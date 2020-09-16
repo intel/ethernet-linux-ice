@@ -26,6 +26,7 @@ struct ice_lag {
 	struct notifier_block notif_block;
 	u8 bonded:1; /* currently bonded */
 	u8 master:1; /* this is a master */
+	u8 handler:1; /* did we register a rx_netdev_handler */
 	/* each thing blocking bonding will increment this value by one.
 	 * If this value is zero, then bonding is allowed.
 	 */
@@ -44,12 +45,14 @@ rx_handler_result_t ice_lag_nop_handler(struct sk_buff **pskb);
 static inline void ice_disable_lag(struct ice_lag *lag)
 {
 	/* If LAG this PF is not already disabled, disable it */
-	if (!lag->dis_lag) {
-		rtnl_lock();
-		netdev_rx_handler_register(lag->netdev, ice_lag_nop_handler,
-					   NULL);
-		rtnl_unlock();
+	rtnl_lock();
+	if (!netdev_is_rx_handler_busy(lag->netdev)) {
+		if (!netdev_rx_handler_register(lag->netdev,
+						ice_lag_nop_handler,
+						NULL))
+			lag->handler = true;
 	}
+	rtnl_unlock();
 	lag->dis_lag++;
 }
 
@@ -64,10 +67,11 @@ static inline void ice_enable_lag(struct ice_lag *lag)
 {
 	if (lag->dis_lag)
 		lag->dis_lag--;
-	if (!lag->dis_lag) {
+	if (!lag->dis_lag && lag->handler) {
 		rtnl_lock();
 		netdev_rx_handler_unregister(lag->netdev);
 		rtnl_unlock();
+		lag->handler = false;
 	}
 }
 

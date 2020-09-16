@@ -51,15 +51,20 @@ ice-y := ice_main.o	\
 	 ice_flow.o		\
 	 ice_lag.o		\
 	 ice_ethtool.o
-ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_pldm.o
+ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
+ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
 ice-$(CONFIG_MFD_CORE:m=y) += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
-ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_sriov.o ice_dcf.o ice_virtchnl_fdir.o
+ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_sriov.o ice_virtchnl_allowlist.o ice_dcf.o ice_virtchnl_fdir.o
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
 ice-$(CONFIG_XDP_SOCKETS) += ice_xsk.o
 ice-y += kcompat.o
+# Use kcompat pldmfw.c if kernel does not provide CONFIG_PLDMFW
+ifndef CONFIG_PLDMFW
+ice-y += kcompat_pldmfw.o
+endif
 
 else	# ifneq($(KERNELRELEASE),)
 # normal makefile

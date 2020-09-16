@@ -2,6 +2,7 @@
 /* Copyright (C) 2018-2019, Intel Corporation. */
 
 #include "ice_txrx_lib.h"
+#include "ice_eswitch.h"
 
 /**
  * ice_release_rx_desc - Store the new tail and head values
@@ -235,7 +236,12 @@ ice_process_skb_fields(struct ice_ring *rx_ring,
 	ice_rx_hash(rx_ring, rx_desc, skb, ptype);
 
 	/* modifies the skb - consumes the enet header */
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	skb->protocol = eth_type_trans(skb, ice_eswitch_get_target_netdev
+				       (rx_ring, rx_desc));
+#else
 	skb->protocol = eth_type_trans(skb, rx_ring->netdev);
+#endif /* CONFIG_NET_DEVLINK */
 
 	ice_rx_csum(rx_ring, skb, rx_desc, ptype);
 	if (rx_ring->ptp_rx)
@@ -321,6 +327,11 @@ int ice_xmit_xdp_ring(void *data, u16 size, struct ice_ring *xdp_ring)
 	 */
 	smp_wmb();
 
+#ifdef HAVE_XDP_SUPPORT
+#ifdef HAVE_AF_XDP_ZC_SUPPORT
+	xdp_ring->xdp_tx_active++;
+#endif /* HAVE_AF_XDP_ZC_SUPPORT */
+#endif /* HAVE_XDP_SUPPORT */
 	i++;
 	if (i == xdp_ring->count)
 		i = 0;

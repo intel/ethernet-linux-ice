@@ -56,7 +56,7 @@ ice_aq_read_nvm(struct ice_hw *hw, u16 module_typeid, u32 offset, u16 length,
  *
  * Reads a portion of the NVM, as a flat memory space. This function correctly
  * breaks read requests across Shadow RAM sectors and ensures that no single
- * read request exceeds the maximum 4Kb read for a single AdminQ command.
+ * read request exceeds the maximum 4KB read for a single AdminQ command.
  *
  * Returns a status code on failure. Note that the data pointer may be
  * partially updated if some reads succeed before a failure.
@@ -74,18 +74,17 @@ ice_read_flat_nvm(struct ice_hw *hw, u32 offset, u32 *length, u8 *data,
 
 	/* Verify the length of the read if this is for the Shadow RAM */
 	if (read_shadow_ram && ((offset + inlen) > (hw->nvm.sr_words * 2u))) {
-		ice_debug(hw, ICE_DBG_NVM,
-			  "NVM error: requested data is beyond Shadow RAM limit\n");
+		ice_debug(hw, ICE_DBG_NVM, "NVM error: requested data is beyond Shadow RAM limit\n");
 		return ICE_ERR_PARAM;
 	}
 
 	do {
 		u32 read_size, sector_offset;
 
-		/* ice_aq_read_nvm cannot read more than 4Kb at a time.
+		/* ice_aq_read_nvm cannot read more than 4KB at a time.
 		 * Additionally, a read from the Shadow RAM may not cross over
 		 * a sector boundary. Conveniently, the sector size is also
-		 * 4Kb.
+		 * 4KB.
 		 */
 		sector_offset = offset % ICE_AQ_MAX_BUF_LEN;
 		read_size = min_t(u32, ICE_AQ_MAX_BUF_LEN - sector_offset,
@@ -112,6 +111,75 @@ ice_read_flat_nvm(struct ice_hw *hw, u32 offset, u32 *length, u8 *data,
 	return status;
 }
 
+/**
+ * ice_aq_update_nvm
+ * @hw: pointer to the HW struct
+ * @module_typeid: module pointer location in words from the NVM beginning
+ * @offset: byte offset from the module beginning
+ * @length: length of the section to be written (in bytes from the offset)
+ * @data: command buffer (size [bytes] = length)
+ * @last_command: tells if this is the last command in a series
+ * @command_flags: command parameters
+ * @cd: pointer to command details structure or NULL
+ *
+ * Update the NVM using the admin queue commands (0x0703)
+ */
+enum ice_status
+ice_aq_update_nvm(struct ice_hw *hw, u16 module_typeid, u32 offset,
+		  u16 length, void *data, bool last_command, u8 command_flags,
+		  struct ice_sq_cd *cd)
+{
+	struct ice_aq_desc desc;
+	struct ice_aqc_nvm *cmd;
+
+	cmd = &desc.params.nvm;
+
+	/* In offset the highest byte must be zeroed. */
+	if (offset & 0xFF000000)
+		return ICE_ERR_PARAM;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_nvm_write);
+
+	cmd->cmd_flags |= command_flags;
+
+	/* If this is the last command in a series, set the proper flag. */
+	if (last_command)
+		cmd->cmd_flags |= ICE_AQC_NVM_LAST_CMD;
+	cmd->module_typeid = cpu_to_le16(module_typeid);
+	cmd->offset_low = cpu_to_le16(offset & 0xFFFF);
+	cmd->offset_high = (offset >> 16) & 0xFF;
+	cmd->length = cpu_to_le16(length);
+
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+
+	return ice_aq_send_cmd(hw, &desc, data, length, cd);
+}
+
+/**
+ * ice_aq_erase_nvm
+ * @hw: pointer to the HW struct
+ * @module_typeid: module pointer location in words from the NVM beginning
+ * @cd: pointer to command details structure or NULL
+ *
+ * Erase the NVM sector using the admin queue commands (0x0702)
+ */
+enum ice_status
+ice_aq_erase_nvm(struct ice_hw *hw, u16 module_typeid, struct ice_sq_cd *cd)
+{
+	struct ice_aq_desc desc;
+	struct ice_aqc_nvm *cmd;
+
+	cmd = &desc.params.nvm;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_nvm_erase);
+
+	cmd->module_typeid = cpu_to_le16(module_typeid);
+	cmd->length = cpu_to_le16(ICE_AQC_NVM_ERASE_LEN);
+	cmd->offset_low = 0;
+	cmd->offset_high = 0;
+
+	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+}
 
 
 /**
@@ -134,7 +202,7 @@ ice_read_sr_word_aq(struct ice_hw *hw, u16 offset, u16 *data)
 	 * boundary
 	 */
 	status = ice_read_flat_nvm(hw, offset * sizeof(u16), &bytes,
-				   (u8 *)&data_local, true);
+				   (__force u8 *)&data_local, true);
 	if (status)
 		return status;
 
@@ -300,16 +368,14 @@ ice_read_pba_string(struct ice_hw *hw, u8 *pba_num, u32 pba_num_size)
 	 */
 	pba_size--;
 	if (pba_num_size < (((u32)pba_size * 2) + 1)) {
-		ice_debug(hw, ICE_DBG_INIT,
-			  "Buffer too small for PBA data.\n");
+		ice_debug(hw, ICE_DBG_INIT, "Buffer too small for PBA data.\n");
 		return ICE_ERR_PARAM;
 	}
 
 	for (i = 0; i < pba_size; i++) {
 		status = ice_read_sr_word(hw, (pba_tlv + 2 + 1) + i, &pba_word);
 		if (status) {
-			ice_debug(hw, ICE_DBG_INIT,
-				  "Failed to read PBA Block word %d.\n", i);
+			ice_debug(hw, ICE_DBG_INIT, "Failed to read PBA Block word %d.\n", i);
 			return status;
 		}
 
@@ -338,8 +404,7 @@ static enum ice_status ice_get_orom_ver_info(struct ice_hw *hw)
 	status = ice_get_pfa_module_tlv(hw, &boot_cfg_tlv, &boot_cfg_tlv_len,
 					ICE_SR_BOOT_CFG_PTR);
 	if (status) {
-		ice_debug(hw, ICE_DBG_INIT,
-			  "Failed to read Boot Configuration Block TLV.\n");
+		ice_debug(hw, ICE_DBG_INIT, "Failed to read Boot Configuration Block TLV.\n");
 		return status;
 	}
 
@@ -347,8 +412,7 @@ static enum ice_status ice_get_orom_ver_info(struct ice_hw *hw)
 	 * (Combo Image Version High and Combo Image Version Low)
 	 */
 	if (boot_cfg_tlv_len < 2) {
-		ice_debug(hw, ICE_DBG_INIT,
-			  "Invalid Boot Configuration Block TLV size.\n");
+		ice_debug(hw, ICE_DBG_INIT, "Invalid Boot Configuration Block TLV size.\n");
 		return ICE_ERR_INVAL_SIZE;
 	}
 
@@ -483,14 +547,12 @@ static enum ice_status ice_discover_flash_size(struct ice_hw *hw)
 		status = ice_read_flat_nvm(hw, offset, &len, &data, false);
 		if (status == ICE_ERR_AQ_ERROR &&
 		    hw->adminq.sq_last_status == ICE_AQ_RC_EINVAL) {
-			ice_debug(hw, ICE_DBG_NVM,
-				  "%s: New upper bound of %u bytes\n",
+			ice_debug(hw, ICE_DBG_NVM, "%s: New upper bound of %u bytes\n",
 				  __func__, offset);
 			status = 0;
 			max_size = offset;
 		} else if (!status) {
-			ice_debug(hw, ICE_DBG_NVM,
-				  "%s: New lower bound of %u bytes\n",
+			ice_debug(hw, ICE_DBG_NVM, "%s: New lower bound of %u bytes\n",
 				  __func__, offset);
 			min_size = offset;
 		} else {
@@ -499,8 +561,7 @@ static enum ice_status ice_discover_flash_size(struct ice_hw *hw)
 		}
 	}
 
-	ice_debug(hw, ICE_DBG_NVM,
-		  "Predicted flash size is %u bytes\n", max_size);
+	ice_debug(hw, ICE_DBG_NVM, "Predicted flash size is %u bytes\n", max_size);
 
 	hw->nvm.flash_size = max_size;
 
@@ -541,15 +602,13 @@ enum ice_status ice_init_nvm(struct ice_hw *hw)
 	} else {
 		/* Blank programming mode */
 		nvm->blank_nvm_mode = true;
-		ice_debug(hw, ICE_DBG_NVM,
-			  "NVM init error: unsupported blank mode.\n");
+		ice_debug(hw, ICE_DBG_NVM, "NVM init error: unsupported blank mode.\n");
 		return ICE_ERR_NVM_BLANK_MODE;
 	}
 
 	status = ice_read_sr_word(hw, ICE_SR_NVM_DEV_STARTER_VER, &ver);
 	if (status) {
-		ice_debug(hw, ICE_DBG_INIT,
-			  "Failed to read DEV starter version.\n");
+		ice_debug(hw, ICE_DBG_INIT, "Failed to read DEV starter version.\n");
 		return status;
 	}
 	nvm->major_ver = (ver & ICE_NVM_VER_HI_MASK) >> ICE_NVM_VER_HI_SHIFT;
@@ -570,35 +629,8 @@ enum ice_status ice_init_nvm(struct ice_hw *hw)
 
 	status = ice_discover_flash_size(hw);
 	if (status) {
-		ice_debug(hw, ICE_DBG_NVM,
-			  "NVM init error: failed to discover flash size.\n");
+		ice_debug(hw, ICE_DBG_NVM, "NVM init error: failed to discover flash size.\n");
 		return status;
-	}
-
-	switch (hw->device_id) {
-	/* the following devices do not have boot_cfg_tlv yet */
-	case ICE_DEV_ID_E823C_BACKPLANE:
-	case ICE_DEV_ID_E823C_QSFP:
-	case ICE_DEV_ID_E823C_SFP:
-	case ICE_DEV_ID_E823C_10G_BASE_T:
-	case ICE_DEV_ID_E823C_SGMII:
-	case ICE_DEV_ID_E822C_BACKPLANE:
-	case ICE_DEV_ID_E822C_QSFP:
-	case ICE_DEV_ID_E822C_10G_BASE_T:
-	case ICE_DEV_ID_E822C_SGMII:
-	case ICE_DEV_ID_E822C_SFP:
-	case ICE_DEV_ID_E822L_BACKPLANE:
-	case ICE_DEV_ID_E822L_SFP:
-	case ICE_DEV_ID_E822L_10G_BASE_T:
-	case ICE_DEV_ID_E822L_SGMII:
-	case ICE_DEV_ID_E823L_BACKPLANE:
-	case ICE_DEV_ID_E823L_SFP:
-	case ICE_DEV_ID_E823L_10G_BASE_T:
-	case ICE_DEV_ID_E823L_1GBE:
-	case ICE_DEV_ID_E823L_QSFP:
-		return status;
-	default:
-		break;
 	}
 
 	status = ice_get_orom_ver_info(hw);
@@ -646,6 +678,26 @@ enum ice_status ice_nvm_validate_checksum(struct ice_hw *hw)
 	return status;
 }
 
+/**
+ * ice_nvm_write_activate
+ * @hw: pointer to the HW struct
+ * @cmd_flags: NVM activate admin command bits (banks to be validated)
+ *
+ * Update the control word with the required banks' validity bits
+ * and dumps the Shadow RAM to flash (0x0707)
+ */
+enum ice_status ice_nvm_write_activate(struct ice_hw *hw, u8 cmd_flags)
+{
+	struct ice_aqc_nvm *cmd;
+	struct ice_aq_desc desc;
+
+	cmd = &desc.params.nvm;
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_nvm_write_activate);
+
+	cmd->cmd_flags = cmd_flags;
+
+	return ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+}
 
 /**
  * ice_nvm_access_get_features - Return the NVM access features structure
@@ -661,7 +713,7 @@ ice_nvm_access_get_features(struct ice_nvm_access_cmd *cmd,
 {
 	/* The provided data_size must be at least as large as our NVM
 	 * features structure. A larger size should not be treated as an
-	 * error, to allow future extensions to to the features structure to
+	 * error, to allow future extensions to the features structure to
 	 * work on older drivers.
 	 */
 	if (cmd->data_size < sizeof(struct ice_nvm_features))
@@ -824,8 +876,7 @@ ice_nvm_access_write(struct ice_hw *hw, struct ice_nvm_access_cmd *cmd,
 		break;
 	}
 
-	ice_debug(hw, ICE_DBG_NVM,
-		  "NVM access: writing register %08x with value %08x\n",
+	ice_debug(hw, ICE_DBG_NVM, "NVM access: writing register %08x with value %08x\n",
 		  cmd->offset, data->regval);
 
 	/* Write the data field to the specified register */
@@ -884,6 +935,21 @@ ice_handle_nvm_access(struct ice_hw *hw, struct ice_nvm_access_cmd *cmd,
 	}
 }
 
+/**
+ * ice_aq_nvm_update_empr
+ * @hw: pointer to the HW struct
+ *
+ * Update empr (0x0709). This command allows SW to
+ * request an EMPR to activate new FW.
+ */
+enum ice_status ice_aq_nvm_update_empr(struct ice_hw *hw)
+{
+	struct ice_aq_desc desc;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_nvm_update_empr);
+
+	return ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+}
 
 /* ice_nvm_set_pkg_data
  * @hw: pointer to the HW struct
@@ -920,4 +986,47 @@ ice_nvm_set_pkg_data(struct ice_hw *hw, bool del_pkg_data_flag, u8 *data,
 	return ice_aq_send_cmd(hw, &desc, data, length, cd);
 }
 
+/* ice_nvm_pass_component_tbl
+ * @hw: pointer to the HW struct
+ * @data: pointer to buffer
+ * @length: length of the buffer
+ * @transfer_flag: parameter for determining stage of the update
+ * @comp_response: a pointer to the response from the 0x070B AQC.
+ * @comp_response_code: a pointer to the response code from the 0x070B AQC.
+ * @cd: pointer to command details structure or NULL
+ *
+ * Pass component table (0x070B). This command is equivalent to the reception
+ * of a PLDM FW Update PassComponentTable cmd. This command should be sent once
+ * per component. It can be only sent after Set Package Data cmd and before
+ * actual update. FW will assume these commands are going to be sent until
+ * the TransferFlag is set to End or StartAndEnd.
+ */
+
+enum ice_status
+ice_nvm_pass_component_tbl(struct ice_hw *hw, u8 *data, u16 length,
+			   u8 transfer_flag, u8 *comp_response,
+			   u8 *comp_response_code, struct ice_sq_cd *cd)
+{
+	struct ice_aqc_nvm_pass_comp_tbl *cmd;
+	struct ice_aq_desc desc;
+	enum ice_status status;
+
+	if (!data || !comp_response || !comp_response_code)
+		return ICE_ERR_PARAM;
+
+	cmd = &desc.params.pass_comp_tbl;
+
+	ice_fill_dflt_direct_cmd_desc(&desc,
+				      ice_aqc_opc_nvm_pass_component_tbl);
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+
+	cmd->transfer_flag = transfer_flag;
+	status = ice_aq_send_cmd(hw, &desc, data, length, cd);
+
+	if (!status) {
+		*comp_response = cmd->component_response;
+		*comp_response_code = cmd->component_response_code;
+	}
+	return status;
+}
 

@@ -23,6 +23,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/pci.h>
 #include <linux/workqueue.h>
+#include <linux/wait.h>
 #include <linux/aer.h>
 #include <linux/interrupt.h>
 #include <linux/ethtool.h>
@@ -97,6 +98,8 @@
 #include <linux/atomic.h>
 #include <linux/jiffies.h>
 #include "ice_arfs.h"
+#include "ice_repr.h"
+#include "ice_eswitch.h"
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0		0
@@ -332,6 +335,7 @@ enum ice_state {
 	__ICE_TESTING,
 	__ICE_DOWN,
 	__ICE_NEEDS_RESTART,
+	__ICE_PREPARING_FOR_RESET,	/* set by driver when preparing */
 	__ICE_PREPARED_FOR_RESET,	/* set by driver when prepared */
 	__ICE_RESET_OICR_RECV,		/* set by driver after rcv reset OICR */
 	__ICE_DCBNL_DEVRESET,		/* set by dcbnl devreset */
@@ -391,6 +395,10 @@ enum ice_chnl_feature {
 	 * interrupt from napi_poll for channel enabled vector
 	 */
 	ICE_CHNL_FEATURE_PKT_INSPECT_OPT_ENA,
+	/* when set, allows cleaning of Rx queue(s) when napi_poll is invoked
+	 * due to busy_poll_stop
+	 */
+	ICE_CHNL_FEATURE_PKT_CLEAN_BP_STOP_ENA,
 	ICE_CHNL_FEATURE_NBITS		/* must be last */
 };
 
@@ -593,6 +601,12 @@ struct ice_vsi {
 	u8 *rss_lut_user;	/* User configured lookup table entries */
 	u8 rss_lut_type;	/* used to configure Get/Set RSS LUT AQ call */
 
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	/* devlink port data */
+	struct devlink_port devlink_port;
+	bool devlink_port_registered;
+#endif /* CONFIG_NET_DEVLINK */
+
 	/* aRFS members only allocated for the PF VSI */
 #define ICE_MAX_RFS_FILTERS	0xFFFF
 #define ICE_MAX_ARFS_LIST	1024
@@ -618,7 +632,6 @@ struct ice_vsi {
 	u8 irqs_ready:1;
 	u8 current_isup:1;		 /* Sync 'link up' logging */
 	u8 stat_offsets_loaded:1;
-	u8 vlan_ena:1;
 	u16 num_vlan;
 
 
@@ -644,9 +657,11 @@ struct ice_vsi {
 	u8 xdp_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
 #endif /* HAVE_XDP_SUPPORT */
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	struct xdp_umem **xsk_umems;
 	u16 num_xsk_umems_used;
 	u16 num_xsk_umems;
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
@@ -708,6 +723,7 @@ struct ice_vsi {
 	u16 old_ena_tc;
 
 	struct ice_channel *ch;
+	struct net_device **target_netdevs;
 
 	/* setup back reference, to which aggregator node this VSI
 	 * corresponds to
@@ -720,6 +736,7 @@ enum ice_chnl_vector_state {
 	ICE_CHNL_VECTOR_PREV_IN_BP,
 	ICE_CHNL_VECTOR_ONCE_IN_BP,
 	ICE_CHNL_VECTOR_PREV_DATA_PKT_RECV,
+	ICE_CHNL_VECTOR_WD_EQUALS_BP,
 	ICE_CHNL_VECTOR_NBITS, /* This must be last */
 };
 
@@ -761,6 +778,15 @@ struct ice_q_vector_ch_stats {
 	u64 num_no_sw_intr_opt_off;
 	/* tracking, how many times WB_ON_ITR is set */
 	u64 num_wb_on_itr_set;
+
+	u64 pkt_bp_stop_napi_budget;
+	u64 pkt_bp_stop_bp_budget;
+
+	u64 bp_wd_equals_budget64;
+	u64 bp_wd_equals_budget8;
+
+	u64 keep_state_bp_budget64;
+	u64 keep_state_bp_budget8;
 };
 #endif /* ADQ_PERF_COUNTERS */
 
@@ -802,6 +828,12 @@ struct ice_q_vector {
 	 * on per channel enabled vector or not
 	 */
 #define ICE_CHNL_PREV_DATA_PKT_RECV	BIT(ICE_CHNL_VECTOR_PREV_DATA_PKT_RECV)
+	/* tracks if number of Rx packets processed is equal to budget or not.
+	 * It is set from napi_poll and used from ice_refresh_bp_state
+	 * to determine if internal state of vector to be kept in BUSY_POLL
+	 * or not
+	 */
+#define ICE_CHNL_WD_EQUALS_BP		BIT(ICE_CHNL_VECTOR_WD_EQUALS_BP)
 	/* it is used to keep track of various states as defined earlier
 	 * and those states are used during ADQ performance optimization
 	 */
@@ -812,6 +844,35 @@ struct ice_q_vector {
 	u64 jiffy;
 	/* Primarily used in decision making w.r.t using inline flow-director */
 	atomic_t inline_fd_cnt;
+
+	/* This is applicable only for ADQ enabled vectors and used to avoid
+	 * situation of OS triggering ksoftirqd.
+	 *
+	 * Usually busy_poll_stop is followed by napi_schedule:napi_poll if
+	 * driver returned "budget" as part of processing packets during
+	 * busy_poll_stop. As long as driver continue to return "budget",
+	 * OS keeps calling napi_schedule upto 10 times or 2msec and then
+	 * arms the ksoftrqd.
+	 *
+	 * As part of ADQ performance optimization, it is not preferable to
+	 * let ksoftirqd run when there has been enough packets processed.
+	 * To facilitate fairness to the consumer of those packets,
+	 * do not process Rx queues after 8 times.
+	 */
+	/* following variable keeps track of how many times Rx queues were
+	 * processed when napi_poll is invoked thru napi_schedule (as a result
+	 * of returning "budget" from busy_poll_stop:napi_poll) and
+	 * work_done == budget.
+	 */
+	u8 process_rx_queues;
+
+	/* following is controlled thru' priv-flag, value of
+	 * "max_limit_process_rx_queues" becomes 8 when priv-flag is set
+	 * otherwise it is set to 4 (default)
+	 */
+#define ICE_MAX_LIMIT_PROCESS_RX_PKTS_DFLT  4
+#define ICE_MAX_LIMIT_PROCESS_RX_PKTS  8
+	u8 max_limit_process_rx_queues;
 
 #ifdef ADQ_PERF_COUNTERS
 	struct ice_q_vector_ch_stats ch_stats;
@@ -828,7 +889,6 @@ enum ice_pf_flags {
 	ICE_FLAG_RSS_ENA,
 	ICE_FLAG_SRIOV_ENA,
 	ICE_FLAG_SRIOV_CAPABLE,
-	ICE_FLAG_SRIOV_CHNL_FLTR_AS_UDP,
 	ICE_FLAG_DCB_CAPABLE,
 	ICE_FLAG_DCB_ENA,
 	ICE_FLAG_FD_ENA,
@@ -850,6 +910,8 @@ enum ice_pf_flags {
 	ICE_FLAG_FW_LLDP_AGENT,
 	ICE_FLAG_CHNL_INLINE_FD_ENA,
 	ICE_FLAG_CHNL_PKT_INSPECT_OPT_ENA,
+	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA,
+	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG,
 	ICE_FLAG_ETHTOOL_CTXT,		/* set when ethtool holds RTNL lock */
 	ICE_FLAG_LEGACY_RX,
 	ICE_FLAG_VF_TRUE_PROMISC_ENA,
@@ -869,6 +931,10 @@ struct ice_macvlan {
 };
 #endif /* HAVE_NETDEV_SB_DEV */
 
+struct ice_switchdev_info {
+	struct ice_vsi *control_vsi;
+	struct ice_vsi *uplink_vsi;
+};
 
 enum ice_tnl_state {
 	ICE_TNL_SET_TO_ADD,
@@ -896,18 +962,31 @@ struct ice_agg_node {
 	u8 valid;
 };
 
+enum ice_flash_update_preservation {
+	/* Preserve all settings and fields */
+	ICE_FLASH_UPDATE_PRESERVE_ALL = 0,
+	/* Preserve limited fields, such as VPD, PCI serial ID, MACs, etc */
+	ICE_FLASH_UPDATE_PRESERVE_LIMITED,
+	/* Return all fields to factory settings */
+	ICE_FLASH_UPDATE_PRESERVE_FACTORY_SETTINGS,
+	/* Do not perform any preservation */
+	ICE_FLASH_UPDATE_PRESERVE_NONE,
+};
+
+struct ice_devlink_flash_params {
+	enum ice_flash_update_preservation preservation_level;
+};
+
 struct ice_pf {
 	struct pci_dev *pdev;
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
-	/* devlink port data */
-	struct devlink_port devlink_port;
-
 #ifdef HAVE_DEVLINK_REGIONS
 	struct devlink_region *nvm_region;
 	struct devlink_region *devcaps_region;
 #endif /* HAVE_DEVLINK_REGIONS */
 #endif /* CONFIG_NET_DEVLINK */
+	struct ice_devlink_flash_params flash_params;
 
 	/* OS reserved IRQ details */
 	struct msix_entry *msix_entries;
@@ -922,6 +1001,7 @@ struct ice_pf {
 
 	struct ice_vsi **vsi;		/* VSIs created by the driver */
 	struct ice_sw *first_sw;	/* first switch created by firmware */
+	u16 eswitch_mode;		/* current mode of eswitch */
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *ice_debugfs_pf;
 #endif /* CONFIG_DEBUG_FS */
@@ -959,6 +1039,12 @@ struct ice_pf {
 	u16 num_macvlan;
 	u16 max_num_macvlan;
 #endif /* HAVE_NETDEV_SB_DEV */
+
+	/* spinlock to protect the AdminQ wait list */
+	spinlock_t aq_wait_lock;
+	struct hlist_head aq_wait_list;
+	wait_queue_head_t aq_wait_queue;
+
 	u32 hw_csum_rx_error;
 	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
 	u16 num_avail_sw_msix;	/* remaining MSIX SW vectors left unclaimed */
@@ -1030,6 +1116,7 @@ struct ice_pf {
 	 */
 	spinlock_t tnl_lock;
 	struct list_head tnl_list;
+	struct ice_switchdev_info switchdev;
 
 #define ICE_INVALID_AGG_NODE_ID		0
 #define ICE_PF_AGG_NODE_ID_START	1
@@ -1060,8 +1147,11 @@ struct ice_netdev_priv {
 	 *
 	 */
 	struct list_head tc_indr_block_priv_list;
+#ifndef HAVE_TC_FLOW_INDIR_DEV
 	struct notifier_block netdevice_nb;
+#endif
 #endif /* HAVE_TC_INDIR_BLOCK */
+	struct ice_repr *repr;
 };
 
 extern struct ida ice_peer_index_ida;
@@ -1184,14 +1274,14 @@ ice_sw_intr_cntr(struct ice_q_vector *q_vector, bool napi_codepath)
 static inline void
 ice_force_wb(struct ice_hw *hw, struct ice_q_vector *q_vector)
 {
+	if (q_vector->num_ring_rx || q_vector->num_ring_tx) {
 #ifdef ADQ_PERF_COUNTERS
-	q_vector->ch_stats.num_wb_on_itr_set++;
-
+		q_vector->ch_stats.num_wb_on_itr_set++;
 #endif /* ADQ_PERF_COUNTERS */
-	wr32(hw,
-	     GLINT_DYN_CTL(q_vector->reg_idx),
-	     (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) |
-	     GLINT_DYN_CTL_WB_ON_ITR_M);
+		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx),
+		     (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) |
+		     GLINT_DYN_CTL_WB_ON_ITR_M);
+	}
 
 	/* needed to avoid triggering WB_ON_ITR again which typically
 	 * happens from ice_set_wb_on_itr function
@@ -1285,17 +1375,26 @@ static inline void ice_set_ring_xdp(struct ice_ring *ring)
  */
 static inline struct xdp_umem *ice_xsk_umem(struct ice_ring *ring)
 {
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	struct xdp_umem **umems = ring->vsi->xsk_umems;
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 	u16 qid = ring->q_index;
 
 	if (ice_ring_is_xdp(ring))
 		qid -= ring->vsi->num_xdp_txq;
 
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	if (qid >= ring->vsi->num_xsk_umems || !umems || !umems[qid] ||
 	    !ice_is_xdp_ena_vsi(ring->vsi))
 		return NULL;
 
 	return umems[qid];
+#else
+	if (!ice_is_xdp_ena_vsi(ring->vsi))
+		return NULL;
+
+	return xdp_get_umem_from_qid(ring->vsi->netdev, qid);
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 }
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 
@@ -1505,10 +1604,32 @@ static inline bool ice_vsi_pkt_inspect_opt_ena(struct ice_vsi *vsi)
 	return !!test_bit(ICE_CHNL_FEATURE_PKT_INSPECT_OPT_ENA, vsi->features);
 }
 
+/**
+ * ice_vsi_pkt_process_bp_stop_ena - packet process ON/OFF from bp stop
+ * @vsi: pointer to VSI
+ *
+ * This function returns true if VSI is enabled for optimization to allow
+ * Tx/Rx cleanup from busy_poll_stop code path. There is an associated
+ * priv flag to control this feature and applicable only for channel (aka ADQ)
+ * specific vectors
+ */
+static inline bool ice_vsi_pkt_process_bp_stop_ena(struct ice_vsi *vsi)
+{
+	return !!test_bit(ICE_CHNL_FEATURE_PKT_CLEAN_BP_STOP_ENA,
+			  vsi->features);
+}
+
 static inline bool ice_active_vmdqs(struct ice_pf *pf)
 {
 	return !!ice_find_first_vsi_by_type(pf, ICE_VSI_VMDQ2);
 }
+
+#ifdef HAVE_NETDEV_SB_DEV
+static inline bool ice_is_offloaded_macvlan_ena(struct ice_pf *pf)
+{
+	return test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags);
+}
+#endif /* HAVE_NETDEV_SB_DEV */
 
 #ifdef CONFIG_DEBUG_FS
 void ice_debugfs_pf_init(struct ice_pf *pf);
@@ -1516,17 +1637,11 @@ void ice_debugfs_pf_exit(struct ice_pf *pf);
 void ice_debugfs_init(void);
 void ice_debugfs_exit(void);
 #else
-static inline void ice_debugfs_pf_init(struct ice_pf *pf) {}
-static inline void ice_debugfs_pf_exit(struct ice_pf *pf) {}
-static inline void ice_debugfs_init(void) {}
-static inline void ice_debugfs_exit(void) {}
+#define ice_debugfs_pf_init(pf) do {} while (0)
+#define ice_debugfs_pf_exit(pf) do {} while (0)
+#define ice_debugfs_init() do {} while (0)
+#define ice_debugfs_exit() do {} while (0)
 #endif /* CONFIG_DEBUG_FS */
-#ifdef HAVE_NETDEV_SB_DEV
-static inline bool ice_is_offloaded_macvlan_ena(struct ice_pf *pf)
-{
-	return test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags);
-}
-#endif /* HAVE_NETDEV_SB_DEV */
 
 bool netif_is_ice(struct net_device *dev);
 int ice_vsi_setup_tx_rings(struct ice_vsi *vsi);
@@ -1632,13 +1747,19 @@ static inline void ice_clear_rdma_cap(struct ice_pf *pf)
 const char *ice_stat_str(enum ice_status stat_err);
 const char *ice_aq_str(enum ice_aq_err aq_err);
 bool ice_is_wol_supported(struct ice_pf *pf);
+int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
+			  struct ice_rq_event_info *event);
 int
 ice_fdir_write_fltr(struct ice_pf *pf, struct ice_fdir_fltr *input, bool add,
 		    bool is_tun);
 void ice_vsi_manage_fdir(struct ice_vsi *vsi, bool ena);
-int ice_add_fdir_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
-int ice_del_fdir_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
+int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
+int ice_del_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_get_ethtool_fdir_entry(struct ice_hw *hw, struct ethtool_rxnfc *cmd);
+int
+ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
+			 struct ethtool_rx_flow_spec *fsp,
+			 struct ice_fdir_fltr *input);
 u32 ice_get_fltr_cnt(struct ice_hw *hw);
 int ice_check_ip4_seg_fltr(struct ethtool_tcpip4_spec *tcp_ip4_spec);
 int ice_check_ip4_usr_seg_fltr(struct ethtool_usrip4_spec *usr_ip4_spec);
@@ -1656,8 +1777,8 @@ void ice_fdir_replay_fltrs(struct ice_pf *pf);
 int ice_fdir_create_dflt_rules(struct ice_pf *pf);
 enum ice_fltr_ptype ice_ethtool_flow_to_fltr(int eth);
 int
-ice_fdir_update_list_entry(struct ice_pf *pf, struct ice_fdir_fltr *input,
-			   int fltr_idx);
+ice_ntuple_update_list_entry(struct ice_pf *pf, struct ice_fdir_fltr *input,
+			     int fltr_idx);
 void ice_update_ring_dest_vsi(struct ice_vsi *vsi, u16 *dest_vsi, u32 *ring);
 int ice_open(struct net_device *netdev);
 int ice_stop(struct net_device *netdev);
@@ -1669,4 +1790,5 @@ int
 ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			   struct ice_tc_flower_fltr *tc_fltr);
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
+void ice_napi_add(struct ice_vsi *vsi);
 #endif /* _ICE_H_ */

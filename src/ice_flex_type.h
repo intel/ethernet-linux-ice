@@ -24,7 +24,7 @@ struct ice_fv {
 struct ice_pkg_hdr {
 	struct ice_pkg_ver pkg_format_ver;
 	__le32 seg_count;
-	__le32 seg_offset[1];
+	__le32 seg_offset[];
 };
 
 /* generic segment */
@@ -55,12 +55,12 @@ struct ice_device_id_entry {
 struct ice_seg {
 	struct ice_generic_seg_hdr hdr;
 	__le32 device_table_count;
-	struct ice_device_id_entry device_table[1];
+	struct ice_device_id_entry device_table[];
 };
 
 struct ice_nvm_table {
 	__le32 table_count;
-	__le32 vers[1];
+	__le32 vers[];
 };
 
 struct ice_buf {
@@ -70,7 +70,7 @@ struct ice_buf {
 
 struct ice_buf_table {
 	__le32 buf_count;
-	struct ice_buf buf_array[1];
+	struct ice_buf buf_array[];
 };
 
 /* global metadata specific segment */
@@ -103,11 +103,12 @@ struct ice_section_entry {
 struct ice_buf_hdr {
 	__le16 section_count;
 	__le16 data_end;
-	struct ice_section_entry section_entry[1];
+	struct ice_section_entry section_entry[];
 };
 
 #define ICE_MAX_ENTRIES_IN_BUF(hd_sz, ent_sz) ((ICE_PKG_BUF_SIZE - \
-	sizeof(struct ice_buf_hdr) - (hd_sz)) / (ent_sz))
+	struct_size((struct ice_buf_hdr *)0, section_entry, 1) - (hd_sz)) /\
+	(ent_sz))
 
 /* ice package section IDs */
 #define ICE_SID_XLT0_SW			10
@@ -397,17 +398,16 @@ struct ice_label {
 
 struct ice_label_section {
 	__le16 count;
-	struct ice_label label[1];
+	struct ice_label label[];
 };
 
-#define ICE_MAX_LABELS_IN_BUF ICE_MAX_ENTRIES_IN_BUF( \
-	sizeof(struct ice_label_section) - sizeof(struct ice_label), \
-	sizeof(struct ice_label))
+#define ICE_MAX_LABELS_IN_BUF ICE_MAX_ENTRIES_IN_BUF(struct_size((struct ice_label_section *)0, label, 1) - \
+	sizeof(struct ice_label), sizeof(struct ice_label))
 
 struct ice_sw_fv_section {
 	__le16 count;
 	__le16 base_offset;
-	struct ice_fv fv[1];
+	struct ice_fv fv[];
 };
 
 struct ice_sw_fv_list_entry {
@@ -450,40 +450,30 @@ struct ice_boost_tcam_entry {
 struct ice_boost_tcam_section {
 	__le16 count;
 	__le16 reserved;
-	struct ice_boost_tcam_entry tcam[1];
+	struct ice_boost_tcam_entry tcam[];
 };
 
-#define ICE_MAX_BST_TCAMS_IN_BUF ICE_MAX_ENTRIES_IN_BUF( \
-	sizeof(struct ice_boost_tcam_section) - \
+#define ICE_MAX_BST_TCAMS_IN_BUF ICE_MAX_ENTRIES_IN_BUF(struct_size((struct ice_boost_tcam_section *)0, tcam, 1) - \
 	sizeof(struct ice_boost_tcam_entry), \
 	sizeof(struct ice_boost_tcam_entry))
 
 struct ice_xlt1_section {
 	__le16 count;
 	__le16 offset;
-	u8 value[1];
-} __packed;
-
-#define ICE_XLT1_SIZE(n)	(sizeof(struct ice_xlt1_section) + \
-				 (sizeof(u8) * ((n) - 1)))
+	u8 value[];
+};
 
 struct ice_xlt2_section {
 	__le16 count;
 	__le16 offset;
-	__le16 value[1];
+	__le16 value[];
 };
-
-#define ICE_XLT2_SIZE(n)	(sizeof(struct ice_xlt2_section) + \
-				 (sizeof(u16) * ((n) - 1)))
 
 struct ice_prof_redir_section {
 	__le16 count;
 	__le16 offset;
-	u8 redir_value[1];
+	u8 redir_value[];
 };
-
-#define ICE_PROF_REDIR_SIZE(n)	(sizeof(struct ice_prof_redir_section) + \
-				 (sizeof(u8) * ((n) - 1)))
 
 /* package buffer building */
 
@@ -541,7 +531,7 @@ struct ice_tunnel_table {
 struct ice_pkg_es {
 	__le16 count;
 	__le16 offset;
-	struct ice_fv_word es[1];
+	struct ice_fv_word es[];
 };
 
 struct ice_es {
@@ -697,8 +687,8 @@ struct ice_prof_tcam_entry {
 
 struct ice_prof_id_section {
 	__le16 count;
-	struct ice_prof_tcam_entry entry[1];
-} __packed;
+	struct ice_prof_tcam_entry entry[];
+};
 
 struct ice_prof_tcam {
 	u32 sid;

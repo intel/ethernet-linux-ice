@@ -1,8 +1,7 @@
-
 ice Linux* Base Driver for the Intel(R) Ethernet Controller 800 Series
 ===============================================================================
 
-June 23, 2020
+August 11, 2020
 
 ===============================================================================
 
@@ -27,6 +26,7 @@ Function (VF) driver for this driver is iavf.
 Driver information can be obtained using ethtool, lspci, and ifconfig.
 Instructions on updating ethtool can be found in the section Additional
 Configurations later in this document.
+
 This driver is only supported as a loadable module at this time. Intel is not
 supplying patches against the kernel source to allow for static linking of the
 drivers.
@@ -40,7 +40,6 @@ that XDP is blocked for frame sizes larger than 3KB. This driver supports
 AF_XDP zero-copy on kernel 4.18 and later.
 
 
-
 Identifying Your Adapter
 ========================
 For information on how to identify your adapter, and for the latest Intel
@@ -51,15 +50,24 @@ http://www.intel.com/support
 Important Notes
 ===============
 
-Poor receive performance and dropped packets
---------------------------------------------
-Devices based on the Intel(R) Ethernet Controller 800 Series may exhibit poor
-receive performance and dropped packets. The following steps may improve the
-situation:
-1) In your system's BIOS/UEFI settings, select the "Performance" profile.
-2) On RHEL 7.x/8.x, use the tuned power management tool to set the
+Packet drops may occur under receive stress
+-------------------------------------------
+Devices based on the Intel(R) Ethernet Controller 800 Series are designed to
+tolerate a limited amount of system latency during PCIe and DMA transactions.
+If these transactions take longer than the tolerated latency, it can impact the
+length of time the packets are buffered in the device and associated memory,
+which may result in dropped packets. These packets drops typically do not have
+a noticeable impact on throughput and performance under standard workloads.
+
+If these packet drops appear to affect your workload, the following may improve
+the situation:
+1) Make sure that your system's physical memory is in a high-performance
+configuration, as recommended by the platform vendor. A common recommendation
+is for all channels to be populated with a single DIMM module.
+2) In your system's BIOS/UEFI settings, select the "Performance" profile.
+3) On RHEL 7.x/8.x, use the tuned power management tool to set the
 "latency-performance" profile.
-3) In other operating systems and environments, use the equivalent tool to set
+4) In other operating systems and environments, use the equivalent tool to set
 the equivalent profile.
 
 
@@ -95,15 +103,32 @@ Devices User Guide for details on Firmware Recovery Mode and how to recover
 from it.
 
 
+Link Aggregation is mutually exclusive with SR-IOV and RDMA. If Link
+Aggregation is active:
+1. RDMA peers will not be able to register with the PF.
+2. SR-IOV VFs cannot be created on the PF.
+If either RDMA or SR-IOV is active, you cannot set up Link Aggregation on the
+interface.
+
+Bridging and MACVLAN are also affected by this. If you wish to use bridging or
+MACVLAN with RDMA/SR-IOV you must set up bridging or MACVLAN before enabling
+RDMA or SR-IOV. If you are using bridging or MACVLAN in conjunction with SRIOV
+and/or RDMA, and you want to remove the interface from the bridge or MACVLAN,
+you must follow these steps:
+1. Remove RDMA if it is active
+2. Destroy SR-IOV VFs if they exist
+3. Remove the interface from the bridge or MACVLAN
+4. Reactivate RDMA and recreate SRIOV VFs as needed
+
 Building and Installation
 =========================
 The ice driver requires the Dynamic Device Personalization (DDP) package file
 to enable advanced features (such as dynamic tunneling, Flow Director, RSS, and
-ADQ). The driver installation process installs the default DDP package file and
-creates a soft link ice.pkg to the physical package ice-x.x.x.x.pkg in the
-firmware root directory (typically /lib/firmware/ or /lib/firmware/updates/).
-The driver install process also puts both the driver module and the DDP file in
-the initramfs/initrd image.
+ADQ, or others). The driver installation process installs the default DDP
+package file and creates a soft link ice.pkg to the physical package
+ice-x.x.x.x.pkg in the firmware root directory (typically /lib/firmware/ or
+/lib/firmware/updates/). The driver install process also puts both the driver
+module and the DDP file in the initramfs/initrd image.
 
 NOTE: When the driver loads, it looks for intel/ice/ddp/ice.pkg in the firmware
 root. If this file exists, the driver will download it into the device. If not,
@@ -354,8 +379,14 @@ Requirements:
 - Kernel version 4.19 or later
 - Operating system: Red Hat* Enterprise Linux* 7.5+ or SUSE* Linux Enterprise
 Server* 12+
-- The sch_mqprio, act_mirred and cls_flower modules must be loaded
+- The sch_mqprio, act_mirred and cls_flower modules must be loaded. For example:
+# modprobe sch_mqprio
+# modprobe act_mirred
+# modprove cls_flower
 - The latest version of iproute2
+# cd iproute2
+# ./configure
+# make DESTDIR=/opt/iproute2 install
 - The latest ice driver and NVM image (Note: You must compile the ice driver
 with the ADQ flag as shown in the "Building and Installation" section.)
 
@@ -533,6 +564,18 @@ created:
 
   # tc filter show dev <ethX> parent ffff:
 
+Multiple filters can be added to the device, using the same recipe (and
+requires no additional recipe resources), either on the same interface or on
+different interfaces. Each filter uses the same fields for matching, but can
+have different match values.
+  tc filter add dev <ethX> protocol ip ingress prio 1 flower ip_proto
+   tcp dst_port $app_port skip_sw hw_tc 1
+
+For example:
+
+  # tc filter add dev <ethX> protocol ip ingress prio 1 flower ip_proto
+     tcp dst_port 5555 skip_sw hw_tc 1
+
 
 Intel(R) Ethernet Flow Director
 -------------------------------
@@ -580,7 +623,7 @@ VF FLOW DIRECTOR    Supported       Routing to VF      Not supported
 IP ADDRESS RANGE    Supported       Not supported      Field masking
 FILTER
 ---------------------------------------------------------------------------
-IPv6 SUPPORT        Supported       Not supported      Supported
+IPv6 SUPPORT        Supported       Supported          Supported
 ---------------------------------------------------------------------------
 CONFIGURABLE        Configured      Configured         Configured
 INPUT SET           per port        globally           per port
@@ -622,10 +665,10 @@ action <queue>
     <type> - can be ip4, tcp4, udp4, sctp4, ip6, tcp6, udp6, sctp6
     <ip> - the IP address to match on
     <ip_mask> - the IPv4 address to mask on
-            NOTE: These filters use inverted masks.
+              NOTE: These filters use inverted masks.
     <port> - the port number to match on
     <port_mask> - the 16-bit integer for masking
-            NOTE: These filters use inverted masks.
+              NOTE: These filters use inverted masks.
     <queue> - the queue to direct traffic toward (-1 discards the
               matched traffic)
 
@@ -825,11 +868,10 @@ how many VFs each PF supports, use the following command:
 
 # cat /sys/class/net/<ethX>/device/sriov_totalvfs
 
-Note:
-You cannot use RDMA or SR-IOV when link aggregation (LAG)/bonding is active,
-and vice versa. To enforce this, on kernels 4.5 and above, the ice driver
-checks for this mutual exclusion. On kernels older than 4.5, the ice driver
-cannot check for this exclusion and is unaware of bonding events.
+Note: You cannot use RDMA or SR-IOV when link aggregation (LAG)/bonding is
+active, and vice versa. To enforce this, on kernels 4.5 and above, the ice
+driver checks for this mutual exclusion. On kernels older than 4.5, the ice
+driver cannot check for this exclusion and is unaware of bonding events.
 
 
 Configuring VLAN Tagging on SR-IOV Enabled Adapter Ports

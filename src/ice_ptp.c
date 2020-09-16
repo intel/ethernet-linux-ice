@@ -199,7 +199,7 @@ static void ice_set_ptp_clock_index(struct ice_pf *pf)
 	status = ice_aq_set_driver_param(hw, param_idx, value, NULL);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf),
-			"Failed to write PTP clock index parameter, err %s aq_err %s\n",
+			"Failed to set PTP clock index parameter, err %s aq_err %s\n",
 			ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
 	}
 }
@@ -231,8 +231,8 @@ static void ice_clear_ptp_clock_index(struct ice_pf *pf)
 
 	status = ice_aq_set_driver_param(hw, param_idx, 0, NULL);
 	if (status) {
-		dev_err(ice_pf_to_dev(pf),
-			"Failed to write PTP clock index parameter, err %s aq_err %s\n",
+		dev_dbg(ice_pf_to_dev(pf),
+			"Failed to clear PTP clock index parameter, err %s aq_err %s\n",
 			ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
 	}
 }

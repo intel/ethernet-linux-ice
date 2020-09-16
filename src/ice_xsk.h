@@ -14,7 +14,7 @@ int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid);
 int ice_xsk_umem_query(struct ice_vsi *vsi, struct xdp_umem **umem, u16 qid);
 void ice_zca_free(struct zero_copy_allocator *zca, unsigned long handle);
 int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget);
-bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring, int budget);
+bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring);
 #ifdef HAVE_NDO_XSK_WAKEUP
 int ice_xsk_wakeup(struct net_device *netdev, u32 queue_id, u32 flags);
 #else
@@ -55,8 +55,7 @@ ice_clean_rx_irq_zc(struct ice_ring __always_unused *rx_ring,
 }
 
 static inline bool
-ice_clean_tx_irq_zc(struct ice_ring __always_unused *xdp_ring,
-		    int __always_unused budget)
+ice_clean_tx_irq_zc(struct ice_ring __always_unused *xdp_ring)
 {
 	return false;
 }

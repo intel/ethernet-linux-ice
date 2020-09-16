@@ -17,25 +17,17 @@
 
 #define DUMMY_ETH_HDR_LEN		16
 #define ICE_SW_RULE_RX_TX_ETH_HDR_SIZE \
-	(sizeof(struct ice_aqc_sw_rules_elem) - \
-	 sizeof_field(struct ice_aqc_sw_rules_elem, pdata) + \
-	 sizeof(struct ice_sw_rule_lkup_rx_tx) + DUMMY_ETH_HDR_LEN - 1)
+	(offsetof(struct ice_aqc_sw_rules_elem, pdata.lkup_tx_rx.hdr) + \
+	 (DUMMY_ETH_HDR_LEN * \
+	  sizeof(((struct ice_sw_rule_lkup_rx_tx *)0)->hdr[0])))
 #define ICE_SW_RULE_RX_TX_NO_HDR_SIZE \
-	(sizeof(struct ice_aqc_sw_rules_elem) - \
-	 sizeof_field(struct ice_aqc_sw_rules_elem, pdata) + \
-	 sizeof(struct ice_sw_rule_lkup_rx_tx) - 1)
+	(offsetof(struct ice_aqc_sw_rules_elem, pdata.lkup_tx_rx.hdr))
 #define ICE_SW_RULE_LG_ACT_SIZE(n) \
-	(sizeof(struct ice_aqc_sw_rules_elem) - \
-	 sizeof_field(struct ice_aqc_sw_rules_elem, pdata) + \
-	 sizeof(struct ice_sw_rule_lg_act) - \
-	 sizeof_field(struct ice_sw_rule_lg_act, act) + \
-	 ((n) * sizeof_field(struct ice_sw_rule_lg_act, act)))
+	(offsetof(struct ice_aqc_sw_rules_elem, pdata.lg_act.act) + \
+	 ((n) * sizeof(((struct ice_sw_rule_lg_act *)0)->act[0])))
 #define ICE_SW_RULE_VSI_LIST_SIZE(n) \
-	(sizeof(struct ice_aqc_sw_rules_elem) - \
-	 sizeof_field(struct ice_aqc_sw_rules_elem, pdata) + \
-	 sizeof(struct ice_sw_rule_vsi_list) - \
-	 sizeof_field(struct ice_sw_rule_vsi_list, vsi) + \
-	 ((n) * sizeof_field(struct ice_sw_rule_vsi_list, vsi)))
+	(offsetof(struct ice_aqc_sw_rules_elem, pdata.vsi_list.vsi) + \
+	 ((n) * sizeof(((struct ice_sw_rule_vsi_list *)0)->vsi[0])))
 
 
 /* Worst case buffer length for ice_aqc_opc_get_res_alloc */
@@ -356,7 +348,7 @@ ice_aq_set_storm_ctrl(struct ice_hw *hw, u32 bcast_thresh, u32 mcast_thresh,
 		      u32 ctl_bitmask);
 /* Switch config */
 enum ice_status
-ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp *buf,
+ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp_elem *buf,
 		  u16 buf_size, u16 *req_desc, u16 *num_elems,
 		  struct ice_sq_cd *cd);
 enum ice_status ice_get_initial_sw_cfg(struct ice_hw *hw);
@@ -380,13 +372,13 @@ ice_alloc_sw(struct ice_hw *hw, bool ena_stats, bool shared_res, u16 *sw_id,
 enum ice_status
 ice_free_sw(struct ice_hw *hw, u16 sw_id, u16 counter_id);
 enum ice_status
-ice_aq_get_res_alloc(struct ice_hw *hw, u16 *num_entries, void *buf,
-		     u16 buf_size, struct ice_sq_cd *cd);
+ice_aq_get_res_alloc(struct ice_hw *hw, u16 *num_entries,
+		     struct ice_aqc_get_res_resp_elem *buf, u16 buf_size,
+		     struct ice_sq_cd *cd);
 enum ice_status
 ice_aq_get_res_descs(struct ice_hw *hw, u16 num_entries,
-		     struct ice_aqc_get_allocd_res_desc_resp *buf,
-		     u16 buf_size, u16 res_type, bool res_shared, u16 *desc_id,
-		     struct ice_sq_cd *cd);
+		     struct ice_aqc_res_elem *buf, u16 buf_size, u16 res_type,
+		     bool res_shared, u16 *desc_id, struct ice_sq_cd *cd);
 enum ice_status
 ice_add_vlan(struct ice_hw *hw, struct list_head *m_list);
 enum ice_status

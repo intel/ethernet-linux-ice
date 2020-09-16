@@ -4,21 +4,18 @@
 #include "ice.h"
 #include "ice_lib.h"
 #include "ice_devlink.h"
-#include "ice_pldm.h"
+#include "ice_eswitch.h"
+#include "ice_fw_update.h"
 
 #ifdef HAVE_DEVLINK_INFO_GET
-static int ice_info_get_dsn(struct ice_pf *pf, char *buf, size_t len)
+static void ice_info_get_dsn(struct ice_pf *pf, char *buf, size_t len)
 {
 	u8 dsn[8];
 
 	/* Copy the DSN into an array in Big Endian format */
 	put_unaligned_be64(pci_get_dsn(pf->pdev), dsn);
 
-	snprintf(buf, len, "%02x-%02x-%02x-%02x-%02x-%02x-%02x-%02x",
-		 dsn[0], dsn[1], dsn[2], dsn[3],
-		 dsn[4], dsn[5], dsn[6], dsn[7]);
-
-	return 0;
+	snprintf(buf, len, "%8phD", dsn);
 }
 
 static int ice_info_pba(struct ice_pf *pf, char *buf, size_t len)
@@ -189,11 +186,7 @@ static int ice_devlink_info_get(struct devlink *devlink,
 		return err;
 	}
 
-	err = ice_info_get_dsn(pf, buf, sizeof(buf));
-	if (err) {
-		NL_SET_ERR_MSG_MOD(extack, "Unable to obtain serial number");
-		return err;
-	}
+	ice_info_get_dsn(pf, buf, sizeof(buf));
 
 	err = devlink_info_serial_number_put(req, buf);
 	if (err) {
@@ -240,6 +233,125 @@ static int ice_devlink_info_get(struct devlink *devlink,
 }
 #endif /* HAVE_DEVLINK_INFO_GET */
 
+#ifdef HAVE_DEVLINK_PARAMS
+enum ice_devlink_param_id {
+	ICE_DEVLINK_PARAM_ID_BASE = DEVLINK_PARAM_GENERIC_ID_MAX,
+	ICE_DEVLINK_PARAM_ID_FLASH_UPDATE_PRESERVATION_LEVEL,
+};
+
+/**
+ * ice_devlink_flash_param_get - Get a flash update parameter value
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter id to get
+ * @ctx: context to return the parameter value
+ *
+ * Reads the value of the given parameter and reports it back via the provided
+ * context.
+ *
+ * Used to get the devlink parameters which control specific driver
+ * behaviors during the .flash_update command.
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int ice_devlink_flash_param_get(struct devlink *devlink, u32 id,
+				       struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_devlink_flash_params *params;
+
+	params = &pf->flash_params;
+
+	switch (id) {
+	case ICE_DEVLINK_PARAM_ID_FLASH_UPDATE_PRESERVATION_LEVEL:
+		ctx->val.vu8 = params->preservation_level;
+		break;
+	default:
+		WARN(1, "parameter ID %u is not a flash update parameter", id);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_flash_param_set - Set a flash update parameter value
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to return the parameter value
+ *
+ * Reads the value of the given parameter and reports it back via the provided
+ * context.
+ *
+ * Used to set the devlink parameters which control specific driver
+ * behaviors during the .flash_update command.
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int ice_devlink_flash_param_set(struct devlink *devlink, u32 id,
+				       struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_devlink_flash_params *params;
+
+	params = &pf->flash_params;
+
+	switch (id) {
+	case ICE_DEVLINK_PARAM_ID_FLASH_UPDATE_PRESERVATION_LEVEL:
+		params->preservation_level =
+			(enum ice_flash_update_preservation)ctx->val.vu8;
+		break;
+	default:
+		WARN(1, "parameter ID %u is not a flash update parameter", id);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_flash_preservation_validate - Validate preservation level
+ * @devlink: unused pointer to devlink instance
+ * @id: the parameter ID to validate
+ * @val: value to validate
+ * @extack: netlink extended ACK structure
+ *
+ * Validate that the value for "flash_update_preservation_level" is within the
+ * valid range.
+ *
+ * Returns: zero if the value is valid, -ERANGE if it is out of range, and
+ * -EINVAL if this function is called with the wrong id.
+ */
+static int
+ice_devlink_flash_preservation_validate(struct devlink __always_unused *devlink,
+					u32 id, union devlink_param_value val,
+					struct netlink_ext_ack *extack)
+{
+	if (WARN_ON(id != ICE_DEVLINK_PARAM_ID_FLASH_UPDATE_PRESERVATION_LEVEL))
+		return -EINVAL;
+
+	switch (val.vu8) {
+	case ICE_FLASH_UPDATE_PRESERVE_ALL:
+	case ICE_FLASH_UPDATE_PRESERVE_LIMITED:
+	case ICE_FLASH_UPDATE_PRESERVE_FACTORY_SETTINGS:
+	case ICE_FLASH_UPDATE_PRESERVE_NONE:
+		return 0;
+	}
+
+	return -ERANGE;
+}
+
+/* devlink parameters for the ice driver */
+static const struct devlink_param ice_devlink_params[] = {
+	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_FLASH_UPDATE_PRESERVATION_LEVEL,
+			     "flash_update_preservation_level",
+			     DEVLINK_PARAM_TYPE_U8,
+			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),
+			     ice_devlink_flash_param_get,
+			     ice_devlink_flash_param_set,
+			     ice_devlink_flash_preservation_validate),
+};
+#endif /* HAVE_DEVLINK_PARAMS */
+
 #ifdef HAVE_DEVLINK_FLASH_UPDATE
 /**
  * ice_devlink_flash_update - Update firmware stored in flash on the device
@@ -272,6 +384,10 @@ ice_devlink_flash_update(struct devlink *devlink, const char *path,
 		return -EOPNOTSUPP;
 	}
 
+	err = ice_check_for_pending_update(pf, component, extack);
+	if (err)
+		return err;
+
 	err = request_firmware(&fw, path, dev);
 	if (err) {
 		NL_SET_ERR_MSG_MOD(extack, "Unable to read file from disk");
@@ -291,6 +407,8 @@ ice_devlink_flash_update(struct devlink *devlink, const char *path,
 #endif /* HAVE_DEVLINK_FLASH_UPDATE */
 
 static const struct devlink_ops ice_devlink_ops = {
+	.eswitch_mode_get = ice_eswitch_mode_get,
+	.eswitch_mode_set = ice_eswitch_mode_set,
 #ifdef HAVE_DEVLINK_INFO_GET
 	.info_get = ice_devlink_info_get,
 #endif /* HAVE_DEVLINK_INFO_GET */
@@ -349,6 +467,17 @@ int ice_devlink_register(struct ice_pf *pf)
 		return err;
 	}
 
+#ifdef HAVE_DEVLINK_PARAMS
+	err = devlink_params_register(devlink, ice_devlink_params,
+				      ARRAY_SIZE(ice_devlink_params));
+	if (err) {
+		dev_err(dev, "devlink params registration failed: %d\n", err);
+		return err;
+	}
+
+	devlink_params_publish(devlink);
+#endif /* HAVE_DEVLINK_PARAMS */
+
 	return 0;
 }
 
@@ -360,52 +489,71 @@ int ice_devlink_register(struct ice_pf *pf)
  */
 void ice_devlink_unregister(struct ice_pf *pf)
 {
-	devlink_unregister(priv_to_devlink(pf));
+	struct devlink *devlink = priv_to_devlink(pf);
+
+#ifdef HAVE_DEVLINK_PARAMS
+	devlink_params_unpublish(devlink);
+	devlink_params_unregister(devlink, ice_devlink_params,
+				  ARRAY_SIZE(ice_devlink_params));
+#endif /* HAVE_DEVLINK_PARAMS */
+	devlink_unregister(devlink);
 }
 
 /**
- * ice_devlink_create_port - Create a devlink port for this PF
- * @pf: the PF to create a port for
+ * ice_devlink_create_port - Create a devlink port for this VSI
+ * @vsi: the VSI to create a port for
  *
- * Create and register a devlink_port for this PF. Note that although each
- * physical function is connected to a separate devlink instance, the port
- * will still be numbered according to the physical function ID.
+ * Create and register a devlink_port for this VSI.
  *
  * Return: zero on success or an error code on failure.
  */
-int ice_devlink_create_port(struct ice_pf *pf)
+int ice_devlink_create_port(struct ice_vsi *vsi)
 {
-	struct devlink *devlink = priv_to_devlink(pf);
-	struct ice_vsi *vsi = ice_get_main_vsi(pf);
-	struct device *dev = ice_pf_to_dev(pf);
+	struct devlink_port_attrs attrs = {};
+	struct ice_port_info *pi;
+	struct devlink *devlink;
+	struct device *dev;
+	struct ice_pf *pf;
 	int err;
 
-	if (!vsi) {
-		dev_err(dev, "%s: unable to find main VSI\n", __func__);
-		return -EIO;
-	}
+	/* Currently we only create devlink_port instances for PF VSIs */
+	if (vsi->type != ICE_VSI_PF)
+		return -EINVAL;
 
-	devlink_port_attrs_set(&pf->devlink_port, DEVLINK_PORT_FLAVOUR_PHYSICAL,
-			       pf->hw.pf_id, false, 0, NULL, 0);
-	err = devlink_port_register(devlink, &pf->devlink_port, pf->hw.pf_id);
+	pf = vsi->back;
+	devlink = priv_to_devlink(pf);
+	dev = ice_pf_to_dev(pf);
+	pi = pf->hw.port_info;
+
+	attrs.flavour = DEVLINK_PORT_FLAVOUR_PHYSICAL;
+	attrs.phys.port_number = pi->lport;
+	devlink_port_attrs_set(&vsi->devlink_port, &attrs);
+	err = devlink_port_register(devlink, &vsi->devlink_port, vsi->idx);
 	if (err) {
 		dev_err(dev, "devlink_port_register failed: %d\n", err);
 		return err;
 	}
 
+	vsi->devlink_port_registered = true;
+
 	return 0;
 }
 
 /**
- * ice_devlink_destroy_port - Destroy the devlink_port for this PF
- * @pf: the PF to cleanup
+ * ice_devlink_destroy_port - Destroy the devlink_port for this VSI
+ * @vsi: the VSI to cleanup
  *
- * Unregisters the devlink_port structure associated with this PF.
+ * Unregisters the devlink_port structure associated with this VSI.
  */
-void ice_devlink_destroy_port(struct ice_pf *pf)
+void ice_devlink_destroy_port(struct ice_vsi *vsi)
 {
-	devlink_port_type_clear(&pf->devlink_port);
-	devlink_port_unregister(&pf->devlink_port);
+	if (!vsi->devlink_port_registered)
+		return;
+
+	devlink_port_type_clear(&vsi->devlink_port);
+	devlink_port_unregister(&vsi->devlink_port);
+
+	vsi->devlink_port_registered = false;
 }
 
 #ifdef HAVE_DEVLINK_REGIONS

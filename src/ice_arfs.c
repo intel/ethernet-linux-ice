@@ -24,7 +24,7 @@ bool
 ice_is_arfs_using_perfect_flow(struct ice_hw *hw, enum ice_fltr_ptype flow_type)
 {
 	struct ice_arfs_active_fltr_cntrs *arfs_fltr_cntrs;
-	struct ice_pf *pf = (struct ice_pf *)hw->back;
+	struct ice_pf *pf = hw->back;
 	struct ice_vsi *vsi;
 
 	vsi = ice_get_main_vsi(pf);
@@ -287,6 +287,29 @@ void ice_sync_arfs_fltrs(struct ice_pf *pf)
 	ice_arfs_add_flow_rules(pf_vsi, &tmp_add_list);
 }
 
+#ifdef ICE_ADD_PROBES
+static u16
+ice_arfs_get_cnt_index(struct ice_pf *pf, struct ice_arfs_entry *entry)
+{
+	struct ice_hw *hw = &pf->hw;
+
+	switch (entry->fltr_info.flow_type) {
+	case ICE_FLTR_PTYPE_NONF_IPV4_TCP:
+		return ICE_ARFS_STAT_TCPV4_IDX(hw->fd_ctr_base);
+	case ICE_FLTR_PTYPE_NONF_IPV6_TCP:
+		return ICE_ARFS_STAT_TCPV6_IDX(hw->fd_ctr_base);
+	case ICE_FLTR_PTYPE_NONF_IPV4_UDP:
+		return ICE_ARFS_STAT_UDPV4_IDX(hw->fd_ctr_base);
+	case ICE_FLTR_PTYPE_NONF_IPV6_UDP:
+		return ICE_ARFS_STAT_UDPV6_IDX(hw->fd_ctr_base);
+	default:
+		dev_err(ice_pf_to_dev(pf), "aRFS: Invalid flow type %d\n",
+			entry->fltr_info.flow_type);
+		return ICE_FD_SB_STAT_IDX(hw->fd_ctr_base);
+	}
+}
+#endif /* ICE_ADD_PROBES */
+
 /**
  * ice_arfs_build_entry - builds an aRFS entry based on input
  * @vsi: destination VSI for this flow
@@ -340,35 +363,18 @@ ice_arfs_build_entry(struct ice_vsi *vsi, const struct flow_keys *fk,
 		fltr_info->ip.v6.dst_port = fk->ports.dst;
 	}
 
+#ifdef ICE_ADD_PROBES
+	fltr_info->cnt_index =
+		ice_arfs_get_cnt_index(vsi->back, arfs_entry);
+	fltr_info->cnt_ena = ICE_FXD_FLTR_QW0_STAT_ENA_PKTS;
+#endif /* ICE_ADD_PROBES */
+
 	arfs_entry->flow_id = flow_id;
 	fltr_info->fltr_id =
 		atomic_inc_return(vsi->arfs_last_fltr_id) % RPS_NO_FILTER;
 
 	return arfs_entry;
 }
-
-#ifdef ICE_ADD_PROBES
-static u16
-ice_arfs_get_cnt_index(struct ice_pf *pf, struct ice_arfs_entry *entry)
-{
-	struct ice_hw *hw = &pf->hw;
-
-	switch (entry->fltr_info.flow_type) {
-	case ICE_FLTR_PTYPE_NONF_IPV4_TCP:
-		return ICE_ARFS_STAT_TCPV4_IDX(hw->fd_ctr_base);
-	case ICE_FLTR_PTYPE_NONF_IPV6_TCP:
-		return ICE_ARFS_STAT_TCPV6_IDX(hw->fd_ctr_base);
-	case ICE_FLTR_PTYPE_NONF_IPV4_UDP:
-		return ICE_ARFS_STAT_UDPV4_IDX(hw->fd_ctr_base);
-	case ICE_FLTR_PTYPE_NONF_IPV6_UDP:
-		return ICE_ARFS_STAT_UDPV6_IDX(hw->fd_ctr_base);
-	default:
-		dev_err(ice_pf_to_dev(pf), "aRFS: Invalid flow type %d\n",
-			entry->fltr_info.flow_type);
-		return ICE_FD_SB_STAT_IDX(hw->fd_ctr_base);
-	}
-}
-#endif /* ICE_ADD_PROBES */
 
 /**
  * ice_arfs_is_perfect_flow_set - Check to see if perfect flow is set
@@ -500,10 +506,6 @@ ice_rx_flow_steer(struct net_device *netdev, const struct sk_buff *skb,
 		goto out;
 	}
 
-#ifdef ICE_ADD_PROBES
-	arfs_entry->fltr_info.cnt_index =
-		ice_arfs_get_cnt_index(pf, arfs_entry);
-#endif /* ICE_ADD_PROBES */
 	ret = arfs_entry->fltr_info.fltr_id;
 	INIT_HLIST_NODE(&arfs_entry->list_entry);
 	hlist_add_head(&arfs_entry->list_entry, &vsi->arfs_fltr_list[idx]);

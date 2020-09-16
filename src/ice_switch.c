@@ -696,7 +696,7 @@ static void ice_get_recp_to_prof_map(struct ice_hw *hw)
 	DECLARE_BITMAP(r_bitmap, ICE_MAX_NUM_RECIPES);
 	u16 i;
 
-	for (i = 0; i < ICE_MAX_NUM_PROFILES; i++) {
+	for (i = 0; i < hw->switch_info->max_used_prof_index + 1; i++) {
 		u16 j;
 
 		bitmap_zero(profile_to_recipe[i], ICE_MAX_NUM_RECIPES);
@@ -705,9 +705,8 @@ static void ice_get_recp_to_prof_map(struct ice_hw *hw)
 			continue;
 		bitmap_copy(profile_to_recipe[i], r_bitmap,
 			    ICE_MAX_NUM_RECIPES);
-		for (j = 0; j < ICE_MAX_NUM_RECIPES; j++)
-			if (test_bit(j, r_bitmap))
-				set_bit(i, recipe_to_profile[j]);
+		for_each_set_bit(j, r_bitmap, ICE_MAX_NUM_RECIPES)
+			set_bit(i, recipe_to_profile[j]);
 	}
 }
 
@@ -752,7 +751,7 @@ ice_init_def_sw_recp(struct ice_hw *hw, struct ice_sw_recipe **recp_list)
  * @num_elems: pointer to number of elements
  * @cd: pointer to command details structure or NULL
  *
- * Get switch configuration (0x0200) to be placed in 'buff'.
+ * Get switch configuration (0x0200) to be placed in buf.
  * This admin command returns information such as initial VSI/port number
  * and switch ID it belongs to.
  *
@@ -769,13 +768,13 @@ ice_init_def_sw_recp(struct ice_hw *hw, struct ice_sw_recipe **recp_list)
  * parsing the response buffer.
  */
 enum ice_status
-ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp *buf,
+ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp_elem *buf,
 		  u16 buf_size, u16 *req_desc, u16 *num_elems,
 		  struct ice_sq_cd *cd)
 {
 	struct ice_aqc_get_sw_cfg *cmd;
-	enum ice_status status;
 	struct ice_aq_desc desc;
+	enum ice_status status;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_sw_cfg);
 	cmd = &desc.params.get_sw_conf;
@@ -796,7 +795,7 @@ ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp *buf,
  */
 enum ice_status ice_dump_sw_cfg(struct ice_hw *hw)
 {
-	struct ice_aqc_get_sw_cfg_resp *rbuf;
+	struct ice_aqc_get_sw_cfg_resp_elem *rbuf;
 	enum ice_status ret;
 	u16 req_desc = 0;
 	u16 num_elems;
@@ -813,16 +812,16 @@ enum ice_status ice_dump_sw_cfg(struct ice_hw *hw)
 	 * writing a non-zero value in req_desc.
 	 */
 	do {
+		struct ice_aqc_get_sw_cfg_resp_elem *ele;
+
 		ret = ice_aq_get_sw_cfg(hw, rbuf, ICE_SW_CFG_MAX_BUF_LEN,
 					&req_desc, &num_elems, NULL);
 		if (ret)
 			break;
 
-		for (i = 0; i < num_elems; i++) {
-			struct ice_aqc_get_sw_cfg_resp_elem *ele;
+		for (i = 0, ele = rbuf; i < num_elems; i++, ele++) {
 			u16 vsi_port_num, pf_vf_num, swid;
 
-			ele = rbuf[i].elements;
 			vsi_port_num = le16_to_cpu(ele->vsi_port_num) &
 				ICE_AQC_GET_SW_CONF_RESP_VSI_PORT_NUM_M;
 
@@ -890,7 +889,7 @@ ice_alloc_sw(struct ice_hw *hw, bool ena_stats, bool shared_res, u16 *sw_id,
 	enum ice_status status;
 	u16 buf_len;
 
-	buf_len = sizeof(*sw_buf);
+	buf_len = struct_size(sw_buf, elem, 1);
 	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return ICE_ERR_NO_MEMORY;
@@ -971,7 +970,7 @@ enum ice_status ice_free_sw(struct ice_hw *hw, u16 sw_id, u16 counter_id)
 	enum ice_status status, ret_status;
 	u16 buf_len;
 
-	buf_len = sizeof(*sw_buf);
+	buf_len = struct_size(sw_buf, elem, 1);
 	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return ICE_ERR_NO_MEMORY;
@@ -1009,8 +1008,7 @@ enum ice_status ice_free_sw(struct ice_hw *hw, u16 sw_id, u16 counter_id)
 	status = ice_aq_alloc_free_res(hw, 1, counter_buf, buf_len,
 				       ice_aqc_opc_free_res, NULL);
 	if (status) {
-		ice_debug(hw, ICE_DBG_SW,
-			  "VEB counter resource could not be freed\n");
+		ice_debug(hw, ICE_DBG_SW, "VEB counter resource could not be freed\n");
 		ret_status = status;
 	}
 
@@ -1434,8 +1432,7 @@ ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
 			return ICE_ERR_PARAM;
 		break;
 	default:
-		ice_debug(hw, ICE_DBG_SW,
-			  "Error due to unsupported rule_type %u\n", rule_type);
+		ice_debug(hw, ICE_DBG_SW, "Error due to unsupported rule_type %u\n", rule_type);
 		return ICE_ERR_OUT_OF_RANGE;
 	}
 
@@ -1457,8 +1454,7 @@ ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
 			 * than ICE_MAX_VSI, if not return with error.
 			 */
 			if (id >= ICE_MAX_VSI) {
-				ice_debug(hw, ICE_DBG_SW,
-					  "Error VSI index (%u) out-of-range\n",
+				ice_debug(hw, ICE_DBG_SW, "Error VSI index (%u) out-of-range\n",
 					  id);
 				devm_kfree(ice_hw_to_dev(hw), mr_list);
 				return ICE_ERR_OUT_OF_RANGE;
@@ -1542,7 +1538,7 @@ ice_aq_alloc_free_vsi_list(struct ice_hw *hw, u16 *vsi_list_id,
 	enum ice_status status;
 	u16 buf_len;
 
-	buf_len = sizeof(*sw_buf);
+	buf_len = struct_size(sw_buf, elem, 1);
 	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return ICE_ERR_NO_MEMORY;
@@ -1586,7 +1582,7 @@ ice_aq_alloc_free_vsi_list_exit:
  * @hw: pointer to the HW struct
  * @bcast_thresh: represents the upper threshold for broadcast storm control
  * @mcast_thresh: represents the upper threshold for multicast storm control
- * @ctl_bitmask: storm control control knobs
+ * @ctl_bitmask: storm control knobs
  *
  * Sets the storm control configuration (0x0280)
  */
@@ -1613,7 +1609,7 @@ ice_aq_set_storm_ctrl(struct ice_hw *hw, u32 bcast_thresh, u32 mcast_thresh,
  * @hw: pointer to the HW struct
  * @bcast_thresh: represents the upper threshold for broadcast storm control
  * @mcast_thresh: represents the upper threshold for multicast storm control
- * @ctl_bitmask: storm control control knobs
+ * @ctl_bitmask: storm control knobs
  *
  * Gets the storm control configuration (0x0281)
  */
@@ -1817,7 +1813,7 @@ enum ice_status ice_alloc_recipe(struct ice_hw *hw, u16 *rid)
 	enum ice_status status;
 	u16 buf_len;
 
-	buf_len = sizeof(*sw_buf);
+	buf_len = struct_size(sw_buf, elem, 1);
 	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return ICE_ERR_NO_MEMORY;
@@ -1857,8 +1853,7 @@ ice_init_port_info(struct ice_port_info *pi, u16 vsi_port_num, u8 type,
 		pi->dflt_rx_vsi_num = ICE_DFLT_VSI_INVAL;
 		break;
 	default:
-		ice_debug(pi->hw, ICE_DBG_SW,
-			  "incorrect VSI/port type received\n");
+		ice_debug(pi->hw, ICE_DBG_SW, "incorrect VSI/port type received\n");
 		break;
 	}
 }
@@ -1868,7 +1863,7 @@ ice_init_port_info(struct ice_port_info *pi, u16 vsi_port_num, u8 type,
  */
 enum ice_status ice_get_initial_sw_cfg(struct ice_hw *hw)
 {
-	struct ice_aqc_get_sw_cfg_resp *rbuf;
+	struct ice_aqc_get_sw_cfg_resp_elem *rbuf;
 	enum ice_status status;
 	u8 num_total_ports;
 	u16 req_desc = 0;
@@ -1890,19 +1885,19 @@ enum ice_status ice_get_initial_sw_cfg(struct ice_hw *hw)
 	 * writing a non-zero value in req_desc
 	 */
 	do {
+		struct ice_aqc_get_sw_cfg_resp_elem *ele;
+
 		status = ice_aq_get_sw_cfg(hw, rbuf, ICE_SW_CFG_MAX_BUF_LEN,
 					   &req_desc, &num_elems, NULL);
 
 		if (status)
 			break;
 
-		for (i = 0; i < num_elems; i++) {
-			struct ice_aqc_get_sw_cfg_resp_elem *ele;
+		for (i = 0, ele = rbuf; i < num_elems; i++, ele++) {
 			u16 pf_vf_num, swid, vsi_port_num;
 			bool is_vf = false;
 			u8 res_type;
 
-			ele = rbuf[i].elements;
 			vsi_port_num = le16_to_cpu(ele->vsi_port_num) &
 				ICE_AQC_GET_SW_CONF_RESP_VSI_PORT_NUM_M;
 
@@ -1922,8 +1917,7 @@ enum ice_status ice_get_initial_sw_cfg(struct ice_hw *hw)
 			case ICE_AQC_GET_SW_CONF_RESP_PHYS_PORT:
 			case ICE_AQC_GET_SW_CONF_RESP_VIRT_PORT:
 				if (j == num_total_ports) {
-					ice_debug(hw, ICE_DBG_SW,
-						  "more ports than expected\n");
+					ice_debug(hw, ICE_DBG_SW, "more ports than expected\n");
 					status = ICE_ERR_CFG;
 					goto out;
 				}
@@ -1940,7 +1934,7 @@ enum ice_status ice_get_initial_sw_cfg(struct ice_hw *hw)
 
 
 out:
-	devm_kfree(ice_hw_to_dev(hw), (void *)rbuf);
+	devm_kfree(ice_hw_to_dev(hw), rbuf);
 	return status;
 }
 
@@ -2346,8 +2340,7 @@ ice_add_marker_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 		m_ent->fltr_info.fwd_id.hw_vsi_id;
 
 	act = ICE_LG_ACT_VSI_FORWARDING | ICE_LG_ACT_VALID_BIT;
-	act |= (id << ICE_LG_ACT_VSI_LIST_ID_S) &
-		ICE_LG_ACT_VSI_LIST_ID_M;
+	act |= (id << ICE_LG_ACT_VSI_LIST_ID_S) & ICE_LG_ACT_VSI_LIST_ID_M;
 	if (m_ent->vsi_count > 1)
 		act |= ICE_LG_ACT_VSI_LIST;
 	lg_act->pdata.lg_act.act[0] = cpu_to_le32(act);
@@ -2432,8 +2425,7 @@ ice_add_counter_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 	if (!lg_act)
 		return ICE_ERR_NO_MEMORY;
 
-	rx_tx = (struct ice_aqc_sw_rules_elem *)
-		((u8 *)lg_act + lg_act_size);
+	rx_tx = (struct ice_aqc_sw_rules_elem *)((u8 *)lg_act + lg_act_size);
 
 	/* Fill in the first switch rule i.e. large action */
 	lg_act->type = cpu_to_le16(ICE_AQC_SW_RULES_T_LG_ACT);
@@ -3057,8 +3049,7 @@ ice_rem_update_vsi_list(struct ice_hw *hw, u16 vsi_handle,
 		tmp_fltr_info.vsi_handle = rem_vsi_handle;
 		status = ice_update_pkt_fwd_rule(hw, &tmp_fltr_info);
 		if (status) {
-			ice_debug(hw, ICE_DBG_SW,
-				  "Failed to update pkt fwd rule to FWD_TO_VSI on HW VSI %d, error %d\n",
+			ice_debug(hw, ICE_DBG_SW, "Failed to update pkt fwd rule to FWD_TO_VSI on HW VSI %d, error %d\n",
 				  tmp_fltr_info.fwd_id.hw_vsi_id, status);
 			return status;
 		}
@@ -3074,8 +3065,7 @@ ice_rem_update_vsi_list(struct ice_hw *hw, u16 vsi_handle,
 		/* Remove the VSI list since it is no longer used */
 		status = ice_remove_vsi_list_rule(hw, vsi_list_id, lkup_type);
 		if (status) {
-			ice_debug(hw, ICE_DBG_SW,
-				  "Failed to remove VSI list %d, error %d\n",
+			ice_debug(hw, ICE_DBG_SW, "Failed to remove VSI list %d, error %d\n",
 				  vsi_list_id, status);
 			return status;
 		}
@@ -3184,17 +3174,18 @@ exit:
  * ice_aq_get_res_alloc - get allocated resources
  * @hw: pointer to the HW struct
  * @num_entries: pointer to u16 to store the number of resource entries returned
- * @buf: pointer to user-supplied buffer
- * @buf_size: size of buff
+ * @buf: pointer to buffer
+ * @buf_size: size of buf
  * @cd: pointer to command details structure or NULL
  *
- * The user-supplied buffer must be large enough to store the resource
+ * The caller-supplied buffer must be large enough to store the resource
  * information for all resource types. Each resource type is an
- * ice_aqc_get_res_resp_data_elem structure.
+ * ice_aqc_get_res_resp_elem structure.
  */
 enum ice_status
-ice_aq_get_res_alloc(struct ice_hw *hw, u16 *num_entries, void *buf,
-		     u16 buf_size, struct ice_sq_cd *cd)
+ice_aq_get_res_alloc(struct ice_hw *hw, u16 *num_entries,
+		     struct ice_aqc_get_res_resp_elem *buf, u16 buf_size,
+		     struct ice_sq_cd *cd)
 {
 	struct ice_aqc_get_res_alloc *resp;
 	enum ice_status status;
@@ -3221,8 +3212,8 @@ ice_aq_get_res_alloc(struct ice_hw *hw, u16 *num_entries, void *buf,
  * ice_aq_get_res_descs - get allocated resource descriptors
  * @hw: pointer to the hardware structure
  * @num_entries: number of resource entries in buffer
- * @buf: Indirect buffer to hold data parameters and response
- * @buf_size: size of buffer for indirect commands
+ * @buf: structure to hold response data buffer
+ * @buf_size: size of buffer
  * @res_type: resource type
  * @res_shared: is resource shared
  * @desc_id: input - first desc ID to start; output - next desc ID
@@ -3230,9 +3221,8 @@ ice_aq_get_res_alloc(struct ice_hw *hw, u16 *num_entries, void *buf,
  */
 enum ice_status
 ice_aq_get_res_descs(struct ice_hw *hw, u16 num_entries,
-		     struct ice_aqc_get_allocd_res_desc_resp *buf,
-		     u16 buf_size, u16 res_type, bool res_shared, u16 *desc_id,
-		     struct ice_sq_cd *cd)
+		     struct ice_aqc_res_elem *buf, u16 buf_size, u16 res_type,
+		     bool res_shared, u16 *desc_id, struct ice_sq_cd *cd)
 {
 	struct ice_aqc_get_allocd_res_desc *cmd;
 	struct ice_aq_desc desc;
@@ -3652,8 +3642,7 @@ ice_add_vlan_internal(struct ice_hw *hw, struct ice_sw_recipe *recp_list,
 		 */
 		if (v_list_itr->vsi_count > 1 &&
 		    v_list_itr->vsi_list_info->ref_cnt > 1) {
-			ice_debug(hw, ICE_DBG_SW,
-				  "Invalid configuration: Optimization to reuse VSI list with more than one VSI is not being done yet\n");
+			ice_debug(hw, ICE_DBG_SW, "Invalid configuration: Optimization to reuse VSI list with more than one VSI is not being done yet\n");
 			status = ICE_ERR_CFG;
 			goto exit;
 		}
@@ -3996,7 +3985,8 @@ ice_cfg_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle, bool set,
 	hw_vsi_id = ice_get_hw_vsi_num(hw, vsi_handle);
 
 	s_rule_size = set ? ICE_SW_RULE_RX_TX_ETH_HDR_SIZE :
-			    ICE_SW_RULE_RX_TX_NO_HDR_SIZE;
+		ICE_SW_RULE_RX_TX_NO_HDR_SIZE;
+
 	s_rule = devm_kzalloc(ice_hw_to_dev(hw), s_rule_size, GFP_KERNEL);
 	if (!s_rule)
 		return ICE_ERR_NO_MEMORY;
@@ -4856,8 +4846,7 @@ ice_remove_vsi_lkup_fltr(struct ice_hw *hw, u16 vsi_handle,
 		ice_remove_eth_mac(hw, &remove_list_head);
 		break;
 	case ICE_SW_LKUP_DFLT:
-		ice_debug(hw, ICE_DBG_SW,
-			  "Remove filters for this lookup type hasn't been implemented yet\n");
+		ice_debug(hw, ICE_DBG_SW, "Remove filters for this lookup type hasn't been implemented yet\n");
 		break;
 	case ICE_SW_LKUP_LAST:
 		ice_debug(hw, ICE_DBG_SW, "Unsupported lookup type\n");
@@ -4926,7 +4915,7 @@ ice_alloc_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 	u16 buf_len;
 
 	/* Allocate resource */
-	buf_len = sizeof(*buf);
+	buf_len = struct_size(buf, elem, 1);
 	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
 	if (!buf)
 		return ICE_ERR_NO_MEMORY;
@@ -4964,7 +4953,7 @@ ice_free_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 	u16 buf_len;
 
 	/* Free resource */
-	buf_len = sizeof(*buf);
+	buf_len = struct_size(buf, elem, 1);
 	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
 	if (!buf)
 		return ICE_ERR_NO_MEMORY;
@@ -4977,8 +4966,7 @@ ice_free_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 	status = ice_aq_alloc_free_res(hw, 1, buf, buf_len,
 				       ice_aqc_opc_free_res, NULL);
 	if (status)
-		ice_debug(hw, ICE_DBG_SW,
-			  "counter resource could not be freed\n");
+		ice_debug(hw, ICE_DBG_SW, "counter resource could not be freed\n");
 
 	devm_kfree(ice_hw_to_dev(hw), buf);
 	return status;
@@ -5025,7 +5013,7 @@ ice_alloc_res_lg_act(struct ice_hw *hw, u16 *l_id, u16 num_acts)
 		return ICE_ERR_PARAM;
 
 	/* Allocate resource for large action */
-	buf_len = sizeof(*sw_buf);
+	buf_len = struct_size(sw_buf, elem, 1);
 	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return ICE_ERR_NO_MEMORY;
@@ -5429,7 +5417,7 @@ ice_fill_valid_words(struct ice_adv_lkup_elem *rule,
 			lkup_exts->fv_words[word].prot_id =
 				ice_prot_id_tbl[rule->type].protocol_id;
 			lkup_exts->field_mask[word] =
-				be16_to_cpu(((__be16 *)&rule->m_u)[j]);
+				be16_to_cpu(((__force __be16 *)&rule->m_u)[j]);
 			word++;
 		}
 
@@ -5585,7 +5573,6 @@ ice_find_free_recp_res_idx(struct ice_hw *hw, const unsigned long *profiles,
 	DECLARE_BITMAP(possible_idx, ICE_MAX_FV_WORDS);
 	DECLARE_BITMAP(recipes, ICE_MAX_NUM_RECIPES);
 	DECLARE_BITMAP(used_idx, ICE_MAX_FV_WORDS);
-	u16 count = 0;
 	u16 bit;
 
 	bitmap_zero(possible_idx, ICE_MAX_FV_WORDS);
@@ -5593,47 +5580,33 @@ ice_find_free_recp_res_idx(struct ice_hw *hw, const unsigned long *profiles,
 	bitmap_zero(used_idx, ICE_MAX_FV_WORDS);
 	bitmap_zero(free_idx, ICE_MAX_FV_WORDS);
 
-	for (count = 0; count < ICE_MAX_FV_WORDS; count++)
-		set_bit(count, possible_idx);
+	bitmap_set(possible_idx, 0, ICE_MAX_FV_WORDS);
 
 	/* For each profile we are going to associate the recipe with, add the
 	 * recipes that are associated with that profile. This will give us
 	 * the set of recipes that our recipe may collide with. Also, determine
 	 * what possible result indexes are usable given this set of profiles.
 	 */
-	bit = 0;
-	while (ICE_MAX_NUM_PROFILES >
-	       (bit = find_next_bit(profiles, ICE_MAX_NUM_PROFILES, bit))) {
+	for_each_set_bit(bit, profiles, ICE_MAX_NUM_PROFILES) {
 		bitmap_or(recipes, recipes, profile_to_recipe[bit],
 			  ICE_MAX_NUM_RECIPES);
 		bitmap_and(possible_idx, possible_idx,
 			   hw->switch_info->prof_res_bm[bit],
 			   ICE_MAX_FV_WORDS);
-		bit++;
 	}
 
 	/* For each recipe that our new recipe may collide with, determine
 	 * which indexes have been used.
 	 */
-	for (bit = 0; bit < ICE_MAX_NUM_RECIPES; bit++)
-		if (test_bit(bit, recipes)) {
-			bitmap_or(used_idx, used_idx,
-				  hw->switch_info->recp_list[bit].res_idxs,
-				  ICE_MAX_FV_WORDS);
-		}
+	for_each_set_bit(bit, recipes, ICE_MAX_NUM_RECIPES)
+		bitmap_or(used_idx, used_idx,
+			  hw->switch_info->recp_list[bit].res_idxs,
+			  ICE_MAX_FV_WORDS);
 
 	bitmap_xor(free_idx, used_idx, possible_idx, ICE_MAX_FV_WORDS);
 
 	/* return number of free indexes */
-	count = 0;
-	bit = 0;
-	while (ICE_MAX_FV_WORDS >
-	       (bit = find_next_bit(free_idx, ICE_MAX_FV_WORDS, bit))) {
-		count++;
-		bit++;
-	}
-
-	return count;
+	return (u16) bitmap_weight(free_idx, ICE_MAX_FV_WORDS);
 }
 
 /**
@@ -5746,8 +5719,7 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 			 * that can be used.
 			 */
 			if (chain_idx >= ICE_MAX_FV_WORDS) {
-				ice_debug(hw, ICE_DBG_SW,
-					  "No chain index available\n");
+				ice_debug(hw, ICE_DBG_SW, "No chain index available\n");
 				status = ICE_ERR_MAX_LIMIT;
 				goto err_unroll;
 			}
@@ -6261,10 +6233,8 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 			    ICE_MAX_NUM_RECIPES);
 
 		/* Update recipe to profile bitmap array */
-		for (j = 0; j < ICE_MAX_NUM_RECIPES; j++)
-			if (test_bit(j, r_bitmap))
-				set_bit((u16)fvit->profile_id,
-					recipe_to_profile[j]);
+		for_each_set_bit(j, rm->r_bitmap, ICE_MAX_NUM_RECIPES)
+			set_bit((u16)fvit->profile_id, recipe_to_profile[j]);
 	}
 
 	*rid = rm->root_rid;
@@ -7010,8 +6980,7 @@ ice_adv_rem_update_vsi_list(struct ice_hw *hw, u16 vsi_handle,
 		 */
 		status = ice_update_pkt_fwd_rule(hw, &tmp_fltr);
 		if (status) {
-			ice_debug(hw, ICE_DBG_SW,
-				  "Failed to update pkt fwd rule to FWD_TO_VSI on HW VSI %d, error %d\n",
+			ice_debug(hw, ICE_DBG_SW, "Failed to update pkt fwd rule to FWD_TO_VSI on HW VSI %d, error %d\n",
 				  tmp_fltr.fwd_id.hw_vsi_id, status);
 			return status;
 		}
@@ -7020,8 +6989,7 @@ ice_adv_rem_update_vsi_list(struct ice_hw *hw, u16 vsi_handle,
 		/* Remove the VSI list since it is no longer used */
 		status = ice_remove_vsi_list_rule(hw, vsi_list_id, lkup_type);
 		if (status) {
-			ice_debug(hw, ICE_DBG_SW,
-				  "Failed to remove VSI list %d, error %d\n",
+			ice_debug(hw, ICE_DBG_SW, "Failed to remove VSI list %d, error %d\n",
 				  vsi_list_id, status);
 			return status;
 		}
@@ -7187,13 +7155,12 @@ ice_rem_adv_rule_by_id(struct ice_hw *hw,
  */
 enum ice_status ice_rem_adv_rule_for_vsi(struct ice_hw *hw, u16 vsi_handle)
 {
-	struct ice_adv_fltr_mgmt_list_entry *list_itr;
+	struct ice_adv_fltr_mgmt_list_entry *list_itr, *tmp_entry;
 	struct ice_vsi_list_map_info *map_info;
 	struct list_head *list_head;
 	struct ice_adv_rule_info rinfo;
 	struct ice_switch_info *sw;
 	enum ice_status status;
-	u16 vsi_list_id = 0;
 	u8 rid;
 
 	sw = hw->switch_info;
@@ -7202,21 +7169,29 @@ enum ice_status ice_rem_adv_rule_for_vsi(struct ice_hw *hw, u16 vsi_handle)
 			continue;
 		if (!sw->recp_list[rid].adv_rule)
 			continue;
+
 		list_head = &sw->recp_list[rid].filt_rules;
-		map_info = NULL;
-		list_for_each_entry(list_itr, list_head, list_entry) {
-			map_info = ice_find_vsi_list_entry(&sw->recp_list[rid],
-							   vsi_handle,
-							   &vsi_list_id);
-			if (!map_info)
-				continue;
+		list_for_each_entry_safe(list_itr, tmp_entry, list_head,
+					 list_entry) {
 			rinfo = list_itr->rule_info;
+
+			if (rinfo.sw_act.fltr_act == ICE_FWD_TO_VSI_LIST) {
+				map_info = list_itr->vsi_list_info;
+				if (!map_info)
+					continue;
+
+				if (!test_bit(vsi_handle, map_info->vsi_map))
+					continue;
+			} else if (rinfo.sw_act.vsi_handle != vsi_handle) {
+				continue;
+			}
+
 			rinfo.sw_act.vsi_handle = vsi_handle;
 			status = ice_rem_adv_rule(hw, list_itr->lkups,
 						  list_itr->lkups_cnt, &rinfo);
+
 			if (status)
 				return status;
-			map_info = NULL;
 		}
 	}
 	return 0;

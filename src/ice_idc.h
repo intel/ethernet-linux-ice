@@ -325,9 +325,19 @@ struct peer_dev_id {
 	int id;
 };
 
-#define ASSIGN_PEER_INFO						\
-{									\
-	{ .name = ICE_PEER_RDMA_NAME, .id = ICE_PEER_RDMA_ID },		\
+#define IDC_RDMA_INFO   { .name = ICE_PEER_RDMA_NAME,  .id = ICE_PEER_RDMA_ID },
+#define IDC_AE_INFO
+#define IDC_IPSEC_INFO
+#define IDC_SWITCH_INFO
+#define IDC_ADK_INFO
+/* this is a list of all possible peers, some are unused but left for clarity */
+#define ASSIGN_PEER_INFO	\
+{				\
+	IDC_RDMA_INFO		\
+	IDC_AE_INFO		\
+	IDC_IPSEC_INFO		\
+	IDC_SWITCH_INFO		\
+	IDC_ADK_INFO		\
 }
 
 #define ice_peer_priv(x) ((x)->peer_priv)

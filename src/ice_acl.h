@@ -131,7 +131,6 @@ enum ice_status ice_acl_destroy_tbl(struct ice_hw *hw);
 enum ice_status
 ice_acl_create_scen(struct ice_hw *hw, u16 match_width, u16 num_entries,
 		    u16 *scen_id);
-enum ice_status ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id);
 enum ice_status
 ice_aq_alloc_acl_tbl(struct ice_hw *hw, struct ice_acl_alloc_tbl *tbl,
 		     struct ice_sq_cd *cd);
@@ -171,9 +170,6 @@ ice_aq_alloc_acl_cntrs(struct ice_hw *hw, struct ice_acl_cntrs *cntrs,
 enum ice_status
 ice_aq_dealloc_acl_cntrs(struct ice_hw *hw, struct ice_acl_cntrs *cntrs,
 			 struct ice_sq_cd *cd);
-enum ice_status
-ice_aq_query_acl_cntrs(struct ice_hw *hw, u8 bank, u16 index, u64 *cntr_val,
-		       struct ice_sq_cd *cd);
 enum ice_status
 ice_prog_acl_prof_ranges(struct ice_hw *hw, u8 prof_id,
 			 struct ice_aqc_acl_profile_ranges *buf,

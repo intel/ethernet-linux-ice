@@ -404,9 +404,9 @@ void ice_rm_all_dcf_sw_rules(struct ice_pf *pf)
 }
 
 /**
- * ice_dcf_find_vsi_list_info - find the VSI list by id.
+ * ice_dcf_find_vsi_list_info - find the VSI list by ID.
  * @pf: pointer to the PF info
- * @vsi_list_id: VSI list id
+ * @vsi_list_id: VSI list ID
  */
 static struct ice_dcf_vsi_list_info *
 ice_dcf_find_vsi_list_info(struct ice_pf *pf, u16 vsi_list_id)
@@ -421,9 +421,9 @@ ice_dcf_find_vsi_list_info(struct ice_pf *pf, u16 vsi_list_id)
 }
 
 /**
- * ice_dcf_add_vsi_id - add new VSI id into list.
+ * ice_dcf_add_vsi_id - add new VSI ID into list.
  * @vsi_list_info: pointer to the VSI list info
- * @hw_vsi_id: the VSI id
+ * @hw_vsi_id: the VSI ID
  */
 static void
 ice_dcf_add_vsi_id(struct ice_dcf_vsi_list_info *vsi_list_info, u16 hw_vsi_id)
@@ -433,9 +433,9 @@ ice_dcf_add_vsi_id(struct ice_dcf_vsi_list_info *vsi_list_info, u16 hw_vsi_id)
 }
 
 /**
- * ice_dcf_del_vsi_id - delete the VSI id from list.
+ * ice_dcf_del_vsi_id - delete the VSI ID from list.
  * @vsi_list_info: pointer to the VSI list info
- * @hw_vsi_id: the VSI id
+ * @hw_vsi_id: the VSI ID
  */
 static void
 ice_dcf_del_vsi_id(struct ice_dcf_vsi_list_info *vsi_list_info, u16 hw_vsi_id)
@@ -503,22 +503,22 @@ ice_dcf_parse_free_vsi_list_res(struct ice_pf *pf,
 /**
  * ice_dcf_set_vsi_list - set the VSI to VSI list
  * @pf: pointer to the PF info
- * @vsi_list: pointer to the VSI id list to be set
+ * @vsi_list: pointer to the VSI ID list to be set
  */
 static enum virtchnl_status_code
-ice_dcf_set_vsi_list(struct ice_pf *pf, struct ice_sw_rule_vsi_list *vsi_list)
+ice_dcf_set_vsi_list(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *vsi_list)
 {
 	struct ice_dcf_vsi_list_info *vsi_list_info;
 	int i;
 
-	vsi_list_info =
-		ice_dcf_find_vsi_list_info(pf, le16_to_cpu(vsi_list->index));
+	vsi_list_info = ice_dcf_find_vsi_list_info(pf,
+						   le16_to_cpu(vsi_list->pdata.vsi_list.index));
 	if (!vsi_list_info)
 		return VIRTCHNL_STATUS_ERR_PARAM;
 
-	for (i = 0; i < le16_to_cpu(vsi_list->number_vsi); i++)
+	for (i = 0; i < le16_to_cpu(vsi_list->pdata.vsi_list.number_vsi); i++)
 		ice_dcf_add_vsi_id(vsi_list_info,
-				   le16_to_cpu(vsi_list->vsi[i]));
+				   le16_to_cpu(vsi_list->pdata.vsi_list.vsi[i]));
 
 	return VIRTCHNL_STATUS_SUCCESS;
 }
@@ -526,30 +526,30 @@ ice_dcf_set_vsi_list(struct ice_pf *pf, struct ice_sw_rule_vsi_list *vsi_list)
 /**
  * ice_dcf_clear_vsi_list - clear the VSI from VSI list
  * @pf: pointer to the PF info
- * @vsi_list: pointer to the VSI id list to be cleared
+ * @vsi_list: pointer to the VSI ID list to be cleared
  */
 static enum virtchnl_status_code
-ice_dcf_clear_vsi_list(struct ice_pf *pf, struct ice_sw_rule_vsi_list *vsi_list)
+ice_dcf_clear_vsi_list(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *vsi_list)
 {
 	struct ice_dcf_vsi_list_info *vsi_list_info;
 	int i;
 
-	vsi_list_info =
-		ice_dcf_find_vsi_list_info(pf, le16_to_cpu(vsi_list->index));
+	vsi_list_info = ice_dcf_find_vsi_list_info(pf,
+						   le16_to_cpu(vsi_list->pdata.vsi_list.index));
 	if (!vsi_list_info)
 		return VIRTCHNL_STATUS_ERR_PARAM;
 
-	for (i = 0; i < le16_to_cpu(vsi_list->number_vsi); i++)
+	for (i = 0; i < le16_to_cpu(vsi_list->pdata.vsi_list.number_vsi); i++)
 		ice_dcf_del_vsi_id(vsi_list_info,
-				   le16_to_cpu(vsi_list->vsi[i]));
+				   le16_to_cpu(vsi_list->pdata.vsi_list.vsi[i]));
 
 	return VIRTCHNL_STATUS_SUCCESS;
 }
 
 /**
- * ice_dcf_find_sw_rule - find the switch rule by id.
+ * ice_dcf_find_sw_rule - find the switch rule by ID.
  * @pf: pointer to the PF info
- * @rule_id: switch rule id
+ * @rule_id: switch rule ID
  */
 static struct ice_dcf_sw_rule_entry *
 ice_dcf_find_sw_rule(struct ice_pf *pf, u16 rule_id)
@@ -569,8 +569,7 @@ ice_dcf_find_sw_rule(struct ice_pf *pf, u16 rule_id)
  * @lkup: pointer to the add switch rule data
  */
 static enum virtchnl_status_code
-ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf,
-			       struct ice_sw_rule_lkup_rx_tx *lkup)
+ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *lkup)
 {
 	struct ice_dcf_sw_rule_entry *sw_rule;
 	u32 act;
@@ -579,11 +578,11 @@ ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf,
 	if (!sw_rule)
 		return VIRTCHNL_STATUS_ERR_NO_MEMORY;
 
-	act = le32_to_cpu(lkup->act);
+	act = le32_to_cpu(lkup->pdata.lkup_tx_rx.act);
 	sw_rule->fltr_act = ICE_FWD_TO_VSI;
 	sw_rule->fwd_id.hw_vsi_id = (act & ICE_SINGLE_ACT_VSI_ID_M) >>
 					ICE_SINGLE_ACT_VSI_ID_S;
-	sw_rule->rule_id = le16_to_cpu(lkup->index);
+	sw_rule->rule_id = le16_to_cpu(lkup->pdata.lkup_tx_rx.index);
 
 	list_add(&sw_rule->list_entry, &pf->dcf.sw_rule_head);
 
@@ -596,20 +595,19 @@ ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf,
  * @lkup: pointer to the update switch rule data
  */
 static enum virtchnl_status_code
-ice_dcf_parse_updt_sw_rule_data(struct ice_pf *pf,
-				struct ice_sw_rule_lkup_rx_tx *lkup)
+ice_dcf_parse_updt_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *lkup)
 {
 	struct ice_dcf_vsi_list_info *vsi_list_info;
 	struct ice_dcf_sw_rule_entry *sw_rule;
 	u16 vsi_list_id, rule_id;
 	u32 act;
 
-	rule_id = le16_to_cpu(lkup->index);
+	rule_id = le16_to_cpu(lkup->pdata.lkup_tx_rx.index);
 	sw_rule = ice_dcf_find_sw_rule(pf, rule_id);
 	if (!sw_rule)
 		return VIRTCHNL_STATUS_ERR_PARAM;
 
-	act = le32_to_cpu(lkup->act);
+	act = le32_to_cpu(lkup->pdata.lkup_tx_rx.act);
 	if (!(act & ICE_SINGLE_ACT_VSI_LIST)) {
 		u16 vsi_hw_id = (act & ICE_SINGLE_ACT_VSI_ID_M) >>
 				ICE_SINGLE_ACT_VSI_ID_S;
@@ -665,11 +663,10 @@ ice_dcf_parse_updt_sw_rule_data(struct ice_pf *pf,
  * @lkup: pointer to the remove switch rule data
  */
 static enum virtchnl_status_code
-ice_dcf_parse_rm_sw_rule_data(struct ice_pf *pf,
-			      struct ice_sw_rule_lkup_rx_tx *lkup)
+ice_dcf_parse_rm_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *lkup)
 {
+	u16 rule_id = le16_to_cpu(lkup->pdata.lkup_tx_rx.index);
 	struct ice_dcf_sw_rule_entry *sw_rule, *tmp;
-	u16 rule_id = le16_to_cpu(lkup->index);
 
 	list_for_each_entry_safe(sw_rule, tmp, &pf->dcf.sw_rule_head,
 				 list_entry)
@@ -695,10 +692,9 @@ ice_dcf_handle_add_sw_rule_rsp(struct ice_pf *pf, u8 *aq_buf)
 	u16 type = le16_to_cpu(em->type);
 
 	if (type == ICE_AQC_SW_RULES_T_VSI_LIST_SET)
-		status = ice_dcf_set_vsi_list(pf, &em->pdata.vsi_list);
+		status = ice_dcf_set_vsi_list(pf, em);
 	else if (type == ICE_AQC_SW_RULES_T_LKUP_RX)
-		status = ice_dcf_parse_add_sw_rule_data(pf,
-							&em->pdata.lkup_tx_rx);
+		status = ice_dcf_parse_add_sw_rule_data(pf, em);
 
 	return status;
 }
@@ -717,12 +713,11 @@ ice_dcf_handle_updt_sw_rule_rsp(struct ice_pf *pf, u8 *aq_buf)
 	u16 type = le16_to_cpu(em->type);
 
 	if (type == ICE_AQC_SW_RULES_T_VSI_LIST_SET)
-		status = ice_dcf_set_vsi_list(pf, &em->pdata.vsi_list);
+		status = ice_dcf_set_vsi_list(pf, em);
 	else if (type == ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR)
-		status = ice_dcf_clear_vsi_list(pf, &em->pdata.vsi_list);
+		status = ice_dcf_clear_vsi_list(pf, em);
 	else if (type == ICE_AQC_SW_RULES_T_LKUP_RX)
-		status = ice_dcf_parse_updt_sw_rule_data(pf,
-							 &em->pdata.lkup_tx_rx);
+		status = ice_dcf_parse_updt_sw_rule_data(pf, em);
 
 	return status;
 }
@@ -741,8 +736,7 @@ ice_dcf_handle_rm_sw_rule_rsp(struct ice_pf *pf, u8 *aq_buf)
 	u16 type = le16_to_cpu(em->type);
 
 	if (type == ICE_AQC_SW_RULES_T_LKUP_RX)
-		status = ice_dcf_parse_rm_sw_rule_data(pf,
-						       &em->pdata.lkup_tx_rx);
+		status = ice_dcf_parse_rm_sw_rule_data(pf, em);
 
 	return status;
 }

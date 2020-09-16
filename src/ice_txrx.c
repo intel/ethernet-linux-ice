@@ -20,6 +20,7 @@
 #include <linux/filter.h>
 #endif /* HAVE_XDP_BUFF_IN_XDP_H */
 #endif /* HAVE_XDP_SUPPORT */
+#include "ice_eswitch.h"
 
 #define ICE_RX_HDR_SIZE		256
 
@@ -1925,15 +1926,55 @@ static void ice_update_ena_itr(struct ice_q_vector *q_vector)
 /**
  * ice_refresh_bp_state - refresh state machine
  * @napi: ptr to NAPI struct
+ * @budget: NAPI budget
  *
  * Update ADQ state machine, and depending on whether this was called from
  * busy poll, enable interrupts and update ITR
  */
-static void ice_refresh_bp_state(struct napi_struct *napi)
+static void ice_refresh_bp_state(struct napi_struct *napi, int budget)
 {
 	struct ice_q_vector *q_vector =
 			       container_of(napi, struct ice_q_vector, napi);
 
+	if (ice_vsi_pkt_process_bp_stop_ena(q_vector->ch->ch_vsi) &&
+	    (q_vector->state_flags & ICE_CHNL_WD_EQUALS_BP)) {
+		/* Manage the internal state in such a way that, napi_poll
+		 * can decide when to perform Rx cleanup. When internal
+		 * state indicates that vector is transition from busy_poll to
+		 * interrupt, napi_poll avoid cleaning Rx rings and that
+		 * eventually translates to whether driver will return
+		 * "budget" or not.
+		 *
+		 * Keep internal state as it is "budget" specified
+		 * is not equal to "napi->weight), hence "skip
+		 * When napi weight is equal to budget, and reached the
+		 * value of tunable (max_limit_process_rx_queues), follow
+		 * the NAPI state as seen by OS, otherwise skip internal
+		 * state update (which will allow to keep the vector
+		 * internal state to be whatever it was, in this case)
+		 */
+		if (napi->weight == budget &&
+		    q_vector->process_rx_queues ==
+		    q_vector->max_limit_process_rx_queues) {
+			/* reached the point, keep internal state to be in
+			 * sync with NAPI state as seen by OS
+			 */
+			goto state_update;
+		} else {
+#ifdef ADQ_PERF_COUNTERS
+			if (napi->weight == budget)
+				q_vector->ch_stats.keep_state_bp_budget64++;
+			else
+				q_vector->ch_stats.keep_state_bp_budget8++;
+#endif /* ADQ_PERF_COUNTERS */
+			/* keep internal state of vector as it is, do not
+			 * perform state update
+			 */
+			goto skip_state_update;
+		}
+	}
+
+state_update:
 	/* cache previous state of vector */
 	if (q_vector->state_flags & ICE_CHNL_IN_BP)
 		q_vector->state_flags |= ICE_CHNL_PREV_IN_BP;
@@ -1946,7 +1987,10 @@ static void ice_refresh_bp_state(struct napi_struct *napi)
 		q_vector->state_flags |= ICE_CHNL_IN_BP;
 	else
 		q_vector->state_flags &= ~ICE_CHNL_IN_BP;
+
 #endif /* HAVE_STATE_IN_BUSY_POLL */
+
+skip_state_update:
 	if (q_vector->state_flags & ICE_CHNL_IN_BP) {
 		q_vector->jiffy = jiffies;
 		/* triffer force_wb by setting WB_ON_ITR only when
@@ -2050,11 +2094,108 @@ ice_handle_chnl_vector(struct ice_q_vector *q_vector, bool unlikely_cb_bp)
 	}
 }
 
+#ifdef HAVE_NAPI_STATE_IN_BUSY_POLL
+/**
+ * ice_chnl_vector_bypass_clean_complete
+ * @napi: ptr to napi
+ * @budget: value of budget (it could be napi:weight or BUSY_POLL_BUDGET)
+ * @work_done: amount of work_done (number of packets cleaned)
+ *
+ * This function returns true upon following condition:
+ * - state of NAPI is IN_BUSY_POLL (this is subject to change)
+ * - priv-flag "channel-pkt-clean-bp-stop" is disabled - means user turned
+ *   off such optimization (this is high level knob for user)
+ * - vector state is set (workdone == budget) and napi:weight == budget (means
+ *   invoked from napi_schedule coe path) and limit of optimization is
+ *   reached
+ *
+ * When this function returns true, caller of this function (napi_poll)
+ * do not allow napi_poll to return "budget". This is to prevent OS calling
+ * us upto 2 msec or 10 times (softirq.c:__do_softirq)
+ */
+static bool
+ice_chnl_vector_bypass_clean_complete(struct napi_struct *napi, int budget,
+				      int work_done)
+{
+	struct ice_q_vector *qv = container_of(napi, struct ice_q_vector, napi);
+
+	if (!ice_vector_ever_in_busypoll(qv))
+		return false;
+
+	if (!ice_vsi_pkt_process_bp_stop_ena(qv->ch->ch_vsi))
+		return true; /* like what it was before */
+
+#ifdef ADQ_PERF_COUNTERS
+	if (napi->weight == budget) /* napi_schedule */
+		qv->ch_stats.pkt_bp_stop_napi_budget += work_done;
+	else /* busy_poll_stop */
+		qv->ch_stats.pkt_bp_stop_bp_budget += work_done;
+#endif /* ADQ_PERF_COUNTERS */
+
+	if ((qv->state_flags & ICE_CHNL_WD_EQUALS_BP) &&
+	    napi->weight == budget) {
+		qv->process_rx_queues++;
+		if (qv->process_rx_queues == qv->max_limit_process_rx_queues)
+			return true;
+	} else {
+		qv->process_rx_queues = 0;
+	}
+
+	return false;
+}
+#endif /* HAVE_NAPI_STATE_IN_BUSY_POLL */
+
+/**
+ * ice_chnl_vector_wd_eq_budget - detect workdone equals budget and set bit
+ * @napi: ptr to napi
+ * @budget: value of budget (it could be napi:weight or BUSY_POLL_BUDGET)
+ * @clean_complete: value of clean_complete as computed by napi_poll
+ * @cleaned_any_data_pkt: this function detects true of cleaned any data pkt
+ *
+ * Based on value of "clean_complete", set/reset per vector state
+ * bit indicating that workdone == budget condition has reached and
+ * increment specific stats based on value of "budget"
+ */
+static void
+ice_chnl_vector_wd_eq_budget(struct napi_struct *napi, int budget,
+			     bool clean_complete, bool *cleaned_any_data_pkt)
+{
+	struct ice_q_vector *qv = container_of(napi, struct ice_q_vector, napi);
+
+	if ((qv->state_flags & ICE_CHNL_IN_BP) &&
+	    ice_vsi_pkt_process_bp_stop_ena(qv->ch->ch_vsi)) {
+		if (qv->state_flags & ICE_CHNL_PREV_DATA_PKT_RECV) {
+			qv->state_flags &= ~ICE_CHNL_PREV_DATA_PKT_RECV;
+			*cleaned_any_data_pkt = true;
+#ifdef ADQ_PERF_COUNTERS
+			qv->ch_stats.cleaned_any_data_pkt++;
+#endif /* ADQ_PERF_COUNTERS */
+		}
+		/* Take snapshot if work_done == budget, which is used
+		 * when busy_poll_stop is called, to decide it internal
+		 * state machine to keep in BUSY_POLL or not.
+		 * see ice_refresh_bp_state function for details.
+		 */
+		if (!clean_complete)
+			qv->state_flags |= ICE_CHNL_WD_EQUALS_BP;
+		else
+			qv->state_flags &= ~ICE_CHNL_WD_EQUALS_BP;
+#ifdef ADQ_PERF_COUNTERS
+		if (qv->state_flags & ICE_CHNL_WD_EQUALS_BP) {
+			if (napi->weight == budget)
+				qv->ch_stats.bp_wd_equals_budget64++;
+			else
+				qv->ch_stats.bp_wd_equals_budget8++;
+		}
+#endif /* ADQ_PERF_COUNTERS */
+	} else {
+		qv->state_flags &= ~ICE_CHNL_WD_EQUALS_BP;
+	}
+}
+
 /**
  * ice_set_wb_on_itr - set WB_ON_ITR for this q_vector
  * @q_vector: q_vector to set WB_ON_ITR on
- * @tx_itr: write this ITR value for Tx
- * @rx_itr: write this ITR value for Rx
  *
  * We need to tell hardware to write-back completed descriptors even when
  * interrupts are disabled. Descriptors will be written back on cache line
@@ -2062,29 +2203,26 @@ ice_handle_chnl_vector(struct ice_q_vector *q_vector, bool unlikely_cb_bp)
  * descriptors may not be written back if they don't fill a cache line until
  * the next interrupt.
  *
- * This sets the write-back frequency to the caller specified microseconds.
- * Also, set the INTENA_MSK bit to make sure hardware knows we aren't meddling
- * with the INTENA_M bit.
+ * This sets the write-back frequency to whatever was set previously for the
+ * ITR indices. Also, set the INTENA_MSK bit to make sure hardware knows we
+ * aren't meddling with the INTENA_M bit.
  */
-static void ice_set_wb_on_itr(struct ice_q_vector *q_vector, u32 tx_itr, u32 rx_itr)
+static void ice_set_wb_on_itr(struct ice_q_vector *q_vector)
 {
 	struct ice_vsi *vsi = q_vector->vsi;
 
-	/* already in WB_ON_ITR mode no need to change it */
+	/* already in wb_on_itr mode no need to change it */
 	if (q_vector->itr_countdown == ICE_IN_WB_ON_ITR_MODE)
 		return;
 
-	if (q_vector->num_ring_rx) {
-		q_vector->rx.current_itr = rx_itr;
-		wr32(&vsi->back->hw, GLINT_DYN_CTL(q_vector->reg_idx),
-		     ICE_GLINT_DYN_CTL_WB_ON_ITR(rx_itr, ICE_RX_ITR));
-	}
-
-	if (q_vector->num_ring_tx) {
-		q_vector->tx.current_itr = tx_itr;
-		wr32(&vsi->back->hw, GLINT_DYN_CTL(q_vector->reg_idx),
-		     ICE_GLINT_DYN_CTL_WB_ON_ITR(tx_itr, ICE_TX_ITR));
-	}
+	/* use previously set ITR values for all of the ITR indices by
+	 * specifying ICE_ITR_NONE, which will vary in adaptive (AIM) mode and
+	 * be static in non-adaptive mode (user configured)
+	 */
+	wr32(&vsi->back->hw, GLINT_DYN_CTL(q_vector->reg_idx),
+	     ((ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) &
+	      GLINT_DYN_CTL_ITR_INDX_M) | GLINT_DYN_CTL_INTENA_MSK_M |
+	     GLINT_DYN_CTL_WB_ON_ITR_M);
 
 	q_vector->itr_countdown = ICE_IN_WB_ON_ITR_MODE;
 }
@@ -2114,7 +2252,7 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 	ch_enabled = ice_vector_ch_enabled(q_vector);
 	if (ch_enabled) {
 		/* Refresh state machine */
-		ice_refresh_bp_state(napi);
+		ice_refresh_bp_state(napi, budget);
 
 		/* check during previous run of napi_poll whether at least one
 		 * data packets is processed or not. If processed at least one
@@ -2151,7 +2289,7 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 	ice_for_each_ring(ring, q_vector->tx) {
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 		bool wd = ring->xsk_umem ?
-			  ice_clean_tx_irq_zc(ring, budget) :
+			  ice_clean_tx_irq_zc(ring) :
 			  ice_clean_tx_irq(ring, budget);
 #else
 		bool wd = ice_clean_tx_irq(ring, budget);
@@ -2234,12 +2372,22 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 		if (cleaned >= budget_per_ring)
 			clean_complete = false;
 #endif /* !ICE_ADD_PROBES */
+
+		if (ch_enabled)
+			ice_chnl_vector_wd_eq_budget(napi, budget,
+						     clean_complete,
+						     &cleaned_any_data_pkt);
+	} /* end for ice_for_each_ring */
+
+#ifdef HAVE_NAPI_STATE_IN_BUSY_POLL
+	if (ch_enabled &&
+	    (!test_bit(NAPI_STATE_IN_BUSY_POLL, &napi->state))) {
+		if (ice_chnl_vector_bypass_clean_complete(napi, budget,
+							  work_done))
+			goto bypass;
 	}
 
-	/* if this vector ever was/is in BUSY_POLL, skip processing  */
-	if (ch_enabled && ice_vector_ever_in_busypoll(q_vector))
-		goto bypass;
-
+#endif /* HAVE_NAPI_STATE_IN_BUSY_POLL */
 	/* If work not completed, return budget and polling will return */
 	if (!clean_complete) {
 		/* Set the writeback on ITR so partial completions of
@@ -2248,13 +2396,20 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 		 * receive and transmit when polling, as this seems to yield the
 		 * best balance of performance and cycles spent on interrupts.
 		 */
-		ice_set_wb_on_itr(q_vector, ICE_ITR_ADAPTIVE_MAX_USECS,
-				  ICE_ITR_ADAPTIVE_MAX_USECS);
+		if (!ch_enabled)
+			ice_set_wb_on_itr(q_vector);
 		return budget;
 	}
+
 bypass:
+	/* reset the counter if code flow reached here because this function
+	 * determined that it is not going to return budget and will
+	 * end up calling napi_complete_done followed by return value < budget
+	 */
+	q_vector->process_rx_queues = 0;
+
 #ifdef ADQ_PERF_COUNTERS
-	/* Following block is only for stats, hence guarded by "debug_mask" */
+	/* Following block is only for stats */
 	if (ch_enabled && ice_vector_busypoll_intr(q_vector)) {
 		struct ice_q_vector_ch_stats *stats;
 
@@ -2326,10 +2481,8 @@ bypass:
 		}
 
 	} else {
-		if (!ch_enabled) {
-			/* ITR 0 for lowest latency for busy-poll case */
-			ice_set_wb_on_itr(q_vector, 0, 0);
-		}
+		if (!ch_enabled)
+			ice_set_wb_on_itr(q_vector);
 	}
 
 	return min_t(int, work_done, budget - 1);
@@ -3384,7 +3537,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	if (unlikely(skb->priority == TC_PRIO_CONTROL &&
 		     (!(tx_ring->ch && tx_ring->ch->ch_vsi)) &&
 		     vsi->type == ICE_VSI_PF &&
-		     vsi->port_info->is_sw_lldp))
+		     vsi->port_info->qos_cfg.is_sw_lldp))
 		offload.cd_qw1 |= (u64)(ICE_TX_DESC_DTYPE_CTX |
 					ICE_TX_CTX_DESC_SWTCH_UPLINK <<
 					ICE_TXD_CTX_QW1_CMD_S);
@@ -3403,6 +3556,10 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	if (tsyn &&
 	    ice_tsyn(tx_ring, skb, first, &offload, &idx) == NETDEV_TX_BUSY)
 		goto out_ptp_drop;
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	if (vsi->back->eswitch_mode == DEVLINK_ESWITCH_MODE_SWITCHDEV)
+		ice_eswitch_set_target_vsi(skb, &offload);
+#endif /* CONFIG_NET_DEVLINK */
 	if (offload.cd_qw1 & ICE_TX_DESC_DTYPE_CTX) {
 		struct ice_tx_ctx_desc *cdesc;
 		u16 i = tx_ring->next_to_use;

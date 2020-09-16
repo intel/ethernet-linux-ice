@@ -95,6 +95,25 @@ struct ice_mdd_vf_events {
 	u16 last_printed;
 };
 
+#define ICE_HASH_GTPU_CTX_EH_IP		0
+#define ICE_HASH_GTPU_CTX_EH_IP_UDP	1
+#define ICE_HASH_GTPU_CTX_EH_IP_TCP	2
+#define ICE_HASH_GTPU_CTX_UP_IP		3
+#define ICE_HASH_GTPU_CTX_UP_IP_UDP	4
+#define ICE_HASH_GTPU_CTX_UP_IP_TCP	5
+#define ICE_HASH_GTPU_CTX_DW_IP		6
+#define ICE_HASH_GTPU_CTX_DW_IP_UDP	7
+#define ICE_HASH_GTPU_CTX_DW_IP_TCP	8
+#define ICE_HASH_GTPU_CTX_MAX		9
+
+struct ice_vf_hash_gtpu_ctx {
+	struct ice_rss_hash_cfg ctx[ICE_HASH_GTPU_CTX_MAX];
+};
+
+struct ice_vf_hash_ctx {
+	struct ice_vf_hash_gtpu_ctx ipv4;
+	struct ice_vf_hash_gtpu_ctx ipv6;
+};
 /* VF information structure */
 struct ice_vf {
 	struct ice_pf *pf;
@@ -104,6 +123,7 @@ struct ice_vf {
 	u16 lan_vsi_idx;		/* index into PF struct */
 	u16 ctrl_vsi_idx;
 	struct ice_vf_fdir fdir;
+	struct ice_vf_hash_ctx hash_ctx;
 	/* first vector index of this VF in the PF space */
 	int first_vector_idx;
 	struct ice_sw *vf_sw_id;	/* switch ID the VF VSIs connect to */
@@ -147,6 +167,8 @@ struct ice_vf {
 	struct hlist_head tc_flower_fltr_list;
 	struct ice_mdd_vf_events mdd_rx_events;
 	struct ice_mdd_vf_events mdd_tx_events;
+	struct ice_repr *repr;
+	DECLARE_BITMAP(opcodes_allowlist, VIRTCHNL_OP_MAX);
 };
 
 /**
@@ -186,6 +208,9 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event);
 /* VF configuration related iplink handlers */
 void ice_vc_notify_link_state(struct ice_pf *pf);
 void ice_vc_notify_reset(struct ice_pf *pf);
+void ice_vc_notify_vf_link_state(struct ice_vf *vf);
+void ice_vc_change_ops_to_repr(void);
+void ice_vc_change_ops_to_default(void);
 bool ice_reset_all_vfs(struct ice_pf *pf, bool is_vflr);
 bool ice_reset_vf(struct ice_vf *vf, bool is_vflr);
 void ice_restore_all_vfs_msi_state(struct pci_dev *pdev);
@@ -243,6 +268,16 @@ bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 #define ice_vc_process_vf_msg(pf, event) do {} while (0)
 #define ice_vc_notify_link_state(pf) do {} while (0)
 #define ice_vc_notify_reset(pf) do {} while (0)
+#define ice_vc_notify_vf_link_state(vf) do {} while (0)
+static inline void
+ice_vc_change_ops_to_repr(void)
+{
+}
+
+static inline void
+ice_vc_change_ops_to_default(void)
+{
+}
 #define ice_set_vf_state_qs_dis(vf) do {} while (0)
 #define ice_vf_lan_overflow_event(pf, event) do {} while (0)
 #define ice_print_vfs_mdd_events(pf) do {} while (0)

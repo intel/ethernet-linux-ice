@@ -4,6 +4,7 @@
 #include <linux/bpf_trace.h>
 #include <net/xdp_sock.h>
 #include <net/xdp.h>
+#include <net/busy_poll.h>
 #include "ice.h"
 #include "ice_lib.h"
 #include "ice_base.h"
@@ -207,12 +208,14 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 	struct ice_aqc_add_tx_qgrp *qg_buf;
 	struct ice_ring *tx_ring, *rx_ring;
 	struct ice_q_vector *q_vector;
+	u16 size;
 	int err;
 
 	if (q_idx >= vsi->num_rxq || q_idx >= vsi->num_txq)
 		return -EINVAL;
 
-	qg_buf = kzalloc(sizeof(*qg_buf), GFP_KERNEL);
+	size = struct_size(qg_buf, txqs, 1);
+	qg_buf = kzalloc(size, GFP_KERNEL);
 	if (!qg_buf)
 		return -ENOMEM;
 
@@ -229,7 +232,7 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 	if (ice_is_xdp_ena_vsi(vsi)) {
 		struct ice_ring *xdp_ring = vsi->xdp_rings[q_idx];
 
-		memset(qg_buf, 0, sizeof(*qg_buf));
+		memset(qg_buf, 0, size);
 		qg_buf->num_txqs = 1;
 		err = ice_vsi_cfg_txq(vsi, xdp_ring, qg_buf);
 		if (err)
@@ -258,6 +261,7 @@ free_buf:
 	return err;
 }
 
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 /**
  * ice_xsk_alloc_umems - allocate a UMEM region for an XDP socket
  * @vsi: VSI to allocate the UMEM on
@@ -318,6 +322,7 @@ static void ice_xsk_remove_umem(struct ice_vsi *vsi, u16 qid)
 		vsi->num_xsk_umems = 0;
 	}
 }
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 
 /**
  * ice_xsk_umem_dma_map - DMA map UMEM region for XDP sockets
@@ -388,12 +393,21 @@ static void ice_xsk_umem_dma_unmap(struct ice_vsi *vsi, struct xdp_umem *umem)
  */
 static int ice_xsk_umem_disable(struct ice_vsi *vsi, u16 qid)
 {
+#ifdef HAVE_AF_XDP_NETDEV_UMEM
+	struct xdp_umem *umem = xdp_get_umem_from_qid(vsi->netdev, qid);
+
+	if (!umem)
+		return -EINVAL;
+
+	ice_xsk_umem_dma_unmap(vsi, umem);
+#else
 	if (!vsi->xsk_umems || qid >= vsi->num_xsk_umems ||
 	    !vsi->xsk_umems[qid])
 		return -EINVAL;
 
 	ice_xsk_umem_dma_unmap(vsi, vsi->xsk_umems[qid]);
 	ice_xsk_remove_umem(vsi, qid);
+#endif /* HAVE_AF_XDP_NETDEV_UMEM */
 
 	return 0;
 }
@@ -415,6 +429,7 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 	if (vsi->type != ICE_VSI_PF)
 		return -EINVAL;
 
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	if (!vsi->num_xsk_umems)
 		vsi->num_xsk_umems = min_t(u16, vsi->num_rxq, vsi->num_txq);
 	if (qid >= vsi->num_xsk_umems)
@@ -422,6 +437,11 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 
 	if (vsi->xsk_umems && vsi->xsk_umems[qid])
 		return -EBUSY;
+#else
+	if (qid >= vsi->netdev->real_num_rx_queues ||
+	    qid >= vsi->netdev->real_num_tx_queues)
+		return -EINVAL;
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 
 	reuseq = xsk_reuseq_prepare(vsi->rx_rings[0]->count);
 	if (!reuseq)
@@ -433,9 +453,11 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 	if (err)
 		return err;
 
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	err = ice_xsk_add_umem(vsi, umem, qid);
 	if (err)
 		return err;
+#endif /*!HAVE_AF_XDP_NETDEV_UMEM */
 
 	return 0;
 }
@@ -495,6 +517,7 @@ xsk_umem_if_up:
  */
 int ice_xsk_umem_query(struct ice_vsi *vsi, struct xdp_umem **umem, u16 qid)
 {
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	if (vsi->type != ICE_VSI_PF)
 		return -EINVAL;
 
@@ -509,6 +532,20 @@ int ice_xsk_umem_query(struct ice_vsi *vsi, struct xdp_umem **umem, u16 qid)
 	}
 
 	*umem = NULL;
+#else
+	struct net_device *netdev = vsi->netdev;
+	struct xdp_umem *queried_umem;
+
+	if (vsi->type != ICE_VSI_PF)
+		return -EINVAL;
+
+	queried_umem = xdp_get_umem_from_qid(netdev, qid);
+	if (!queried_umem)
+		return -EINVAL;
+
+	*umem = queried_umem;
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
+
 	return 0;
 }
 #endif /* NO_XDP_QUERY_XSK_UMEM */
@@ -981,7 +1018,9 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
 
 #ifdef HAVE_NDO_XSK_WAKEUP
 	if (xsk_umem_uses_need_wakeup(rx_ring->xsk_umem)) {
-		if (failure || rx_ring->next_to_clean == rx_ring->next_to_use)
+		if (failure || rx_ring->next_to_clean == rx_ring->next_to_use ||
+		    (ice_ring_ch_enabled(rx_ring) &&
+		     !ice_vsi_pkt_inspect_opt_ena(rx_ring->vsi)))
 			xsk_set_rx_need_wakeup(rx_ring->xsk_umem);
 		else
 			xsk_clear_rx_need_wakeup(rx_ring->xsk_umem);
@@ -1002,8 +1041,9 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
  */
 static bool ice_xmit_zc(struct ice_ring *xdp_ring, int budget)
 {
+	unsigned int sent_frames = 0, total_bytes = 0;
 	struct ice_tx_desc *tx_desc = NULL;
-	bool work_done = true;
+	u16 ntu = xdp_ring->next_to_use;
 #ifdef XSK_UMEM_RETURNS_XDP_DESC
 	struct xdp_desc desc;
 #endif /* XSK_UMEM_RETURNS_XDP_DESC */
@@ -1015,13 +1055,7 @@ static bool ice_xmit_zc(struct ice_ring *xdp_ring, int budget)
 	while (likely(budget-- > 0)) {
 		struct ice_tx_buf *tx_buf;
 
-		if (unlikely(!ICE_DESC_UNUSED(xdp_ring))) {
-			xdp_ring->tx_stats.tx_busy++;
-			work_done = false;
-			break;
-		}
-
-		tx_buf = &xdp_ring->tx_buf[xdp_ring->next_to_use];
+		tx_buf = &xdp_ring->tx_buf[ntu];
 
 #ifdef XSK_UMEM_RETURNS_XDP_DESC
 		if (!xsk_umem_consume_tx(xdp_ring->xsk_umem, &desc))
@@ -1043,26 +1077,34 @@ static bool ice_xmit_zc(struct ice_ring *xdp_ring, int budget)
 		tx_buf->bytecount = len;
 #endif /* XSK_UMEM_RETURNS_XDP_DESC */
 
-		tx_desc = ICE_TX_DESC(xdp_ring, xdp_ring->next_to_use);
+		tx_desc = ICE_TX_DESC(xdp_ring, ntu);
 		tx_desc->buf_addr = cpu_to_le64(dma);
 		tx_desc->cmd_type_offset_bsz =
 #ifdef XSK_UMEM_RETURNS_XDP_DESC
-			ice_build_ctob(ICE_TXD_LAST_DESC_CMD, 0, desc.len, 0);
+			ice_build_ctob(ICE_TX_DESC_CMD_EOP, 0, desc.len, 0);
 #else
-			ice_build_ctob(ICE_TXD_LAST_DESC_CMD, 0, len, 0);
+			ice_build_ctob(ICE_TX_DESC_CMD_EOP, 0, len, 0);
 #endif /* XSK_UMEM_RETURNS_XDP_DESC */
 
-		xdp_ring->next_to_use++;
-		if (xdp_ring->next_to_use == xdp_ring->count)
-			xdp_ring->next_to_use = 0;
+		xdp_ring->next_rs_idx = ntu;
+		ntu++;
+		if (ntu == xdp_ring->count)
+			ntu = 0;
+		sent_frames++;
+		total_bytes += tx_buf->bytecount;
 	}
 
 	if (tx_desc) {
+		xdp_ring->next_to_use = ntu;
+		/* Set RS bit for the last frame and bump tail ptr */
+		tx_desc->cmd_type_offset_bsz |=
+			cpu_to_le64(ICE_TX_DESC_CMD_RS << ICE_TXD_QW1_CMD_S);
 		ice_xdp_ring_update_tail(xdp_ring);
 		xsk_umem_consume_tx_done(xdp_ring->xsk_umem);
+		ice_update_tx_ring_stats(xdp_ring, sent_frames, total_bytes);
 	}
 
-	return budget > 0 && work_done;
+	return budget > 0;
 }
 
 /**
@@ -1074,6 +1116,7 @@ static void
 ice_clean_xdp_tx_buf(struct ice_ring *xdp_ring, struct ice_tx_buf *tx_buf)
 {
 	xdp_return_frame((struct xdp_frame *)tx_buf->raw_buf);
+	xdp_ring->xdp_tx_active--;
 	dma_unmap_single(xdp_ring->dev, dma_unmap_addr(tx_buf, dma),
 			 dma_unmap_len(tx_buf, len), DMA_TO_DEVICE);
 	dma_unmap_len_set(tx_buf, len, 0);
@@ -1082,30 +1125,39 @@ ice_clean_xdp_tx_buf(struct ice_ring *xdp_ring, struct ice_tx_buf *tx_buf)
 /**
  * ice_clean_tx_irq_zc - Completes AF_XDP entries, and cleans XDP entries
  * @xdp_ring: XDP Tx ring
- * @budget: NAPI budget
  *
  * Returns true if cleanup/tranmission is done.
  */
-bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring, int budget)
+bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring)
 {
-	int total_packets = 0, total_bytes = 0;
-	s16 ntc = xdp_ring->next_to_clean;
-	struct ice_tx_desc *tx_desc;
+	u16 next_rs_idx = xdp_ring->next_rs_idx;
+	u16 ntc = xdp_ring->next_to_clean;
+	u16 frames_ready = 0, send_budget;
+	struct ice_tx_desc *next_rs_desc;
 	struct ice_tx_buf *tx_buf;
+	u32 total_bytes = 0;
 	u32 xsk_frames = 0;
-	bool xmit_done;
+	u16 i;
 
-	tx_desc = ICE_TX_DESC(xdp_ring, ntc);
-	tx_buf = &xdp_ring->tx_buf[ntc];
-	ntc -= xdp_ring->count;
+	next_rs_desc = ICE_TX_DESC(xdp_ring, next_rs_idx);
+	if (next_rs_desc->cmd_type_offset_bsz &
+	    cpu_to_le64(ICE_TX_DESC_DTYPE_DESC_DONE)) {
+		if (next_rs_idx >= ntc)
+			frames_ready = next_rs_idx - ntc;
+		else
+			frames_ready = next_rs_idx + xdp_ring->count - ntc;
+	}
 
-	do {
-		if (!(tx_desc->cmd_type_offset_bsz &
-		      cpu_to_le64(ICE_TX_DESC_DTYPE_DESC_DONE)))
-			break;
+	if (!frames_ready)
+		goto out_xmit;
 
-		total_bytes += tx_buf->bytecount;
-		total_packets++;
+	if (likely(!xdp_ring->xdp_tx_active)) {
+		xsk_frames = frames_ready;
+		goto skip;
+	}
+
+	for (i = 0; i < frames_ready; i++) {
+		tx_buf = &xdp_ring->tx_buf[ntc];
 
 		if (tx_buf->raw_buf) {
 			ice_clean_xdp_tx_buf(xdp_ring, tx_buf);
@@ -1114,36 +1166,29 @@ bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring, int budget)
 			xsk_frames++;
 		}
 
-		tx_desc->cmd_type_offset_bsz = 0;
-		tx_buf++;
-		tx_desc++;
-		ntc++;
+		total_bytes += tx_buf->bytecount;
 
-		if (unlikely(!ntc)) {
-			ntc -= xdp_ring->count;
-			tx_buf = xdp_ring->tx_buf;
-			tx_desc = ICE_TX_DESC(xdp_ring, 0);
-		}
+		++ntc;
+		if (ntc >= xdp_ring->count)
+			ntc = 0;
+	}
 
-		prefetch(tx_desc);
-
-	} while (likely(--budget));
-
-	ntc += xdp_ring->count;
-	xdp_ring->next_to_clean = ntc;
+skip:
+	xdp_ring->next_to_clean += frames_ready;
+	if (unlikely(xdp_ring->next_to_clean >= xdp_ring->count))
+		xdp_ring->next_to_clean -= xdp_ring->count;
 
 	if (xsk_frames)
 		xsk_umem_complete_tx(xdp_ring->xsk_umem, xsk_frames);
 
+out_xmit:
 #ifdef HAVE_NDO_XSK_WAKEUP
 	if (xsk_umem_uses_need_wakeup(xdp_ring->xsk_umem))
 		xsk_set_tx_need_wakeup(xdp_ring->xsk_umem);
 #endif /* HAVE_NDO_XSK_WAKEUP */
-
-	ice_update_tx_ring_stats(xdp_ring, total_packets, total_bytes);
-	xmit_done = ice_xmit_zc(xdp_ring, ICE_DFLT_IRQ_WORK);
-
-	return budget > 0 && xmit_done;
+	send_budget = ICE_DESC_UNUSED(xdp_ring);
+	send_budget = min_t(u16, send_budget, xdp_ring->count >> 2);
+	return ice_xmit_zc(xdp_ring, send_budget);
 }
 
 #ifdef HAVE_NDO_XSK_WAKEUP
@@ -1188,8 +1233,13 @@ int ice_xsk_async_xmit(struct net_device *netdev, u32 queue_id)
 	 * honored.
 	 */
 	q_vector = ring->q_vector;
-	if (!napi_if_scheduled_mark_missed(&q_vector->napi))
-		ice_trigger_sw_intr(&vsi->back->hw, q_vector);
+	if (!napi_if_scheduled_mark_missed(&q_vector->napi)) {
+		if (ice_ring_ch_enabled(vsi->rx_rings[queue_id]) &&
+		    !ice_vsi_pkt_inspect_opt_ena(vsi))
+			napi_busy_loop(q_vector->napi.napi_id, NULL, NULL);
+		else
+			ice_trigger_sw_intr(&vsi->back->hw, q_vector);
+	}
 
 	return 0;
 }
@@ -1204,6 +1254,7 @@ bool ice_xsk_any_rx_ring_ena(struct ice_vsi *vsi)
 {
 	int i;
 
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	if (!vsi->xsk_umems)
 		return false;
 
@@ -1211,6 +1262,12 @@ bool ice_xsk_any_rx_ring_ena(struct ice_vsi *vsi)
 		if (vsi->xsk_umems[i])
 			return true;
 	}
+#else
+	ice_for_each_rxq(vsi, i) {
+		if (xdp_get_umem_from_qid(vsi->netdev, i))
+			return true;
+	}
+#endif /* HAVE_AF_XDP_NETDEV_UMEM */
 
 	return false;
 }

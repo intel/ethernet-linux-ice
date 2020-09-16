@@ -1073,6 +1073,7 @@ static int ice_peer_register(struct ice_peer_dev *peer_dev)
 		return -EINVAL;
 	}
 
+
 	if (peer_drv->ver.major != ICE_PEER_MAJOR_VER ||
 	    peer_drv->ver.minor != ICE_PEER_MINOR_VER) {
 		pr_err("failed to register due to version mismatch:\n");
@@ -1236,11 +1237,14 @@ ice_peer_vc_send(struct ice_peer_dev *peer_dev, u32 vf_id, u8 *msg, u16 len)
 		return -ENOMEM;
 
 	pf = pci_get_drvdata(peer_dev->pdev);
-	if (vf_id >= pf->num_alloc_vfs || len > ICE_AQ_MAX_BUF_LEN)
+	if (len > ICE_AQ_MAX_BUF_LEN)
 		return -EINVAL;
 
 	switch (peer_dev->peer_drv->driver_id) {
 	case ICE_PEER_RDMA_DRIVER:
+		if (vf_id >= pf->num_alloc_vfs)
+			return -ENODEV;
+
 		/* VIRTCHNL_OP_IWARP is being used for RoCEv2 msg also */
 		err = ice_aq_send_msg_to_vf(&pf->hw, vf_id, VIRTCHNL_OP_IWARP,
 					    0, msg, len, NULL);

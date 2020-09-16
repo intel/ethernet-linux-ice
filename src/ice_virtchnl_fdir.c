@@ -122,6 +122,23 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
+static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_IPV6,
+	VIRTCHNL_PROTO_HDR_UDP,
+	VIRTCHNL_PROTO_HDR_GTPU_IP,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
+static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_IPV6,
+	VIRTCHNL_PROTO_HDR_UDP,
+	VIRTCHNL_PROTO_HDR_GTPU_IP,
+	VIRTCHNL_PROTO_HDR_GTPU_EH,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
 static enum virtchnl_proto_hdr_type vc_pattern_ipv4_l2tpv3[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
@@ -225,6 +242,8 @@ static const struct virtchnl_fdir_pattern_match_item vc_fdir_pattern_comms[] = {
 	{vc_pattern_ether,                    0,         NULL},
 	{vc_pattern_ipv4_gtpu,                0,         NULL},
 	{vc_pattern_ipv4_gtpu_eh,             0,         NULL},
+	{vc_pattern_ipv6_gtpu,                0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh,             0,         NULL},
 	{vc_pattern_ipv4_l2tpv3,              0,         NULL},
 	{vc_pattern_ipv6_l2tpv3,              0,         NULL},
 	{vc_pattern_ipv4_esp,                 0,         NULL},
@@ -621,6 +640,22 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 			return -EINVAL;
 		}
 		break;
+	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU_IPV6_OTHER:
+		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU) {
+			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_IP |
+					  ICE_FLOW_SEG_HDR_IPV6 |
+					  ICE_FLOW_SEG_HDR_IPV_OTHER);
+		} else if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
+			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_EH |
+					  ICE_FLOW_SEG_HDR_GTPU_IP |
+					  ICE_FLOW_SEG_HDR_IPV6 |
+					  ICE_FLOW_SEG_HDR_IPV_OTHER);
+		} else {
+			dev_dbg(dev, "Invalid tunnel type 0x%x for VF %d\n",
+				flow, vf->vf_id);
+			return -EINVAL;
+		}
+		break;
 	case ICE_FLTR_PTYPE_NONF_IPV4_SCTP:
 		ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_SCTP |
 				  ICE_FLOW_SEG_HDR_IPV4 |
@@ -879,6 +914,71 @@ err_exit:
 }
 
 /**
+ * ice_vc_fdir_has_prof_conflict
+ * @vf: pointer to the VF info
+ * @conf: FDIR configuration for each filter
+ *
+ * Check if @conf has conflicting profile with existing profiles
+ *
+ * Return: true on success, and false on error.
+ */
+static bool
+ice_vc_fdir_has_prof_conflict(struct ice_vf *vf,
+			      struct virtchnl_fdir_fltr_conf *conf)
+{
+	struct ice_fdir_fltr *desc;
+
+	list_for_each_entry(desc, &vf->fdir.fdir_rule_list, fltr_node) {
+		struct virtchnl_fdir_fltr_conf *existing_conf =
+				to_fltr_conf_from_desc(desc);
+		struct ice_fdir_fltr *a = &existing_conf->input;
+		struct ice_fdir_fltr *b = &conf->input;
+
+		enum ice_fltr_ptype flow_type_a = a->flow_type;
+		enum ice_fltr_ptype flow_type_b = b->flow_type;
+
+		/* No need to compare two rules with different tunnel type */
+		if (existing_conf->ttype != conf->ttype)
+			continue;
+
+		/* No need to compare two rules with same protocol */
+		if (flow_type_a == flow_type_b)
+			continue;
+
+		switch (flow_type_a) {
+		case ICE_FLTR_PTYPE_NONF_IPV4_UDP:
+		case ICE_FLTR_PTYPE_NONF_IPV4_TCP:
+		case ICE_FLTR_PTYPE_NONF_IPV4_SCTP:
+			if (flow_type_b == ICE_FLTR_PTYPE_NONF_IPV4_OTHER)
+				return true;
+			break;
+		case ICE_FLTR_PTYPE_NONF_IPV4_OTHER:
+			if (flow_type_b == ICE_FLTR_PTYPE_NONF_IPV4_UDP ||
+			    flow_type_b == ICE_FLTR_PTYPE_NONF_IPV4_TCP ||
+			    flow_type_b == ICE_FLTR_PTYPE_NONF_IPV4_SCTP)
+				return true;
+			break;
+		case ICE_FLTR_PTYPE_NONF_IPV6_UDP:
+		case ICE_FLTR_PTYPE_NONF_IPV6_TCP:
+		case ICE_FLTR_PTYPE_NONF_IPV6_SCTP:
+			if (flow_type_b == ICE_FLTR_PTYPE_NONF_IPV6_OTHER)
+				return true;
+			break;
+		case ICE_FLTR_PTYPE_NONF_IPV6_OTHER:
+			if (flow_type_b == ICE_FLTR_PTYPE_NONF_IPV6_UDP ||
+			    flow_type_b == ICE_FLTR_PTYPE_NONF_IPV6_TCP ||
+			    flow_type_b == ICE_FLTR_PTYPE_NONF_IPV6_SCTP)
+				return true;
+			break;
+		default:
+			break;
+		}
+	}
+
+	return false;
+}
+
+/**
  * ice_vc_fdir_set_flow_fld
  * @vf: pointer to the VF structure
  * @fltr: virtual channel add cmd buffer
@@ -900,6 +1000,12 @@ ice_vc_fdir_config_input_set(struct ice_vf *vf,
 	struct ice_flow_seg_info *seg;
 	enum ice_fltr_ptype flow;
 	int ret;
+
+	ret = ice_vc_fdir_has_prof_conflict(vf, conf);
+	if (ret) {
+		dev_dbg(dev, "Found flow prof conflict for VF %d\n", vf->vf_id);
+		return ret;
+	}
 
 	flow = input->flow_type;
 	ret = ice_vc_fdir_alloc_prof(vf, flow);
@@ -983,7 +1089,8 @@ ice_vc_fdir_get_pattern(struct ice_vf *vf, int *len)
 
 	hw = &pf->hw;
 	if (!strncmp(hw->active_pkg_name, "ICE COMMS Package",
-		     sizeof(hw->active_pkg_name))) {
+		     min(sizeof(hw->active_pkg_name),
+			 sizeof("ICE COMMS Package")))) {
 		item = vc_fdir_pattern_comms;
 		*len = ARRAY_SIZE(vc_fdir_pattern_comms);
 	} else {
@@ -1164,7 +1271,7 @@ ice_vc_fdir_parse_pattern(struct ice_vf *vf,
 
 			if (hdr->field_selector)
 				input->l2tpv3_data.session_id =
-					*((__be32 *)hdr->buffer);
+					*((__force __be32 *)hdr->buffer);
 			break;
 		case VIRTCHNL_PROTO_HDR_ESP:
 			esph = (struct ip_esp_hdr *)hdr->buffer;
@@ -1236,12 +1343,15 @@ ice_vc_fdir_parse_pattern(struct ice_vf *vf,
 			break;
 		case VIRTCHNL_PROTO_HDR_GTPU_IP:
 			rawh = (u8 *)hdr->buffer;
-			input->flow_type =
-				ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_OTHER;
-
+			if (input->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_UDP)
+				input->flow_type =
+				    ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_OTHER;
+			else
+				input->flow_type =
+				    ICE_FLTR_PTYPE_NONF_IPV6_GTPU_IPV6_OTHER;
 			if (hdr->field_selector)
 				input->gtpu_data.teid =
-					*(__be32 *)(&rawh[GTPU_TEID_OFFSET]);
+					*(__force __be32 *)(&rawh[GTPU_TEID_OFFSET]);
 			conf->ttype = ICE_FDIR_TUNNEL_TYPE_GTPU;
 			break;
 		case VIRTCHNL_PROTO_HDR_GTPU_EH:
@@ -2175,7 +2285,10 @@ int ice_vc_del_fdir_fltr(struct ice_vf *vf, u8 *msg)
 	struct virtchnl_fdir_del *fltr = (struct virtchnl_fdir_del *)msg;
 	struct virtchnl_fdir_del *stat = NULL;
 	struct virtchnl_fdir_fltr_conf *conf;
+	struct ice_vf_fdir *fdir = &vf->fdir;
 	enum virtchnl_status_code v_ret;
+	struct ice_fdir_fltr *input;
+	enum ice_fltr_ptype flow;
 	struct device *dev;
 	struct ice_pf *pf;
 	int is_tun = 0;
@@ -2233,6 +2346,12 @@ int ice_vc_del_fdir_fltr(struct ice_vf *vf, u8 *msg)
 			vf->vf_id, ret);
 		goto err_del_tmr;
 	}
+
+	/* Remove unused profiles to avoid unexpected behaviors */
+	input = &conf->input;
+	flow = input->flow_type;
+	if (fdir->fdir_fltr_cnt[flow][is_tun] == 1)
+		ice_vc_fdir_rem_prof(vf, flow, is_tun);
 
 	kfree(stat);
 

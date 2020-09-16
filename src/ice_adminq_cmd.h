@@ -140,6 +140,11 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_1588				0x0046
 #define ICE_AQC_CAPS_MAX_MTU				0x0047
 #define ICE_AQC_CAPS_NVM_VER				0x0048
+#define ICE_AQC_CAPS_PENDING_NVM_VER			0x0049
+#define ICE_AQC_CAPS_OROM_VER				0x004A
+#define ICE_AQC_CAPS_PENDING_OROM_VER			0x004B
+#define ICE_AQC_CAPS_NET_VER				0x004C
+#define ICE_AQC_CAPS_PENDING_NET_VER			0x004D
 #define ICE_AQC_CAPS_CEM				0x00F2
 #define ICE_AQC_CAPS_IWARP				0x0051
 #define ICE_AQC_CAPS_LED				0x0061
@@ -272,12 +277,6 @@ struct ice_aqc_get_sw_cfg_resp_elem {
 };
 
 
-/* The response buffer is as follows. Note that the length of the
- * elements array varies with the length of the command response.
- */
-struct ice_aqc_get_sw_cfg_resp {
-	struct ice_aqc_get_sw_cfg_resp_elem elements[1];
-};
 
 /* Set Port parameters, (direct, 0x0203) */
 struct ice_aqc_set_port_params {
@@ -366,15 +365,6 @@ struct ice_aqc_get_res_resp_elem {
 };
 
 
-/* Buffer for Get Resource command */
-struct ice_aqc_get_res_resp {
-	/* Number of resource entries to be calculated using
-	 * datalen/sizeof(struct ice_aqc_cmd_resp)).
-	 * Value of 'datalen' gets updated as part of response.
-	 */
-	struct ice_aqc_get_res_resp_elem elem[1];
-};
-
 
 /* Allocate Resources command (indirect 0x0208)
  * Free Resources command (indirect 0x0209)
@@ -403,7 +393,7 @@ struct ice_aqc_alloc_free_res_elem {
 #define ICE_AQC_RES_TYPE_VSI_PRUNE_LIST_M	\
 				(0xF << ICE_AQC_RES_TYPE_VSI_PRUNE_LIST_S)
 	__le16 num_elems;
-	struct ice_aqc_res_elem elem[1];
+	struct ice_aqc_res_elem elem[];
 };
 
 
@@ -426,10 +416,6 @@ struct ice_aqc_get_allocd_res_desc {
 	__le32 addr_low;
 };
 
-
-struct ice_aqc_get_allocd_res_desc_resp {
-	struct ice_aqc_res_elem elem[1];
-};
 
 
 /* Add VSI (indirect 0x0210)
@@ -817,14 +803,6 @@ struct ice_aqc_recipe_data_elem {
 };
 
 
-/* This struct contains a number of entries as per the
- * num_sub_recipes in the command
- */
-struct ice_aqc_add_get_recipe_data {
-	struct ice_aqc_recipe_data_elem recipe[1];
-};
-
-
 /* Set/Get Recipes to Profile Association (direct 0x0291/0x0293) */
 struct ice_aqc_recipe_to_profile {
 	__le16 profile_id;
@@ -930,8 +908,8 @@ struct ice_sw_rule_lkup_rx_tx {
 	 * lookup-type
 	 */
 	__le16 hdr_len;
-	u8 hdr[1];
-} __packed;
+	u8 hdr[];
+};
 
 
 /* Add/Update/Remove large action command/response entry
@@ -941,7 +919,6 @@ struct ice_sw_rule_lkup_rx_tx {
 struct ice_sw_rule_lg_act {
 	__le16 index; /* Index in large action table */
 	__le16 size;
-	__le32 act[1]; /* array of size for actions */
 	/* Max number of large actions */
 #define ICE_MAX_LG_ACT	4
 	/* Bit 0:1 - Action type */
@@ -992,6 +969,7 @@ struct ice_sw_rule_lg_act {
 #define ICE_LG_ACT_STAT_COUNT		0x7
 #define ICE_LG_ACT_STAT_COUNT_S		3
 #define ICE_LG_ACT_STAT_COUNT_M		(0x7F << ICE_LG_ACT_STAT_COUNT_S)
+	__le32 act[]; /* array of size for actions */
 };
 
 
@@ -1002,7 +980,7 @@ struct ice_sw_rule_lg_act {
 struct ice_sw_rule_vsi_list {
 	__le16 index; /* Index of VSI/Prune list */
 	__le16 number_vsi;
-	__le16 vsi[1]; /* Array of number_vsi VSI numbers */
+	__le16 vsi[]; /* Array of number_vsi VSI numbers */
 };
 
 
@@ -1104,14 +1082,6 @@ struct ice_aqc_sched_elem_cmd {
 };
 
 
-/* This is the buffer for:
- * Suspend Nodes (indirect 0x0409)
- * Resume Nodes (indirect 0x040A)
- */
-struct ice_aqc_suspend_resume_elem {
-	__le32 teid[1];
-};
-
 
 struct ice_aqc_txsched_move_grp_info_hdr {
 	__le32 src_parent_teid;
@@ -1123,7 +1093,7 @@ struct ice_aqc_txsched_move_grp_info_hdr {
 
 struct ice_aqc_move_elem {
 	struct ice_aqc_txsched_move_grp_info_hdr hdr;
-	__le32 teid[1];
+	__le32 teid[];
 };
 
 
@@ -1181,18 +1151,9 @@ struct ice_aqc_txsched_topo_grp_info_hdr {
 
 struct ice_aqc_add_elem {
 	struct ice_aqc_txsched_topo_grp_info_hdr hdr;
-	struct ice_aqc_txsched_elem_data generic[1];
+	struct ice_aqc_txsched_elem_data generic[];
 };
 
-
-struct ice_aqc_conf_elem {
-	struct ice_aqc_txsched_elem_data generic[1];
-};
-
-
-struct ice_aqc_get_elem {
-	struct ice_aqc_txsched_elem_data generic[1];
-};
 
 
 struct ice_aqc_get_topo_elem {
@@ -1204,7 +1165,7 @@ struct ice_aqc_get_topo_elem {
 
 struct ice_aqc_delete_elem {
 	struct ice_aqc_txsched_topo_grp_info_hdr hdr;
-	__le32 teid[1];
+	__le32 teid[];
 };
 
 
@@ -1272,11 +1233,6 @@ struct ice_aqc_rl_profile_elem {
 };
 
 
-struct ice_aqc_rl_profile_generic_elem {
-	struct ice_aqc_rl_profile_elem generic[1];
-};
-
-
 
 /* Configure L2 Node CGD (indirect 0x0414)
  * This indirect command allows configuring a congestion domain for given L2
@@ -1294,11 +1250,6 @@ struct ice_aqc_cfg_l2_node_cgd_elem {
 	__le32 node_teid;
 	u8 cgd;
 	u8 reserved[3];
-};
-
-
-struct ice_aqc_cfg_l2_node_cgd_data {
-	struct ice_aqc_cfg_l2_node_cgd_elem elem[1];
 };
 
 
@@ -2154,14 +2105,6 @@ struct ice_aqc_get_port_options_elem {
 };
 
 
-/* The buffer for command 0x06EA contains port_options_count of options
- * in the option array.
- */
-struct ice_aqc_get_port_options_data {
-	struct ice_aqc_get_port_options_elem option[1];
-};
-
-
 /* Set Port Option (direct, 0x06EB) */
 struct ice_aqc_set_port_option {
 	u8 lport_num;
@@ -2340,6 +2283,56 @@ struct ice_aqc_nvm_pkg_data {
 	__le32 addr_low;
 };
 
+
+/* Used for Pass Component Table command - 0x070B */
+struct ice_aqc_nvm_pass_comp_tbl {
+	u8 component_response; /* Response only */
+#define ICE_AQ_NVM_PASS_COMP_CAN_BE_UPDATED		0x0
+#define ICE_AQ_NVM_PASS_COMP_CAN_MAY_BE_UPDATEABLE	0x1
+#define ICE_AQ_NVM_PASS_COMP_CAN_NOT_BE_UPDATED		0x2
+	u8 component_response_code; /* Response only */
+#define ICE_AQ_NVM_PASS_COMP_CAN_BE_UPDATED_CODE	0x0
+#define ICE_AQ_NVM_PASS_COMP_STAMP_IDENTICAL_CODE	0x1
+#define ICE_AQ_NVM_PASS_COMP_STAMP_LOWER		0x2
+#define ICE_AQ_NVM_PASS_COMP_INVALID_STAMP_CODE		0x3
+#define ICE_AQ_NVM_PASS_COMP_CONFLICT_CODE		0x4
+#define ICE_AQ_NVM_PASS_COMP_PRE_REQ_NOT_MET_CODE	0x5
+#define ICE_AQ_NVM_PASS_COMP_NOT_SUPPORTED_CODE		0x6
+#define ICE_AQ_NVM_PASS_COMP_CANNOT_DOWNGRADE_CODE	0x7
+#define ICE_AQ_NVM_PASS_COMP_INCOMPLETE_IMAGE_CODE	0x8
+#define ICE_AQ_NVM_PASS_COMP_VER_STR_IDENTICAL_CODE	0xA
+#define ICE_AQ_NVM_PASS_COMP_VER_STR_LOWER_CODE		0xB
+	u8 reserved;
+	u8 transfer_flag;
+#define ICE_AQ_NVM_PASS_COMP_TBL_START			0x1
+#define ICE_AQ_NVM_PASS_COMP_TBL_MIDDLE			0x2
+#define ICE_AQ_NVM_PASS_COMP_TBL_END			0x4
+#define ICE_AQ_NVM_PASS_COMP_TBL_START_AND_END		0x5
+	__le32 reserved1;
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+
+struct ice_aqc_nvm_comp_tbl {
+	__le16 comp_class;
+#define NVM_COMP_CLASS_ALL_FW	0x000A
+
+	__le16 comp_id;
+#define NVM_COMP_ID_OROM	0x5
+#define NVM_COMP_ID_NVM		0x6
+#define NVM_COMP_ID_NETLIST	0x8
+
+	u8 comp_class_idx;
+#define FWU_COMP_CLASS_IDX_NOT_USE 0x0
+
+	__le32 comp_cmp_stamp;
+	u8 cvs_type;
+#define NVM_CVS_TYPE_ASCII	0x1
+
+	u8 cvs_len;
+	u8 cvs[]; /* Component Version String */
+} __packed;
 
 
 /**
@@ -2779,7 +2772,7 @@ struct ice_aqc_acl_update_query_scen {
  */
 struct ice_aqc_acl_scen {
 	struct {
-		/* Byte [x] selection for the TCAM key. This value must be set
+		/* Byte [x] selection for the TCAM key. This value must be
 		 * set to 0x0 for unusued TCAM.
 		 * Only Bit 6..0 is used in each byte and MSB is reserved
 		 */
@@ -3091,7 +3084,7 @@ struct ice_aqc_add_tx_qgrp {
 	__le32 parent_teid;
 	u8 num_txqs;
 	u8 rsvd[3];
-	struct ice_aqc_add_txqs_perq txqs[1];
+	struct ice_aqc_add_txqs_perq txqs[];
 };
 
 
@@ -3131,19 +3124,14 @@ struct ice_aqc_dis_txq_item {
 	u8 num_qs;
 	u8 rsvd;
 	/* The length of the q_id array varies according to num_qs */
-	__le16 q_id[1];
-	/* This only applies from F8 onward */
 #define ICE_AQC_Q_DIS_BUF_ELEM_TYPE_S		15
 #define ICE_AQC_Q_DIS_BUF_ELEM_TYPE_LAN_Q	\
 			(0 << ICE_AQC_Q_DIS_BUF_ELEM_TYPE_S)
 #define ICE_AQC_Q_DIS_BUF_ELEM_TYPE_RDMA_QSET	\
 			(1 << ICE_AQC_Q_DIS_BUF_ELEM_TYPE_S)
-};
+	__le16 q_id[];
+} __packed;
 
-
-struct ice_aqc_dis_txq {
-	struct ice_aqc_dis_txq_item qgrps[1];
-};
 
 
 /* Tx LAN Queues Cleanup Event (0x0C31) */
@@ -3188,7 +3176,7 @@ struct ice_aqc_move_txqs_elem {
 struct ice_aqc_move_txqs_data {
 	__le32 src_teid;
 	__le32 dest_teid;
-	struct ice_aqc_move_txqs_elem txqs[1];
+	struct ice_aqc_move_txqs_elem txqs[];
 };
 
 
@@ -3221,7 +3209,7 @@ struct ice_aqc_add_rdma_qset_data {
 	__le32 parent_teid;
 	__le16 num_qsets;
 	u8 rsvd[2];
-	struct ice_aqc_add_tx_rdma_qset_entry rdma_qsets[1];
+	struct ice_aqc_add_tx_rdma_qset_entry rdma_qsets[];
 };
 
 
@@ -3280,7 +3268,7 @@ struct ice_aqc_get_pkg_info {
 /* Get Package Info List response buffer format (0x0C43) */
 struct ice_aqc_get_pkg_info_resp {
 	__le32 count;
-	struct ice_aqc_get_pkg_info pkg_info[1];
+	struct ice_aqc_get_pkg_info pkg_info[];
 };
 
 
@@ -3446,6 +3434,7 @@ struct ice_aq_desc {
 		struct ice_aqc_nvm_cfg nvm_cfg;
 		struct ice_aqc_nvm_checksum nvm_checksum;
 		struct ice_aqc_nvm_pkg_data pkg_data;
+		struct ice_aqc_nvm_pass_comp_tbl pass_comp_tbl;
 		struct ice_aqc_pf_vf_msg virt;
 		struct ice_aqc_pfc_ignore pfc_ignore;
 		struct ice_aqc_set_query_pfc_mode set_query_pfc_mode;

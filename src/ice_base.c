@@ -293,6 +293,7 @@ ice_setup_tx_ctx(struct ice_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 		break;
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 		tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
 		break;
 	default:
@@ -726,11 +727,11 @@ int
 ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *ring,
 		struct ice_aqc_add_tx_qgrp *qg_buf)
 {
+	u8 buf_len = struct_size(qg_buf, txqs, 1);
 	struct ice_tlan_ctx tlan_ctx = { 0 };
 	struct ice_aqc_add_txqs_perq *txq;
 	struct ice_channel *ch = ring->ch;
 	struct ice_pf *pf = vsi->back;
-	u8 buf_len = sizeof(*qg_buf);
 	struct ice_hw *hw = &pf->hw;
 	enum ice_status status;
 	u16 pf_q;

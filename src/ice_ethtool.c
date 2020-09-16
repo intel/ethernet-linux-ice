@@ -247,12 +247,16 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 	ICE_PRIV_FLAG("base-r-fec", ICE_FLAG_BASE_R_FEC),
 #endif /* !ETHTOOL_GFECPARAM */
 	ICE_PRIV_FLAG("fw-lldp-agent", ICE_FLAG_FW_LLDP_AGENT),
+#ifdef NETIF_F_HW_TC
 	ICE_PRIV_FLAG("channel-inline-flow-director",
 		      ICE_FLAG_CHNL_INLINE_FD_ENA),
 	ICE_PRIV_FLAG("channel-pkt-inspect-optimize",
 		      ICE_FLAG_CHNL_PKT_INSPECT_OPT_ENA),
-	ICE_PRIV_FLAG("vf-channel-filter-as-udp",
-		      ICE_FLAG_SRIOV_CHNL_FLTR_AS_UDP),
+	ICE_PRIV_FLAG("channel-pkt-clean-bp-stop",
+		      ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA),
+	ICE_PRIV_FLAG("channel-pkt-clean-bp-stop-cfg",
+		      ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG),
+#endif /* NETIF_F_HW_TC */
 	ICE_PRIV_FLAG("vf-true-promisc-support",
 		      ICE_FLAG_VF_TRUE_PROMISC_ENA),
 	ICE_PRIV_FLAG("mdd-auto-reset-vf", ICE_FLAG_MDD_AUTO_RESET_VF),
@@ -558,15 +562,16 @@ static u64 ice_eeprom_test(struct net_device *netdev)
  */
 static int ice_reg_pattern_test(struct ice_hw *hw, u32 reg, u32 mask)
 {
-	struct ice_pf *pf = (struct ice_pf *)hw->back;
-	struct device *dev = ice_pf_to_dev(pf);
 	static const u32 patterns[] = {
 		0x5A5A5A5A, 0xA5A5A5A5,
 		0x00000000, 0xFFFFFFFF
 	};
+	struct ice_pf *pf = hw->back;
+	struct device *dev;
 	u32 val, orig_val;
 	unsigned int i;
 
+	dev = ice_pf_to_dev(pf);
 	orig_val = rd32(hw, reg);
 	for (i = 0; i < ARRAY_SIZE(patterns); ++i) {
 		u32 pattern = patterns[i] & mask;
@@ -1207,6 +1212,32 @@ ice_get_chnl_rx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
 	/* number of times WB_ON_ITR is set */
 	data[i++] = set ? vector_ch_stats->num_wb_on_itr_set : 0;
 
+	/* number of Rx packets processed when busy_poll_stop is invoked */
+	data[i++] = set ? vector_ch_stats->pkt_bp_stop_bp_budget : 0;
+
+	/* number of Rx packets processed when napi_schedule is invoked because
+	 * busy_poll_stop:napi_poll returned budget
+	 */
+	data[i++] = set ? vector_ch_stats->pkt_bp_stop_napi_budget : 0;
+
+	/* num of times work_done == budget from busy_poll_stop code path */
+	data[i++] = set ? vector_ch_stats->bp_wd_equals_budget8 : 0;
+
+	/* num of times work_done == budget from napi_shedule which gets invoked
+	 * if busy_poll_stop:napi_poll returned "budget"
+	 */
+	data[i++] = set ? vector_ch_stats->bp_wd_equals_budget64 : 0;
+
+	/* how many times, kept internal state to be in BUSY_POLL
+	 * when napi_poll is invoked due to busy_poll_stop
+	 */
+	data[i++] = set ? vector_ch_stats->keep_state_bp_budget8 : 0;
+
+	/* how many times, kept internal state to be in BUSY_POLL
+	 * when napi_poll is invoked due to napi_schedule.
+	 */
+	data[i++] = set ? vector_ch_stats->keep_state_bp_budget64 : 0;
+
 	/* copy back updated index */
 	*idx = i;
 }
@@ -1320,6 +1351,34 @@ ice_get_chnl_rx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
 	p += ETH_GSTRING_LEN;
 	/* number of times WB_ON_ITR is set */
 	snprintf(p, ETH_GSTRING_LEN, "rx_%u.wb_on_itr_set", q);
+	p += ETH_GSTRING_LEN;
+
+	/* number of Rx packet processed due busy_poll_stop */
+	snprintf(p, ETH_GSTRING_LEN, "rx_%u.pkts_bp_stop_budget8", q);
+	p += ETH_GSTRING_LEN;
+
+	/* number of Rx packet processed due to napi_schedule which gets invoked
+	 * if busy_poll_stop returned budget
+	 */
+	snprintf(p, ETH_GSTRING_LEN, "rx_%u.pkts_bp_stop_budget64", q);
+	p += ETH_GSTRING_LEN;
+
+	/* num of times work_done == budget condition met from
+	 * busy_poll_stop:napi_poll code path
+	 */
+	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_wd_equal_budget8", q);
+	p += ETH_GSTRING_LEN;
+
+	/* num of times work_done == budget condition met from
+	 * napi_schedule:napi_poll code path (this happens if busy_poll_stop
+	 * returned "budget")
+	 */
+	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_wd_equal_budget64", q);
+	p += ETH_GSTRING_LEN;
+
+	snprintf(p, ETH_GSTRING_LEN, "rx_%u.keep_state_bp_budget8", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "rx_%u.keep_state_bp_budget64", q);
 	p += ETH_GSTRING_LEN;
 
 	/* copy back updated length */
@@ -1856,6 +1915,19 @@ static void ice_recfg_chnl_vsis(struct ice_pf *pf, struct ice_vsi *vsi)
 		else
 			clear_bit(ICE_CHNL_FEATURE_PKT_INSPECT_OPT_ENA,
 				  ch_vsi->features);
+
+		/* set/clear VSI level feature flag for ADQ (aka channel) VSIs
+		 * based on PF level private flags: this flag meant to harvest
+		 * clean of Rx queue upon busy_poll stop and after that clean
+		 * once only.
+		 */
+		if (test_bit(ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA, pf->flags))
+			set_bit(ICE_CHNL_FEATURE_PKT_CLEAN_BP_STOP_ENA,
+				ch_vsi->features);
+		else
+			clear_bit(ICE_CHNL_FEATURE_PKT_CLEAN_BP_STOP_ENA,
+				  ch_vsi->features);
+
 		/* set/clear inline flow-director bits for ADQ (aka channel)
 		 * VSIs based on PF level private flags
 		 */
@@ -1865,6 +1937,38 @@ static void ice_recfg_chnl_vsis(struct ice_pf *pf, struct ice_vsi *vsi)
 		else
 			clear_bit(ICE_CHNL_FEATURE_INLINE_FD_ENA,
 				  ch_vsi->features);
+	}
+}
+
+/**
+ * ice_recfg_vsi - reconfig specified VSI
+ * @pf: ptr to PF
+ * @vsi: ptr to main VSI
+ *
+ * Set up per vector configurable param which allows cleanup of Tx and
+ * Rx packets upto that many time if napi_schedule is invoked after
+ * busy_poll_stop (where driver returned "budget") based on driver maintained
+ * state for ADQ specific vector.
+ */
+static void ice_recfg_vsi(struct ice_pf *pf, struct ice_vsi *vsi)
+{
+	int q_vectors = vsi->num_q_vectors;
+	int vector;
+
+	if (!q_vectors)
+		return;
+
+	for (vector = 0; vector < q_vectors; vector++) {
+		struct ice_q_vector *qv = vsi->q_vectors[vector];
+
+		if (!qv)
+			continue;
+		if (test_bit(ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG, pf->flags))
+			qv->max_limit_process_rx_queues =
+						ICE_MAX_LIMIT_PROCESS_RX_PKTS;
+		else
+			qv->max_limit_process_rx_queues =
+					ICE_MAX_LIMIT_PROCESS_RX_PKTS_DFLT;
 	}
 }
 #endif /* ADQ_SUPPORT */
@@ -1905,6 +2009,7 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 
 #ifdef NETIF_F_HW_TC
 	ice_recfg_chnl_vsis(pf, vsi);
+	ice_recfg_vsi(pf, vsi);
 #endif /* ADQ_SUPPORT */
 
 	bitmap_xor(change_flags, pf->flags, orig_flags, ICE_PF_FLAGS_NBITS);
@@ -2011,6 +2116,11 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			}
 #endif /* NETIF_F_HW_TC */
 
+			/* Remove rule to direct LLDP packets to default VSI.
+			 * The FW LLDP engine will now be consuming them.
+			 */
+			ice_cfg_sw_lldp(vsi, false, false);
+
 			/* AQ command to start FW LLDP agent will return an
 			 * error if the agent is already started
 			 */
@@ -2038,11 +2148,6 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			status = ice_init_pf_dcb(pf, true);
 			if (status)
 				dev_dbg(dev, "Fail to init DCB\n");
-
-			/* Remove rule to direct LLDP packets to default VSI.
-			 * The FW LLDP engine will now be consuming them.
-			 */
-			ice_cfg_sw_lldp(vsi, false, false);
 
 			/* Register for MIB change events */
 			status = ice_cfg_lldp_mib_change(&pf->hw, true);
@@ -3990,7 +4095,7 @@ ice_set_rss_hash_opt(struct ice_vsi *vsi, struct ethtool_rxnfc *nfc)
 		return -EINVAL;
 	}
 
-	status = ice_add_rss_cfg(&pf->hw, vsi->idx, hashed_flds, hdrs);
+	status = ice_add_rss_cfg(&pf->hw, vsi->idx, hashed_flds, hdrs, false);
 	if (status) {
 		dev_dbg(dev, "ice_add_rss_cfg failed, vsi num = %d, error = %s\n",
 			vsi->vsi_num, ice_stat_str(status));
@@ -4069,9 +4174,9 @@ static int ice_set_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *cmd)
 
 	switch (cmd->cmd) {
 	case ETHTOOL_SRXCLSRLINS:
-		return ice_add_fdir_ethtool(vsi, cmd);
+		return ice_add_ntuple_ethtool(vsi, cmd);
 	case ETHTOOL_SRXCLSRLDEL:
-		return ice_del_fdir_ethtool(vsi, cmd);
+		return ice_del_ntuple_ethtool(vsi, cmd);
 	case ETHTOOL_SRXFH:
 		return ice_set_rss_hash_opt(vsi, cmd);
 	default:
@@ -4407,7 +4512,7 @@ ice_get_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 	pause->rx_pause = 0;
 	pause->tx_pause = 0;
 
-	dcbx_cfg = &pi->local_dcbx_cfg;
+	dcbx_cfg = &pi->qos_cfg.local_dcbx_cfg;
 
 	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps)
@@ -4460,7 +4565,7 @@ ice_get_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 	pause->autoneg = ((hw_link_info->an_info & ICE_AQ_AN_COMPLETED) ?
 			  AUTONEG_ENABLE : AUTONEG_DISABLE);
 
-	dcbx_cfg = &pi->local_dcbx_cfg;
+	dcbx_cfg = &pi->qos_cfg.local_dcbx_cfg;
 
 	if (dcbx_cfg->pfc.pfcena)
 		/* PFC enabled so report LFC as off */
@@ -4510,7 +4615,7 @@ ice_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 
 	pi = vsi->port_info;
 	hw_link_info = &pi->phy.link_info;
-	dcbx_cfg = &pi->local_dcbx_cfg;
+	dcbx_cfg = &pi->qos_cfg.local_dcbx_cfg;
 	link_up = hw_link_info->link_info & ICE_AQ_LINK_UP;
 
 	/* Changing the port's flow control is not supported if this isn't the

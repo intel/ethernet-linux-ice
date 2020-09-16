@@ -48,9 +48,10 @@ int ice_cfg_vlan_pruning(struct ice_vsi *vsi, bool ena, bool vlan_promisc);
 
 void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create);
 
-void ice_vsi_delete(struct ice_vsi *vsi);
 
+void ice_vsi_delete(struct ice_vsi *vsi);
 int ice_vsi_clear(struct ice_vsi *vsi);
+void ice_vsi_put_qs(struct ice_vsi *vsi);
 
 void ice_vsi_cfg_netdev_tc(struct ice_vsi *vsi, u8 ena_tc);
 
@@ -83,8 +84,6 @@ ice_get_res(struct ice_pf *pf, struct ice_res_tracker *res, u16 needed, u16 id);
 int ice_vsi_rebuild(struct ice_vsi *vsi, bool init_vsi);
 
 bool ice_is_reset_in_progress(unsigned long *state);
-
-void ice_vsi_put_qs(struct ice_vsi *vsi);
 
 void ice_vsi_dis_irq(struct ice_vsi *vsi);
 
@@ -128,4 +127,12 @@ int ice_set_min_bw_limit(struct ice_vsi *vsi, u64 min_tx_rate);
 int ice_set_max_bw_limit(struct ice_vsi *vsi, u64 max_tx_rate);
 int ice_get_link_speed_kbps(struct ice_vsi *vsi);
 int ice_get_link_speed_mbps(struct ice_vsi *vsi);
+int ice_vsi_update_security(struct ice_vsi *vsi,
+			    void (*fill)(struct ice_vsi_ctx *));
+#ifdef HAVE_METADATA_PORT_INFO
+void ice_vsi_ctx_set_antispoof(struct ice_vsi_ctx *ctx);
+void ice_vsi_ctx_clear_antispoof(struct ice_vsi_ctx *ctx);
+#endif /* HAVE_METADATA_PORT_INFO */
+void ice_vsi_ctx_set_allow_override(struct ice_vsi_ctx *ctx);
+void ice_vsi_ctx_clear_allow_override(struct ice_vsi_ctx *ctx);
 #endif /* !_ICE_LIB_H_ */

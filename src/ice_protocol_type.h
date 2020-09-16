@@ -50,6 +50,7 @@ enum ice_protocol_type {
 	ICE_ESP,
 	ICE_AH,
 	ICE_NAT_T,
+	ICE_GTP_NO_PAY,
 	ICE_PROTOCOL_LAST
 };
 

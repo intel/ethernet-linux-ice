@@ -177,6 +177,7 @@ enum ice_flow_seg_hdr {
 	ICE_FLOW_SEG_HDR_AH		= 0x00200000,
 	ICE_FLOW_SEG_HDR_NAT_T_ESP	= 0x00400000,
 	ICE_FLOW_SEG_HDR_ETH_NON_IP	= 0x00800000,
+	ICE_FLOW_SEG_HDR_GTPU_NON_IP	= 0x01000000,
 	/* The following is an additive bit for ICE_FLOW_SEG_HDR_IPV4 and
 	 * ICE_FLOW_SEG_HDR_IPV6 which include the IPV4 other PTYPEs
 	 */
@@ -322,6 +323,19 @@ enum ice_flow_avf_hdr_field {
 	BIT_ULL(ICE_AVF_FLOW_FIELD_UNICAST_IPV6_UDP) | \
 	BIT_ULL(ICE_AVF_FLOW_FIELD_MULTICAST_IPV6_UDP))
 
+enum ice_rss_hash_func {
+	ICE_RSS_HASH_TOEPLITZ			= 0,
+	ICE_RSS_HASH_TOEPLITZ_SYMMETRIC		= 1,
+	ICE_RSS_HASH_XOR			= 2,
+	ICE_RSS_HASH_JHASH			= 3,
+};
+
+struct ice_rss_hash_cfg {
+	u32 addl_hdrs;
+	u64 hash_flds;
+	enum ice_rss_hash_func hash_func;
+};
+
 enum ice_flow_dir {
 	ICE_FLOW_DIR_UNDEFINED	= 0,
 	ICE_FLOW_TX		= 0x01,
@@ -338,6 +352,7 @@ enum ice_flow_priority {
 #define ICE_FLOW_SEG_MAX		2
 #define ICE_FLOW_SEG_RAW_FLD_MAX	2
 #define ICE_FLOW_PROFILE_MAX		1024
+#define ICE_FLOW_SW_FIELD_VECTOR_MAX	48
 #define ICE_FLOW_ACL_FIELD_VECTOR_MAX	32
 #define ICE_FLOW_FV_EXTRACT_SZ		2
 
@@ -439,6 +454,8 @@ struct ice_flow_prof {
 		struct ice_acl_scen *scen;
 		/* struct fd */
 		u32 data;
+		/* Symmetric Hash for RSS */
+		bool symm;
 	} cfg;
 
 	/* Default actions */
@@ -451,6 +468,7 @@ struct ice_rss_cfg {
 	DECLARE_BITMAP(vsis, ICE_MAX_VSI);
 	u64 hashed_flds;
 	u32 packet_hdr;
+	bool symm;
 };
 
 enum ice_flow_action_type {
@@ -524,7 +542,7 @@ ice_add_avf_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds);
 enum ice_status ice_rem_vsi_rss_cfg(struct ice_hw *hw, u16 vsi_handle);
 enum ice_status
 ice_add_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
-		u32 addl_hdrs);
+		u32 addl_hdrs, bool symm);
 enum ice_status
 ice_rem_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
 		u32 addl_hdrs);

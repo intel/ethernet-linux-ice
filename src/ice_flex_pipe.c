@@ -343,7 +343,7 @@ ice_boost_tcam_handler(u32 sect_type, void *section, u32 index, u32 *offset)
 	if (offset)
 		*offset = 0;
 
-	boost = (struct ice_boost_tcam_section *)section;
+	boost = section;
 	if (index >= le16_to_cpu(boost->count))
 		return NULL;
 
@@ -373,8 +373,7 @@ ice_find_boost_entry(struct ice_seg *ice_seg, u16 addr,
 		return ICE_ERR_PARAM;
 
 	do {
-		tcam = (struct ice_boost_tcam_entry *)
-		       ice_pkg_enum_entry(ice_seg, &state,
+		tcam = ice_pkg_enum_entry(ice_seg, &state,
 					  ICE_SID_RXPARSER_BOOST_TCAM, NULL,
 					  ice_boost_tcam_handler);
 		if (tcam && le16_to_cpu(tcam->addr) == addr) {
@@ -414,7 +413,7 @@ ice_label_enum_handler(u32 __always_unused sect_type, void *section, u32 index,
 	if (offset)
 		*offset = 0;
 
-	labels = (struct ice_label_section *)section;
+	labels = section;
 	if (index >= le16_to_cpu(labels->count))
 		return NULL;
 
@@ -713,8 +712,7 @@ ice_acquire_global_cfg_lock(struct ice_hw *hw,
 	if (!status)
 		mutex_lock(&ice_global_cfg_lock_sw);
 	else if (status == ICE_ERR_AQ_NO_WORK)
-		ice_debug(hw, ICE_DBG_PKG,
-			  "Global config lock: No work to do\n");
+		ice_debug(hw, ICE_DBG_PKG, "Global config lock: No work to do\n");
 
 	return status;
 }
@@ -934,8 +932,7 @@ ice_update_pkg(struct ice_hw *hw, struct ice_buf *bufs, u32 count)
 					   last, &offset, &info, NULL);
 
 		if (status) {
-			ice_debug(hw, ICE_DBG_PKG,
-				  "Update pkg failed: err %d off %d inf %d\n",
+			ice_debug(hw, ICE_DBG_PKG, "Update pkg failed: err %d off %d inf %d\n",
 				  status, offset, info);
 			break;
 		}
@@ -1013,8 +1010,7 @@ ice_dwnld_cfg_bufs(struct ice_hw *hw, struct ice_buf *bufs, u32 count)
 		/* Save AQ status from download package */
 		hw->pkg_dwnld_status = hw->adminq.sq_last_status;
 		if (status) {
-			ice_debug(hw, ICE_DBG_PKG,
-				  "Pkg download failed: err %d off %d inf %d\n",
+			ice_debug(hw, ICE_DBG_PKG, "Pkg download failed: err %d off %d inf %d\n",
 				  status, offset, info);
 
 			break;
@@ -1108,8 +1104,7 @@ ice_init_pkg_info(struct ice_hw *hw, struct ice_pkg_hdr *pkg_hdr)
 			  meta_seg->pkg_ver.update, meta_seg->pkg_ver.draft,
 			  meta_seg->pkg_name);
 	} else {
-		ice_debug(hw, ICE_DBG_INIT,
-			  "Did not find metadata segment in driver package\n");
+		ice_debug(hw, ICE_DBG_INIT, "Did not find metadata segment in driver package\n");
 		return ICE_ERR_CFG;
 	}
 
@@ -1126,8 +1121,7 @@ ice_init_pkg_info(struct ice_hw *hw, struct ice_pkg_hdr *pkg_hdr)
 			  seg_hdr->seg_format_ver.draft,
 			  seg_hdr->seg_id);
 	} else {
-		ice_debug(hw, ICE_DBG_INIT,
-			  "Did not find ice segment in driver package\n");
+		ice_debug(hw, ICE_DBG_INIT, "Did not find ice segment in driver package\n");
 		return ICE_ERR_CFG;
 	}
 
@@ -1147,7 +1141,7 @@ static enum ice_status ice_get_pkg_info(struct ice_hw *hw)
 	u16 size;
 	u32 i;
 
-	size = struct_size(pkg_info, pkg_info, ICE_PKG_CNT - 1);
+	size = struct_size(pkg_info, pkg_info, ICE_PKG_CNT);
 	pkg_info = devm_kzalloc(ice_hw_to_dev(hw), size, GFP_KERNEL);
 	if (!pkg_info)
 		return ICE_ERR_NO_MEMORY;
@@ -1242,7 +1236,7 @@ static enum ice_status ice_verify_pkg(struct ice_pkg_hdr *pkg, u32 len)
 	u32 seg_count;
 	u32 i;
 
-	if (len < sizeof(*pkg))
+	if (len < struct_size(pkg, seg_offset, 1))
 		return ICE_ERR_BUF_TOO_SHORT;
 
 	if (pkg->pkg_format_ver.major != ICE_PKG_FMT_VER_MAJ ||
@@ -1257,7 +1251,7 @@ static enum ice_status ice_verify_pkg(struct ice_pkg_hdr *pkg, u32 len)
 		return ICE_ERR_CFG;
 
 	/* make sure segment array fits in package length */
-	if (len < struct_size(pkg, seg_offset, seg_count - 1))
+	if (len < struct_size(pkg, seg_offset, seg_count))
 		return ICE_ERR_BUF_TOO_SHORT;
 
 	/* all segments must fit within length */
@@ -1362,7 +1356,7 @@ ice_chk_pkg_compat(struct ice_hw *hw, struct ice_pkg_hdr *ospkg,
 	}
 
 	/* Check if FW is compatible with the OS package */
-	size = struct_size(pkg, pkg_info, ICE_PKG_CNT - 1);
+	size = struct_size(pkg, pkg_info, ICE_PKG_CNT);
 	pkg = devm_kzalloc(ice_hw_to_dev(hw), size, GFP_KERNEL);
 	if (!pkg)
 		return ICE_ERR_NO_MEMORY;
@@ -1380,8 +1374,7 @@ ice_chk_pkg_compat(struct ice_hw *hw, struct ice_pkg_hdr *ospkg,
 		    (*seg)->hdr.seg_format_ver.minor >
 			pkg->pkg_info[i].ver.minor) {
 			status = ICE_ERR_FW_DDP_MISMATCH;
-			ice_debug(hw, ICE_DBG_INIT,
-				  "OS package is not compatible with NVM.\n");
+			ice_debug(hw, ICE_DBG_INIT, "OS package is not compatible with NVM.\n");
 		}
 		/* done processing NVM package so break */
 		break;
@@ -1389,6 +1382,86 @@ ice_chk_pkg_compat(struct ice_hw *hw, struct ice_pkg_hdr *ospkg,
 fw_ddp_compat_free_alloc:
 	devm_kfree(ice_hw_to_dev(hw), pkg);
 	return status;
+}
+
+/**
+ * ice_sw_fv_handler
+ * @sect_type: section type
+ * @section: pointer to section
+ * @index: index of the field vector entry to be returned
+ * @offset: ptr to variable that receives the offset in the field vector table
+ *
+ * This is a callback function that can be passed to ice_pkg_enum_entry.
+ * This function treats the given section as of type ice_sw_fv_section and
+ * enumerates offset field. "offset" is an index into the field vector table.
+ */
+static void *
+ice_sw_fv_handler(u32 sect_type, void *section, u32 index, u32 *offset)
+{
+	struct ice_sw_fv_section *fv_section = section;
+
+	if (!section || sect_type != ICE_SID_FLD_VEC_SW)
+		return NULL;
+	if (index >= le16_to_cpu(fv_section->count))
+		return NULL;
+	if (offset)
+		/* "index" passed in to this function is relative to a given
+		 * 4k block. To get to the true index into the field vector
+		 * table need to add the relative index to the base_offset
+		 * field of this section
+		 */
+		*offset = le16_to_cpu(fv_section->base_offset) + index;
+	return fv_section->fv + index;
+}
+
+/**
+ * ice_get_prof_index_max - get the max profile index for used profile
+ * @hw: pointer to the HW struct
+ *
+ * Calling this function will get the max profile index for used profile
+ * and store the index number in struct ice_switch_info *switch_info
+ * in hw for following use.
+ */
+static int ice_get_prof_index_max(struct ice_hw *hw)
+{
+	u16 prof_index = 0, j, max_prof_index = 0;
+	struct ice_pkg_enum state;
+	struct ice_seg *ice_seg;
+	bool flag = false;
+	struct ice_fv *fv;
+	u32 offset;
+
+	memset(&state, 0, sizeof(state));
+
+	if (!hw->seg)
+		return ICE_ERR_PARAM;
+
+	ice_seg = hw->seg;
+
+	do {
+		fv = ice_pkg_enum_entry(ice_seg, &state, ICE_SID_FLD_VEC_SW,
+					&offset, ice_sw_fv_handler);
+		if (!fv)
+			break;
+		ice_seg = NULL;
+
+		/* in the profile that not be used, the prot_id is set to 0xff
+		 * and the off is set to 0x1ff for all the field vectors.
+		 */
+		for (j = 0; j < hw->blk[ICE_BLK_SW].es.fvw; j++)
+			if (fv->ew[j].prot_id != ICE_PROT_INVALID ||
+			    fv->ew[j].off != ICE_FV_OFFSET_INVAL)
+				flag = true;
+		if (flag && prof_index > max_prof_index)
+			max_prof_index = prof_index;
+
+		prof_index++;
+		flag = false;
+	} while (fv);
+
+	hw->switch_info->max_used_prof_index = max_prof_index;
+
+	return 0;
 }
 
 /**
@@ -1449,8 +1522,7 @@ enum ice_status ice_init_pkg(struct ice_hw *hw, u8 *buf, u32 len)
 	ice_init_pkg_hints(hw, seg);
 	status = ice_download_pkg(hw, seg);
 	if (status == ICE_ERR_AQ_NO_WORK) {
-		ice_debug(hw, ICE_DBG_INIT,
-			  "package previously loaded - no work.\n");
+		ice_debug(hw, ICE_DBG_INIT, "package previously loaded - no work.\n");
 		status = 0;
 	}
 
@@ -1471,6 +1543,7 @@ enum ice_status ice_init_pkg(struct ice_hw *hw, u8 *buf, u32 len)
 		 */
 		ice_init_pkg_regs(hw);
 		ice_fill_blk_tbls(hw);
+		ice_get_prof_index_max(hw);
 	} else {
 		ice_debug(hw, ICE_DBG_INIT, "package load failed, %d\n",
 			  status);
@@ -1548,38 +1621,6 @@ static struct ice_buf_build *ice_pkg_buf_alloc(struct ice_hw *hw)
 }
 
 /**
- * ice_sw_fv_handler
- * @sect_type: section type
- * @section: pointer to section
- * @index: index of the field vector entry to be returned
- * @offset: ptr to variable that receives the offset in the field vector table
- *
- * This is a callback function that can be passed to ice_pkg_enum_entry.
- * This function treats the given section as of type ice_sw_fv_section and
- * enumerates offset field. "offset" is an index into the field vector
- * vector table.
- */
-static void *
-ice_sw_fv_handler(u32 sect_type, void *section, u32 index, u32 *offset)
-{
-	struct ice_sw_fv_section *fv_section =
-		(struct ice_sw_fv_section *)section;
-
-	if (!section || sect_type != ICE_SID_FLD_VEC_SW)
-		return NULL;
-	if (index >= le16_to_cpu(fv_section->count))
-		return NULL;
-	if (offset)
-		/* "index" passed in to this function is relative to a given
-		 * 4k block. To get to the true index into the field vector
-		 * table need to add the relative index to the base_offset
-		 * field of this section
-		 */
-		*offset = le16_to_cpu(fv_section->base_offset) + index;
-	return fv_section->fv + index;
-}
-
-/**
  * ice_get_sw_prof_type - determine switch profile type
  * @hw: pointer to the HW structure
  * @fv: pointer to the switch field vector
@@ -1617,26 +1658,20 @@ ice_get_sw_fv_bitmap(struct ice_hw *hw, enum ice_prof_type req_profs,
 	struct ice_seg *ice_seg;
 	struct ice_fv *fv;
 
-	memset(&state, 0, sizeof(state));
-
 	if (req_profs == ICE_PROF_ALL) {
-		u16 i;
-
-		for (i = 0; i < ICE_MAX_NUM_PROFILES; i++)
-			set_bit(i, bm);
+		bitmap_set(bm, 0, ICE_MAX_NUM_PROFILES);
 		return;
 	}
 
+	memset(&state, 0, sizeof(state));
 	bitmap_zero(bm, ICE_MAX_NUM_PROFILES);
-
 	ice_seg = hw->seg;
 	do {
 		enum ice_prof_type prof_type;
 		u32 offset;
 
-		fv = (struct ice_fv *)
-			ice_pkg_enum_entry(ice_seg, &state, ICE_SID_FLD_VEC_SW,
-					   &offset, ice_sw_fv_handler);
+		fv = ice_pkg_enum_entry(ice_seg, &state, ICE_SID_FLD_VEC_SW,
+					&offset, ice_sw_fv_handler);
 		ice_seg = NULL;
 
 		if (fv) {
@@ -1684,9 +1719,8 @@ ice_get_sw_fv_list(struct ice_hw *hw, u8 *prot_ids, u16 ids_cnt,
 	do {
 		u16 i;
 
-		fv = (struct ice_fv *)
-			ice_pkg_enum_entry(ice_seg, &state, ICE_SID_FLD_VEC_SW,
-					   &offset, ice_sw_fv_handler);
+		fv = ice_pkg_enum_entry(ice_seg, &state, ICE_SID_FLD_VEC_SW,
+					&offset, ice_sw_fv_handler);
 		if (!fv)
 			break;
 		ice_seg = NULL;
@@ -1755,9 +1789,8 @@ void ice_init_prof_result_bm(struct ice_hw *hw)
 		u32 off;
 		u16 i;
 
-		fv = (struct ice_fv *)
-			ice_pkg_enum_entry(ice_seg, &state, ICE_SID_FLD_VEC_SW,
-					   &off, ice_sw_fv_handler);
+		fv = ice_pkg_enum_entry(ice_seg, &state, ICE_SID_FLD_VEC_SW,
+					&off, ice_sw_fv_handler);
 		ice_seg = NULL;
 		if (!fv)
 			break;
@@ -2205,16 +2238,14 @@ ice_create_tunnel(struct ice_hw *hw, enum ice_tunnel_type type, u16 port)
 	if (ice_pkg_buf_reserve_section(bld, 2))
 		goto ice_create_tunnel_err;
 
-	sect_rx = (struct ice_boost_tcam_section *)
-		ice_pkg_buf_alloc_section(bld, ICE_SID_RXPARSER_BOOST_TCAM,
-					  sizeof(*sect_rx));
+	sect_rx = ice_pkg_buf_alloc_section(bld, ICE_SID_RXPARSER_BOOST_TCAM,
+					    struct_size(sect_rx, tcam, 1));
 	if (!sect_rx)
 		goto ice_create_tunnel_err;
 	sect_rx->count = cpu_to_le16(1);
 
-	sect_tx = (struct ice_boost_tcam_section *)
-		ice_pkg_buf_alloc_section(bld, ICE_SID_TXPARSER_BOOST_TCAM,
-					  sizeof(*sect_tx));
+	sect_tx = ice_pkg_buf_alloc_section(bld, ICE_SID_TXPARSER_BOOST_TCAM,
+					    struct_size(sect_tx, tcam, 1));
 	if (!sect_tx)
 		goto ice_create_tunnel_err;
 	sect_tx->count = cpu_to_le16(1);
@@ -2291,7 +2322,7 @@ enum ice_status ice_destroy_tunnel(struct ice_hw *hw, u16 port, bool all)
 	}
 
 	/* size of section - there is at least one entry */
-	size = struct_size(sect_rx, tcam, count - 1);
+	size = struct_size(sect_rx, tcam, count);
 
 	bld = ice_pkg_buf_alloc(hw);
 	if (!bld) {
@@ -2303,16 +2334,14 @@ enum ice_status ice_destroy_tunnel(struct ice_hw *hw, u16 port, bool all)
 	if (ice_pkg_buf_reserve_section(bld, 2))
 		goto ice_destroy_tunnel_err;
 
-	sect_rx = (struct ice_boost_tcam_section *)
-		ice_pkg_buf_alloc_section(bld, ICE_SID_RXPARSER_BOOST_TCAM,
-					  size);
+	sect_rx = ice_pkg_buf_alloc_section(bld, ICE_SID_RXPARSER_BOOST_TCAM,
+					    size);
 	if (!sect_rx)
 		goto ice_destroy_tunnel_err;
 	sect_rx->count = cpu_to_le16(1);
 
-	sect_tx = (struct ice_boost_tcam_section *)
-		ice_pkg_buf_alloc_section(bld, ICE_SID_TXPARSER_BOOST_TCAM,
-					  size);
+	sect_tx = ice_pkg_buf_alloc_section(bld, ICE_SID_TXPARSER_BOOST_TCAM,
+					    size);
 	if (!sect_tx)
 		goto ice_destroy_tunnel_err;
 	sect_tx->count = cpu_to_le16(1);
@@ -2375,16 +2404,14 @@ enum ice_status ice_replay_tunnels(struct ice_hw *hw)
 		hw->tnl.tbl[i].ref = 1; /* make sure to destroy in one call */
 		status = ice_destroy_tunnel(hw, port, false);
 		if (status) {
-			ice_debug(hw, ICE_DBG_PKG,
-				  "ERR: 0x%x - destroy tunnel port 0x%x\n",
+			ice_debug(hw, ICE_DBG_PKG, "ERR: 0x%x - destroy tunnel port 0x%x\n",
 				  status, port);
 			break;
 		}
 
 		status = ice_create_tunnel(hw, type, port);
 		if (status) {
-			ice_debug(hw, ICE_DBG_PKG,
-				  "ERR: 0x%x - create tunnel port 0x%x\n",
+			ice_debug(hw, ICE_DBG_PKG, "ERR: 0x%x - create tunnel port 0x%x\n",
 				  status, port);
 			break;
 		}
@@ -2443,7 +2470,7 @@ enum ice_status ice_ptg_update_xlt1(struct ice_hw *hw, enum ice_block blk)
 	u16 index;
 
 	bld = ice_pkg_buf_alloc_single_section(hw, ice_sect_id(blk, ICE_XLT1),
-					       ICE_XLT1_SIZE(ICE_XLT1_CNT),
+					       struct_size(sect, value, ICE_XLT1_CNT),
 					       (void **)&sect);
 	if (!bld)
 		return ICE_ERR_NO_MEMORY;
@@ -2730,7 +2757,7 @@ ice_vsig_update_xlt2_sect(struct ice_hw *hw, enum ice_block blk, u16 vsi,
 	enum ice_status status;
 
 	bld = ice_pkg_buf_alloc_single_section(hw, ice_sect_id(blk, ICE_XLT2),
-					       sizeof(struct ice_xlt2_section),
+					       struct_size(sect, value, 1),
 					       (void **)&sect);
 	if (!bld)
 		return ICE_ERR_NO_MEMORY;
@@ -3130,10 +3157,10 @@ ice_find_prof_id_with_mask(struct ice_hw *hw, enum ice_block blk,
 	struct ice_es *es = &hw->blk[blk].es;
 	u8 i;
 
-	/* For FD, we don't want to re-use a existed profile with the same
-	 * field vector and mask. This will cause rule interference.
+	/* For FD and RSS we don't want to re-use a existed profile with the
+	 * same field vector and mask. This will cause rule interference.
 	 */
-	if (blk == ICE_BLK_FD)
+	if (blk == ICE_BLK_FD || blk == ICE_BLK_RSS)
 		return ICE_ERR_DOES_NOT_EXIST;
 
 	for (i = 0; i < (u8)es->count; i++) {
@@ -3834,7 +3861,7 @@ static void ice_fill_tbl(struct ice_hw *hw, enum ice_block block_id, u32 sid)
 		case ICE_SID_XLT1_RSS:
 		case ICE_SID_XLT1_ACL:
 		case ICE_SID_XLT1_PE:
-			xlt1 = (struct ice_xlt1_section *)sect;
+			xlt1 = sect;
 			src = xlt1->value;
 			sect_len = le16_to_cpu(xlt1->count) *
 				sizeof(*hw->blk[block_id].xlt1.t);
@@ -3847,7 +3874,7 @@ static void ice_fill_tbl(struct ice_hw *hw, enum ice_block block_id, u32 sid)
 		case ICE_SID_XLT2_RSS:
 		case ICE_SID_XLT2_ACL:
 		case ICE_SID_XLT2_PE:
-			xlt2 = (struct ice_xlt2_section *)sect;
+			xlt2 = sect;
 			src = (__force u8 *)xlt2->value;
 			sect_len = le16_to_cpu(xlt2->count) *
 				sizeof(*hw->blk[block_id].xlt2.t);
@@ -3860,7 +3887,7 @@ static void ice_fill_tbl(struct ice_hw *hw, enum ice_block block_id, u32 sid)
 		case ICE_SID_PROFID_TCAM_RSS:
 		case ICE_SID_PROFID_TCAM_ACL:
 		case ICE_SID_PROFID_TCAM_PE:
-			pid = (struct ice_prof_id_section *)sect;
+			pid = sect;
 			src = (u8 *)pid->entry;
 			sect_len = le16_to_cpu(pid->count) *
 				sizeof(*hw->blk[block_id].prof.t);
@@ -3873,7 +3900,7 @@ static void ice_fill_tbl(struct ice_hw *hw, enum ice_block block_id, u32 sid)
 		case ICE_SID_PROFID_REDIR_RSS:
 		case ICE_SID_PROFID_REDIR_ACL:
 		case ICE_SID_PROFID_REDIR_PE:
-			pr = (struct ice_prof_redir_section *)sect;
+			pr = sect;
 			src = pr->redir_value;
 			sect_len = le16_to_cpu(pr->count) *
 				sizeof(*hw->blk[block_id].prof_redir.t);
@@ -3886,7 +3913,7 @@ static void ice_fill_tbl(struct ice_hw *hw, enum ice_block block_id, u32 sid)
 		case ICE_SID_FLD_VEC_RSS:
 		case ICE_SID_FLD_VEC_ACL:
 		case ICE_SID_FLD_VEC_PE:
-			es = (struct ice_sw_fv_section *)sect;
+			es = sect;
 			src = (u8 *)es->fv;
 			sect_len = (u32)(le16_to_cpu(es->count) *
 					 hw->blk[block_id].es.fvw) *
@@ -4375,8 +4402,7 @@ ice_has_prof_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl)
 		if (ent->profile_cookie == hdl)
 			return true;
 
-	ice_debug(hw, ICE_DBG_INIT,
-		  "Characteristic list for VSI group %d not found.\n",
+	ice_debug(hw, ICE_DBG_INIT, "Characteristic list for VSI group %d not found.\n",
 		  vsig);
 	return false;
 }
@@ -4402,10 +4428,8 @@ ice_prof_bld_es(struct ice_hw *hw, enum ice_block blk,
 			u32 id;
 
 			id = ice_sect_id(blk, ICE_VEC_TBL);
-			p = (struct ice_pkg_es *)
-				ice_pkg_buf_alloc_section(bld, id, sizeof(*p) +
-							  vec_size -
-							  sizeof(p->es[0]));
+			p = ice_pkg_buf_alloc_section(bld, id,
+						      struct_size(p, es, 1) + vec_size - sizeof(p->es[0]));
 
 			if (!p)
 				return ICE_ERR_MAX_LIMIT;
@@ -4438,8 +4462,8 @@ ice_prof_bld_tcam(struct ice_hw *hw, enum ice_block blk,
 			u32 id;
 
 			id = ice_sect_id(blk, ICE_PROF_TCAM);
-			p = (struct ice_prof_id_section *)
-				ice_pkg_buf_alloc_section(bld, id, sizeof(*p));
+			p = ice_pkg_buf_alloc_section(bld, id,
+						      struct_size(p, entry, 1));
 
 			if (!p)
 				return ICE_ERR_MAX_LIMIT;
@@ -4474,8 +4498,8 @@ ice_prof_bld_xlt1(enum ice_block blk, struct ice_buf_build *bld,
 			u32 id;
 
 			id = ice_sect_id(blk, ICE_XLT1);
-			p = (struct ice_xlt1_section *)
-				ice_pkg_buf_alloc_section(bld, id, sizeof(*p));
+			p = ice_pkg_buf_alloc_section(bld, id,
+						      struct_size(p, value, 1));
 
 			if (!p)
 				return ICE_ERR_MAX_LIMIT;
@@ -4509,8 +4533,8 @@ ice_prof_bld_xlt2(enum ice_block blk, struct ice_buf_build *bld,
 		case ICE_VSI_MOVE:
 		case ICE_VSIG_REM:
 			id = ice_sect_id(blk, ICE_XLT2);
-			p = (struct ice_xlt2_section *)
-				ice_pkg_buf_alloc_section(bld, id, sizeof(*p));
+			p = ice_pkg_buf_alloc_section(bld, id,
+						      struct_size(p, value, 1));
 
 			if (!p)
 				return ICE_ERR_MAX_LIMIT;
@@ -4968,50 +4992,42 @@ ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id, u8 ptypes[],
 			byte++;
 			continue;
 		}
+
 		/* Examine 8 bits per byte */
-		for (bit = 0; bit < 8; bit++) {
-			if (ptypes[byte] & BIT(bit)) {
-				u16 ptype;
-				u8 ptg;
-				u8 m;
+		for_each_set_bit(bit, (unsigned long *)&ptypes[byte],
+				 BITS_PER_BYTE) {
+			u16 ptype;
+			u8 ptg;
 
-				ptype = byte * BITS_PER_BYTE + bit;
+			ptype = byte * BITS_PER_BYTE + bit;
 
-				/* The package should place all ptypes in a
-				 * non-zero PTG, so the following call should
-				 * never fail.
+			/* The package should place all ptypes in a non-zero
+			 * PTG, so the following call should never fail.
+			 */
+			if (ice_ptg_find_ptype(hw, blk, ptype, &ptg))
+				continue;
+
+			/* If PTG is already added, skip and continue */
+			if (test_bit(ptg, ptgs_used))
+				continue;
+
+			set_bit(ptg, ptgs_used);
+			/* Check to see there are any attributes for this
+			 * ptype, and add them if found.
+			 */
+			status = ice_add_prof_attrib(prof, ptg, ptype, attr,
+						     attr_cnt);
+			if (status == ICE_ERR_MAX_LIMIT)
+				break;
+			if (status) {
+				/* This is simple a ptype/PTG with no
+				 * attribute
 				 */
-				if (ice_ptg_find_ptype(hw, blk, ptype, &ptg))
-					continue;
+				prof->ptg[prof->ptg_cnt] = ptg;
+				prof->attr[prof->ptg_cnt].flags = 0;
+				prof->attr[prof->ptg_cnt].mask = 0;
 
-				/* If PTG is already added, skip and continue */
-				if (test_bit(ptg, ptgs_used))
-					continue;
-
-				set_bit(ptg, ptgs_used);
-				/* Check to see there are any attributes for
-				 * this ptype, and add them if found.
-				 */
-				status = ice_add_prof_attrib(prof, ptg, ptype,
-							     attr, attr_cnt);
-				if (status == ICE_ERR_MAX_LIMIT)
-					break;
-				if (status) {
-					/* This is simple a ptype/PTG with no
-					 * attribute
-					 */
-					prof->ptg[prof->ptg_cnt] = ptg;
-					prof->attr[prof->ptg_cnt].flags = 0;
-					prof->attr[prof->ptg_cnt].mask = 0;
-
-					if (++prof->ptg_cnt >=
-					    ICE_MAX_PTG_PER_PROFILE)
-						break;
-				}
-
-				/* nothing left in byte, then exit */
-				m = ~(u8)((1 << (bit + 1)) - 1);
-				if (!(ptypes[byte] & m))
+				if (++prof->ptg_cnt >= ICE_MAX_PTG_PER_PROFILE)
 					break;
 			}
 		}
@@ -5587,7 +5603,7 @@ ice_prof_tcam_ena_dis(struct ice_hw *hw, enum ice_block blk, bool enable,
 
 	/* for re-enabling, reallocate a TCAM */
 	/* for entries with empty attribute masks, allocate entry from
-	 * the bottom of the tcam table; otherwise, allocate from the
+	 * the bottom of the TCAM table; otherwise, allocate from the
 	 * top of the table in order to give it higher priority
 	 */
 	status = ice_alloc_tcam_ent(hw, blk, tcam->attr.mask == 0,
@@ -5731,8 +5747,7 @@ ice_adj_prof_priorities(struct ice_hw *hw, enum ice_block blk, u16 vsig,
 			if (attr_used_cnt < ICE_MAX_PTG_ATTRS)
 				attr_used[attr_used_cnt++] = &t->tcam[i];
 			else
-				ice_debug(hw, ICE_DBG_INIT,
-					  "Warn: ICE_MAX_PTG_ATTRS exceeded\n");
+				ice_debug(hw, ICE_DBG_INIT, "Warn: ICE_MAX_PTG_ATTRS exceeded\n");
 		}
 	}
 
@@ -5798,7 +5813,7 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 
 		/* allocate the TCAM entry index */
 		/* for entries with empty attribute masks, allocate entry from
-		 * the bottom of the tcam table; otherwise, allocate from the
+		 * the bottom of the TCAM table; otherwise, allocate from the
 		 * top of the table in order to give it higher priority
 		 */
 		status = ice_alloc_tcam_ent(hw, blk, map->attr[i].mask == 0,
@@ -6259,7 +6274,7 @@ ice_rem_prof_id_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl)
 
 			if (last_profile) {
 				/* If there are no profiles left for this VSIG,
-				 * then simply remove the the VSIG.
+				 * then simply remove the VSIG.
 				 */
 				status = ice_rem_vsig(hw, blk, vsig, &chg);
 				if (status)
