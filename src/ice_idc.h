@@ -50,6 +50,7 @@ enum ice_event_type {
 	ICE_EVENT_TC_CHANGE,
 	ICE_EVENT_API_CHANGE,
 	ICE_EVENT_MBX_CHANGE,
+	ICE_EVENT_CRIT_ERR,
 	ICE_EVENT_NBITS		/* must be last */
 };
 
@@ -218,6 +219,8 @@ union ice_event_info {
 	u8 api_rdy;
 	/* ICE_EVENT_MBX_CHANGE */
 	u8 mbx_rdy;
+	/* ICE_EVENT_CRIT_ERR */
+	u32 reg;
 };
 
 /* ice_event elements are to be passed back and forth between the ice driver

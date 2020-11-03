@@ -925,6 +925,12 @@ void ice_free_vfs(struct ice_pf *pf)
 			wr32(hw, GLGEN_VFLRSTAT(reg_idx), BIT(bit_idx));
 		}
 	}
+
+	/* clear malicious info if the VFs are getting released */
+	for (i = 0; i < tmp; i++)
+		if (ice_mbx_clear_malvf(&hw->mbx_snapshot, pf->malvfs, ICE_MAX_VF_COUNT, i))
+			dev_dbg(dev, "failed to clear malicious VF state for VF %u\n", i);
+
 	clear_bit(__ICE_VF_DIS, pf->state);
 	clear_bit(ICE_FLAG_SRIOV_ENA, pf->flags);
 }
@@ -1520,7 +1526,7 @@ static int ice_get_max_valid_res_idx(struct ice_res_tracker *res)
  * If there are not enough resources available, return an error. This should
  * always be caught by ice_set_per_vf_res().
  *
- * Return 0 on success, and -EINVAL when there are not enough MSIX vectors in
+ * Return 0 on success, and -EINVAL when there are not enough MSIX vectors
  * in the PF's space available for SR-IOV.
  */
 static int ice_sriov_set_msix_res(struct ice_pf *pf, u16 num_msix_needed)
@@ -1718,7 +1724,6 @@ static void ice_vf_pre_vsi_rebuild(struct ice_vf *vf)
 {
 	/* Remove switch rules associated with the reset VF */
 	ice_rm_dcf_sw_vsi_rule(vf->pf, vf->lan_vsi_num);
-
 	ice_vf_clear_counters(vf);
 	ice_clear_vf_reset_trigger(vf);
 }
@@ -2063,9 +2068,16 @@ bool ice_reset_all_vfs(struct ice_pf *pf, bool is_vflr)
 	if (!pf->num_alloc_vfs)
 		return false;
 
+	/* clear all malicious info if the VFs are getting reset */
+	ice_for_each_vf(pf, i)
+		if (ice_mbx_clear_malvf(&hw->mbx_snapshot, pf->malvfs, ICE_MAX_VF_COUNT, i))
+			dev_dbg(dev, "failed to clear malicious VF state for VF %u\n", i);
+
 	/* If VFs have been disabled, there is no need to reset */
 	if (test_and_set_bit(__ICE_VF_DIS, pf->state))
 		return false;
+
+	ice_dis_dcf_acl_cap(pf);
 
 	/* Begin reset on all VFs at once */
 	ice_for_each_vf(pf, v)
@@ -2297,6 +2309,10 @@ bool ice_reset_vf(struct ice_vf *vf, bool is_vflr)
 				      VIRTCHNL_STATUS_SUCCESS,
 				      (u8 *)&pfe, sizeof(pfe), NULL);
 	}
+
+	/* if the VF has been reset allow it to come up again */
+	if (ice_mbx_clear_malvf(&hw->mbx_snapshot, pf->malvfs, ICE_MAX_VF_COUNT, vf->vf_id))
+		dev_dbg(dev, "failed to clear malicious VF state for VF %u\n", i);
 
 	return true;
 }
@@ -2648,6 +2664,7 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 {
 	struct ice_pf *pf = pci_get_drvdata(pdev);
 	struct device *dev = ice_pf_to_dev(pf);
+	enum ice_status status;
 	int err;
 
 	err = ice_check_sriov_allowed(pf);
@@ -2656,6 +2673,7 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 
 	if (!num_vfs) {
 		if (!pci_vfs_assigned(pdev)) {
+			ice_mbx_deinit_snapshot(&pf->hw);
 			ice_free_vfs(pf);
 #ifdef HAVE_NETDEV_UPPER_INFO
 			if (pf->lag)
@@ -2668,9 +2686,15 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 		return -EBUSY;
 	}
 
+	status = ice_mbx_init_snapshot(&pf->hw, num_vfs);
+	if (status)
+		return ice_status_to_errno(status);
+
 	err = ice_pci_sriov_ena(pf, num_vfs);
-	if (err)
+	if (err) {
+		ice_mbx_deinit_snapshot(&pf->hw);
 		return err;
+	}
 
 #ifdef HAVE_NETDEV_UPPER_INFO
 	if (pf->lag)
@@ -2994,6 +3018,14 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 		ice_dcf_set_state(pf, ICE_DCF_STATE_ON);
 		dev_info(ice_pf_to_dev(pf), "Grant request for DCF functionality to VF%d\n",
 			 ICE_DCF_VFID);
+		if (ice_is_acl_empty(&pf->hw)) {
+			ice_acl_destroy_tbl(&pf->hw);
+			pf->hw.dcf_acl_enabled = true;
+		} else {
+			dev_info(ice_pf_to_dev(pf), "Failed to grant ACL capability to VF%d as ACL rules already exist\n",
+				 ICE_DCF_VFID);
+			pf->hw.dcf_acl_enabled = false;
+		}
 	} else if (ice_is_vf_dcf(vf) &&
 		   ice_dcf_get_state(pf) != ICE_DCF_STATE_OFF) {
 		/* If a designated DCF requests AVF functionality from the
@@ -3001,8 +3033,9 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 		 * functionality first, remove ALL switch filters that were
 		 * added by the DCF.
 		 */
-		dev_info(ice_pf_to_dev(pf), "DCF is not in the OFF state, removing all switch filters that were added by the DCF\n");
+		dev_info(ice_pf_to_dev(pf), "DCF is not in the OFF state, removing all filters that were added by the DCF\n");
 		ice_rm_all_dcf_sw_rules(pf);
+		ice_dis_dcf_acl_cap(pf);
 		ice_dcf_set_state(pf, ICE_DCF_STATE_OFF);
 		pf->dcf.vf = NULL;
 		ice_reset_vf(vf, false);
@@ -3013,7 +3046,7 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	vfres->num_queue_pairs = vsi->num_txq;
 	vfres->max_vectors = pf->num_msix_per_vf;
 	vfres->rss_key_size = ICE_VSIQF_HKEY_ARRAY_SIZE;
-	vfres->rss_lut_size = ICE_VSIQF_HLUT_ARRAY_SIZE;
+	vfres->rss_lut_size = vsi->rss_table_size;
 	vfres->max_mtu = ice_vc_get_max_frame_size(vf);
 
 	vfres->vsi_res[0].vsi_id = vf->lan_vsi_num;
@@ -4032,7 +4065,13 @@ static int ice_vc_config_rss_lut(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	if (vrl->lut_entries != ICE_VSIQF_HLUT_ARRAY_SIZE) {
+	vsi = pf->vsi[vf->lan_vsi_idx];
+	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto error_param;
+	}
+
+	if (vrl->lut_entries != vsi->rss_table_size) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto error_param;
 	}
@@ -4042,13 +4081,7 @@ static int ice_vc_config_rss_lut(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	vsi = pf->vsi[vf->lan_vsi_idx];
-	if (!vsi) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		goto error_param;
-	}
-
-	if (ice_set_rss(vsi, NULL, vrl->lut, ICE_VSIQF_HLUT_ARRAY_SIZE))
+	if (ice_set_rss(vsi, NULL, vrl->lut, vrl->lut_entries))
 		v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
 error_param:
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_RSS_LUT, v_ret,
@@ -4755,6 +4788,7 @@ static int ice_vc_dis_qs_msg(struct ice_vf *vf, u8 *msg)
 	} else if (q_map) {
 		for_each_set_bit(vf_q_id, &q_map, ICE_MAX_RSS_QS_PER_VF) {
 			u16 vsi_id, q_id;
+
 			ice_vf_q_id_get_vsi_q_id(vf, vf_q_id, &tc, vqs, &vsi,
 						 &vsi_id, &q_id);
 			if (ice_is_vf_adq_ena(vf) &&
@@ -4764,7 +4798,6 @@ static int ice_vc_dis_qs_msg(struct ice_vf *vf, u8 *msg)
 					goto error_param;
 				}
 			}
-
 			if (!ice_vc_isvalid_q_id(vf, vsi_id, q_id)) {
 				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 				goto error_param;
@@ -4823,6 +4856,7 @@ ice_cfg_interrupt(struct ice_vf *vf, struct ice_vsi *vsi, u16 vector_id,
 	qmap = map->rxq_map;
 	for_each_set_bit(vsi_q_id_idx, &qmap, ICE_MAX_RSS_QS_PER_VF) {
 		u16 vsi_q_id;
+
 		if (tc && ice_is_vf_adq_ena(vf))
 			vsi_q_id = ice_vf_get_tc_based_qid(vsi_q_id_idx,
 							   vf->ch[tc].offset);
@@ -5355,12 +5389,11 @@ ice_vc_add_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 
 		status = ice_fltr_add_mac(vsi, mac_addr, ICE_FWD_TO_VSI);
 		if (status == ICE_ERR_ALREADY_EXISTS) {
-			dev_err(dev, "MAC %pM already exists for VF %d\n",
-			mac_addr, vf->vf_id);
+			dev_err(dev, "MAC %pM already exists for VF %d\n", mac_addr, vf->vf_id);
 			return -EEXIST;
 		} else if (status) {
-			dev_err(dev, "Failed to add MAC %pM for VF %d\n, error %s\n",
-			mac_addr, vf->vf_id, ice_stat_str(status));
+			dev_err(dev, "Failed to add MAC %pM for VF %d\n, error %s\n", mac_addr,
+				vf->vf_id, ice_stat_str(status));
 			return -EIO;
 		}
 
@@ -7097,6 +7130,9 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 	if ((aq_buf && !aq_buf_size) || (!aq_buf && aq_buf_size))
 		return -EINVAL;
 
+	if (ice_dcf_is_acl_aq_cmd(aq_desc) && !pf->hw.dcf_acl_enabled)
+		return 0;
+
 	if (ice_dcf_pre_aq_send_cmd(vf, aq_desc, aq_buf, aq_buf_size)) {
 		ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_CMD_DESC,
 					    VIRTCHNL_STATUS_SUCCESS,
@@ -7122,6 +7158,12 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 
 	if (aq_ret != ICE_ERR_AQ_ERROR) {
 		v_ret = ice_dcf_post_aq_send_cmd(pf, aq_desc, aq_buf);
+		if (v_ret != VIRTCHNL_STATUS_SUCCESS) {
+			v_op = VIRTCHNL_OP_DCF_CMD_DESC;
+			goto err;
+		}
+
+		v_ret = ice_dcf_update_acl_rule_info(pf, aq_desc, aq_buf);
 		if (v_ret != VIRTCHNL_STATUS_SUCCESS) {
 			v_op = VIRTCHNL_OP_DCF_CMD_DESC;
 			goto err;
@@ -7235,6 +7277,7 @@ static int ice_vc_dis_dcf_cap(struct ice_vf *vf)
 	if (vf->driver_caps & VIRTCHNL_VF_CAP_DCF) {
 		vf->driver_caps &= ~VIRTCHNL_VF_CAP_DCF;
 		ice_rm_all_dcf_sw_rules(vf->pf);
+		ice_dis_dcf_acl_cap(vf->pf);
 		ice_dcf_set_state(vf->pf, ICE_DCF_STATE_OFF);
 		vf->pf->dcf.vf = NULL;
 	}
@@ -7811,6 +7854,12 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted)
 	struct ice_vf *vf;
 	int ret;
 
+	if (ice_is_eswitch_mode_switchdev(pf)) {
+		dev_info(ice_pf_to_dev(pf),
+			 "Trusted VF is forbidden in switchdev mode\n");
+		return -EOPNOTSUPP;
+	}
+
 	if (ice_validate_vf_id(pf, vf_id))
 		return -EINVAL;
 
@@ -7831,6 +7880,7 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted)
 	if (ice_is_vf_dcf(vf) && !trusted &&
 	    ice_dcf_get_state(pf) != ICE_DCF_STATE_OFF) {
 		ice_rm_all_dcf_sw_rules(pf);
+		ice_dis_dcf_acl_cap(pf);
 		ice_dcf_set_state(pf, ICE_DCF_STATE_OFF);
 		pf->dcf.vf = NULL;
 		vf->driver_caps &= ~VIRTCHNL_VF_CAP_DCF;
@@ -8203,4 +8253,71 @@ void ice_restore_all_vfs_msi_state(struct pci_dev *pdev)
 					       vfdev);
 		}
 	}
+}
+
+/**
+ * ice_is_malicious_vf - helper function to detect a malicious VF
+ * @pf: ptr to struct ice_pf
+ * @event: pointer to the AQ event
+ * @num_msg_proc: the number of messages processed so far
+ * @num_msg_pending: the number of messages peinding in admin queue
+ */
+bool
+ice_is_malicious_vf(struct ice_pf *pf, struct ice_rq_event_info *event,
+		    u16 num_msg_proc, u16 num_msg_pending)
+{
+	s16 vf_id = le16_to_cpu(event->desc.retval);
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_mbx_data mbxdata;
+	enum ice_status status;
+	bool malvf = false;
+	struct ice_vf *vf;
+
+	if (ice_validate_vf_id(pf, vf_id))
+		return false;
+
+	vf = &pf->vf[vf_id];
+	/* Check if VF is disabled. */
+	if (test_bit(ICE_VF_STATE_DIS, vf->vf_states))
+		return false;
+
+	mbxdata.num_msg_proc = num_msg_proc;
+	mbxdata.num_pending_arq = num_msg_pending;
+	mbxdata.max_num_msgs_mbx = pf->hw.mailboxq.num_rq_entries;
+#define ICE_MBX_OVERFLOW_WATERMARK 64
+	mbxdata.async_watermark_val = ICE_MBX_OVERFLOW_WATERMARK;
+
+	/* check to see if we have a malicious VF */
+	status = ice_mbx_vf_state_handler(&pf->hw, &mbxdata, vf_id, &malvf);
+	if (status)
+		return false;
+
+	if (malvf) {
+		bool report_vf = false;
+
+		/* if the VF is malicious and we haven't let the user
+		 * know about it, then let them know now
+		 */
+		status = ice_mbx_report_malvf(&pf->hw, pf->malvfs,
+					      ICE_MAX_VF_COUNT, vf_id,
+					      &report_vf);
+		if (status)
+			dev_dbg(dev, "Error reporting malicious VF\n");
+
+		if (report_vf) {
+			struct ice_vsi *pf_vsi = ice_get_main_vsi(pf);
+
+			if (pf_vsi)
+				dev_warn(dev, "VF MAC %pM on PF MAC %pM is generating asynchronous messages and may be overflowing the PF message queue. Please see the Adapter User Guide for more information\n",
+					 &vf->dev_lan_addr.addr[0],
+					 pf_vsi->netdev->dev_addr);
+		}
+
+		return true;
+	}
+
+	/* if there was an error in detection or the VF is not malicious then
+	 * return false
+	 */
+	return false;
 }

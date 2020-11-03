@@ -2077,6 +2077,13 @@ _kc_skb_flow_dissect_flow_keys(const struct sk_buff *skb,
 			       unsigned int __always_unused flags);
 #define skb_flow_dissect_flow_keys	_kc_skb_flow_dissect_flow_keys
 #endif /* ! >= RHEL 7.4 && ! >= SLES 12.2 */
+
+#if ((RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3)) || \
+     (SLE_VERSION_CODE >= SLE_VERSION(12,2,0)))
+#include <net/dst_metadata.h>
+#endif /* >= RHEL7.3 || >= SLE12sp2 */
+#else /* >= 4.3.0 */
+#include <net/dst_metadata.h>
 #endif /* 4.3.0 */
 
 /*****************************************************************************/
@@ -2826,6 +2833,33 @@ tc_cls_can_offload_and_chain0(const struct net_device *dev,
 #ifndef sizeof_field
 #define sizeof_field(TYPE, MEMBER) (sizeof((((TYPE *)0)->MEMBER)))
 #endif /* sizeof_field */
+#if !(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)) && \
+     !(SLE_VERSION_CODE >= SLE_VERSION(12,5,0) && \
+       SLE_VERSION_CODE < SLE_VERSION(15,0,0) || \
+       SLE_VERSION_CODE >= SLE_VERSION(15,1,0))
+/*
+ * Copy bitmap and clear tail bits in last word.
+ */
+static inline void
+bitmap_copy_clear_tail(unsigned long *dst, const unsigned long *src, unsigned int nbits)
+{
+	bitmap_copy(dst, src, nbits);
+	if (nbits % BITS_PER_LONG)
+		dst[nbits / BITS_PER_LONG] &= BITMAP_LAST_WORD_MASK(nbits);
+}
+
+/*
+ * On 32-bit systems bitmaps are represented as u32 arrays internally, and
+ * therefore conversion is not needed when copying data from/to arrays of u32.
+ */
+#if BITS_PER_LONG == 64
+void bitmap_from_arr32(unsigned long *bitmap, const u32 *buf, unsigned int nbits);
+#else
+#define bitmap_from_arr32(bitmap, buf, nbits)			\
+	bitmap_copy_clear_tail((unsigned long *) (bitmap),	\
+			       (const unsigned long *) (buf), (nbits))
+#endif /* BITS_PER_LONG == 64 */
+#endif /* !(RHEL >= 8.0) && !(SLES >= 12.5 && SLES < 15.0 || SLES >= 15.1) */
 #else /* >= 4.16 */
 #include <linux/nospec.h>
 #define HAVE_XDP_BUFF_RXQ
@@ -2973,7 +3007,7 @@ _kc_devlink_port_attrs_set(struct devlink_port *devlink_port,
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)) && \
     (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(8,2)))
 #define HAVE_DEVLINK_REGIONS
-#endif
+#endif /* RHEL >= 8.0 && RHEL <= 8.2 */
 #define bitmap_alloc(nbits, flags) \
 	kmalloc_array(BITS_TO_LONGS(nbits), sizeof(unsigned long), flags)
 #define bitmap_zalloc(nbits, flags) bitmap_alloc(nbits, ((flags) | __GFP_ZERO))
@@ -3000,19 +3034,13 @@ _kc_devlink_port_attrs_set(struct devlink_port *devlink_port,
 #define HAVE_TCF_EXTS_FOR_EACH_ACTION
 #undef HAVE_TCF_EXTS_TO_LIST
 #endif /* RHEL8.0+ */
-#if ((RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3))) || \
-     (SLE_VERSION_CODE && (SLE_VERSION_CODE >= SLE_VERSION(12,2,0))))
-#ifndef metadata_dst_free
-#include <net/dst_metadata.h>
 
-static inline void __kc_metadata_dst_free(struct metadata_dst *md_dst)
+static inline void __kc_metadata_dst_free(void *md_dst)
 {
 	kfree(md_dst);
 }
 
 #define metadata_dst_free(md_dst) __kc_metadata_dst_free(md_dst)
-#endif /* !metadata_dst_free */
-#endif /* RHEL >= 7.3 || SLES >= 12.2 */
 #else /* >= 4.19.0 */
 #define HAVE_TCF_BLOCK_CB_REGISTER_EXTACK
 #define NO_NETDEV_BPF_PROG_ATTACHED
@@ -3296,9 +3324,14 @@ _kc_devlink_port_attrs_set(struct devlink_port *devlink_port,
 #endif /* CONFIG_NET_DEVLINK && !devlink_port_attrs_set */
 #endif /* <RHEL8.2 */
 
+#if (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(8,1))
+#define HAVE_NDO_GET_DEVLINK_PORT
+#endif /* RHEL > 8.1 */
+
 #else /* >= 5.2.0 */
 #define HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
 #define SPIN_UNLOCK_IMPLIES_MMIOWB
+#define HAVE_NDO_GET_DEVLINK_PORT
 #endif /* 5.2.0 */
 
 /*****************************************************************************/
@@ -3485,6 +3518,7 @@ _kc_devlink_region_create(struct devlink *devlink,
 #undef HAVE_AF_XDP_ZC_SUPPORT
 #define HAVE_TC_FLOW_INDIR_DEV
 #define HAVE_TC_FLOW_INDIR_BLOCK_CLEANUP
+#define HAVE_XDP_BUFF_FRAME_SZ
 #endif /* 5.8.0 */
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,3)))
 #define HAVE_TC_FLOW_INDIR_DEV
@@ -3510,4 +3544,15 @@ _kc_devlink_port_attrs_set(struct devlink_port *devlink_port,
 #define HAVE_FLOW_INDIR_BLOCK_QDISC
 #endif /* 5.9.0 */
 
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0))
+struct devlink_flash_update_params {
+	const char *file_name;
+	const char *component;
+	u32 overwrite_mask;
+};
+#else /* >= 5.10.0 */
+#define HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS
+#define HAVE_DEVLINK_FLASH_UPDATE_PARAMS
+#endif /* 5.10.0 */
 #endif /* _KCOMPAT_H_ */

@@ -25,19 +25,21 @@ static void ice_acl_init_entry(struct ice_acl_scen *scen)
 	 * normal priority: start from the highest index, 50% of total entries
 	 * high priority: start from the lowest index, 25% of total entries
 	 */
-	scen->first_idx[ICE_LOW] = scen->num_entry - 1;
-	scen->first_idx[ICE_NORMAL] = scen->num_entry - scen->num_entry / 4 - 1;
-	scen->first_idx[ICE_HIGH] = 0;
+	scen->first_idx[ICE_ACL_PRIO_LOW] = scen->num_entry - 1;
+	scen->first_idx[ICE_ACL_PRIO_NORMAL] = scen->num_entry -
+		scen->num_entry / 4 - 1;
+	scen->first_idx[ICE_ACL_PRIO_HIGH] = 0;
 
-	scen->last_idx[ICE_LOW] = scen->num_entry - scen->num_entry / 4;
-	scen->last_idx[ICE_NORMAL] = scen->num_entry / 4;
-	scen->last_idx[ICE_HIGH] = scen->num_entry / 4 - 1;
+	scen->last_idx[ICE_ACL_PRIO_LOW] = scen->num_entry -
+		scen->num_entry / 4;
+	scen->last_idx[ICE_ACL_PRIO_NORMAL] = scen->num_entry / 4;
+	scen->last_idx[ICE_ACL_PRIO_HIGH] = scen->num_entry / 4 - 1;
 }
 
 /**
  * ice_acl_scen_assign_entry_idx
  * @scen: pointer to the scenario struct
- * @prior: the priority of the flow entry being allocated
+ * @prio: the priority of the flow entry being allocated
  *
  * To find the index of an available entry in scenario
  *
@@ -46,16 +48,16 @@ static void ice_acl_init_entry(struct ice_acl_scen *scen)
  */
 static u16
 ice_acl_scen_assign_entry_idx(struct ice_acl_scen *scen,
-			      enum ice_acl_entry_prior prior)
+			      enum ice_acl_entry_prio prio)
 {
 	u16 first_idx, last_idx, i;
 	s8 step;
 
-	if (prior >= ICE_MAX_PRIOR)
+	if (prio >= ICE_ACL_MAX_PRIO)
 		return ICE_ACL_SCEN_ENTRY_INVAL;
 
-	first_idx = scen->first_idx[prior];
-	last_idx = scen->last_idx[prior];
+	first_idx = scen->first_idx[prio];
+	last_idx = scen->last_idx[prio];
 	step = first_idx <= last_idx ? 1 : -1;
 
 	for (i = first_idx; i != last_idx + step; i += step)
@@ -149,10 +151,8 @@ static enum ice_status ice_acl_init_tbl(struct ice_hw *hw)
 	u16 idx;
 
 	tbl = hw->acl_tbl;
-	if (!tbl) {
-		status = ICE_ERR_CFG;
-		return status;
-	}
+	if (!tbl)
+		return ICE_ERR_CFG;
 
 	memset(&buf, 0, sizeof(buf));
 	memset(&act_buf, 0, sizeof(act_buf));
@@ -312,6 +312,9 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 	struct ice_acl_tbl *tbl;
 	enum ice_status status;
 
+	if (hw->dcf_acl_enabled)
+		return ICE_ERR_IN_USE;
+
 	if (hw->acl_tbl)
 		return ICE_ERR_ALREADY_EXISTS;
 
@@ -352,7 +355,6 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 
 	/* call the AQ command to create the ACL table with these values */
 	status = ice_aq_alloc_acl_tbl(hw, &tbl_alloc, NULL);
-
 	if (status) {
 		if (le16_to_cpu(tbl_alloc.buf.resp_buf.alloc_id) <
 		    ICE_AQC_ALLOC_ID_LESS_THAN_4K)
@@ -525,7 +527,7 @@ ice_acl_alloc_partition(struct ice_hw *hw, struct ice_acl_scen *req)
 			break;
 		}
 
-		row = (dir > 0) ? (row + width) : (row - width);
+		row = dir > 0 ? row + width : row - width;
 		if (row > hw->acl_tbl->last_tcam ||
 		    row < hw->acl_tbl->first_tcam) {
 			/* All rows have been checked. Increment 'off' that
@@ -666,8 +668,7 @@ static void
 ice_acl_assign_act_mem_for_scen(struct ice_acl_tbl *tbl,
 				struct ice_acl_scen *scen,
 				struct ice_aqc_acl_scen *scen_buf,
-				u8 current_tcam_idx,
-				u8 target_tcam_idx)
+				u8 current_tcam_idx, u8 target_tcam_idx)
 {
 	u8 i;
 
@@ -746,6 +747,9 @@ ice_acl_create_scen(struct ice_hw *hw, u16 match_width, u16 num_entries,
 	struct ice_acl_scen *scen;
 	enum ice_status status;
 
+	if (hw->dcf_acl_enabled)
+		return ICE_ERR_IN_USE;
+
 	if (!hw->acl_tbl)
 		return ICE_ERR_DOES_NOT_EXIST;
 
@@ -759,10 +763,8 @@ ice_acl_create_scen(struct ice_hw *hw, u16 match_width, u16 num_entries,
 	scen->num_entry = num_entries;
 
 	status = ice_acl_alloc_partition(hw, scen);
-	if (status) {
-		devm_kfree(ice_hw_to_dev(hw), scen);
-		return status;
-	}
+	if (status)
+		goto out;
 
 	memset(&scen_buf, 0, sizeof(scen_buf));
 
@@ -826,14 +828,17 @@ ice_acl_create_scen(struct ice_hw *hw, u16 match_width, u16 num_entries,
 	if (status) {
 		ice_debug(hw, ICE_DBG_ACL, "AQ allocation of ACL scenario failed. status: %d\n",
 			  status);
-		devm_kfree(ice_hw_to_dev(hw), scen);
-		return status;
+		goto out;
 	}
 
 	scen->id = *scen_id;
 	ice_acl_commit_partition(hw, scen, false);
 	ice_acl_init_entry(scen);
 	list_add(&scen->list_entry, &hw->acl_tbl->scens);
+
+out:
+	if (status)
+		devm_kfree(ice_hw_to_dev(hw), scen);
 
 	return status;
 }
@@ -849,6 +854,9 @@ static enum ice_status ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id)
 	struct ice_flow_prof *p, *tmp;
 	enum ice_status status;
 
+	if (hw->dcf_acl_enabled)
+		return ICE_ERR_IN_USE;
+
 	if (!hw->acl_tbl)
 		return ICE_ERR_DOES_NOT_EXIST;
 
@@ -859,17 +867,16 @@ static enum ice_status ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id)
 			if (status) {
 				ice_debug(hw, ICE_DBG_ACL, "ice_flow_rem_prof failed. status: %d\n",
 					  status);
-				goto exit;
+				return status;
 			}
 		}
 
 	/* Call the AQ command to destroy the targeted scenario */
 	status = ice_aq_dealloc_acl_scen(hw, scen_id, NULL);
-
 	if (status) {
 		ice_debug(hw, ICE_DBG_ACL, "AQ de-allocation of scenario failed. status: %d\n",
 			  status);
-		goto exit;
+		return status;
 	}
 
 	/* Remove scenario from hw->acl_tbl->scens */
@@ -879,8 +886,8 @@ static enum ice_status ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id)
 			list_del(&scen->list_entry);
 			devm_kfree(ice_hw_to_dev(hw), scen);
 		}
-exit:
-	return status;
+
+	return 0;
 }
 
 /**
@@ -894,6 +901,9 @@ enum ice_status ice_acl_destroy_tbl(struct ice_hw *hw)
 	struct ice_aqc_acl_scen buf;
 	enum ice_status status;
 	u8 i;
+
+	if (hw->dcf_acl_enabled)
+		return ICE_ERR_IN_USE;
 
 	if (!hw->acl_tbl)
 		return ICE_ERR_DOES_NOT_EXIST;
@@ -936,7 +946,6 @@ enum ice_status ice_acl_destroy_tbl(struct ice_hw *hw)
 
 	/* call the AQ command to destroy the ACL table */
 	status = ice_aq_dealloc_acl_tbl(hw, hw->acl_tbl->id, &resp_buf, NULL);
-
 	if (status) {
 		ice_debug(hw, ICE_DBG_ACL, "AQ de-allocation of ACL failed. status: %d\n",
 			  status);
@@ -953,7 +962,7 @@ enum ice_status ice_acl_destroy_tbl(struct ice_hw *hw)
  * ice_acl_add_entry - Add a flow entry to an ACL scenario
  * @hw: pointer to the HW struct
  * @scen: scenario to add the entry to
- * @prior: priority level of the entry being added
+ * @prio: priority level of the entry being added
  * @keys: buffer of the value of the key to be programmed to the ACL entry
  * @inverts: buffer of the value of the key inverts to be programmed
  * @acts: pointer to a buffer containing formatted actions
@@ -967,7 +976,7 @@ enum ice_status ice_acl_destroy_tbl(struct ice_hw *hw)
  */
 enum ice_status
 ice_acl_add_entry(struct ice_hw *hw, struct ice_acl_scen *scen,
-		  enum ice_acl_entry_prior prior, u8 *keys, u8 *inverts,
+		  enum ice_acl_entry_prio prio, u8 *keys, u8 *inverts,
 		  struct ice_acl_act_entry *acts, u8 acts_cnt, u16 *entry_idx)
 {
 	u8 i, entry_tcam, num_cscd, offset;
@@ -975,10 +984,13 @@ ice_acl_add_entry(struct ice_hw *hw, struct ice_acl_scen *scen,
 	enum ice_status status = 0;
 	u16 idx;
 
+	if (hw->dcf_acl_enabled)
+		return ICE_ERR_IN_USE;
+
 	if (!scen)
 		return ICE_ERR_DOES_NOT_EXIST;
 
-	*entry_idx = ice_acl_scen_assign_entry_idx(scen, prior);
+	*entry_idx = ice_acl_scen_assign_entry_idx(scen, prio);
 	if (*entry_idx >= scen->num_entry) {
 		*entry_idx = 0;
 		return ICE_ERR_MAX_LIMIT;
@@ -1050,6 +1062,9 @@ ice_acl_prog_act(struct ice_hw *hw, struct ice_acl_scen *scen,
 	enum ice_status status = 0;
 	u16 idx;
 
+	if (hw->dcf_acl_enabled)
+		return ICE_ERR_IN_USE;
+
 	if (entry_idx >= scen->num_entry)
 		return ICE_ERR_MAX_LIMIT;
 
@@ -1108,6 +1123,9 @@ ice_acl_rem_entry(struct ice_hw *hw, struct ice_acl_scen *scen, u16 entry_idx)
 	enum ice_status status = 0;
 	u16 idx;
 
+	if (hw->dcf_acl_enabled)
+		return ICE_ERR_IN_USE;
+
 	if (!scen)
 		return ICE_ERR_DOES_NOT_EXIST;
 
@@ -1144,7 +1162,7 @@ ice_acl_rem_entry(struct ice_hw *hw, struct ice_acl_scen *scen, u16 entry_idx)
 			status = ice_aq_program_actpair(hw, i, idx, &act_buf,
 							NULL);
 			if (status)
-				ice_debug(hw, ICE_DBG_ACL, "program actpair failed.status: %d\n",
+				ice_debug(hw, ICE_DBG_ACL, "program actpair failed status: %d\n",
 					  status);
 		}
 	}
@@ -1152,4 +1170,23 @@ ice_acl_rem_entry(struct ice_hw *hw, struct ice_acl_scen *scen, u16 entry_idx)
 	ice_acl_scen_free_entry_idx(scen, entry_idx);
 
 	return status;
+}
+
+/**
+ * ice_is_acl_empty - Check if any entry exists
+ * @hw: pointer to the HW struct
+ */
+bool ice_is_acl_empty(struct ice_hw *hw)
+{
+	struct ice_acl_scen *scen, *tmp_scen;
+
+	if (!hw->acl_tbl)
+		return false;
+
+	list_for_each_entry_safe(scen, tmp_scen, &hw->acl_tbl->scens,
+				 list_entry)
+		if (!bitmap_empty(scen->entry_bitmap, ICE_MAX_ACL_TCAM_ENTRY))
+			return false;
+
+	return true;
 }

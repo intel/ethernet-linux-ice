@@ -11,7 +11,7 @@
  * ice_lag_nop_handler - no-op rx handler to disable LAG
  * @pskb: pointer to skb pointer
  */
-rx_handler_result_t ice_lag_nop_handler(struct sk_buff **pskb)
+rx_handler_result_t ice_lag_nop_handler(struct sk_buff __always_unused **pskb)
 {
 	return RX_HANDLER_PASS;
 }

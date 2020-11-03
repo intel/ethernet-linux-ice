@@ -437,7 +437,8 @@ void ice_clean_rx_ring(struct ice_ring *rx_ring)
 		dma_unmap_page_attrs(dev, rx_buf->dma, ice_rx_pg_size(rx_ring),
 				     DMA_FROM_DEVICE, ICE_RX_DMA_ATTR);
 #else
-		dma_unmap_page(dev, rx_buf->dma, PAGE_SIZE, DMA_FROM_DEVICE);
+		dma_unmap_page(dev, rx_buf->dma, ice_rx_pg_size(rx_ring),
+			       DMA_FROM_DEVICE);
 #endif
 		__page_frag_cache_drain(rx_buf->page, rx_buf->pagecnt_bias);
 
@@ -580,7 +581,7 @@ ice_run_xdp(struct ice_ring *rx_ring, struct xdp_buff *xdp,
 	case XDP_PASS:
 		break;
 	case XDP_TX:
-		xdp_ring = rx_ring->vsi->xdp_rings[smp_processor_id()];
+		xdp_ring = rx_ring->vsi->xdp_rings[rx_ring->q_index];
 		result = ice_xmit_xdp_buff(xdp, xdp_ring);
 		break;
 	case XDP_REDIRECT:
@@ -2391,10 +2392,7 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 	/* If work not completed, return budget and polling will return */
 	if (!clean_complete) {
 		/* Set the writeback on ITR so partial completions of
-		 * cache-lines will still continue even if we're polling. Use
-		 * the MAX_USECS define to limit the interrupt rate of both
-		 * receive and transmit when polling, as this seems to yield the
-		 * best balance of performance and cycles spent on interrupts.
+		 * cache-lines will still continue even if we're polling.
 		 */
 		if (!ch_enabled)
 			ice_set_wb_on_itr(q_vector);
@@ -2750,12 +2748,15 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 				  ICE_TX_CTX_EIPT_IPV4_NO_CSUM;
 			l4_proto = ip.v4->protocol;
 		} else if (first->tx_flags & ICE_TX_FLAGS_IPV6) {
+			int ret;
+
 			tunnel |= ICE_TX_CTX_EIPT_IPV6;
 			exthdr = ip.hdr + sizeof(*ip.v6);
 			l4_proto = ip.v6->nexthdr;
-			if (l4.hdr != exthdr)
-				ipv6_skip_exthdr(skb, exthdr - skb->data,
-						 &l4_proto, &frag_off);
+			ret = ipv6_skip_exthdr(skb, exthdr - skb->data,
+					       &l4_proto, &frag_off);
+			if (ret < 0)
+				return -1;
 		}
 
 		/* define outer transport */
@@ -3557,7 +3558,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	    ice_tsyn(tx_ring, skb, first, &offload, &idx) == NETDEV_TX_BUSY)
 		goto out_ptp_drop;
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
-	if (vsi->back->eswitch_mode == DEVLINK_ESWITCH_MODE_SWITCHDEV)
+	if (ice_is_eswitch_mode_switchdev(vsi->back))
 		ice_eswitch_set_target_vsi(skb, &offload);
 #endif /* CONFIG_NET_DEVLINK */
 	if (offload.cd_qw1 & ICE_TX_DESC_DTYPE_CTX) {

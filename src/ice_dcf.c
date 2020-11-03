@@ -30,6 +30,28 @@ static const enum ice_adminq_opc aqc_permitted_tbl[] = {
 	ice_aqc_opc_add_sw_rules,
 	ice_aqc_opc_update_sw_rules,
 	ice_aqc_opc_remove_sw_rules,
+
+	/* ACL commands */
+	ice_aqc_opc_alloc_acl_tbl,
+	ice_aqc_opc_dealloc_acl_tbl,
+	ice_aqc_opc_alloc_acl_actpair,
+	ice_aqc_opc_dealloc_acl_actpair,
+	ice_aqc_opc_alloc_acl_scen,
+	ice_aqc_opc_dealloc_acl_scen,
+	ice_aqc_opc_alloc_acl_counters,
+	ice_aqc_opc_dealloc_acl_counters,
+	ice_aqc_opc_dealloc_acl_res,
+	ice_aqc_opc_update_acl_scen,
+	ice_aqc_opc_program_acl_actpair,
+	ice_aqc_opc_program_acl_prof_extraction,
+	ice_aqc_opc_program_acl_prof_ranges,
+	ice_aqc_opc_program_acl_entry,
+	ice_aqc_opc_query_acl_prof,
+	ice_aqc_opc_query_acl_prof_ranges,
+	ice_aqc_opc_query_acl_scen,
+	ice_aqc_opc_query_acl_entry,
+	ice_aqc_opc_query_acl_actpair,
+	ice_aqc_opc_query_acl_counter,
 };
 
 /**
@@ -44,6 +66,21 @@ bool ice_dcf_aq_cmd_permitted(struct ice_aq_desc *desc)
 	for (i = 0; i < ARRAY_SIZE(aqc_permitted_tbl); i++)
 		if (opc == aqc_permitted_tbl[i])
 			return true;
+
+	return false;
+}
+
+/**
+ * ice_dcf_is_acl_aq_cmd - check if the AdminQ command is ACL command
+ * @desc: descriptor describing the command
+ */
+bool ice_dcf_is_acl_aq_cmd(struct ice_aq_desc *desc)
+{
+	u16 opc = le16_to_cpu(desc->opcode);
+
+	if (opc >= ice_aqc_opc_alloc_acl_tbl &&
+	    opc <= ice_aqc_opc_query_acl_counter)
+		return true;
 
 	return false;
 }
@@ -400,6 +437,19 @@ void ice_rm_all_dcf_sw_rules(struct ice_pf *pf)
 				 list_entry) {
 		list_del(&sw_rule->list_entry);
 		kfree(sw_rule);
+	}
+}
+
+/**
+ * ice_dis_dcf_acl_cap - disable DCF ACL capability for the PF
+ * @pf: pointer to the PF info
+ */
+void ice_dis_dcf_acl_cap(struct ice_pf *pf)
+{
+	if (pf->hw.dcf_acl_enabled) {
+		pf->hw.dcf_acl_enabled = false;
+		ice_acl_destroy_tbl(&pf->hw);
+		ice_init_acl(pf);
 	}
 }
 
@@ -811,6 +861,67 @@ ice_dcf_post_aq_send_cmd(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
 		status = ice_dcf_handle_free_res_rsp(pf, aq_buf);
 
 	return status;
+}
+
+/**
+ * ice_dcf_update_acl_rule_info - update DCF ACL rule info
+ * @pf: pointer to the PF info
+ * @desc: descriptor describing the command
+ * @aq_buf: the AdminQ command buffer
+ */
+enum virtchnl_status_code
+ice_dcf_update_acl_rule_info(struct ice_pf *pf, struct ice_aq_desc *desc,
+			     u8 *aq_buf)
+{
+	struct ice_acl_scen *scen, *tmp;
+	struct ice_acl_tbl *tbl;
+	u16 scen_id;
+
+	switch (le16_to_cpu(desc->opcode)) {
+	case ice_aqc_opc_alloc_acl_tbl:
+		if (pf->hw.acl_tbl)
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		tbl = devm_kzalloc(ice_pf_to_dev(pf), sizeof(*tbl),
+				   GFP_ATOMIC);
+		if (!tbl)
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		tbl->id = le16_to_cpu(((struct ice_aqc_acl_generic *)
+					aq_buf)->alloc_id);
+		INIT_LIST_HEAD(&tbl->scens);
+		pf->hw.acl_tbl = tbl;
+		break;
+	case ice_aqc_opc_dealloc_acl_tbl:
+		list_for_each_entry_safe(scen, tmp, &pf->hw.acl_tbl->scens,
+					 list_entry) {
+			list_del(&scen->list_entry);
+			devm_kfree(ice_pf_to_dev(pf), scen);
+		}
+		devm_kfree(ice_pf_to_dev(pf), pf->hw.acl_tbl);
+		pf->hw.acl_tbl = NULL;
+		break;
+	case ice_aqc_opc_alloc_acl_scen:
+		scen = devm_kzalloc(ice_pf_to_dev(pf), sizeof(*scen),
+				    GFP_ATOMIC);
+		if (!scen)
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		INIT_LIST_HEAD(&scen->list_entry);
+		scen_id = le16_to_cpu(desc->params.alloc_scen.ops.resp.scen_id);
+		scen->id = scen_id;
+		list_add(&scen->list_entry, &pf->hw.acl_tbl->scens);
+		break;
+	case ice_aqc_opc_dealloc_acl_scen:
+		list_for_each_entry_safe(scen, tmp, &pf->hw.acl_tbl->scens,
+					 list_entry) {
+			if (le16_to_cpu(desc->params.dealloc_scen.scen_id) ==
+			    scen->id) {
+				list_del(&scen->list_entry);
+				devm_kfree(ice_pf_to_dev(pf), scen);
+			}
+		}
+		break;
+	}
+
+	return VIRTCHNL_STATUS_SUCCESS;
 }
 
 /**

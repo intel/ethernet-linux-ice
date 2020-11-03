@@ -8,8 +8,6 @@
 #include "ice_fltr.h"
 #include "ice_repr.h"
 
-#include <net/dst_metadata.h>
-
 /**
  * ice_eswitch_vsi_change_lan_en - change default LB/LAN enable bit
  * @vsi: pointer to VSI given rule belongs to
@@ -172,7 +170,7 @@ static int ice_eswitch_setup_reprs(struct ice_pf *pf, struct ice_vsi *ctrl_vsi)
 			max_vsi_num = vsi->vsi_num;
 	}
 
-	ctrl_vsi->target_netdevs = kcalloc(max_vsi_num,
+	ctrl_vsi->target_netdevs = kcalloc(max_vsi_num + 1,
 					   sizeof(*ctrl_vsi->target_netdevs),
 					   GFP_KERNEL);
 	if (!ctrl_vsi->target_netdevs)
@@ -240,8 +238,17 @@ static void ice_eswitch_release_reprs(struct ice_pf *pf,
 netdev_tx_t
 ice_eswitch_port_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
-	struct ice_repr *repr = ice_netdev_to_repr(netdev);
+	struct ice_netdev_priv *np;
+	struct ice_repr *repr;
+	struct ice_vsi *vsi;
 
+	np = netdev_priv(netdev);
+	vsi = np->vsi;
+
+	if (ice_is_reset_in_progress(vsi->back->state))
+		return NETDEV_TX_BUSY;
+
+	repr = ice_netdev_to_repr(netdev);
 	skb_dst_drop(skb);
 	dst_hold((struct dst_entry *)repr->dst);
 	skb_dst_set(skb, (struct dst_entry *)repr->dst);
@@ -329,6 +336,7 @@ ice_eswitch_enable_switchdev(struct ice_pf *pf)
 {
 	struct ice_vsi *control_vsi;
 	struct ice_vsi *uplink_vsi;
+	int i;
 
 #ifdef NETIF_F_HW_TC
 	if (ice_is_adq_active(pf)) {
@@ -340,6 +348,14 @@ ice_eswitch_enable_switchdev(struct ice_pf *pf)
 	if (!pf->num_alloc_vfs) {
 		dev_info(ice_pf_to_dev(pf), "No vfs created");
 		return -EOPNOTSUPP;
+	}
+
+	ice_for_each_vf(pf, i) {
+		if (pf->vf[i].trusted) {
+			dev_info(ice_pf_to_dev(pf),
+				 "Disable trust for VF %d before go to switchdev\n", i);
+			return -EOPNOTSUPP;
+		}
 	}
 
 	pf->switchdev.control_vsi = ice_eswitch_vsi_setup(pf, pf->hw.port_info);
@@ -507,43 +523,5 @@ void ice_eswitch_release(struct ice_pf *pf)
 
 	ice_eswitch_disable_switchdev(pf);
 	pf->eswitch_mode = DEVLINK_ESWITCH_MODE_LEGACY;
-}
-
-/**
- * ice_eswitch_close - cleanup eswitch before rebuild
- * @pf: pointer to PF structure
- *
- * This function is called in rebuild path. If eswitch mode is set to
- * DEVLINK_ESWITCH_MODE_SWITCHDEV, it frees switchdev resources. Current
- * eswitch mode remains unchanged and ice_switch_rebuild function should be
- * called to restore original eswitch configuration.
- */
-void ice_eswitch_close(struct ice_pf *pf)
-{
-	if (pf->eswitch_mode == DEVLINK_ESWITCH_MODE_LEGACY)
-		return;
-
-	ice_eswitch_disable_switchdev(pf);
-}
-
-/**
- * ice_eswitch_rebuild - rebuild eswitch configuration
- * @pf: pointer to PF structure
- *
- * This function is called in rebuild path to restore original eswitch
- * configuration after reset. If the eswitch mode was set to
- * DEVLINK_ESWITCH_MODE_SWITCHDEV before the reset, all switchdev configuration
- * is restored. No action is taken otherwise.
- */
-void ice_eswitch_rebuild(struct ice_pf *pf)
-{
-	if (pf->eswitch_mode == DEVLINK_ESWITCH_MODE_LEGACY)
-		return;
-
-	if (ice_eswitch_enable_switchdev(pf))
-		return;
-#ifdef HAVE_METADATA_PORT_INFO
-	pf->eswitch_mode = DEVLINK_ESWITCH_MODE_SWITCHDEV;
-#endif /* HAVE_METADATA_PORT_INFO */
 }
 #endif /* CONFIG_NET_DEVLINK */

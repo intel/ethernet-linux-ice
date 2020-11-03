@@ -249,7 +249,7 @@ ice_process_skb_fields(struct ice_ring *rx_ring,
 
 #ifdef HAVE_NETDEV_SB_DEV
 	if (!netif_is_ice(rx_ring->netdev))
-		macvlan_count_rx(netdev_priv(rx_ring->netdev),
+		macvlan_count_rx((const struct macvlan_dev *)netdev_priv(rx_ring->netdev),
 				 skb->len + ETH_HLEN, true, false);
 #endif /* HAVE_NETDEV_SB_DEV */
 }

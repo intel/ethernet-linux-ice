@@ -400,6 +400,7 @@ int ice_ptp_get_ts_idx(struct ice_vsi *vsi)
 
 	lport = vsi->port_info->lport;
 	quad_lport = lport % ICE_PORTS_PER_QUAD;
+
 	/* Check on own idx window */
 	if (ice_is_generic_mac(&vsi->back->hw)) {
 		own_idx_start = quad_lport * INDEX_PER_PORT;
@@ -408,6 +409,7 @@ int ice_ptp_get_ts_idx(struct ice_vsi *vsi)
 		own_idx_start = 0;
 		own_idx_end = INDEX_PER_PORT_EXT;
 	}
+
 	for (i = own_idx_start; i < own_idx_end; i++) {
 		if (!test_and_set_bit(i, vsi->ptp_tx_idx))
 			return i;
@@ -1208,9 +1210,9 @@ static void ice_ptp_tx_cfg_lane(struct ice_pf *pf, u8 port)
 		goto exit;
 
 	if (link_spd >= ICE_PTP_LNK_SPD_40G)
-		val &= ~Q_REG_TX_MEM_GBL_CFG_SINGLE_LANE_M;
+		val &= ~Q_REG_TX_MEM_GBL_CFG_LANE_TYPE_M;
 	else
-		val |= Q_REG_TX_MEM_GBL_CFG_SINGLE_LANE_M;
+		val |= Q_REG_TX_MEM_GBL_CFG_LANE_TYPE_M;
 
 	status = ice_phy_quad_reg_write(pf, quad, Q_REG_TX_MEM_GBL_CFG, val);
 
@@ -1355,10 +1357,6 @@ enum ice_status ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup)
 	return ice_ptp_port_phy_start(pf, port, linkup);
 }
 
-#define TX_INTR_THR_MASK	0x00007E00
-#define TX_INTR_MASK		0x00008000
-#define TX_INTR_INDEX		9
-
 /**
  * ice_ptp_tx_ena_intr - Enable or disable the Tx timestamp interrupt
  * @pf: PF private structure
@@ -1382,12 +1380,12 @@ ice_ptp_tx_ena_intr(struct ice_pf *pf, bool ena, u32 threshold)
 			goto exit;
 
 		if (ena) {
-			val |= TX_INTR_MASK;
-			val &= ~TX_INTR_THR_MASK;
-			val |= ((threshold << TX_INTR_INDEX) &
-				TX_INTR_THR_MASK);
+			val |= Q_REG_TX_MEM_GBL_CFG_INTR_ENA_M;
+			val &= ~Q_REG_TX_MEM_GBL_CFG_INTR_THR_M;
+			val |= ((threshold << Q_REG_TX_MEM_GBL_CFG_INTR_THR_S) &
+				Q_REG_TX_MEM_GBL_CFG_INTR_THR_M);
 		} else {
-			val &= ~TX_INTR_MASK;
+			val &= ~Q_REG_TX_MEM_GBL_CFG_INTR_ENA_M;
 		}
 
 		status = ice_phy_quad_reg_write(pf, quad, Q_REG_TX_MEM_GBL_CFG,
@@ -2395,89 +2393,229 @@ int ice_ptp_set_ts_config(struct ice_pf *pf, struct ifreq *ifr)
 }
 
 
+/**
+ * ice_ptp_get_tx_hwtstamp_ver - Returns the Tx timestamp and valid bits
+ * @pf: Board specific private structure
+ * @tx_idx_req: Bitmap of timestamp indices to read
+ * @quad: Quad to read
+ * @ts: Timestamps read from PHY
+ * @ts_read: Bitmap of successfully read timestamp indices
+ * @ts_count: Count of timestamps read
+ *
+ * Read the value of the Tx timestamp from the registers and build a
+ * bitmap of successfully read indices and count of the number successfully
+ * read.
+ *
+ * There are 3 possible return values,
+ * 0 = success
+ *
+ * -EIO = unable to read a register, this could be to a variety of issues but
+ *  should be very rare.  Up to caller how to respond to this (retry, abandon,
+ *  etc).  But once this situation occurs, stop reading as we cannot
+ *  guarantee what state the PHY or Timestamp Unit is in.
+ *
+ * -EINVAL = (at least) one of the timestamps that was read did not have the
+ *  TS_VALID bit set, and is probably zero.  Be aware that not all of the
+ *  timestamps that were read (so the TS_READY bit for this timestamp was
+ *  cleared but no valid TS was retrieved) are present.  Expect at least one
+ *  ts_read index that should be 1 is zero.
+ */
+static int ice_ptp_get_tx_hwtstamp_ver(struct ice_pf *pf, u64 tx_idx_req,
+				       u8 quad, u64 *ts, u64 *ts_read,
+				       u8 *ts_count)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	u32 ts_ns_low, ts_ns_high, val;
+	enum ice_status status;
+	struct ice_vsi *vsi;
+	unsigned long i;
+	int ret = 0;
+	u16 offset;
+	u64 ts_ns;
+
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi)
+		return ICE_ERR_PARAM;
+
+	if (pf->ptp_quad_mem_reset[quad]) {
+		*ts_read = 0;
+		*ts_count = 0;
+		return -EINVAL;
+	}
+
+	for_each_set_bit(i, (unsigned long *)&tx_idx_req, INDEX_PER_QUAD) {
+		ts[i] = 0x0;
+		*ts_read |= BIT(i);
+		(*ts_count)++;
+
+		offset = (u16)TS_L(Q_REG_TX_MEMORY_BANK_START, i);
+
+		status = ice_phy_quad_reg_read(pf, quad, offset, &val);
+		if (status) {
+			dev_dbg(dev, "PTP Tx read failed %s\n",
+				ice_stat_str(status));
+			*ts_read &= ~BIT(i);
+			(*ts_count)--;
+			ret = -EIO;
+			break;
+		}
+
+		ts_ns_low = val;
+
+		/* Read the high timestamp next */
+		offset = (u16)TS_H(Q_REG_TX_MEMORY_BANK_START, i);
+
+		status = ice_phy_quad_reg_read(pf, quad, offset, &val);
+		if (status) {
+			dev_dbg(dev, "PTP Tx read failed %s\n",
+				ice_stat_str(status));
+			*ts_read &= ~BIT(i);
+			(*ts_count)--;
+			ret = -EIO;
+			break;
+		}
+
+		ts_ns_high = val;
+
+		ts_ns = (((u64)ts_ns_high) << 8) | (ts_ns_low & 0x000000FF);
+
+		if (!(ts_ns & ICE_PTP_TS_VALID)) {
+			dev_dbg(dev, "PTP tx invalid\n");
+			ret = -EINVAL;
+			continue;
+		}
+
+		ts_ns = ice_ptp_convert_40b_64b(pf->cached_systime, ts_ns, vsi);
+		/* Each timestamp will be offset in the array of
+		 * timestamps by the index's value.  So the timestamp
+		 * from index n will be in ts[n] position.
+		 */
+		ts[i] = ts_ns;
+	}
+	return ret;
+}
+
+/**
+ * ice_ptp_get_tx_hwtstamp_ready - Get the Tx timestamp ready bitmap
+ * @pf: The PF private data structure
+ * @quad: Quad to read (0-4)
+ * @ts_ready: Bitmap where each bit set indicates that the corresponding
+ *            timestamp register is ready to read
+ *
+ * Read the PHY timestamp ready registers for a particular bank.
+ */
+static void
+ice_ptp_get_tx_hwtstamp_ready(struct ice_pf *pf, u8 quad, u64 *ts_ready)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	enum ice_status status;
+	u64 bitmap;
+	u32 val;
+
+	status = ice_phy_quad_reg_read(pf, quad, Q_REG_TX_MEMORY_STATUS_U,
+				       &val);
+	if (status) {
+		dev_dbg(dev, "TX_MEMORY_STATUS_U read failed for quad %u\n",
+			quad);
+		return;
+	}
+
+	bitmap = val;
+
+	status = ice_phy_quad_reg_read(pf, quad, Q_REG_TX_MEMORY_STATUS_L,
+				       &val);
+	if (status) {
+		dev_dbg(dev, "TX_MEMORY_STATUS_L read failed for quad %u\n",
+			quad);
+		return;
+	}
+
+	bitmap = (bitmap << 32) | val;
+
+	*ts_ready = bitmap;
+
+	if (bitmap)
+		pf->ptp_quad_mem_reset[quad] = false;
+}
+
+/**
+ * ice_ptp_tx_hwtstamp_vsi - Return the Tx timestamp for a specified VSI
+ * @vsi: lport corresponding VSI
+ * @quad: lport corresponding QUAD
+ * @idx: Index of timestamp read from QUAD memory
+ * @hwtstamp: Timestamps read from PHY
+ *
+ * Helper function for ice_ptp_tx_hwtstamp.
+ */
+static void ice_ptp_tx_hwtstamp_vsi(struct ice_vsi *vsi, u8 quad, int idx, u64 hwtstamp)
+{
+	struct skb_shared_hwtstamps shhwtstamps;
+	struct ice_pf *pf = vsi->back;
+	struct sk_buff *skb;
+
+	skb = vsi->ptp_tx_skb[idx];
+	if (!skb)
+		return;
+
+	ice_ptp_convert_to_hwtstamp(&shhwtstamps, hwtstamp);
+
+	vsi->ptp_tx_skb[idx] = NULL;
+
+	/* Notify the stack and free the skb after we've unlocked */
+	skb_tstamp_tx(skb, &shhwtstamps);
+	dev_kfree_skb_any(skb);
+	clear_bit(idx, &pf->ptp_tx_idx[quad]);
+	clear_bit(idx, vsi->ptp_tx_idx);
+}
 
 /**
  * ice_ptp_tx_hwtstamp - Return the Tx timestamp
  * @pf: Board private structure
  *
- * Read the value of the Tx timestamp from the registers, convert it into a
+ * Read the value of the Tx timestamps from the registers, convert it into a
  * value consumable by the stack, and store that result into the shhwtstamps
  * struct before returning it up the stack.
  */
 static void ice_ptp_tx_hwtstamp(struct ice_pf *pf)
 {
-	struct ice_hw *hw = &pf->hw;
-	int i, num_ports;
-	u16 offset;
-	u32 val;
+	u8 quad;
 
-	num_ports = 1;
+	for (quad = 0; quad < ICE_MAX_QUAD; quad++) {
+		/* Read the tx_memory_status registers of the PHY timestamp module to determine
+		 * which memory entries contain ready timestamps, and then read out the timestamps
+		 * from those locations. While we are reading out the timestamps, however, new
+		 * timestamps may be captured. No new interrupt will be generated until the
+		 * intr_threshold is crossed again, so read the status registers in a loop until no
+		 * more timestamps are ready.
+		 */
+		while (true) {
+			u64 ready_map = 0, valid_map = 0;
+			u64 hwtstamps[INDEX_PER_QUAD];
+			int i, ret, vsi_idx;
+			u8 ts_count;
 
-	for (i = 0; i < num_ports; i++) {
-		struct ice_vsi *vsi;
-		int idx, quad;
-		u8 lport;
+			ice_ptp_get_tx_hwtstamp_ready(pf, quad, &ready_map);
+			if (!ready_map)
+				break;
 
-		vsi = ice_get_main_vsi(pf);
-		if (!vsi)
-			return;
-		if (!vsi->ptp_tx)
-			return;
-		lport = hw->port_info->lport;
-		quad = lport / ICE_PORTS_PER_QUAD;
+			ret = ice_ptp_get_tx_hwtstamp_ver(pf, ready_map, quad, hwtstamps,
+							  &valid_map, &ts_count);
+			if (ret == -EIO)
+				break;
 
-		/* Don't attempt to timestamp if we don't have an skb */
-		for (idx = 0; idx < INDEX_PER_QUAD; idx++) {
-			struct skb_shared_hwtstamps shhwtstamps;
-			u32 ts_ns_low, ts_ns_high;
-			enum ice_status status;
-			struct sk_buff *skb;
-			u64 ts_ns;
+			for_each_set_bit(i, (unsigned long *)&valid_map, INDEX_PER_QUAD) {
+				ice_for_each_vsi(pf, vsi_idx) {
+					struct ice_vsi *vsi = pf->vsi[vsi_idx];
 
-			skb = vsi->ptp_tx_skb[idx];
-			if (!skb)
-				continue;
+					if (!vsi ||
+					    vsi->type != ICE_VSI_PF ||
+					    (vsi->port_info->lport / ICE_PORTS_PER_QUAD != quad))
+						continue;
 
-			offset = TS_L(Q_REG_TX_MEMORY_BANK_START, i);
-
-			status = ice_phy_quad_reg_read(pf, quad, offset, &val);
-			if (status)
-				continue;
-
-			ts_ns_low = val;
-
-			/* Read the high timestamp next */
-			offset = TS_H(Q_REG_TX_MEMORY_BANK_START, i);
-
-			status = ice_phy_quad_reg_read(pf, quad, offset, &val);
-			if (status) {
-				if (!ts_ns_low)
-					continue;
-				dev_dbg(ice_pf_to_dev(pf),
-					"PTP tx rd failed %s\n",
-					ice_stat_str(status));
-				vsi->ptp_tx_skb[idx] = NULL;
-				dev_kfree_skb_any(skb);
-				clear_bit(idx, vsi->ptp_tx_idx);
-				continue;
+					if (test_bit(i, vsi->ptp_tx_idx))
+						ice_ptp_tx_hwtstamp_vsi(vsi, quad, i, hwtstamps[i]);
+				}
 			}
-
-			ts_ns_high = val;
-			ts_ns = (((u64)ts_ns_high) << 8) |
-				(ts_ns_low & 0x000000FF);
-
-			ts_ns = ice_ptp_convert_40b_64b(pf->cached_systime,
-							ts_ns, vsi);
-			ice_ptp_convert_to_hwtstamp(&shhwtstamps, ts_ns);
-
-			vsi->ptp_tx_skb[idx] = NULL;
-
-			/* Notify the stack and free the skb after we have
-			 * unlocked
-			 */
-			skb_tstamp_tx(skb, &shhwtstamps);
-			dev_kfree_skb_any(skb);
-			clear_bit(idx, vsi->ptp_tx_idx);
 		}
 	}
 }
@@ -2710,7 +2848,7 @@ void ice_ptp_init(struct ice_pf *pf)
 		/* Do not touch the reserved bits and set other bits
 		 * to zero
 		 */
-		regval &= 0xFFFFFFF0;
+		regval &= 0xFFFFFFE0;
 		wr32(hw, GLINT_TSYN_PHY, regval);
 #define PF_SB_REM_DEV_CTL_PHY0	BIT(2)
 		if (ice_is_generic_mac(hw)) {
@@ -2769,7 +2907,6 @@ void ice_ptp_init(struct ice_pf *pf)
 
 	set_bit(ICE_FLAG_PTP, pf->flags);
 	dev_info(dev, "PTP init successful\n");
-
 	return;
 
 err_clk:
@@ -2828,6 +2965,7 @@ void ice_clean_ptp_subtask(struct ice_pf *pf)
 	if (!test_bit(ICE_FLAG_PTP, pf->flags))
 		return;
 
+	ice_ptp_update_cached_systime(pf);
 	if (test_and_clear_bit(__ICE_PTP_TX_TS_READY, pf->state)) {
 		if (ice_is_generic_mac(hw))
 			ice_ptp_tx_hwtstamp(pf);
@@ -2835,5 +2973,4 @@ void ice_clean_ptp_subtask(struct ice_pf *pf)
 			ice_ptp_tx_hwtstamp_ext(pf);
 	}
 
-	ice_ptp_update_cached_systime(pf);
 }

@@ -15,10 +15,10 @@
 #include "ice_eswitch.h"
 
 #define DRV_VERSION_MAJOR 1
-#define DRV_VERSION_MINOR 1
-#define DRV_VERSION_BUILD 4
+#define DRV_VERSION_MINOR 2
+#define DRV_VERSION_BUILD 1
 
-#define DRV_VERSION	"1.1.4"
+#define DRV_VERSION	"1.2.1"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 
 const char ice_drv_ver[] = DRV_VERSION;
@@ -420,21 +420,10 @@ static int ice_init_mac_fltr(struct ice_pf *pf)
 
 	perm_addr = vsi->port_info->mac.perm_addr;
 	status = ice_fltr_add_mac_and_broadcast(vsi, perm_addr, ICE_FWD_TO_VSI);
-	if (!status)
-		return 0;
+	if (status)
+		return -EIO;
 
-	/* We aren't useful with no MAC filters, so unregister if we
-	 * had an error
-	 */
-	if (vsi->netdev->reg_state == NETREG_REGISTERED) {
-		dev_err(ice_pf_to_dev(pf), "Could not add MAC filters error %s. Unregistering device\n",
-			ice_stat_str(status));
-		unregister_netdev(vsi->netdev);
-		free_netdev(vsi->netdev);
-		vsi->netdev = NULL;
-	}
-
-	return -EIO;
+	return 0;
 }
 
 /**
@@ -688,6 +677,7 @@ exit:
 	clear_bit(__ICE_CFG_BUSY, vsi->state);
 	return err;
 }
+
 
 /**
  * ice_sync_fltr_subtask - Sync the VSI filter list with HW
@@ -1092,7 +1082,7 @@ static void ice_print_topo_conflict(struct ice_vsi *vsi)
 	case ICE_AQ_LINK_TOPO_UNREACH_PRT:
 	case ICE_AQ_LINK_TOPO_UNDRUTIL_PRT:
 	case ICE_AQ_LINK_TOPO_UNDRUTIL_MEDIA:
-		netdev_info(vsi->netdev, "Possible mis-configuration of the Ethernet port detected, please use the Intel(R) Ethernet Port Configuration Tool application to address the issue.\n");
+		netdev_info(vsi->netdev, "Potential misconfiguration of the Ethernet port detected. If it was not intended, please use the Intel (R) Ethernet Port Configuration Tool to address the issue.\n");
 		break;
 	case ICE_AQ_LINK_TOPO_UNSUPP_MEDIA:
 		netdev_info(vsi->netdev, "Rx/Tx is disabled on this device because an unsupported module type was detected. Refer to the Intel(R) Ethernet Adapters and Devices User Guide for a list of supported modules.\n");
@@ -1281,15 +1271,9 @@ static void ice_set_dflt_mib(struct ice_pf *pf)
 	u8 mib_type, *buf, *lldpmib = NULL;
 	u16 len, typelen, offset = 0;
 	struct ice_lldp_org_tlv *tlv;
-	struct ice_hw *hw;
+	struct ice_hw *hw = &pf->hw;
 	u32 ouisubtype;
 
-	if (!pf) {
-		dev_dbg(dev, "%s NULL pf pointer\n", __func__);
-		return;
-	}
-
-	hw = &pf->hw;
 	mib_type = SET_LOCAL_MIB_TYPE_LOCAL_MIB;
 	lldpmib = kzalloc(ICE_LLDPDU_SIZE, GFP_KERNEL);
 	if (!lldpmib) {
@@ -1567,7 +1551,9 @@ struct ice_aq_task {
 int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
 			  struct ice_rq_event_info *event)
 {
+	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_aq_task *task;
+	unsigned long start;
 	long ret;
 	int err;
 
@@ -1583,6 +1569,8 @@ int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
 	spin_lock_bh(&pf->aq_wait_lock);
 	hlist_add_head(&task->entry, &pf->aq_wait_list);
 	spin_unlock_bh(&pf->aq_wait_lock);
+
+	start = jiffies;
 
 #ifdef __CHECKER__
 	/* Suppress sparse warning from kernel macro:
@@ -1608,6 +1596,11 @@ int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
 		err = -EINVAL;
 		break;
 	}
+
+	dev_dbg(dev, "Waited %u msecs (max %u msecs) for firmware response to op 0x%04x\n",
+		jiffies_to_msecs(jiffies - start),
+		jiffies_to_msecs(timeout),
+		opcode);
 
 	spin_lock_bh(&pf->aq_wait_lock);
 	hlist_del(&task->entry);
@@ -1716,6 +1709,10 @@ static int __ice_clean_ctrlq(struct ice_pf *pf, enum ice_ctl_q q_type)
 	case ICE_CTL_Q_MAILBOX:
 		cq = &hw->mailboxq;
 		qtype = "Mailbox";
+		/* we are going to try to detect a malicious VF, so set the
+		 * state to begin detection
+		 */
+		hw->mbx_snapshot.mbx_buf.state = ICE_MAL_VF_DETECT_STATE_NEW_SNAPSHOT;
 		break;
 	default:
 		dev_warn(dev, "Unknown control queue type 0x%x\n", q_type);
@@ -1797,7 +1794,8 @@ static int __ice_clean_ctrlq(struct ice_pf *pf, enum ice_ctl_q q_type)
 			ice_vf_lan_overflow_event(pf, &event);
 			break;
 		case ice_mbx_opc_send_msg_to_pf:
-			ice_vc_process_vf_msg(pf, &event);
+			if (!ice_is_malicious_vf(pf, &event, i, pending))
+				ice_vc_process_vf_msg(pf, &event);
 			break;
 		case ice_aqc_opc_lldp_set_mib_change:
 			ice_dcb_process_lldp_set_mib_change(pf, &event);
@@ -1889,8 +1887,10 @@ static void ice_clean_sbq_subtask(struct ice_pf *pf)
 	/* if mac_type is not generic, sideband is not supported
 	 * and there's nothing to do here
 	 */
-	if (!ice_is_generic_mac(hw))
+	if (!ice_is_generic_mac(hw)) {
+		clear_bit(__ICE_SIDEBANDQ_EVENT_PENDING, pf->state);
 		return;
+	}
 
 	if (!test_bit(__ICE_SIDEBANDQ_EVENT_PENDING, pf->state))
 		return;
@@ -3316,6 +3316,7 @@ static void ice_ena_misc_vector(struct ice_pf *pf)
 	       PFINT_OICR_TSYN_TX_M |
 	       PFINT_OICR_VFLR_M |
 	       PFINT_OICR_HMC_ERR_M |
+	       PFINT_OICR_PE_PUSH_M |
 	       PFINT_OICR_PE_CRITERR_M |
 	       PFINT_OICR_SWINT_M);
 
@@ -3338,7 +3339,6 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 	irqreturn_t ret = IRQ_NONE;
 	struct device *dev;
 	u32 oicr, ena_mask;
-	u32 pe_criterr;
 
 	dev = ice_pf_to_dev(pf);
 	set_bit(__ICE_ADMINQ_EVENT_PENDING, pf->state);
@@ -3417,25 +3417,25 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 		}
 	}
 
-	if (oicr & PFINT_OICR_HMC_ERR_M) {
-		ena_mask &= ~PFINT_OICR_HMC_ERR_M;
-		dev_dbg(dev, "HMC Error interrupt - info 0x%x, data 0x%x\n",
-			rd32(hw, PFHMC_ERRORINFO),
-			rd32(hw, PFHMC_ERRORDATA));
-	}
-
 	if (oicr & PFINT_OICR_TSYN_TX_M) {
 		ena_mask &= ~PFINT_OICR_TSYN_TX_M;
 		set_bit(__ICE_PTP_TX_TS_READY, pf->state);
 	}
+	if (oicr & (PFINT_OICR_PE_CRITERR_M | PFINT_OICR_HMC_ERR_M | PFINT_OICR_PE_PUSH_M)) {
+		struct ice_event *event;
 
-#define GLPE_CRITERR 0x00534000
-	if (oicr & PFINT_OICR_PE_CRITERR_M) {
-		pe_criterr = rd32(hw, GLPE_CRITERR);
-		dev_warn(dev, "critical PE Error, GLPE_CRITERR=0x%08x\n",
-			 pe_criterr);
-		if (pe_criterr == 0x0001024d)
-			ena_mask &= ~PFINT_OICR_PE_CRITERR_M;
+		ena_mask &= ~PFINT_OICR_HMC_ERR_M;
+		ena_mask &= ~PFINT_OICR_PE_CRITERR_M;
+		ena_mask &= ~PFINT_OICR_PE_PUSH_M;
+		event = kzalloc(sizeof(*event), GFP_KERNEL);
+		if (event) {
+			set_bit(ICE_EVENT_CRIT_ERR, event->type);
+			event->reporter = NULL;
+			/* report the entire OICR value to peer */
+			event->info.reg = oicr;
+			ice_for_each_peer(pf, event, ice_peer_check_for_reg);
+			kfree(event);
+		}
 	}
 
 	/* Report any remaining unexpected interrupts */
@@ -3445,8 +3445,7 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 		/* If a critical error is pending there is no choice but to
 		 * reset the device.
 		 */
-		if (oicr & (PFINT_OICR_PE_CRITERR_M |
-			    PFINT_OICR_PCI_EXCEPTION_M |
+		if (oicr & (PFINT_OICR_PCI_EXCEPTION_M |
 			    PFINT_OICR_ECC_ERR_M)) {
 			set_bit(__ICE_PFR_REQ, pf->state);
 			ice_service_task_schedule(pf);
@@ -3772,11 +3771,6 @@ static int ice_cfg_netdev(struct ice_vsi *vsi)
 	struct ice_netdev_priv *np;
 	struct net_device *netdev;
 	u8 mac_addr[ETH_ALEN];
-	int err;
-
-	err = ice_devlink_create_port(vsi);
-	if (err)
-		return err;
 
 #ifdef HAVE_NETDEV_SB_DEV
 	/* Inform Kernel beforehand about max number of MACVLAN queues
@@ -3789,10 +3783,8 @@ static int ice_cfg_netdev(struct ice_vsi *vsi)
 	netdev = alloc_etherdev_mqs(sizeof(*np), vsi->alloc_txq,
 				    vsi->alloc_rxq);
 #endif /* !HAVE_NETDEV_SB_DEV */
-	if (!netdev) {
-		err = -ENOMEM;
-		goto err_destroy_devlink_port;
-	}
+	if (!netdev)
+		return -ENOMEM;
 
 	vsi->netdev = netdev;
 	np = netdev_priv(netdev);
@@ -3832,27 +3824,7 @@ static int ice_cfg_netdev(struct ice_vsi *vsi)
 #endif /* HAVE_RHEL7_EXTENDED_MIN_MAX_MTU */
 #endif /* HAVE_NETDEVICE_MIN_MAX_MTU */
 
-	err = register_netdev(vsi->netdev);
-	if (err)
-		goto err_free_netdev;
-
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-	devlink_port_type_eth_set(&vsi->devlink_port, vsi->netdev);
-#endif /* CONFIG_NET_DEVLINK */
-
-	netif_carrier_off(vsi->netdev);
-
-	/* make sure transmit queues start off as stopped */
-	netif_tx_stop_all_queues(vsi->netdev);
-
 	return 0;
-
-err_free_netdev:
-	free_netdev(vsi->netdev);
-	vsi->netdev = NULL;
-err_destroy_devlink_port:
-	ice_devlink_destroy_port(vsi);
-	return err;
 }
 
 /**
@@ -4101,13 +4073,61 @@ static void ice_pf_reset_stats(struct ice_pf *pf)
 
 
 #ifdef HAVE_TC_INDIR_BLOCK
+#ifdef HAVE_FLOW_BLOCK_API
 /**
- * ice_tc_indir_block_init - Initialize TC indirect block notifications
+ * ice_rep_indr_tc_block_unbind
+ * @cb_priv: indirection block private data
+ */
+static void ice_rep_indr_tc_block_unbind(void *cb_priv)
+{
+	struct ice_indr_block_priv *indr_priv = cb_priv;
+
+	list_del(&indr_priv->list);
+	devm_kfree(&indr_priv->netdev->dev, indr_priv);
+}
+#endif /* HAVE_FLOW_BLOCK_API */
+
+/**
+ * ice_tc_indir_block_unregister - Unregister TC indirect block notifications
+ * @vsi: VSI struct which has the netdev
+ */
+static void ice_tc_indir_block_unregister(struct ice_vsi *vsi)
+{
+	struct ice_netdev_priv *np = netdev_priv(vsi->netdev);
+#ifndef HAVE_TC_FLOW_INDIR_DEV
+	/* clean indirect TC block notifications */
+	unregister_netdevice_notifier(&np->netdevice_nb);
+	ice_indr_clean_block_privs(np);
+#elif defined(HAVE_TC_FLOW_INDIR_DEV) && defined(HAVE_TC_FLOW_INDIR_BLOCK_CLEANUP) && defined(HAVE_FLOW_BLOCK_API)
+	flow_indr_dev_unregister(ice_indr_setup_tc_cb, np,
+				 ice_rep_indr_tc_block_unbind);
+#else
+	flow_indr_dev_unregister(ice_indr_setup_tc_cb, np,
+				 ice_indr_setup_block_cb);
+#endif /* HAVE_TC_FLOW_INDIR_DEV */
+}
+
+/**
+ * ice_tc_indir_block_remove - clean indirect TC block notifications
+ * @pf: PF structure
+ */
+static void ice_tc_indir_block_remove(struct ice_pf *pf)
+{
+	struct ice_vsi *pf_vsi = ice_get_main_vsi(pf);
+
+	if (!pf_vsi)
+		return;
+
+	ice_tc_indir_block_unregister(pf_vsi);
+}
+
+/**
+ * ice_tc_indir_block_register - Register TC indirect block notifications
  * @vsi: VSI struct which has the netdev
  *
  * Returns 0 on success, negative value on failure
  */
-static int ice_tc_indir_block_init(struct ice_vsi *vsi)
+static int ice_tc_indir_block_register(struct ice_vsi *vsi)
 {
 	struct ice_netdev_priv *np;
 
@@ -4125,15 +4145,6 @@ static int ice_tc_indir_block_init(struct ice_vsi *vsi)
 #endif /* HAVE_TC_FLOW_INDIR_DEV */
 }
 
-#ifdef HAVE_FLOW_BLOCK_API
-static void ice_rep_indr_tc_block_unbind(void *cb_priv)
-{
-	struct ice_indr_block_priv *indr_priv = cb_priv;
-
-	list_del(&indr_priv->list);
-	devm_kfree(&indr_priv->netdev->dev, indr_priv);
-}
-#endif /* HAVE_FLOW_BLOCK_API */
 #endif /* HAVE_TC_INDIR_BLOCK */
 
 /**
@@ -4164,15 +4175,16 @@ static int ice_setup_pf_sw(struct ice_pf *pf)
 		status = -ENODEV;
 		goto unroll_vsi_setup;
 	}
+
 	/* netdev has to be configured before setting frame size */
 	ice_vsi_cfg_frame_size(vsi);
 
 #ifdef HAVE_TC_INDIR_BLOCK
 	/* init indirect block notifications */
-	status = ice_tc_indir_block_init(vsi);
+	status = ice_tc_indir_block_register(vsi);
 	if (status) {
 		dev_err(dev, "Failed to register netdev notifier\n");
-		goto unroll_vsi_setup;
+		goto unroll_cfg_netdev;
 	}
 #endif /* HAVE_TC_INDIR_BLOCK */
 
@@ -4185,6 +4197,10 @@ static int ice_setup_pf_sw(struct ice_pf *pf)
 	 */
 	ice_napi_add(vsi);
 
+	status = ice_init_mac_fltr(pf);
+	if (status)
+		goto unroll_napi_add;
+
 	status = ice_set_cpu_rx_rmap(vsi);
 	if (status) {
 		dev_err(dev, "Failed to set CPU Rx map VSI %d error %d\n",
@@ -4192,45 +4208,19 @@ static int ice_setup_pf_sw(struct ice_pf *pf)
 		status = -EINVAL;
 		goto unroll_napi_add;
 	}
-	status = ice_init_mac_fltr(pf);
-	if (status)
-		goto free_cpu_rx_map;
-
-	/* init tunnel list and lock */
-	spin_lock_init(&pf->tnl_lock);
-	INIT_LIST_HEAD(&pf->tnl_list);
 
 	return status;
 
-free_cpu_rx_map:
-	ice_free_cpu_rx_rmap(vsi);
-
 unroll_napi_add:
-	if (vsi) {
+	ice_napi_del(vsi);
 #ifdef HAVE_TC_INDIR_BLOCK
-		struct ice_netdev_priv *np = netdev_priv(vsi->netdev);
+	ice_tc_indir_block_unregister(vsi);
+unroll_cfg_netdev:
 #endif /* HAVE_TC_INDIR_BLOCK */
-		ice_napi_del(vsi);
-#ifdef HAVE_TC_INDIR_BLOCK
-#ifndef HAVE_TC_FLOW_INDIR_DEV
-		/* clean indirect TC block notifications */
-		unregister_netdevice_notifier(&np->netdevice_nb);
-#elif defined(HAVE_TC_FLOW_INDIR_DEV) && defined(HAVE_TC_FLOW_INDIR_BLOCK_CLEANUP)
-		flow_indr_dev_unregister(ice_indr_setup_tc_cb, np,
-					 ice_rep_indr_tc_block_unbind);
-#else /* HAVE_TC_FLOW_INDIR_DEV */
-		flow_indr_dev_unregister(ice_indr_setup_tc_cb, np,
-					 ice_indr_setup_block_cb);
-#endif /* HAVE_TC_FLOW_INDIR_DEV */
-#endif /* HAVE_TC_INDIR_BLOCK */
-		if (vsi->netdev) {
-			if (vsi->netdev->reg_state == NETREG_REGISTERED)
-				unregister_netdev(vsi->netdev);
-			free_netdev(vsi->netdev);
-			vsi->netdev = NULL;
-		}
+	if (vsi->netdev) {
+		free_netdev(vsi->netdev);
+		vsi->netdev = NULL;
 	}
-
 unroll_vsi_setup:
 	ice_vsi_release(vsi);
 
@@ -4386,120 +4376,148 @@ static int ice_init_pf(struct ice_pf *pf)
 		return -ENOMEM;
 	}
 
+	/* init tunnel list and lock */
+	spin_lock_init(&pf->tnl_lock);
+	INIT_LIST_HEAD(&pf->tnl_list);
+
 	return 0;
 }
 
+static int ice_alloc_msix_entries(struct ice_pf *pf, u16 num_entries)
+{
+	u16 i;
+
+	pf->msix_entries = devm_kcalloc(ice_pf_to_dev(pf), num_entries,
+					sizeof(*pf->msix_entries), GFP_KERNEL);
+	if (!pf->msix_entries)
+		return -ENOMEM;
+
+	for (i = 0; i < num_entries; i++)
+		pf->msix_entries[i].entry = i;
+
+	return 0;
+}
+
+static void ice_free_msix_entries(struct ice_pf *pf)
+{
+	devm_kfree(ice_pf_to_dev(pf), pf->msix_entries);
+	pf->msix_entries = NULL;
+}
+
 /**
- * ice_ena_msix_range - Request a range of MSIX vectors from the OS
+ * ice_ena_msix_range - request a range of MSI-X vectors from the OS
  * @pf: board private structure
  *
- * compute the number of MSIX vectors required (v_budget) and request from
- * the OS. Return the number of vectors reserved or negative on failure
+ * The driver first tries to enable best-case scenario MSI-X vectors. If that doesn't succeeed then
+ * a fall-back method is employed.
+ *
+ * The fall-back logic is described below with each [#] being an attempt at enabling a certain
+ * number of MSI-X. If any of the steps succeed, then return the number of MSI-X enabled from
+ * pci_ena_msix_exact(). If any of the attempts fail, then goto the next step.
+ *
+ * Attempt [0]: Enable the best-case scenario MSI-X vectors.
+ *
+ * Attempt [1]: Enable MSI-X vectors with MACVLAN support disabled, which reduces the request by the
+ * MSI-X vectors needed for MACVLAN.
+ *
+ * Attempt [2]: Enable MSI-X vectors with the number of pf->num_lan_msix reduced by a factor of 2
+ * from the previous attempts (i.e. num_online_cpus() / 2). Also, with the number of
+ * pf->num_rdma_msix reduced by a factor of ~2 from the previous attempts
+ * (i.e. num_online_cpus() / 2 + ICE_RDMA_NUM_AEQ_VECS).
+ *
+ * Attempt [3]: Same as attempt [2], except reduce both by a factor of 4.
+ *
+ * Attempt [4]: Enable the bare-minimum MSI-X vectors.
+ *
+ * Also, if the adjusted_base_msix ever hits the mimimum required for LAN or RDMA, then just set
+ * the needed MSI-X for that feature to the minimum (similar to attempt [4]).
  */
 static int ice_ena_msix_range(struct ice_pf *pf)
 {
+	int err = -ENOSPC, num_cpus, attempt, adjusted_msix_divisor = 1, needed;
 	struct device *dev = ice_pf_to_dev(pf);
-	int v_left, v_actual, v_budget = 0;
-	int needed, err, i;
 
-	v_left = pf->hw.func_caps.common_cap.num_msix_vectors;
+	num_cpus = num_online_cpus();
 
-	/* reserve one vector for miscellaneous handler */
-	needed = 1;
-	if (v_left < needed)
-		goto no_hw_vecs_left_err;
-	v_budget += needed;
-	v_left -= needed;
+#define ICE_MAX_ENABLE_MSIX_ATTEMPTS 4
+	/* make multiple passes at enabling MSI-X vectors in case there aren't enough available for
+	 * the best-case scenario
+	 */
+	for (attempt = 0; attempt <= ICE_MAX_ENABLE_MSIX_ATTEMPTS; attempt++) {
+		int adjusted_base_msix = num_cpus / adjusted_msix_divisor;
 
-	/* reserve vectors for LAN traffic */
-	needed = min_t(int, num_online_cpus(), v_left);
-	if (v_left < needed)
-		goto no_hw_vecs_left_err;
-	pf->num_lan_msix = needed;
-	v_budget += needed;
-	v_left -= needed;
+		/* attempt to enable minimum MSI-X range */
+		if (attempt == ICE_MAX_ENABLE_MSIX_ATTEMPTS) {
+			needed = ICE_MIN_VECS;
+			pf->num_lan_msix = ICE_MIN_LAN_VECS;
 
-	/* reserve one vector for flow director */
-	if (test_bit(ICE_FLAG_FD_ENA, pf->flags)) {
-		needed = ICE_FDIR_MSIX;
-		if (v_left < needed)
-			goto no_hw_vecs_left_err;
-		v_budget += needed;
-		v_left -= needed;
-	}
+			if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags))
+				pf->num_rdma_msix = ICE_MIN_RDMA_VECS;
+		} else {
+			if (adjusted_base_msix > ICE_MIN_LAN_VECS)
+				pf->num_lan_msix = adjusted_base_msix;
+			else
+				pf->num_lan_msix = ICE_MIN_LAN_VECS;
 
+			needed = pf->num_lan_msix + ICE_OICR_VECS;
+
+			if (test_bit(ICE_FLAG_FD_ENA, pf->flags))
+				needed += ICE_FDIR_MSIX;
 #ifdef HAVE_NETDEV_SB_DEV
-	/* reserve vectors for L2 offloads */
-	if (test_bit(ICE_FLAG_VMDQ_ENA, pf->flags)) {
-		needed = ICE_MAX_MACVLANS * ICE_DFLT_VEC_VMDQ_VSI;
-		if (v_left < needed)
-			goto no_hw_vecs_left_err;
-		v_budget += needed;
-		v_left -= needed;
-	}
+
+			/* only reserve MSI-X for MACVLAN on the first attempt */
+			if (attempt == 0 && test_bit(ICE_FLAG_VMDQ_ENA, pf->flags)) {
+				needed += ICE_MAX_MACVLANS * ICE_DFLT_VEC_VMDQ_VSI;
+			} else if (attempt == 1) {
+				dev_warn(dev, "Not enough MSI-X for hardware MACVLAN support, disabling feature.\n");
+				clear_bit(ICE_FLAG_VMDQ_ENA, pf->flags);
+			}
 #endif /* HAVE_NETDEV_SB_DEV */
 
-	/* reserve vectors for RDMA peer driver */
-	if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
-#define ICE_RDMA_NUM_AEQ_VECS 4
-		needed = min_t(int, (num_online_cpus() + ICE_RDMA_NUM_AEQ_VECS),
-			       v_left);
-		pf->num_rdma_msix = needed;
-		v_budget += needed;
-		v_left -= needed;
-	}
+			/* reserve vectors for RDMA peer driver */
+			if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
+				if (adjusted_base_msix > ICE_MIN_RDMA_VECS)
+					pf->num_rdma_msix = adjusted_base_msix +
+						ICE_RDMA_NUM_AEQ_VECS;
+				else
+					pf->num_rdma_msix = ICE_MIN_RDMA_VECS;
 
-	pf->msix_entries = devm_kcalloc(dev, v_budget,
-					sizeof(*pf->msix_entries), GFP_KERNEL);
+				needed += pf->num_rdma_msix;
+			}
+		}
 
-	if (!pf->msix_entries) {
-		err = -ENOMEM;
-		goto exit_err;
-	}
+		err = ice_alloc_msix_entries(pf, needed);
+		if (err)
+			goto err_out;
 
-	for (i = 0; i < v_budget; i++)
-		pf->msix_entries[i].entry = i;
+		dev_dbg(dev, "attempting to enable %d MSI-X vectors\n", needed);
+		err = pci_enable_msix_exact(pf->pdev, pf->msix_entries, needed);
+		if (err < 0) {
+			ice_free_msix_entries(pf);
+			dev_notice(dev, "Couldn't get %d MSI-X vectors due to OS, Platform, and/or PCI-function limitations. Reducing request and retrying.",
+				   needed);
 
-	/* actually reserve the vectors */
-	v_actual = pci_enable_msix_range(pf->pdev, pf->msix_entries,
-					 ICE_MIN_MSIX, v_budget);
-
-	if (v_actual < 0) {
-		dev_err(dev, "unable to reserve MSI-X vectors\n");
-		err = v_actual;
-		goto msix_err;
-	}
-
-	if (v_actual < v_budget) {
-		dev_warn(dev, "not enough OS MSI-X vectors. requested = %d, obtained = %d\n",
-			 v_budget, v_actual);
-/* 2 vectors each for LAN and RDMA (traffic + OICR), one for flow director */
-#define ICE_MIN_LAN_VECS 2
-#define ICE_MIN_RDMA_VECS 2
-#define ICE_MIN_VECS (ICE_MIN_LAN_VECS + ICE_MIN_RDMA_VECS + 1)
-
-		if (v_actual < ICE_MIN_VECS) {
-			/* error if we can't get minimum vectors */
-			pci_disable_msix(pf->pdev);
-			err = -ERANGE;
-			goto msix_err;
+			/* MACVLAN support already disabled and we still failed to enable MSI-X, so
+			 * make another attempt at enabling MSI-X by reducing the needed amount
+			 */
+			if (attempt > 0)
+				adjusted_msix_divisor *= 2;
 		} else {
-			pf->num_lan_msix = ICE_MIN_LAN_VECS;
-			pf->num_rdma_msix = ICE_MIN_RDMA_VECS;
+			if (pf->num_lan_msix != num_cpus)
+				dev_notice(dev, "Enabled %d MSI-X vectors for LAN traffic.\n",
+					   pf->num_lan_msix);
+
+			if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags) &&
+			    pf->num_rdma_msix != (num_cpus + ICE_RDMA_NUM_AEQ_VECS))
+				dev_notice(dev, "Enabled %d MSI-X vectors for RDMA.\n",
+					   pf->num_rdma_msix);
+
+			return needed;
 		}
 	}
 
-	return v_actual;
-
-msix_err:
-	devm_kfree(dev, pf->msix_entries);
-	goto exit_err;
-
-no_hw_vecs_left_err:
-	dev_err(dev, "not enough device MSI-X vectors. requested = %d, available = %d\n",
-		needed, v_left);
-	err = -ERANGE;
-exit_err:
+err_out:
+	dev_err(dev, "failed to enable MSI-X vectors\n");
 	pf->num_lan_msix = 0;
 	pf->num_rdma_msix = 0;
 	return err;
@@ -4512,8 +4530,7 @@ exit_err:
 static void ice_dis_msix(struct ice_pf *pf)
 {
 	pci_disable_msix(pf->pdev);
-	devm_kfree(ice_pf_to_dev(pf), pf->msix_entries);
-	pf->msix_entries = NULL;
+	ice_free_msix_entries(pf);
 }
 
 /**
@@ -4946,13 +4963,13 @@ static enum ice_status ice_send_version(struct ice_pf *pf)
  *
  * returns 0 on success, negative on error
  */
-static int ice_init_acl(struct ice_pf *pf)
+int ice_init_acl(struct ice_pf *pf)
 {
 	struct ice_acl_tbl_params params;
 	struct ice_hw *hw = &pf->hw;
+	enum ice_status status;
 	int divider;
 	u16 scen_id;
-	int err;
 
 	/* Creates a single ACL table that consist of src_ip(4 byte),
 	 * dest_ip(4 byte), src_port(2 byte) and dst_port(2 byte) for a total
@@ -4973,22 +4990,24 @@ static int ice_init_acl(struct ice_pf *pf)
 	params.concurr = false;
 
 
-	err = ice_acl_create_tbl(hw, &params);
-	if (err)
-		return err;
+	/* set DCF ACL enable flag as false by default */
+	hw->dcf_acl_enabled = false;
 
-	return ice_acl_create_scen(hw, params.width, params.depth, &scen_id);
+	status = ice_acl_create_tbl(hw, &params);
+	if (status)
+		return ice_status_to_errno(status);
+
+	return ice_status_to_errno(ice_acl_create_scen(hw, params.width,
+						       params.depth, &scen_id));
 }
 
 /**
  * ice_deinit_acl - Unroll the initialization of the ACL block
  * @pf: ptr to PF device
- *
- * returns 0 on success, negative on error
  */
-static int ice_deinit_acl(struct ice_pf *pf)
+static void ice_deinit_acl(struct ice_pf *pf)
 {
-	return ice_acl_destroy_tbl((struct ice_hw *)&pf->hw);
+	ice_acl_destroy_tbl(&pf->hw);
 }
 
 /**
@@ -5157,6 +5176,43 @@ static void ice_print_wake_reason(struct ice_pf *pf)
 }
 
 
+/*
+ * ice_register_netdev - register netdev and devlink port
+ * @pf: pointer to the PF struct
+ */
+static int ice_register_netdev(struct ice_pf *pf)
+{
+	struct ice_vsi *vsi;
+	int err = 0;
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi || !vsi->netdev)
+		return -EIO;
+
+	err = register_netdev(vsi->netdev);
+	if (err)
+		goto err_register_netdev;
+
+	netif_carrier_off(vsi->netdev);
+	netif_tx_stop_all_queues(vsi->netdev);
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	err = ice_devlink_create_port(vsi);
+	if (err)
+		goto err_devlink_create;
+
+	devlink_port_type_eth_set(&vsi->devlink_port, vsi->netdev);
+#endif /* CONFIG_NET_DEVLINK */
+
+	return 0;
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+err_devlink_create:
+	unregister_netdev(vsi->netdev);
+#endif /* CONFIG_NET_DEVLINK */
+err_register_netdev:
+	free_netdev(vsi->netdev);
+	vsi->netdev = NULL;
+	return err;
+}
+
 /**
  * ice_probe - Device initialization routine
  * @pdev: PCI device information struct
@@ -5295,6 +5351,7 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 #endif /* ETHTOOL_GFECPARAM */
 
 	ice_devlink_init_regions(pf);
+	ice_devlink_params_publish(pf);
 
 	pf->num_alloc_vsi = hw->func_caps.guar_num_vsi;
 	if (!pf->num_alloc_vsi) {
@@ -5446,12 +5503,12 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	}
 
 	/* initialize DDP driven features */
-
 	ice_ptp_init(pf);
 
 	/* Note: Flow director init failure is non-fatal to load */
 	if (ice_init_fdir(pf))
 		dev_err(dev, "could not initialize flow director\n");
+
 	if (test_bit(ICE_FLAG_FD_ENA, pf->flags)) {
 		/* Note: ACL init failure is non-fatal to load */
 		err = ice_init_acl(pf);
@@ -5467,8 +5524,8 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	} else {
 		ice_cfg_lldp_mib_change(&pf->hw, true);
 	}
-#ifdef HAVE_NETDEV_UPPER_INFO
 
+#ifdef HAVE_NETDEV_UPPER_INFO
 	if (ice_init_lag(pf))
 		dev_warn(dev, "Failed to init link aggregation support\n");
 
@@ -5476,13 +5533,18 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	/* print PCI link speed and width */
 	pcie_print_link_status(pf->pdev);
 
-
 probe_done:
+	err = ice_register_netdev(pf);
+	if (err)
+		goto err_netdev_reg;
+
 	/* ready to go, so clear down state bit */
 	clear_bit(__ICE_DOWN, pf->state);
+
 	return 0;
 
 	/* Unwind non-managed device resources, etc. if something failed */
+err_netdev_reg:
 err_init_peer_unroll:
 	if (ice_is_peer_ena(pf)) {
 		ice_for_each_peer(pf, NULL, ice_unroll_peer);
@@ -5505,6 +5567,7 @@ err_init_vsi_unroll:
 	devm_kfree(dev, pf->vsi);
 err_init_pf_unroll:
 	ice_deinit_pf(pf);
+	ice_devlink_params_unpublish(pf);
 	ice_devlink_destroy_regions(pf);
 	ice_deinit_hw(hw);
 err_exit_unroll:
@@ -5516,32 +5579,6 @@ err_rec_mode:
 	return err;
 }
 
-
-#ifdef HAVE_TC_INDIR_BLOCK
-/**
- * ice_tc_indir_block_remove - clean indirect TC block notifications
- * @pf: PF structure
- */
-static void ice_tc_indir_block_remove(struct ice_pf *pf)
-{
-	struct ice_vsi *pf_vsi = ice_get_main_vsi(pf);
-	struct ice_netdev_priv *np;
-
-	if (!pf_vsi)
-		return;
-	np = netdev_priv(pf_vsi->netdev);
-#ifndef HAVE_TC_FLOW_INDIR_DEV
-	unregister_netdevice_notifier(&np->netdevice_nb);
-	ice_indr_clean_block_privs(np);
-#elif defined(HAVE_TC_FLOW_INDIR_DEV) && defined(HAVE_TC_FLOW_INDIR_BLOCK_CLEANUP)
-	flow_indr_dev_unregister(ice_indr_setup_tc_cb, np,
-				 ice_rep_indr_tc_block_unbind);
-#else
-	flow_indr_dev_unregister(ice_indr_setup_tc_cb, np,
-				 ice_indr_setup_block_cb);
-#endif /* HAVE_TC_FLOW_INDIR_DEV */
-}
-#endif /* HAVE_TC_INDIR_BLOCK */
 
 /**
  * ice_set_wake - enable or disable Wake on LAN
@@ -5689,6 +5726,7 @@ static void ice_remove(struct pci_dev *pdev)
 	}
 
 	ice_deinit_pf(pf);
+	ice_devlink_params_unpublish(pf);
 	ice_devlink_destroy_regions(pf);
 	ice_deinit_hw(&pf->hw);
 	ice_devlink_unregister(pf);
@@ -7906,6 +7944,12 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 
 	ice_clear_pxe_mode(hw);
 
+	ret = ice_init_nvm(hw);
+	if (ret) {
+		dev_err(dev, "ice_init_nvm failed %s\n", ice_stat_str(ret));
+		goto err_init_ctrlq;
+	}
+
 	ret = ice_get_caps(hw);
 	if (ret) {
 		dev_err(dev, "ice_get_caps failed %s\n", ice_stat_str(ret));
@@ -7921,6 +7965,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	err = ice_sched_init_port(hw->port_info);
 	if (err)
 		goto err_sched_init_port;
+
 
 	ice_pf_reset_stats(pf);
 
@@ -7948,7 +7993,6 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 
 	if (test_bit(ICE_FLAG_DCB_ENA, pf->flags))
 		ice_dcb_rebuild(pf);
-	ice_eswitch_close(pf);
 
 	/* rebuild PF VSI */
 	err = ice_vsi_rebuild_by_type(pf, ICE_VSI_PF);
@@ -7991,7 +8035,11 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	}
 #endif /* HAVE_NETDEV_SB_DEV */
 
-	ice_eswitch_rebuild(pf);
+	err = ice_vsi_rebuild_by_type(pf, ICE_VSI_SWITCHDEV_CTRL);
+	if (err) {
+		dev_err(dev, "Switchdev CTRL VSI rebuild failed: %d\n", err);
+		goto err_vsi_rebuild;
+	}
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 	if (reset_type == ICE_RESET_PFR) {
@@ -8038,7 +8086,6 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	}
 
 	ice_replay_post(hw);
-
 	/* if we get here, reset flow is successful */
 	clear_bit(__ICE_RESET_FAILED, pf->state);
 	return;
@@ -11911,11 +11958,6 @@ int ice_open(struct net_device *netdev)
 	if (test_bit(__ICE_NEEDS_RESTART, pf->state)) {
 		netdev_err(netdev, "driver needs to be unloaded and reloaded\n");
 		return -EIO;
-	}
-
-	if (test_bit(__ICE_DOWN, pf->state)) {
-		netdev_err(netdev, "device is not ready yet\n");
-		return -EBUSY;
 	}
 
 	netif_carrier_off(netdev);

@@ -871,6 +871,71 @@ enum ice_status ice_dump_sw_cfg(struct ice_hw *hw)
 }
 
 /**
+ * ice_alloc_rss_global_lut - allocate a RSS global LUT
+ * @hw: pointer to the HW struct
+ * @shared_res: true to allocate as a shared resource and false to allocate as a dedicated resource
+ * @global_lut_id: output parameter for the RSS global LUT's ID
+ */
+enum ice_status ice_alloc_rss_global_lut(struct ice_hw *hw, bool shared_res, u16 *global_lut_id)
+{
+	struct ice_aqc_alloc_free_res_elem *sw_buf;
+	enum ice_status status;
+	u16 buf_len;
+
+	buf_len = struct_size(sw_buf, elem, 1);
+	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	if (!sw_buf)
+		return ICE_ERR_NO_MEMORY;
+
+	sw_buf->num_elems = cpu_to_le16(1);
+	sw_buf->res_type = cpu_to_le16(ICE_AQC_RES_TYPE_GLOBAL_RSS_HASH |
+				       (shared_res ? ICE_AQC_RES_TYPE_FLAG_SHARED :
+				       ICE_AQC_RES_TYPE_FLAG_DEDICATED));
+
+	status = ice_aq_alloc_free_res(hw, 1, sw_buf, buf_len, ice_aqc_opc_alloc_res, NULL);
+	if (status) {
+		ice_debug(hw, ICE_DBG_RES, "Failed to allocate %s RSS global LUT, status %d\n",
+			  shared_res ? "shared" : "dedicated", status);
+		goto ice_alloc_global_lut_exit;
+	}
+
+	*global_lut_id = le16_to_cpu(sw_buf->elem[0].e.sw_resp);
+
+ice_alloc_global_lut_exit:
+	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	return status;
+}
+
+/**
+ * ice_free_global_lut - free a RSS global LUT
+ * @hw: pointer to the HW struct
+ * @global_lut_id: ID of the RSS global LUT to free
+ */
+enum ice_status ice_free_rss_global_lut(struct ice_hw *hw, u16 global_lut_id)
+{
+	struct ice_aqc_alloc_free_res_elem *sw_buf;
+	u16 buf_len, num_elems = 1;
+	enum ice_status status;
+
+	buf_len = struct_size(sw_buf, elem, num_elems);
+	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	if (!sw_buf)
+		return ICE_ERR_NO_MEMORY;
+
+	sw_buf->num_elems = cpu_to_le16(num_elems);
+	sw_buf->res_type = cpu_to_le16(ICE_AQC_RES_TYPE_GLOBAL_RSS_HASH);
+	sw_buf->elem[0].e.sw_resp = cpu_to_le16(global_lut_id);
+
+	status = ice_aq_alloc_free_res(hw, num_elems, sw_buf, buf_len, ice_aqc_opc_free_res, NULL);
+	if (status)
+		ice_debug(hw, ICE_DBG_RES, "Failed to free RSS global LUT %d, status %d\n",
+			  global_lut_id, status);
+
+	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	return status;
+}
+
+/**
  * ice_alloc_sw - allocate resources specific to switch
  * @hw: pointer to the HW struct
  * @ena_stats: true to turn on VEB stats
@@ -2495,7 +2560,7 @@ ice_create_vsi_list_map(struct ice_hw *hw, u16 *vsi_handle_arr, u16 num_vsi,
 	struct ice_vsi_list_map_info *v_map;
 	int i;
 
-	v_map = devm_kcalloc(ice_hw_to_dev(hw), 1, sizeof(*v_map), GFP_KERNEL);
+	v_map = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*v_map), GFP_KERNEL);
 	if (!v_map)
 		return NULL;
 

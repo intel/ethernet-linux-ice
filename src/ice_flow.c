@@ -197,8 +197,8 @@ struct ice_flow_field_info ice_flds_info[ICE_FLOW_FIELD_IDX_MAX] = {
  */
 static const u32 ice_ptypes_mac_ofos[] = {
 	0xFDC00846, 0xBFBF7F7E, 0xF70001DF, 0xFEFDFDFB,
-	0x0000077E, 0x00000000, 0x00000000, 0x00000000,
-	0x00400000, 0x03FFF000, 0x7FFFFFE0, 0x00000000,
+	0x0000077E, 0x000003FF, 0x00000000, 0x00000000,
+	0x00400000, 0x03FFF000, 0xFFFFFFE0, 0x00000307,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -222,7 +222,7 @@ static const u32 ice_ptypes_macvlan_il[] = {
  * include IPV4 other PTYPEs
  */
 static const u32 ice_ptypes_ipv4_ofos[] = {
-	0x1DC00000, 0x04000800, 0x00000000, 0x00000000,
+	0x1DC00000, 0x24000800, 0x00000000, 0x00000000,
 	0x00000000, 0x00000155, 0x00000000, 0x00000000,
 	0x00000000, 0x000FC000, 0x000002A0, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -236,7 +236,7 @@ static const u32 ice_ptypes_ipv4_ofos[] = {
  * IPV4 other PTYPEs
  */
 static const u32 ice_ptypes_ipv4_ofos_all[] = {
-	0x1DC00000, 0x04000800, 0x00000000, 0x00000000,
+	0x1DC00000, 0x24000800, 0x00000000, 0x00000000,
 	0x00000000, 0x00000155, 0x00000000, 0x00000000,
 	0x00000000, 0x000FC000, 0x83E0FAA0, 0x00000101,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -278,7 +278,7 @@ static const u32 ice_ptypes_ipv6_ofos[] = {
 static const u32 ice_ptypes_ipv6_ofos_all[] = {
 	0x00000000, 0x00000000, 0x77000000, 0x10002000,
 	0x00000000, 0x000002AA, 0x00000000, 0x00000000,
-	0x00080F00, 0x03F00000, 0x7C1F0540, 0x00000206,
+	0x00000000, 0x03F00000, 0x7C1F0540, 0x00000206,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -299,7 +299,7 @@ static const u32 ice_ptypes_ipv6_il[] = {
 };
 
 /* Packet types for packets with an Outer/First/Single IPv4 header - no L4 */
-static const u32 ice_ipv4_ofos_no_l4[] = {
+static const u32 ice_ptypes_ipv4_ofos_no_l4[] = {
 	0x10C00000, 0x04000800, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -311,7 +311,7 @@ static const u32 ice_ipv4_ofos_no_l4[] = {
 };
 
 /* Packet types for packets with an Innermost/Last IPv4 header - no L4 */
-static const u32 ice_ipv4_il_no_l4[] = {
+static const u32 ice_ptypes_ipv4_il_no_l4[] = {
 	0x60000000, 0x18043008, 0x80000002, 0x6010c021,
 	0x00000008, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -323,7 +323,7 @@ static const u32 ice_ipv4_il_no_l4[] = {
 };
 
 /* Packet types for packets with an Outer/First/Single IPv6 header - no L4 */
-static const u32 ice_ipv6_ofos_no_l4[] = {
+static const u32 ice_ptypes_ipv6_ofos_no_l4[] = {
 	0x00000000, 0x00000000, 0x43000000, 0x10002000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -335,7 +335,7 @@ static const u32 ice_ipv6_ofos_no_l4[] = {
 };
 
 /* Packet types for packets with an Innermost/Last IPv6 header - no L4 */
-static const u32 ice_ipv6_il_no_l4[] = {
+static const u32 ice_ptypes_ipv6_il_no_l4[] = {
 	0x00000000, 0x02180430, 0x0000010c, 0x086010c0,
 	0x00000430, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -434,7 +434,7 @@ static const u32 ice_ptypes_gre_of[] = {
 
 /* Packet types for packets with an Innermost/Last MAC header */
 static const u32 ice_ptypes_mac_il[] = {
-	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x20000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -846,8 +846,8 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 				   ICE_FLOW_PTYPE_MAX);
 		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV4) &&
 			   !(hdrs & ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER)) {
-			src = !i ? (const unsigned long *)ice_ipv4_ofos_no_l4 :
-				(const unsigned long *)ice_ipv4_il_no_l4;
+			src = !i ? (const unsigned long *)ice_ptypes_ipv4_ofos_no_l4 :
+				(const unsigned long *)ice_ptypes_ipv4_il_no_l4;
 			bitmap_and(params->ptypes, params->ptypes, src,
 				   ICE_FLOW_PTYPE_MAX);
 		} else if (hdrs & ICE_FLOW_SEG_HDR_IPV4) {
@@ -857,8 +857,8 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 				   ICE_FLOW_PTYPE_MAX);
 		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV6) &&
 			   !(hdrs & ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER)) {
-			src = !i ? (const unsigned long *)ice_ipv6_ofos_no_l4 :
-				(const unsigned long *)ice_ipv6_il_no_l4;
+			src = !i ? (const unsigned long *)ice_ptypes_ipv6_ofos_no_l4 :
+				(const unsigned long *)ice_ptypes_ipv6_il_no_l4;
 			bitmap_and(params->ptypes, params->ptypes, src,
 				   ICE_FLOW_PTYPE_MAX);
 		} else if (hdrs & ICE_FLOW_SEG_HDR_IPV6) {
@@ -1081,7 +1081,7 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 		 */
 		if (fld == ICE_FLOW_FIELD_IDX_IPV4_TTL)
 			sib = ICE_FLOW_FIELD_IDX_IPV4_PROT;
-		else if (fld == ICE_FLOW_FIELD_IDX_IPV4_PROT)
+		else
 			sib = ICE_FLOW_FIELD_IDX_IPV4_TTL;
 
 		/* If the sibling field is also included, that field's
@@ -1100,7 +1100,7 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 		 */
 		if (fld == ICE_FLOW_FIELD_IDX_IPV6_TTL)
 			sib = ICE_FLOW_FIELD_IDX_IPV6_PROT;
-		else if (fld == ICE_FLOW_FIELD_IDX_IPV6_PROT)
+		else
 			sib = ICE_FLOW_FIELD_IDX_IPV6_TTL;
 
 		/* If the sibling field is also included, that field's
@@ -1698,8 +1698,8 @@ ice_flow_acl_is_prof_in_use(struct ice_hw *hw, struct ice_flow_prof *prof,
 	    buf->pf_scenario_num[6] == ICE_ACL_INVALID_SCEN &&
 	    buf->pf_scenario_num[7] == ICE_ACL_INVALID_SCEN)
 		return 0;
-	else
-		return ICE_ERR_IN_USE;
+
+	return ICE_ERR_IN_USE;
 }
 
 /**
@@ -1766,7 +1766,7 @@ ice_flow_acl_disassoc_scen(struct ice_hw *hw, struct ice_flow_prof *prof)
 
 	/* Clear scenario for this PF */
 	buf.pf_scenario_num[hw->pf_id] = ICE_ACL_INVALID_SCEN;
-	status = ice_prgm_acl_prof_extrt(hw, prof_id, &buf, NULL);
+	status = ice_prgm_acl_prof_xtrct(hw, prof_id, &buf, NULL);
 
 	return status;
 }
@@ -2065,7 +2065,7 @@ ice_flow_acl_set_xtrct_seq(struct ice_hw *hw, struct ice_flow_prof *prof)
 
 	/* Update the current PF */
 	buf.pf_scenario_num[hw->pf_id] = (u8)prof->cfg.scen->id;
-	status = ice_prgm_acl_prof_extrt(hw, prof_id, &buf, NULL);
+	status = ice_prgm_acl_prof_xtrct(hw, prof_id, &buf, NULL);
 
 	return status;
 }
@@ -2492,7 +2492,6 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 
 	e->acts = devm_kmemdup(ice_hw_to_dev(hw), acts,
 			       acts_cnt * sizeof(*acts), GFP_KERNEL);
-
 	if (!e->acts)
 		goto out;
 
@@ -2700,30 +2699,30 @@ ice_flow_acl_find_scen_entry_cond(struct ice_flow_prof *prof,
 }
 
 /**
- * ice_flow_acl_convert_to_acl_prior - Convert to ACL priority
+ * ice_flow_acl_convert_to_acl_prio - Convert to ACL priority
  * @p: flow priority
  */
-static enum ice_acl_entry_prior
-ice_flow_acl_convert_to_acl_prior(enum ice_flow_priority p)
+static enum ice_acl_entry_prio
+ice_flow_acl_convert_to_acl_prio(enum ice_flow_priority p)
 {
-	enum ice_acl_entry_prior acl_prior;
+	enum ice_acl_entry_prio acl_prio;
 
 	switch (p) {
 	case ICE_FLOW_PRIO_LOW:
-		acl_prior = ICE_LOW;
+		acl_prio = ICE_ACL_PRIO_LOW;
 		break;
 	case ICE_FLOW_PRIO_NORMAL:
-		acl_prior = ICE_NORMAL;
+		acl_prio = ICE_ACL_PRIO_NORMAL;
 		break;
 	case ICE_FLOW_PRIO_HIGH:
-		acl_prior = ICE_HIGH;
+		acl_prio = ICE_ACL_PRIO_HIGH;
 		break;
 	default:
-		acl_prior = ICE_NORMAL;
+		acl_prio = ICE_ACL_PRIO_NORMAL;
 		break;
 	}
 
-	return acl_prior;
+	return acl_prio;
 }
 
 /**
@@ -2801,7 +2800,7 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 	if (!entry || !(*entry) || !prof)
 		return ICE_ERR_BAD_PTR;
 
-	e = *(entry);
+	e = *entry;
 
 	do_chg_rng_chk = false;
 	if (e->range_buf) {
@@ -2843,7 +2842,6 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 	 */
 	exist = ice_flow_acl_find_scen_entry_cond(prof, e, &do_chg_action,
 						  &do_add_entry, &do_rem_entry);
-
 	if (do_rem_entry) {
 		status = ice_flow_rem_entry_sync(hw, ICE_BLK_ACL, exist);
 		if (status)
@@ -2861,15 +2859,15 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 		       sizeof(struct ice_acl_act_entry));
 
 	if (do_add_entry) {
-		enum ice_acl_entry_prior prior;
+		enum ice_acl_entry_prio prio;
 		u8 *keys, *inverts;
 		u16 entry_idx;
 
 		keys = (u8 *)e->entry;
 		inverts = keys + (e->entry_sz / 2);
-		prior = ice_flow_acl_convert_to_acl_prior(e->priority);
+		prio = ice_flow_acl_convert_to_acl_prio(e->priority);
 
-		status = ice_acl_add_entry(hw, prof->cfg.scen, prior, keys,
+		status = ice_acl_add_entry(hw, prof->cfg.scen, prio, keys,
 					   inverts, acts, e->acts_cnt,
 					   &entry_idx);
 		if (status)
@@ -2888,7 +2886,6 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 						   exist->acts_cnt,
 						   sizeof(struct ice_flow_action),
 						   GFP_KERNEL);
-
 			if (!exist->acts) {
 				status = ICE_ERR_NO_MEMORY;
 				goto out;

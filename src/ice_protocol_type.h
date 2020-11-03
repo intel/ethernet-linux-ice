@@ -51,6 +51,7 @@ enum ice_protocol_type {
 	ICE_AH,
 	ICE_NAT_T,
 	ICE_GTP_NO_PAY,
+	ICE_VLAN_EX,
 	ICE_PROTOCOL_LAST
 };
 
@@ -125,6 +126,7 @@ enum ice_prot_id {
 #define ICE_MAC_OFOS_HW		1
 #define ICE_MAC_IL_HW		4
 #define ICE_ETYPE_OL_HW		9
+#define ICE_VLAN_OF_HW		16
 #define ICE_VLAN_OL_HW		17
 #define ICE_IPV4_OFOS_HW	32
 #define ICE_IPV4_IL_HW		33

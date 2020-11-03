@@ -7,8 +7,6 @@
 #include <net/devlink.h>
 
 void ice_eswitch_release(struct ice_pf *pf);
-void ice_eswitch_close(struct ice_pf *pf);
-void ice_eswitch_rebuild(struct ice_pf *pf);
 int ice_eswitch_mode_get(struct devlink *devlink, u16 *mode);
 
 struct net_device *
@@ -49,8 +47,6 @@ static inline int ice_eswitch_mode_set(struct devlink __always_unused *devlink,
 bool ice_is_eswitch_mode_switchdev(struct ice_pf *pf);
 #else
 #define ice_eswitch_release(pf) do {} while (0)
-#define ice_eswitch_close(pf) do {} while (0)
-#define ice_eswitch_rebuild(pf) do {} while (0)
 #define ice_eswitch_set_target_vsi(skb, off) do {} while (0)
 static inline bool
 ice_is_eswitch_mode_switchdev(struct ice_pf __always_unused *pf)

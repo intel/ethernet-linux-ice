@@ -90,6 +90,7 @@ ice_qvec_dis_irq(struct ice_vsi *vsi, struct ice_ring *rx_ring,
 		u16 v_idx = q_vector->v_idx;
 
 		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx), 0);
+
 		ice_flush(hw);
 		synchronize_irq(pf->msix_entries[v_idx + base].vector);
 	}

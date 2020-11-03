@@ -49,6 +49,9 @@
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #include <net/devlink.h>
 #endif /* CONFIG_NET_DEVLINK */
+#if IS_ENABLED(CONFIG_DCB)
+#include <scsi/iscsi_proto.h>
+#endif /* CONFIG_DCB */
 #include "ice_devids.h"
 #include "ice_type.h"
 #include "ice_txrx.h"
@@ -131,6 +134,11 @@ extern const char ice_drv_ver[];
 #define ICE_MIN_MSIX		2
 #define ICE_FDIR_MSIX		2
 #define ICE_NO_VSI		0xffff
+#define ICE_MIN_LAN_VECS	1
+#define ICE_OICR_VECS		1
+#define ICE_RDMA_NUM_AEQ_VECS 4
+#define ICE_MIN_RDMA_VECS 2
+#define ICE_MIN_VECS	(ICE_MIN_LAN_VECS + ICE_MIN_RDMA_VECS + ICE_FDIR_MSIX + ICE_OICR_VECS)
 #define ICE_VSI_MAP_CONTIG	0
 #define ICE_VSI_MAP_SCATTER	1
 #define ICE_MAX_SCATTER_TXQS	16
@@ -1013,6 +1021,7 @@ struct ice_pf {
 	u16 num_msix_per_vf;
 	/* used to ratelimit the MDD event logging */
 	unsigned long last_printed_mdd_jiffies;
+	DECLARE_BITMAP(malvfs, ICE_MAX_VF_COUNT);
 	DECLARE_BITMAP(state, __ICE_STATE_NBITS);
 	DECLARE_BITMAP(flags, ICE_PF_FLAGS_NBITS);
 	unsigned long *avail_txqs;	/* bitmap to track PF Tx queue usage */
@@ -1028,7 +1037,8 @@ struct ice_pf {
 	u64 cached_systime;
 	u8 ptp_tx_ts_ena;
 	u8 ptp_one_pps_out_ena;
-
+	bool ptp_quad_mem_reset[ICE_MAX_QUAD];
+	DECLARE_BITMAP(ptp_tx_idx, INDEX_PER_QUAD * ICE_MAX_QUAD);
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
 	struct ice_peer_dev *rdma_peer;
@@ -1231,13 +1241,19 @@ static inline bool ice_vector_intr_busypoll(struct ice_q_vector *qv)
 static inline void
 ice_adq_trigger_sw_intr(struct ice_hw *hw, struct ice_q_vector *q_vector)
 {
+	struct ice_ring_container *rx_rc = &q_vector->rx;
+
 	q_vector->state_flags &= ~ICE_CHNL_ONCE_IN_BP;
 
+	/* when entering into interrupt mode, use current value of Rx ITR
+	 * hence rx_rc->itr_setting. This is needed to honor user setting
+	 * for Rx ITR
+	 */
 	wr32(hw,
 	     GLINT_DYN_CTL(q_vector->reg_idx),
-	     (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) |
+	     (rx_rc->itr_idx << GLINT_DYN_CTL_ITR_INDX_S) |
+	     (ITR_REG_ALIGN(rx_rc->itr_setting) >> ICE_ITR_GRAN_S) |
 	     GLINT_DYN_CTL_SWINT_TRIG_M |
-	     GLINT_DYN_CTL_CLEARPBA_M |
 	     GLINT_DYN_CTL_INTENA_M);
 }
 
@@ -1264,7 +1280,7 @@ ice_sw_intr_cntr(struct ice_q_vector *q_vector, bool napi_codepath)
 /**
  * ice_force_wb - trigger force write-back by setting WB_ON_ITR bit
  * @hw: ptr to HW
- * @qv: pointer to q_vector
+ * @q_vector: pointer to q_vector
  *
  * This function is used to force write-backs by setting WB_ON_ITR bit
  * in DYN_CTLN register. WB_ON_ITR and INTENA are mutually exclusive bits.
@@ -1279,8 +1295,7 @@ ice_force_wb(struct ice_hw *hw, struct ice_q_vector *q_vector)
 		q_vector->ch_stats.num_wb_on_itr_set++;
 #endif /* ADQ_PERF_COUNTERS */
 		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx),
-		     (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) |
-		     GLINT_DYN_CTL_WB_ON_ITR_M);
+		     ICE_GLINT_DYN_CTL_WB_ON_ITR(0, ICE_RX_ITR));
 	}
 
 	/* needed to avoid triggering WB_ON_ITR again which typically
@@ -1306,9 +1321,6 @@ static inline bool ice_is_chnl_fltr(struct ice_tc_flower_fltr *f)
 /**
  * ice_chnl_dmac_fltr_cnt - DMAC based CHNL filter count
  * @pf: Pointer to PF
- * @mac: Pointer to MAC address
- *
- * returns the filter count which matches with "mac"
  */
 static inline int ice_chnl_dmac_fltr_cnt(struct ice_pf *pf)
 {
@@ -1368,7 +1380,7 @@ static inline void ice_set_ring_xdp(struct ice_ring *ring)
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 /**
  * ice_xsk_umem - get XDP UMEM bound to a ring
- * @ring - ring to use
+ * @ring: ring to use
  *
  * Returns a pointer to xdp_umem structure if there is an UMEM present,
  * NULL otherwise.
@@ -1756,17 +1768,17 @@ void ice_vsi_manage_fdir(struct ice_vsi *vsi, bool ena);
 int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_del_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_get_ethtool_fdir_entry(struct ice_hw *hw, struct ethtool_rxnfc *cmd);
+u32 ice_ntuple_get_max_fltr_cnt(struct ice_hw *hw);
 int
 ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 			 struct ethtool_rx_flow_spec *fsp,
 			 struct ice_fdir_fltr *input);
-u32 ice_get_fltr_cnt(struct ice_hw *hw);
-int ice_check_ip4_seg_fltr(struct ethtool_tcpip4_spec *tcp_ip4_spec);
-int ice_check_ip4_usr_seg_fltr(struct ethtool_usrip4_spec *usr_ip4_spec);
-#ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
-int ice_check_ip6_seg_fltr(struct ethtool_tcpip6_spec *tcp_ip6_spec);
-int ice_check_ip6_usr_seg_fltr(struct ethtool_usrip6_spec *usr_ip6_spec);
-#endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
+int
+ice_ntuple_l4_proto_to_port(enum ice_flow_seg_hdr l4_proto,
+			    enum ice_flow_field *src_port,
+			    enum ice_flow_field *dst_port);
+int ice_ntuple_check_ip4_seg(struct ethtool_tcpip4_spec *tcp_ip4_spec);
+int ice_ntuple_check_ip4_usr_seg(struct ethtool_usrip4_spec *usr_ip4_spec);
 int
 ice_get_fdir_fltr_ids(struct ice_hw *hw, struct ethtool_rxnfc *cmd,
 		      u32 *rule_locs);
@@ -1785,6 +1797,7 @@ int ice_stop(struct net_device *netdev);
 void ice_service_task_schedule(struct ice_pf *pf);
 int
 ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
+int ice_init_acl(struct ice_pf *pf);
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 int
 ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,

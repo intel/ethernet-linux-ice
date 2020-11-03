@@ -1003,7 +1003,7 @@ ice_peer_report_state_change(struct ice_peer_dev *peer_dev,
  */
 static int ice_peer_unregister(struct ice_peer_dev *peer_dev)
 {
-	enum ice_close_reason reason = ICE_REASON_PEER_DEV_UNINIT;
+	enum ice_close_reason reason = ICE_REASON_PEER_DRV_UNREG;
 	struct ice_peer_dev_int *peer_dev_int;
 	struct ice_pf *pf;
 	int ret;
@@ -1109,6 +1109,7 @@ static int ice_peer_register(struct ice_peer_dev *peer_dev)
 
 	return 0;
 }
+
 
 /**
  * ice_peer_request_reset - accept request from peer to perform a reset

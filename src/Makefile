@@ -104,11 +104,7 @@ clean:
 # Install kernel module files. This target is called by the RPM specfile when
 # generating binary RPMs, and is not expected to modify files outside of the
 # build root. Thus, it must not update initramfs, or run depmod.
-ifeq (${DRIVER},ice_swx)
-  DDP_PKG_ORIGIN := $(shell ls ../ddp/ice_comms-[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*\.pkg 2>/dev/null)
-else
-  DDP_PKG_ORIGIN := $(shell ls ../ddp/${DRIVER}-[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*\.pkg 2>/dev/null)
-endif
+DDP_PKG_ORIGIN := $(shell ls ../ddp/${DRIVER}-[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*\.pkg 2>/dev/null)
 DDP_PKG_NAME := $(shell basename ${DDP_PKG_ORIGIN} 2>/dev/null)
 DDP_PKG_DEST_PATH := ${INSTALL_MOD_PATH}/lib/firmware/updates/intel/${DRIVER}/ddp
 DDP_PKG_DEST := ${DDP_PKG_DEST_PATH}/${DDP_PKG_NAME}

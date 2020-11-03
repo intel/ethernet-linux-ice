@@ -71,6 +71,7 @@ enum ice_ptp_fec_algo {
 #define INDEX_PER_QUAD			64
 #define INDEX_PER_PORT			(INDEX_PER_QUAD / ICE_PORTS_PER_QUAD)
 #define INDEX_PER_PORT_EXT		64
+#define TX_INTR_QUAD_MASK		0x03
 /* Per-channel register definitions */
 #define GLTSYN_AUX_OUT(_chan, _idx)	(GLTSYN_AUX_OUT_0(_idx) + ((_chan) * 8))
 #define GLTSYN_CLKO(_chan, _idx)	(GLTSYN_CLKO_0(_idx) + ((_chan) * 8))
@@ -115,8 +116,14 @@ enum ice_ptp_fec_algo {
 #define Q_REG_FIFO13_M			ICE_M(0x3FF, 10)
 /* Interrupt control Config registers */
 #define Q_REG_TX_MEM_GBL_CFG		0xC08
-#define Q_REG_TX_MEM_GBL_CFG_SINGLE_LANE_S	0
-#define Q_REG_TX_MEM_GBL_CFG_SINGLE_LANE_M	BIT(0)
+#define Q_REG_TX_MEM_GBL_CFG_LANE_TYPE_S	0
+#define Q_REG_TX_MEM_GBL_CFG_LANE_TYPE_M	BIT(0)
+#define Q_REG_TX_MEM_GBL_CFG_TX_TYPE_S	1
+#define Q_REG_TX_MEM_GBL_CFG_TX_TYPE_M	ICE_M(0xFF, 1)
+#define Q_REG_TX_MEM_GBL_CFG_INTR_THR_S	9
+#define Q_REG_TX_MEM_GBL_CFG_INTR_THR_M ICE_M(0x3F, 9)
+#define Q_REG_TX_MEM_GBL_CFG_INTR_ENA_S	15
+#define Q_REG_TX_MEM_GBL_CFG_INTR_ENA_M	BIT(15)
 /* Tx Timestamp data registers */
 #define Q_REG_TX_MEMORY_BANK_START	0xA00
 /* PHY port register base addresses */
@@ -290,5 +297,6 @@ static inline int ice_ptp_get_ts_idx(struct ice_vsi __always_unused *vsi)
 #define ice_ptp_init(pf)				do {} while (0)
 #define ice_ptp_release(pf)				do {} while (0)
 #define ice_ptp_link_change(pf, port, linkup)		do {} while (0)
+#define ice_ptp_ts_ena_intr(d, e, i)			do {} while (0)
 #endif /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
 #endif /* _ICE_PTP_H_ */

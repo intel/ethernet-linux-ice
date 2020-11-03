@@ -95,8 +95,6 @@ void ice_vsi_free_tx_rings(struct ice_vsi *vsi);
 
 int ice_vsi_manage_rss_lut(struct ice_vsi *vsi, bool ena);
 
-int ice_vsi_set_dflt_rss_lut(struct ice_vsi *vsi, int req_rss_size);
-
 void ice_update_tx_ring_stats(struct ice_ring *ring, u64 pkts, u64 bytes);
 
 void ice_update_rx_ring_stats(struct ice_ring *ring, u64 pkts, u64 bytes);

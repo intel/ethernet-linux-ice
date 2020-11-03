@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet Controller 800 Series
 ===============================================================================
 
-August 11, 2020
+September 30, 2020
 
 ===============================================================================
 
@@ -20,8 +20,9 @@ Contents
 
 Overview
 ========
-This driver supports kernel versions 3.10.0 and newer. The associated Virtual
-Function (VF) driver for this driver is iavf.
+This driver supports kernel versions 3.10.0 and newer. However, some features
+may require a newer kernel version. The associated Virtual Function (VF) driver
+for this driver is iavf.
 
 Driver information can be obtained using ethtool, lspci, and ifconfig.
 Instructions on updating ethtool can be found in the section Additional
@@ -35,13 +36,17 @@ For questions related to hardware requirements, refer to the documentation
 supplied with your Intel adapter. All hardware requirements listed apply to use
 with Linux.
 
-This driver supports XDP (Express Data Path) on kernel 4.14 and later. Note
-that XDP is blocked for frame sizes larger than 3KB. This driver supports
-AF_XDP zero-copy on kernel 4.18 and later.
+This driver supports XDP (Express Data Path) on kernel 4.14 and later and
+AF_XDP zero-copy on kernel 4.18 and later. Note that XDP is blocked for frame
+sizes larger than 3KB.
 
 
 Identifying Your Adapter
 ========================
+The driver is compatible with devices based on the following:
+  * Intel(R) Ethernet Controller E810-C
+  * Intel(R) Ethernet Controller E810-XXV
+
 For information on how to identify your adapter, and for the latest Intel
 network drivers, refer to the Intel Support website:
 http://www.intel.com/support
@@ -81,9 +86,10 @@ expected and can throttle traffic between the host and the virtual switch,
 reducing performance. To resolve this issue, and to ensure isolation from
 unintended traffic streams, configure all SR-IOV enabled ports for VLAN tagging
 from the administrative interface on the PF. This configuration allows
-unexpected, and potentially malicious, frames to be dropped. See "Configuring
-VLAN Tagging on SR-IOV Enabled Adapter Ports" in this README for configuration
-instructions.
+unexpected, and potentially malicious, frames to be dropped.
+
+See "Configuring VLAN Tagging on SR-IOV Enabled Adapter Ports" later in this
+README for configuration instructions.
 
 
 Do not unload port driver if VF with active VM is bound to it
@@ -103,22 +109,24 @@ Devices User Guide for details on Firmware Recovery Mode and how to recover
 from it.
 
 
-Link Aggregation is mutually exclusive with SR-IOV and RDMA. If Link
-Aggregation is active:
-1. RDMA peers will not be able to register with the PF.
-2. SR-IOV VFs cannot be created on the PF.
-If either RDMA or SR-IOV is active, you cannot set up Link Aggregation on the
+Important notes for SR-IOV, RDMA, and Link Aggregation
+------------------------------------------------------
+Link Aggregation is mutually exclusive with SR-IOV and RDMA.
+- If Link Aggregation is active, RDMA peers will not be able to register with
+the PF, and SR-IOV VFs cannot be created on the PF.
+- If either RDMA or SR-IOV is active, you cannot set up Link Aggregation on the
 interface.
 
 Bridging and MACVLAN are also affected by this. If you wish to use bridging or
-MACVLAN with RDMA/SR-IOV you must set up bridging or MACVLAN before enabling
-RDMA or SR-IOV. If you are using bridging or MACVLAN in conjunction with SRIOV
+MACVLAN with RDMA/SR-IOV, you must set up bridging or MACVLAN before enabling
+RDMA or SR-IOV. If you are using bridging or MACVLAN in conjunction with SR-IOV
 and/or RDMA, and you want to remove the interface from the bridge or MACVLAN,
 you must follow these steps:
 1. Remove RDMA if it is active
 2. Destroy SR-IOV VFs if they exist
 3. Remove the interface from the bridge or MACVLAN
 4. Reactivate RDMA and recreate SRIOV VFs as needed
+
 
 Building and Installation
 =========================
@@ -360,9 +368,9 @@ Notes:
 RDMA when operating in multiport mode with more than 4 ports.
 
 - You cannot use RDMA or SR-IOV when link aggregation (LAG)/bonding is active,
-and vice versa. To enforce this, on kernels 4.5 and above, the ice driver
-checks for this mutual exclusion. On kernels older than 4.5, the ice driver
-cannot check for this exclusion and is unaware of bonding events.
+and vice versa. To enforce this, on kernels 4.5 and above, the driver checks
+for this mutual exclusion. On kernels older than 4.5, the driver cannot check
+for this exclusion and is unaware of bonding events.
 
 
 Application Device Queues (ADQ)
@@ -869,9 +877,23 @@ how many VFs each PF supports, use the following command:
 # cat /sys/class/net/<ethX>/device/sriov_totalvfs
 
 Note: You cannot use RDMA or SR-IOV when link aggregation (LAG)/bonding is
-active, and vice versa. To enforce this, on kernels 4.5 and above, the ice
-driver checks for this mutual exclusion. On kernels older than 4.5, the ice
-driver cannot check for this exclusion and is unaware of bonding events.
+active, and vice versa. To enforce this, on kernels 4.5 and above, the driver
+checks for this mutual exclusion. On kernels older than 4.5, the driver cannot
+check for this exclusion and is unaware of bonding events.
+
+
+Displaying VF Statistics on the PF
+----------------------------------
+Use the following command to display the statistics for the PF and its VFs:
+
+# ip -s link show dev <ethX>
+
+NOTE: The output of this command can be very large due to the maximum number of
+possible VFs.
+
+The PF driver will display a subset of the statistics for the PF and for all
+VFs that are configured. The PF will always print a statistics block for each
+of the possible VFs, and it will show zero for all unconfigured VFs.
 
 
 Configuring VLAN Tagging on SR-IOV Enabled Adapter Ports
@@ -1043,8 +1065,9 @@ Alternatively, you can use the ip command as follows:
 # ip link set mtu 9000 dev <ethX>
 # ip link set up dev <ethX>
 
-This setting is not saved across reboots. The setting change can be made
-permanent by adding 'MTU=9000' to the following file:
+This setting is not saved across reboots.
+
+Add 'MTU=9000' to the following file to make the setting change permanent:
   /etc/sysconfig/network-scripts/ifcfg-<ethX> for RHEL
       or
   /etc/sysconfig/network/<config_file> for SLES
@@ -1078,8 +1101,7 @@ and higher cannot be forced. Use the autonegotiation advertising setting to
 manually set devices for 1 Gbps and higher.
 
 Speed, duplex, and autonegotiation advertising are configured through the
-ethtool* utility. ethtool is included with all versions of Red Hat after Red
-Hat 7.2. For the latest version, download and install ethtool from the
+ethtool utility. For the latest version, download and install ethtool from the
 following website:
 
    https://kernel.org/pub/software/network/ethtool/
@@ -1109,35 +1131,36 @@ priority flow control (802.1Qbb) which can limit or eliminate the number of
 dropped packets during network stress. Bandwidth can be allocated to each of
 these priorities, which is enforced at the hardware level (802.1Qaz).
 
-Adapter firmware implements LLDP and DCBX protocol agents as per 802.1AB and
-802.1Qaz respectively. There are potentially two DCBX modes on Linux, depending
-on the underlying PF device:
-- Intel Ethernet Controller 800 Series adapters support both firmware DCBX and
-software DCBX. If FW-LLDP is enabled, DCBX will run in firmware.
+DCB is normally configured on the network using the DCBX protocol (802.1Qaz), a
+specialization of LLDP (802.1AB). The ice driver supports the following
+mutually exclusive variants of DCBX support:
+1) Firmware-based LLDP Agent
+2) Software-based LLDP Agent
 
-DCB parameters can be established via a firmware LLDP/DCBX agent or a software
-LLDP/DCBX agent. Only one LLDP/DCBX agent can be active on a single interface
-at a time. When the firmware DCBX agent is active, software agents will not be
-able to receive or transmit LLDP frames.
+In firmware-based mode, firmware intercepts all LLDP traffic and handles DCBX
+negotiation transparently for the user. In this mode, the adapter operates in
+"willing" DCBX mode, receiving DCB settings from the link partner (typically a
+switch). The local user can only query the negotiated DCB configuration. For
+information on configuring DCBX parameters on a switch, please consult the
+switch manufacturer's documentation.
 
-See the "FW-LLDP (Firmware Link Layer Discovery Protocol)" section in this
-README for the ethtool commands to query the status of the firmware LLDP/DCBX
-agent.
+In software-based mode, LLDP traffic is forwarded to the network stack and user
+space, where a software agent can handle it. In this mode, the adapter can
+operate in either "willing" or "nonwilling" DCBX mode and DCB configuration can
+be both queried and set locally. This mode requires the FW-based LLDP Agent to
+be disabled.
 
-When operating in firmware DCBX mode, the adapter is in an "always willing"
-state. DCB settings are applied on the adapter by transmitting a nonwilling
-configuration from the link partner. Typically this is a switch. For
-configuring DCBX parameters on a switch, please consult the switch
-manufacturer's documentation.
-
-NOTES:
-- The ice driver supports DCB when the firmware agent is on or off by
-supporting software DCBX agents.
-- When the firmware LLDP agent is disabled, you can configure DCB parameters
-using software LLDP/DCBX agents that interface with the Linux kernel's DCB
-Netlink API. We recommend using OpenLLDP as the DCBX agent when running in
-software mode. For more information, see the OpenLLDP man pages and
+NOTE:
+- You can enable and disable the firmware-based LLDP Agent using an ethtool
+private flag. Refer to the "FW-LLDP (Firmware Link Layer Discovery Protocol)"
+section in this README for more information.
+- In software-based DCBX mode, you can configure DCB parameters using software
+LLDP/DCBX agents that interface with the Linux kernel's DCB Netlink API. We
+recommend using OpenLLDP as the DCBX agent when running in software mode. For
+more information, see the OpenLLDP man pages and
 https://github.com/intel/openlldp.
+- The driver implements the DCB netlink interface layer to allow the user space
+to communicate with the driver and query DCB configuration for the port.
 - iSCSI with DCB is not supported.
 
 
@@ -1295,7 +1318,7 @@ able to complete data segmentation much faster than operating system software,
 this feature may improve transmission performance.
 In addition, the adapter may use fewer CPU resources.
 
-NOTES:
+NOTE:
 - UDP transmit segmentation offload requires Linux kernel 4.18 or later.
 - The application sending UDP packets must support UDP segmentation offload.
 
@@ -1456,6 +1479,14 @@ command:
 
 For more details, see the Dynamic Debug documentation included in the Linux
 kernel instructions.
+
+
+PF Message Queue Overflow
+-------------------------
+The device driver can detect some types of anomalous behavior. When it does, it
+will log the VF MAC address and associated PF MAC address. Using this
+information, you can check the virtual machine (VM)that is using the VF MAC to
+ensure that the VM is operating correctly.
 
 
 'ethtool -S' does not display Tx/Rx packet statistics

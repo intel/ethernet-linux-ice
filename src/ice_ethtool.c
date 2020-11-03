@@ -275,8 +275,8 @@ ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 	struct ice_orom_info *orom;
 	struct ice_nvm_info *nvm;
 
-	nvm = &hw->nvm;
-	orom = &nvm->orom;
+	nvm = &hw->flash.nvm;
+	orom = &hw->flash.orom;
 
 	strscpy(drvinfo->driver, KBUILD_MODNAME, sizeof(drvinfo->driver));
 	strscpy(drvinfo->version, ice_drv_ver, sizeof(drvinfo->version));
@@ -285,7 +285,7 @@ ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 	 * determined) which contains more pertinent information.
 	 */
 	snprintf(drvinfo->fw_version, sizeof(drvinfo->fw_version),
-		 "%x.%02x 0x%x %d.%d.%d", nvm->major_ver, nvm->minor_ver,
+		 "%x.%02x 0x%x %d.%d.%d", nvm->major, nvm->minor,
 		 nvm->eetrack, orom->major, orom->build, orom->patch);
 
 	/* When called via 'ethtool -i|--driver <iface>', log the above with
@@ -293,11 +293,11 @@ ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 	 * will not all fit in the 32-byte fixed-length buffer.
 	 */
 	if (!strncmp(current->comm, "ethtool", 7)) {
-		struct ice_netlist_ver_info *netlist = &hw->netlist_ver;
+		struct ice_netlist_info *netlist = &hw->flash.netlist;
 
 		/* The netlist versions are stored in packed BCD format */
 		netdev_info(netdev, "NVM version details - %x.%02x, 0x%x, %x.%x.%x-%x.%x.%x.%08x, %d.%d.%d\n",
-			    nvm->major_ver, nvm->minor_ver, nvm->eetrack,
+			    nvm->major, nvm->minor, nvm->eetrack,
 			    netlist->major, netlist->minor,
 			    netlist->type >> 16, netlist->type & 0xffff,
 			    netlist->rev, netlist->cust_ver, netlist->hash,
@@ -368,7 +368,7 @@ static int ice_get_eeprom_len(struct net_device *netdev)
 	struct ice_pf *pf = np->vsi->back;
 
 	/* Report the flash size, or at least 10MB */
-	return max_t(int, pf->hw.nvm.flash_size, 10 * 1024 * 1024);
+	return max_t(int, pf->hw.flash.flash_size, 10 * 1024 * 1024);
 }
 
 static int
@@ -4211,8 +4211,8 @@ ice_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *cmd,
 		break;
 	case ETHTOOL_GRXCLSRLCNT:
 		cmd->rule_cnt = hw->fdir_active_fltr;
-		/* report total rule count, including ACL filters */
-		cmd->data = ice_get_fltr_cnt(hw);
+		/* report max rule count */
+		cmd->data = ice_ntuple_get_max_fltr_cnt(hw);
 		ret = 0;
 		break;
 	case ETHTOOL_GRXCLSRULE:
@@ -4908,8 +4908,8 @@ ice_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
  */
 static int ice_get_max_txq(struct ice_pf *pf)
 {
-	return min_t(int, num_online_cpus(),
-		     pf->hw.func_caps.common_cap.num_txq);
+	return min3(pf->num_lan_msix, (u16)num_online_cpus(),
+		    (u16)pf->hw.func_caps.common_cap.num_txq);
 }
 
 /**
@@ -4918,8 +4918,8 @@ static int ice_get_max_txq(struct ice_pf *pf)
  */
 static int ice_get_max_rxq(struct ice_pf *pf)
 {
-	return min_t(int, num_online_cpus(),
-		     pf->hw.func_caps.common_cap.num_rxq);
+	return min3(pf->num_lan_msix, (u16)num_online_cpus(),
+		    (u16)pf->hw.func_caps.common_cap.num_rxq);
 }
 
 /**
@@ -4979,6 +4979,66 @@ ice_get_channels(struct net_device *dev, struct ethtool_channels *ch)
 	/* report other queues */
 	ch->other_count = test_bit(ICE_FLAG_FD_ENA, pf->flags) ? 1 : 0;
 	ch->max_other = ch->other_count;
+}
+
+/**
+ * ice_vsi_set_dflt_rss_lut - set default RSS LUT with requested RSS size
+ * @vsi: VSI to reconfigure RSS LUT on
+ * @req_rss_size: requested range of queue numbers for hashing
+ *
+ * Set the VSI's RSS parameters, configure the RSS LUT based on these, and then
+ * clear the previous vsi->rss_lut_user because it is assumed to be invalid at
+ * this point.
+ */
+static int ice_vsi_set_dflt_rss_lut(struct ice_vsi *vsi, int req_rss_size)
+{
+	struct ice_pf *pf = vsi->back;
+	enum ice_status status;
+	struct device *dev;
+	struct ice_hw *hw;
+	int err = 0;
+	u8 *lut;
+
+	dev = ice_pf_to_dev(pf);
+	hw = &pf->hw;
+
+	if (!req_rss_size)
+		return -EINVAL;
+
+	lut = kzalloc(vsi->rss_table_size, GFP_KERNEL);
+	if (!lut)
+		return -ENOMEM;
+
+	/* set RSS LUT parameters */
+	if (!test_bit(ICE_FLAG_RSS_ENA, pf->flags)) {
+		vsi->rss_size = 1;
+	} else {
+		struct ice_hw_common_caps *caps = &hw->func_caps.common_cap;
+
+		vsi->rss_size = min_t(int, req_rss_size,
+				      BIT(caps->rss_table_entry_width));
+	}
+
+	/* create/set RSS LUT */
+	ice_fill_rss_lut(lut, vsi->rss_table_size, vsi->rss_size);
+	status = ice_aq_set_rss_lut(hw, vsi->idx, vsi->rss_lut_type, lut,
+				    vsi->rss_table_size);
+	if (status) {
+		dev_err(dev, "Cannot set RSS lut, err %s aq_err %s\n",
+			ice_stat_str(status),
+			ice_aq_str(hw->adminq.rq_last_status));
+		err = -EIO;
+	}
+
+	/* get rid of invalid user configuration */
+	if (vsi->rss_lut_user) {
+		netdev_info(vsi->netdev, "Rx queue count changed, clearing user modified RSS LUT, re-run ethtool [-x|-X] to [check|set] settings if needed\n");
+		devm_kfree(dev, vsi->rss_lut_user);
+		vsi->rss_lut_user = NULL;
+	}
+
+	kfree(lut);
+	return err;
 }
 
 /**
@@ -5634,13 +5694,13 @@ ice_get_module_eeprom(struct net_device *netdev,
 	u8 value = 0;
 	u8 page = 0;
 
-	status = ice_aq_sff_eeprom(hw, 0, addr, offset, page, 0,
-				   &value, 1, 0, NULL);
-	if (status)
-		return -EIO;
-
 	if (!ee || !ee->len || !data)
 		return -EINVAL;
+
+	status = ice_aq_sff_eeprom(hw, 0, addr, offset, page, 0, &value, 1, 0,
+				   NULL);
+	if (status)
+		return -EIO;
 
 	if (value == ICE_MODULE_TYPE_SFP)
 		is_sfp = true;

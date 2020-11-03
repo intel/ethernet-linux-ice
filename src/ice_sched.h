@@ -34,6 +34,7 @@
 #define ICE_PSM_CLK_446MHZ_IN_HZ 446428571
 #define ICE_PSM_CLK_390MHZ_IN_HZ 390625000
 
+
 struct rl_profile_params {
 	u32 bw;			/* in Kbps */
 	u16 rl_multiplier;
@@ -158,13 +159,21 @@ enum ice_status
 ice_cfg_agg_bw_dflt_lmt_per_tc(struct ice_port_info *pi, u32 agg_id, u8 tc,
 			       enum ice_rl_type rl_type);
 enum ice_status
-ice_cfg_vsi_bw_shared_lmt(struct ice_port_info *pi, u16 vsi_handle, u32 bw);
+ice_cfg_vsi_bw_shared_lmt(struct ice_port_info *pi, u16 vsi_handle, u32 min_bw,
+			  u32 max_bw, u32 shared_bw);
 enum ice_status
 ice_cfg_vsi_bw_no_shared_lmt(struct ice_port_info *pi, u16 vsi_handle);
 enum ice_status
-ice_cfg_agg_bw_shared_lmt(struct ice_port_info *pi, u32 agg_id, u32 bw);
+ice_cfg_agg_bw_shared_lmt(struct ice_port_info *pi, u32 agg_id, u32 min_bw,
+			  u32 max_bw, u32 shared_bw);
 enum ice_status
 ice_cfg_agg_bw_no_shared_lmt(struct ice_port_info *pi, u32 agg_id);
+enum ice_status
+ice_cfg_agg_bw_shared_lmt_per_tc(struct ice_port_info *pi, u32 agg_id, u8 tc,
+				 u32 min_bw, u32 max_bw, u32 shared_bw);
+enum ice_status
+ice_cfg_agg_bw_no_shared_lmt_per_tc(struct ice_port_info *pi, u32 agg_id,
+				    u8 tc);
 enum ice_status
 ice_cfg_vsi_q_priority(struct ice_port_info *pi, u16 num_qs, u32 *q_ids,
 		       u8 *q_prio);
@@ -189,9 +198,14 @@ ice_sched_set_node_bw_lmt_per_tc(struct ice_port_info *pi, u32 id,
 				 enum ice_rl_type rl_type, u32 bw);
 enum ice_status
 ice_sched_set_vsi_bw_shared_lmt(struct ice_port_info *pi, u16 vsi_handle,
-				u32 bw);
+				u32 min_bw, u32 max_bw, u32 shared_bw);
 enum ice_status
-ice_sched_set_agg_bw_shared_lmt(struct ice_port_info *pi, u32 agg_id, u32 bw);
+ice_sched_set_agg_bw_shared_lmt(struct ice_port_info *pi, u32 agg_id, u32 min_bw,
+				u32 max_bw, u32 shared_bw);
+enum ice_status
+ice_sched_set_agg_bw_shared_lmt_per_tc(struct ice_port_info *pi, u32 agg_id,
+				       u8 tc, u32 min_bw, u32 max_bw,
+				       u32 shared_bw);
 enum ice_status
 ice_sched_cfg_sibl_node_prio(struct ice_port_info *pi,
 			     struct ice_sched_node *node, u8 priority);
@@ -199,4 +213,12 @@ enum ice_status
 ice_cfg_tc_node_bw_alloc(struct ice_port_info *pi, u8 tc,
 			 enum ice_rl_type rl_type, u8 bw_alloc);
 enum ice_status ice_cfg_rl_burst_size(struct ice_hw *hw, u32 bytes);
+void ice_sched_replay_agg_vsi_preinit(struct ice_hw *hw);
+void ice_sched_replay_agg(struct ice_hw *hw);
+enum ice_status ice_sched_replay_tc_node_bw(struct ice_port_info *pi);
+enum ice_status ice_replay_vsi_agg(struct ice_hw *hw, u16 vsi_handle);
+enum ice_status ice_sched_replay_root_node_bw(struct ice_port_info *pi);
+enum ice_status
+ice_sched_replay_q_bw(struct ice_port_info *pi, struct ice_q_ctx *q_ctx);
+
 #endif /* _ICE_SCHED_H_ */

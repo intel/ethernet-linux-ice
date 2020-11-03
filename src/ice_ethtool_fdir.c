@@ -230,12 +230,10 @@ release_lock:
 }
 
 /**
- * ice_get_fltr_cnt - return the number of available filters
- * @hw: ICE hardware structure containing filter information
- *
- * Returns the number of Flow Director and ACL filters
+ * ice_ntuple_get_max_fltr_cnt - return the maximum number of allowed filters
+ * @hw: hardware structure containing filter information
  */
-u32 ice_get_fltr_cnt(struct ice_hw *hw)
+u32 ice_ntuple_get_max_fltr_cnt(struct ice_hw *hw)
 {
 	int acl_cnt;
 
@@ -263,8 +261,8 @@ ice_get_fdir_fltr_ids(struct ice_hw *hw, struct ethtool_rxnfc *cmd,
 	unsigned int cnt = 0;
 	int val = 0;
 
-	/* report total rule count, including ACL filters */
-	cmd->data = ice_get_fltr_cnt(hw);
+	/* report max rule count */
+	cmd->data = ice_ntuple_get_max_fltr_cnt(hw);
 
 	mutex_lock(&hw->fdir_fltr_lock);
 
@@ -934,10 +932,10 @@ err_exit:
 }
 
 /**
- * ice_check_ip4_seg_fltr - Check valid fields are provided for filter
+ * ice_ntuple_check_ip4_seg - Check valid fields are provided for filter
  * @tcp_ip4_spec: mask data from ethtool
  */
-int ice_check_ip4_seg_fltr(struct ethtool_tcpip4_spec *tcp_ip4_spec)
+int ice_ntuple_check_ip4_seg(struct ethtool_tcpip4_spec *tcp_ip4_spec)
 {
 	if (!tcp_ip4_spec)
 		return -EINVAL;
@@ -950,6 +948,35 @@ int ice_check_ip4_seg_fltr(struct ethtool_tcpip4_spec *tcp_ip4_spec)
 	/* filtering on TOS not supported */
 	if (tcp_ip4_spec->tos)
 		return -EOPNOTSUPP;
+
+	return 0;
+}
+
+/**
+ * ice_ntuple_l4_proto_to_port
+ * @l4_proto: Layer 4 protocol to program
+ * @src_port: source flow field value for provided l4 protocol
+ * @dst_port: destination flow field value for provided l4 protocol
+ *
+ * Set associated src and dst port for given l4 protocol
+ */
+int
+ice_ntuple_l4_proto_to_port(enum ice_flow_seg_hdr l4_proto,
+			    enum ice_flow_field *src_port,
+			    enum ice_flow_field *dst_port)
+{
+	if (l4_proto == ICE_FLOW_SEG_HDR_TCP) {
+		*src_port = ICE_FLOW_FIELD_IDX_TCP_SRC_PORT;
+		*dst_port = ICE_FLOW_FIELD_IDX_TCP_DST_PORT;
+	} else if (l4_proto == ICE_FLOW_SEG_HDR_UDP) {
+		*src_port = ICE_FLOW_FIELD_IDX_UDP_SRC_PORT;
+		*dst_port = ICE_FLOW_FIELD_IDX_UDP_DST_PORT;
+	} else if (l4_proto == ICE_FLOW_SEG_HDR_SCTP) {
+		*src_port = ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT;
+		*dst_port = ICE_FLOW_FIELD_IDX_SCTP_DST_PORT;
+	} else {
+		return -EOPNOTSUPP;
+	}
 
 	return 0;
 }
@@ -976,22 +1003,13 @@ ice_set_fdir_ip4_seg(struct ice_flow_seg_info *seg,
 	if (!seg || !perfect_fltr)
 		return -EINVAL;
 
-	ret = ice_check_ip4_seg_fltr(tcp_ip4_spec);
+	ret = ice_ntuple_check_ip4_seg(tcp_ip4_spec);
 	if (ret)
 		return ret;
 
-	if (l4_proto == ICE_FLOW_SEG_HDR_TCP) {
-		src_port = ICE_FLOW_FIELD_IDX_TCP_SRC_PORT;
-		dst_port = ICE_FLOW_FIELD_IDX_TCP_DST_PORT;
-	} else if (l4_proto == ICE_FLOW_SEG_HDR_UDP) {
-		src_port = ICE_FLOW_FIELD_IDX_UDP_SRC_PORT;
-		dst_port = ICE_FLOW_FIELD_IDX_UDP_DST_PORT;
-	} else if (l4_proto == ICE_FLOW_SEG_HDR_SCTP) {
-		src_port = ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT;
-		dst_port = ICE_FLOW_FIELD_IDX_SCTP_DST_PORT;
-	} else {
-		return -EOPNOTSUPP;
-	}
+	ret = ice_ntuple_l4_proto_to_port(l4_proto, &src_port, &dst_port);
+	if (ret)
+		return ret;
 
 	*perfect_fltr = true;
 	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_IPV4 | l4_proto);
@@ -1040,10 +1058,10 @@ ice_set_fdir_ip4_seg(struct ice_flow_seg_info *seg,
 }
 
 /**
- * ice_check_ip4_usr_seg_fltr - Check valid fields are provided for filter
+ * ice_ntuple_check_ip4_usr_seg - Check valid fields are provided for filter
  * @usr_ip4_spec: ethtool userdef packet offset
  */
-int ice_check_ip4_usr_seg_fltr(struct ethtool_usrip4_spec *usr_ip4_spec)
+int ice_ntuple_check_ip4_usr_seg(struct ethtool_usrip4_spec *usr_ip4_spec)
 {
 	if (!usr_ip4_spec)
 		return -EINVAL;
@@ -1085,7 +1103,7 @@ ice_set_fdir_ip4_usr_seg(struct ice_flow_seg_info *seg,
 	if (!seg || !perfect_fltr)
 		return -EINVAL;
 
-	ret = ice_check_ip4_usr_seg_fltr(usr_ip4_spec);
+	ret = ice_ntuple_check_ip4_usr_seg(usr_ip4_spec);
 	if (ret)
 		return ret;
 
@@ -1117,10 +1135,10 @@ ice_set_fdir_ip4_usr_seg(struct ice_flow_seg_info *seg,
 
 #ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
 /**
- * ice_check_ip6_seg_fltr - Check valid fields are provided for filter
+ * ice_ntuple_check_ip6_seg - Check valid fields are provided for filter
  * @tcp_ip6_spec: mask data from ethtool
  */
-int ice_check_ip6_seg_fltr(struct ethtool_tcpip6_spec *tcp_ip6_spec)
+static int ice_ntuple_check_ip6_seg(struct ethtool_tcpip6_spec *tcp_ip6_spec)
 {
 	if (!tcp_ip6_spec)
 		return -EINVAL;
@@ -1162,22 +1180,13 @@ ice_set_fdir_ip6_seg(struct ice_flow_seg_info *seg,
 	if (!seg || !perfect_fltr)
 		return -EINVAL;
 
-	ret = ice_check_ip6_seg_fltr(tcp_ip6_spec);
+	ret = ice_ntuple_check_ip6_seg(tcp_ip6_spec);
 	if (ret)
 		return ret;
 
-	if (l4_proto == ICE_FLOW_SEG_HDR_TCP) {
-		src_port = ICE_FLOW_FIELD_IDX_TCP_SRC_PORT;
-		dst_port = ICE_FLOW_FIELD_IDX_TCP_DST_PORT;
-	} else if (l4_proto == ICE_FLOW_SEG_HDR_UDP) {
-		src_port = ICE_FLOW_FIELD_IDX_UDP_SRC_PORT;
-		dst_port = ICE_FLOW_FIELD_IDX_UDP_DST_PORT;
-	} else if (l4_proto == ICE_FLOW_SEG_HDR_SCTP) {
-		src_port = ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT;
-		dst_port = ICE_FLOW_FIELD_IDX_SCTP_DST_PORT;
-	} else {
-		return -EINVAL;
-	}
+	ret = ice_ntuple_l4_proto_to_port(l4_proto, &src_port, &dst_port);
+	if (ret)
+		return ret;
 
 	*perfect_fltr = true;
 	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_IPV6 | l4_proto);
@@ -1228,10 +1237,11 @@ ice_set_fdir_ip6_seg(struct ice_flow_seg_info *seg,
 }
 
 /**
- * ice_check_ip6_usr_seg_fltr - Check valid fields are provided for filter
+ * ice_ntuple_check_ip6_usr_seg - Check valid fields are provided for filter
  * @usr_ip6_spec: ethtool userdef packet offset
  */
-int ice_check_ip6_usr_seg_fltr(struct ethtool_usrip6_spec *usr_ip6_spec)
+static int
+ice_ntuple_check_ip6_usr_seg(struct ethtool_usrip6_spec *usr_ip6_spec)
 {
 	if (!usr_ip6_spec)
 		return -EINVAL;
@@ -1275,7 +1285,7 @@ ice_set_fdir_ip6_usr_seg(struct ice_flow_seg_info *seg,
 	if (!seg || !perfect_fltr)
 		return -EINVAL;
 
-	ret = ice_check_ip6_usr_seg_fltr(usr_ip6_spec);
+	ret = ice_ntuple_check_ip6_usr_seg(usr_ip6_spec);
 	if (ret)
 		return ret;
 
@@ -1673,7 +1683,7 @@ ice_del_acl_ethtool(struct ice_hw *hw, struct ice_fdir_fltr *fltr)
 	u64 entry;
 
 	entry = ice_flow_find_entry(hw, ICE_BLK_ACL, fltr->fltr_id);
-	return ice_flow_rem_entry(hw, ICE_BLK_ACL, entry);
+	return ice_status_to_errno(ice_flow_rem_entry(hw, ICE_BLK_ACL, entry));
 }
 
 /**
@@ -1857,10 +1867,6 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 {
 	struct ethtool_tcpip4_spec *tcp_ip4_spec;
 	struct ethtool_usrip4_spec *usr_ip4_spec;
-#ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
-	struct ethtool_tcpip6_spec *tcp_ip6_spec;
-	struct ethtool_usrip6_spec *usr_ip6_spec;
-#endif
 
 	switch (fsp->flow_type & ~FLOW_EXT) {
 	case TCP_V4_FLOW:
@@ -1878,6 +1884,14 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 		    tcp_ip4_spec->ip4dst != htonl(0xFFFFFFFF))
 			return true;
 
+		/* Layer 4 source port */
+		if (tcp_ip4_spec->psrc && tcp_ip4_spec->psrc != htons(0xFFFF))
+			return true;
+
+		/* Layer 4 destination port */
+		if (tcp_ip4_spec->pdst && tcp_ip4_spec->pdst != htons(0xFFFF))
+			return true;
+
 		break;
 	case IPV4_USER_FLOW:
 		usr_ip4_spec = &fsp->m_u.usr_ip4_spec;
@@ -1893,119 +1907,6 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 			return true;
 
 		break;
-#ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
-	case TCP_V6_FLOW:
-	case UDP_V6_FLOW:
-	case SCTP_V6_FLOW:
-		tcp_ip6_spec = &fsp->m_u.tcp_ip6_spec;
-
-		if (memcmp(tcp_ip6_spec->ip6src, &zero_ipv6_addr_mask,
-			   sizeof(struct in6_addr)) &&
-		    memcmp(tcp_ip6_spec->ip6src, &full_ipv6_addr_mask,
-			   sizeof(struct in6_addr)))
-			return true;
-
-		if (memcmp(tcp_ip6_spec->ip6dst, &zero_ipv6_addr_mask,
-			   sizeof(struct in6_addr)) &&
-		    memcmp(tcp_ip6_spec->ip6dst, &full_ipv6_addr_mask,
-			   sizeof(struct in6_addr)))
-			return true;
-
-		break;
-	case IPV6_USER_FLOW:
-		usr_ip6_spec = &fsp->m_u.usr_ip6_spec;
-
-		if (memcmp(usr_ip6_spec->ip6src, &zero_ipv6_addr_mask,
-			   sizeof(struct in6_addr)) &&
-		    memcmp(usr_ip6_spec->ip6src, &full_ipv6_addr_mask,
-			   sizeof(struct in6_addr)))
-			return true;
-
-		if (memcmp(usr_ip6_spec->ip6dst, &zero_ipv6_addr_mask,
-			   sizeof(struct in6_addr)) &&
-		    memcmp(usr_ip6_spec->ip6dst, &full_ipv6_addr_mask,
-			   sizeof(struct in6_addr)))
-			return true;
-
-		break;
-#endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
-	}
-
-	switch (fsp->flow_type & ~FLOW_EXT) {
-	case TCP_V4_FLOW:
-		tcp_ip4_spec = &fsp->m_u.tcp_ip4_spec;
-
-		/* Layer 4 source port */
-		if (tcp_ip4_spec->psrc && tcp_ip4_spec->psrc != htons(0xFFFF))
-			return true;
-
-		/* Layer 4 destination port */
-		if (tcp_ip4_spec->pdst && tcp_ip4_spec->pdst != htons(0xFFFF))
-			return true;
-
-		break;
-	case UDP_V4_FLOW:
-		tcp_ip4_spec = &fsp->m_u.tcp_ip4_spec;
-
-		/* Layer 4 source port */
-		if (tcp_ip4_spec->psrc && tcp_ip4_spec->psrc != htons(0xFFFF))
-			return true;
-
-		/* Layer 4 destination port */
-		if (tcp_ip4_spec->pdst && tcp_ip4_spec->pdst != htons(0xFFFF))
-			return true;
-
-		break;
-	case SCTP_V4_FLOW:
-		tcp_ip4_spec = &fsp->m_u.tcp_ip4_spec;
-
-		/* Layer 4 source port */
-		if (tcp_ip4_spec->psrc && tcp_ip4_spec->psrc != htons(0xFFFF))
-			return true;
-
-		/* Layer 4 destination port */
-		if (tcp_ip4_spec->pdst && tcp_ip4_spec->pdst != htons(0xFFFF))
-			return true;
-
-		break;
-#ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
-	case TCP_V6_FLOW:
-		tcp_ip6_spec = &fsp->m_u.tcp_ip6_spec;
-
-		/* Layer 4 source port */
-		if (tcp_ip6_spec->psrc && tcp_ip6_spec->psrc != htons(0xFFFF))
-			return true;
-
-		/* Layer 4 destination port */
-		if (tcp_ip6_spec->pdst && tcp_ip6_spec->pdst != htons(0xFFFF))
-			return true;
-
-		break;
-	case UDP_V6_FLOW:
-		tcp_ip6_spec = &fsp->m_u.tcp_ip6_spec;
-
-		/* Layer 4 source port */
-		if (tcp_ip6_spec->psrc && tcp_ip6_spec->psrc != htons(0xFFFF))
-			return true;
-
-		/* Layer 4 destination port */
-		if (tcp_ip6_spec->pdst && tcp_ip6_spec->pdst != htons(0xFFFF))
-			return true;
-
-		break;
-	case SCTP_V6_FLOW:
-		tcp_ip6_spec = &fsp->m_u.tcp_ip6_spec;
-
-		/* Layer 4 source port */
-		if (tcp_ip6_spec->psrc && tcp_ip6_spec->psrc != htons(0xFFFF))
-			return true;
-
-		/* Layer 4 destination port */
-		if (tcp_ip6_spec->pdst && tcp_ip6_spec->pdst != htons(0xFFFF))
-			return true;
-
-		break;
-#endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
 	}
 
 	return false;
@@ -2145,7 +2046,13 @@ ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 		       sizeof(struct in6_addr));
 		input->ip.v6.l4_header = fsp->h_u.usr_ip6_spec.l4_4_bytes;
 		input->ip.v6.tc = fsp->h_u.usr_ip6_spec.tclass;
-		input->ip.v6.proto = fsp->h_u.usr_ip6_spec.l4_proto;
+
+		/* if no protocol requested, use IPPROTO_NONE */
+		if (!fsp->m_u.usr_ip6_spec.l4_proto)
+			input->ip.v6.proto = IPPROTO_NONE;
+		else
+			input->ip.v6.proto = fsp->h_u.usr_ip6_spec.l4_proto;
+
 		memcpy(input->mask.v6.dst_ip, fsp->m_u.usr_ip6_spec.ip6dst,
 		       sizeof(struct in6_addr));
 		memcpy(input->mask.v6.src_ip, fsp->m_u.usr_ip6_spec.ip6src,
@@ -2195,7 +2102,7 @@ int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 
 	/* Do not program filters during reset */
 	if (ice_is_reset_in_progress(pf->state)) {
-		dev_err(dev, "Device is resetting - adding Flow Director filters not supported during reset\n");
+		dev_err(dev, "Device is resetting - adding ntuple filters not supported during reset\n");
 		return -EBUSY;
 	}
 
@@ -2207,6 +2114,11 @@ int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	if (fsp->flow_type & FLOW_MAC_EXT)
 		return -EINVAL;
 
+	if (fsp->location >= ice_ntuple_get_max_fltr_cnt(hw)) {
+		dev_err(dev, "Failed to add filter.  The maximum number of ntuple filters has been reached.\n");
+		return -ENOSPC;
+	}
+
 	/* ACL filter */
 	if (pf->hw.acl_tbl && ice_is_acl_filter(fsp))
 		return ice_acl_add_rule_ethtool(vsi, cmd);
@@ -2214,11 +2126,6 @@ int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	ret = ice_cfg_fdir_xtrct_seq(pf, fsp, &userdata);
 	if (ret)
 		return ret;
-
-	if (fsp->location >= ice_get_fltr_cnt(hw)) {
-		dev_err(dev, "Failed to add filter.  The maximum number of flow director filters has been reached.\n");
-		return -ENOSPC;
-	}
 
 	/* return error if not an update and no available filters */
 	fltrs_needed = ice_get_open_tunnel_port(hw, TNL_ALL, &tunnel_port) ?

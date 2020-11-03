@@ -886,10 +886,8 @@ ice_cfg_rxq_interrupt(struct ice_vsi *vsi, u16 rxq, u16 msix_idx, u16 itr_idx)
  */
 void ice_trigger_sw_intr(struct ice_hw *hw, struct ice_q_vector *q_vector)
 {
-	wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx),
-	     (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) |
-	     GLINT_DYN_CTL_SWINT_TRIG_M |
-	     GLINT_DYN_CTL_INTENA_M);
+	wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx), (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) |
+	     GLINT_DYN_CTL_SWINT_TRIG_M | GLINT_DYN_CTL_INTENA_M);
 }
 
 /**
