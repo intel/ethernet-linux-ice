@@ -47,20 +47,31 @@ ice_fltr_add_entry_to_list(struct device *dev, struct ice_fltr_info *info,
 }
 
 /**
- * ice_fltr_cfg_vlan_vsi_promisc
+ * ice_fltr_set_vlan_vsi_promisc
  * @hw: pointer to the hardware structure
  * @vsi: the VSI being configured
  * @promisc_mask: mask of promiscuous config bits
- * @rm_vlan_promisc: Clear VLANs VSI promisc mode
  *
- * Configure VSI with all associated VLANs to given promiscuous mode(s)
+ * Set VSI with all associated VLANs to given promiscuous mode(s)
  */
 enum ice_status
-ice_fltr_cfg_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi,
-			      u8 promisc_mask, bool rm_vlan_promisc)
+ice_fltr_set_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi, u8 promisc_mask)
 {
-	return ice_set_vlan_vsi_promisc(hw,  vsi->idx, promisc_mask,
-					rm_vlan_promisc);
+	return ice_set_vlan_vsi_promisc(hw, vsi->idx, promisc_mask, false);
+}
+
+/**
+ * ice_fltr_clear_vlan_vsi_promisc
+ * @hw: pointer to the hardware structure
+ * @vsi: the VSI being configured
+ * @promisc_mask: mask of promiscuous config bits
+ *
+ * Clear VSI with all associated VLANs to given promiscuous mode(s)
+ */
+enum ice_status
+ice_fltr_clear_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi, u8 promisc_mask)
+{
+	return ice_set_vlan_vsi_promisc(hw, vsi->idx, promisc_mask, true);
 }
 
 /**

@@ -239,7 +239,7 @@ static void ice_cfg_xps_tx_ring(struct ice_ring *ring)
 	if (vsi->tc_cfg.numtc > 1)
 		return;
 
-	if (!test_and_set_bit(__ICE_TX_XPS_INIT_DONE, ring->xps_state))
+	if (!test_and_set_bit(ICE_TX_XPS_INIT_DONE, ring->xps_state))
 		netif_set_xps_queue(ring->netdev,
 				    &ring->q_vector->affinity_mask,
 				    ring->q_index);
@@ -293,7 +293,6 @@ ice_setup_tx_ctx(struct ice_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 		break;
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
-	case ICE_VSI_SWITCHDEV_CTRL:
 		tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
 		break;
 	default:

@@ -192,7 +192,6 @@ void ice_vsi_set_dcb_tc_cfg(struct ice_vsi *vsi)
 	case ICE_VSI_OFFLOAD_MACVLAN:
 #endif /* HAVE_NETDEV_SB_DEV */
 	case ICE_VSI_VMDQ2:
-	case ICE_VSI_SWITCHDEV_CTRL:
 		vsi->tc_cfg.ena_tc = BIT(ice_get_first_droptc(vsi));
 		vsi->tc_cfg.numtc = 1;
 		break;
@@ -337,7 +336,6 @@ static void ice_dcb_ena_dis_vsi(struct ice_pf *pf, bool ena, bool locked)
 		case ICE_VSI_CHNL:
 		case ICE_VSI_OFFLOAD_MACVLAN:
 		case ICE_VSI_VMDQ2:
-		case ICE_VSI_SWITCHDEV_CTRL:
 		case ICE_VSI_PF:
 			if (ena)
 				ice_ena_vsi(vsi, locked);

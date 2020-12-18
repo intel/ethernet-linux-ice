@@ -937,9 +937,6 @@ err_exit:
  */
 int ice_ntuple_check_ip4_seg(struct ethtool_tcpip4_spec *tcp_ip4_spec)
 {
-	if (!tcp_ip4_spec)
-		return -EINVAL;
-
 	/* make sure we don't have any empty rule */
 	if (!tcp_ip4_spec->psrc && !tcp_ip4_spec->ip4src &&
 	    !tcp_ip4_spec->pdst && !tcp_ip4_spec->ip4dst)
@@ -999,9 +996,6 @@ ice_set_fdir_ip4_seg(struct ice_flow_seg_info *seg,
 {
 	enum ice_flow_field src_port, dst_port;
 	int ret;
-
-	if (!seg || !perfect_fltr)
-		return -EINVAL;
 
 	ret = ice_ntuple_check_ip4_seg(tcp_ip4_spec);
 	if (ret)
@@ -1063,9 +1057,6 @@ ice_set_fdir_ip4_seg(struct ice_flow_seg_info *seg,
  */
 int ice_ntuple_check_ip4_usr_seg(struct ethtool_usrip4_spec *usr_ip4_spec)
 {
-	if (!usr_ip4_spec)
-		return -EINVAL;
-
 	/* first 4 bytes of Layer 4 header */
 	if (usr_ip4_spec->l4_4_bytes)
 		return -EINVAL;
@@ -1099,9 +1090,6 @@ ice_set_fdir_ip4_usr_seg(struct ice_flow_seg_info *seg,
 			 bool *perfect_fltr)
 {
 	int ret;
-
-	if (!seg || !perfect_fltr)
-		return -EINVAL;
 
 	ret = ice_ntuple_check_ip4_usr_seg(usr_ip4_spec);
 	if (ret)
@@ -1140,9 +1128,6 @@ ice_set_fdir_ip4_usr_seg(struct ice_flow_seg_info *seg,
  */
 static int ice_ntuple_check_ip6_seg(struct ethtool_tcpip6_spec *tcp_ip6_spec)
 {
-	if (!tcp_ip6_spec)
-		return -EINVAL;
-
 	/* make sure we don't have any empty rule */
 	if (!memcmp(tcp_ip6_spec->ip6src, &zero_ipv6_addr_mask,
 		    sizeof(struct in6_addr)) &&
@@ -1176,9 +1161,6 @@ ice_set_fdir_ip6_seg(struct ice_flow_seg_info *seg,
 {
 	enum ice_flow_field src_port, dst_port;
 	int ret;
-
-	if (!seg || !perfect_fltr)
-		return -EINVAL;
 
 	ret = ice_ntuple_check_ip6_seg(tcp_ip6_spec);
 	if (ret)
@@ -1243,9 +1225,6 @@ ice_set_fdir_ip6_seg(struct ice_flow_seg_info *seg,
 static int
 ice_ntuple_check_ip6_usr_seg(struct ethtool_usrip6_spec *usr_ip6_spec)
 {
-	if (!usr_ip6_spec)
-		return -EINVAL;
-
 	/* filtering on Layer 4 bytes not supported */
 	if (usr_ip6_spec->l4_4_bytes)
 		return -EOPNOTSUPP;
@@ -1281,9 +1260,6 @@ ice_set_fdir_ip6_usr_seg(struct ice_flow_seg_info *seg,
 			 bool *perfect_fltr)
 {
 	int ret;
-
-	if (!seg || !perfect_fltr)
-		return -EINVAL;
 
 	ret = ice_ntuple_check_ip6_usr_seg(usr_ip6_spec);
 	if (ret)
@@ -1808,7 +1784,7 @@ int ice_del_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 		return -EBUSY;
 	}
 
-	if (test_bit(__ICE_FD_FLUSH_REQ, pf->state))
+	if (test_bit(ICE_FD_FLUSH_REQ, pf->state))
 		return -EBUSY;
 
 	mutex_lock(&hw->fdir_fltr_lock);
@@ -1930,9 +1906,6 @@ ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 	struct ice_pf *pf;
 	struct ice_hw *hw;
 	u8 dest_ctl;
-
-	if (!vsi || !fsp || !input)
-		return -EINVAL;
 
 	if (blk == ICE_BLK_FD)
 		flow_mask = FLOW_EXT;

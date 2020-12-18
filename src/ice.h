@@ -67,6 +67,9 @@
 #include "ice_virtchnl_pf.h"
 #include "ice_sriov.h"
 #include "ice_ptp.h"
+#include "ice_cgu.h"
+#include "ice_cgu_ops.h"
+#include "ice_cgu_util.h"
 #include "ice_fdir.h"
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 #include "ice_xsk.h"
@@ -74,6 +77,7 @@
 #ifdef HAVE_NETDEV_UPPER_INFO
 #include "ice_lag.h"
 #endif /* HAVE_NETDEV_UPPER_INFO */
+#include "ice_trace.h"
 
 #if defined(HAVE_VXLAN_RX_OFFLOAD) || defined(HAVE_VXLAN_TYPE)
 #if IS_ENABLED(CONFIG_VXLAN)
@@ -101,8 +105,7 @@
 #include <linux/atomic.h>
 #include <linux/jiffies.h>
 #include "ice_arfs.h"
-#include "ice_repr.h"
-#include "ice_eswitch.h"
+#include "ice_vsi_vlan_ops.h"
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0		0
@@ -128,17 +131,21 @@ extern const char ice_drv_ver[];
 #endif
 #define ICE_DFLT_TRAFFIC_CLASS	BIT(0)
 #define ICE_INT_NAME_STR_LEN	(IFNAMSIZ + 16)
+#ifdef FWLOG_SUPPORT
+/* if FW logging is on, then bump the admin q size to avoid overflows */
+#define ICE_AQ_LEN		1023
+#else
 #define ICE_AQ_LEN		192
+#endif /* FWLOG_SUPPORT */
 #define ICE_MBXSQ_LEN		64
 #define ICE_SBQ_LEN		64
-#define ICE_MIN_MSIX		2
 #define ICE_FDIR_MSIX		2
+#define ICE_MIN_LAN_MSIX	1
+#define ICE_OICR_MSIX		1
+#define ICE_RDMA_NUM_AEQ_MSIX	4
+#define ICE_MIN_RDMA_MSIX	2
+#define ICE_MIN_MSIX		(ICE_MIN_LAN_MSIX + ICE_OICR_MSIX)
 #define ICE_NO_VSI		0xffff
-#define ICE_MIN_LAN_VECS	1
-#define ICE_OICR_VECS		1
-#define ICE_RDMA_NUM_AEQ_VECS 4
-#define ICE_MIN_RDMA_VECS 2
-#define ICE_MIN_VECS	(ICE_MIN_LAN_VECS + ICE_MIN_RDMA_VECS + ICE_FDIR_MSIX + ICE_OICR_VECS)
 #define ICE_VSI_MAP_CONTIG	0
 #define ICE_VSI_MAP_SCATTER	1
 #define ICE_MAX_SCATTER_TXQS	16
@@ -156,6 +163,7 @@ extern const char ice_drv_ver[];
 #define ICE_INVAL_Q_INDEX	0xffff
 #define ICE_INVAL_VFID		256
 
+#define ICE_MAX_RXQS_PER_TC		256	/* Used when setting VSI context per TC Rx queues */
 #define ICE_MAX_TXQS_PER_TC		8
 #define ICE_MAX_RDMA_QSET_PER_TC	1
 
@@ -215,13 +223,10 @@ extern const char ice_drv_ver[];
 #define ice_for_each_chnl_tc(i)	\
 	for ((i) = ICE_CHNL_START_TC; (i) < ICE_CHNL_MAX_TC; (i)++)
 
-#define ICE_UCAST_PROMISC_BITS (ICE_PROMISC_UCAST_TX | ICE_PROMISC_MCAST_TX | \
-				ICE_PROMISC_UCAST_RX | ICE_PROMISC_MCAST_RX)
+#define ICE_UCAST_PROMISC_BITS (ICE_PROMISC_UCAST_TX | ICE_PROMISC_UCAST_RX)
 
 #define ICE_UCAST_VLAN_PROMISC_BITS (ICE_PROMISC_UCAST_TX | \
-				     ICE_PROMISC_MCAST_TX | \
 				     ICE_PROMISC_UCAST_RX | \
-				     ICE_PROMISC_MCAST_RX | \
 				     ICE_PROMISC_VLAN_TX  | \
 				     ICE_PROMISC_VLAN_RX)
 
@@ -339,61 +344,64 @@ struct ice_sw {
 	u8 stat_offsets_loaded:1;
 };
 
-enum ice_state {
-	__ICE_TESTING,
-	__ICE_DOWN,
-	__ICE_NEEDS_RESTART,
-	__ICE_PREPARING_FOR_RESET,	/* set by driver when preparing */
-	__ICE_PREPARED_FOR_RESET,	/* set by driver when prepared */
-	__ICE_RESET_OICR_RECV,		/* set by driver after rcv reset OICR */
-	__ICE_DCBNL_DEVRESET,		/* set by dcbnl devreset */
-	__ICE_PFR_REQ,			/* set by driver and peers */
-	__ICE_CORER_REQ,		/* set by driver and peers */
-	__ICE_GLOBR_REQ,		/* set by driver and peers */
-	__ICE_CORER_RECV,		/* set by OICR handler */
-	__ICE_GLOBR_RECV,		/* set by OICR handler */
-	__ICE_EMPR_RECV,		/* set by OICR handler */
-	__ICE_SUSPENDED,		/* set on module remove path */
-	__ICE_RESET_FAILED,		/* set by reset/rebuild */
-	__ICE_RECOVERY_MODE,		/* set when recovery mode is detected */
-	__ICE_PREPPED_RECOVERY_MODE,	/* set on recovery mode transition */
+enum ice_pf_state {
+	ICE_TESTING,
+	ICE_DOWN,
+	ICE_NEEDS_RESTART,
+	ICE_PREPARED_FOR_RESET,	/* set by driver when prepared */
+	ICE_RESET_OICR_RECV,		/* set by driver after rcv reset OICR */
+	ICE_PFR_REQ,			/* set by driver and peers */
+	ICE_CORER_REQ,		/* set by driver and peers */
+	ICE_GLOBR_REQ,		/* set by driver and peers */
+	ICE_CORER_RECV,		/* set by OICR handler */
+	ICE_GLOBR_RECV,		/* set by OICR handler */
+	ICE_EMPR_RECV,		/* set by OICR handler */
+	ICE_SUSPENDED,		/* set on module remove path */
+	ICE_RESET_FAILED,		/* set by reset/rebuild */
+	ICE_RECOVERY_MODE,		/* set when recovery mode is detected */
+	ICE_PREPPED_RECOVERY_MODE,	/* set on recovery mode transition */
 	/* When checking for the PF to be in a nominal operating state, the
 	 * bits that are grouped at the beginning of the list need to be
-	 * checked. Bits occurring before __ICE_STATE_NOMINAL_CHECK_BITS will
+	 * checked. Bits occurring before ICE_STATE_NOMINAL_CHECK_BITS will
 	 * be checked. If you need to add a bit into consideration for nominal
 	 * operating state, it must be added before
-	 * __ICE_STATE_NOMINAL_CHECK_BITS. Do not move this entry's position
+	 * ICE_STATE_NOMINAL_CHECK_BITS. Do not move this entry's position
 	 * without appropriate consideration.
 	 */
-	__ICE_STATE_NOMINAL_CHECK_BITS,
-	__ICE_ADMINQ_EVENT_PENDING,
-	__ICE_MAILBOXQ_EVENT_PENDING,
-	__ICE_SIDEBANDQ_EVENT_PENDING,
-	__ICE_MDD_EVENT_PENDING,
-	__ICE_VFLR_EVENT_PENDING,
-	__ICE_FLTR_OVERFLOW_PROMISC,
-	__ICE_VF_DIS,
-	__ICE_CFG_BUSY,
-	__ICE_SERVICE_SCHED,
-	__ICE_PTP_TX_TS_READY,
-	__ICE_SERVICE_DIS,
-	__ICE_FD_FLUSH_REQ,
-	__ICE_OICR_INTR_DIS,		/* Global OICR interrupt disabled */
-	__ICE_BAD_EEPROM,
-	__ICE_MDD_VF_PRINT_PENDING,	/* set when MDD event handle */
-	__ICE_VF_RESETS_DISABLED,	/* disable resets during ice_remove */
-	__ICE_LINK_DEFAULT_OVERRIDE_PENDING,
-	__ICE_PHY_INIT_COMPLETE,
-	__ICE_FD_VF_FLUSH_CTX,		/* set at FD Rx IRQ or timeout */
-	__ICE_STATE_NBITS		/* must be last */
+	ICE_STATE_NOMINAL_CHECK_BITS,
+	ICE_ADMINQ_EVENT_PENDING,
+	ICE_MAILBOXQ_EVENT_PENDING,
+	ICE_SIDEBANDQ_EVENT_PENDING,
+	ICE_MDD_EVENT_PENDING,
+	ICE_VFLR_EVENT_PENDING,
+	ICE_FLTR_OVERFLOW_PROMISC,
+	ICE_VF_DIS,
+	ICE_CFG_BUSY,
+	ICE_SERVICE_SCHED,
+	ICE_PTP_TX_TS_READY,
+	ICE_SERVICE_DIS,
+	ICE_FD_FLUSH_REQ,
+	ICE_OICR_INTR_DIS,		/* Global OICR interrupt disabled */
+	ICE_BAD_EEPROM,
+	ICE_MDD_VF_PRINT_PENDING,	/* set when MDD event handle */
+	ICE_VF_RESETS_DISABLED,	/* disable resets during ice_remove */
+	ICE_LINK_DEFAULT_OVERRIDE_PENDING,
+	ICE_PHY_INIT_COMPLETE,
+	ICE_FD_VF_FLUSH_CTX,		/* set at FD Rx IRQ or timeout */
+	ICE_STATE_NBITS		/* must be last */
 };
 
-enum ice_vsi_flags {
-	ICE_VSI_FLAG_UMAC_FLTR_CHANGED,
-	ICE_VSI_FLAG_MMAC_FLTR_CHANGED,
-	ICE_VSI_FLAG_VLAN_FLTR_CHANGED,
-	ICE_VSI_FLAG_PROMISC_CHANGED,
-	ICE_VSI_FLAG_NBITS		/* must be last */
+enum ice_vsi_state {
+	ICE_VSI_DOWN,
+	ICE_VSI_NEEDS_RESTART,
+	ICE_VSI_BUSY,
+	ICE_VSI_NETDEV_ALLOCD,
+	ICE_VSI_NETDEV_REGISTERED,
+	ICE_VSI_UMAC_FLTR_CHANGED,
+	ICE_VSI_MMAC_FLTR_CHANGED,
+	ICE_VSI_VLAN_FLTR_CHANGED,
+	ICE_VSI_PROMISC_CHANGED,
+	ICE_VSI_STATE_NBITS		/* must be last */
 };
 
 enum ice_chnl_feature {
@@ -577,8 +585,7 @@ struct ice_vsi {
 	irqreturn_t (*irq_handler)(int irq, void *data);
 
 	u64 tx_linearize;
-	DECLARE_BITMAP(state, __ICE_STATE_NBITS);
-	DECLARE_BITMAP(flags, ICE_VSI_FLAG_NBITS);
+	DECLARE_BITMAP(state, ICE_VSI_STATE_NBITS);
 	unsigned int current_netdev_flags;
 	u32 tx_restart;
 	u32 tx_busy;
@@ -640,6 +647,7 @@ struct ice_vsi {
 	u8 irqs_ready:1;
 	u8 current_isup:1;		 /* Sync 'link up' logging */
 	u8 stat_offsets_loaded:1;
+	struct ice_vsi_vlan_ops vlan_ops;
 	u16 num_vlan;
 
 
@@ -731,12 +739,12 @@ struct ice_vsi {
 	u16 old_ena_tc;
 
 	struct ice_channel *ch;
-	struct net_device **target_netdevs;
 
 	/* setup back reference, to which aggregator node this VSI
 	 * corresponds to
 	 */
 	struct ice_agg_node *agg_node;
+	u16 *global_lut_id;
 } ____cacheline_internodealigned_in_smp;
 
 enum ice_chnl_vector_state {
@@ -939,10 +947,6 @@ struct ice_macvlan {
 };
 #endif /* HAVE_NETDEV_SB_DEV */
 
-struct ice_switchdev_info {
-	struct ice_vsi *control_vsi;
-	struct ice_vsi *uplink_vsi;
-};
 
 enum ice_tnl_state {
 	ICE_TNL_SET_TO_ADD,
@@ -981,10 +985,6 @@ enum ice_flash_update_preservation {
 	ICE_FLASH_UPDATE_PRESERVE_NONE,
 };
 
-struct ice_devlink_flash_params {
-	enum ice_flash_update_preservation preservation_level;
-};
-
 struct ice_pf {
 	struct pci_dev *pdev;
 
@@ -994,7 +994,6 @@ struct ice_pf {
 	struct devlink_region *devcaps_region;
 #endif /* HAVE_DEVLINK_REGIONS */
 #endif /* CONFIG_NET_DEVLINK */
-	struct ice_devlink_flash_params flash_params;
 
 	/* OS reserved IRQ details */
 	struct msix_entry *msix_entries;
@@ -1009,7 +1008,6 @@ struct ice_pf {
 
 	struct ice_vsi **vsi;		/* VSIs created by the driver */
 	struct ice_sw *first_sw;	/* first switch created by firmware */
-	u16 eswitch_mode;		/* current mode of eswitch */
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *ice_debugfs_pf;
 #endif /* CONFIG_DEBUG_FS */
@@ -1022,7 +1020,7 @@ struct ice_pf {
 	/* used to ratelimit the MDD event logging */
 	unsigned long last_printed_mdd_jiffies;
 	DECLARE_BITMAP(malvfs, ICE_MAX_VF_COUNT);
-	DECLARE_BITMAP(state, __ICE_STATE_NBITS);
+	DECLARE_BITMAP(state, ICE_STATE_NBITS);
 	DECLARE_BITMAP(flags, ICE_PF_FLAGS_NBITS);
 	unsigned long *avail_txqs;	/* bitmap to track PF Tx queue usage */
 	unsigned long *avail_rxqs;	/* bitmap to track PF Rx queue usage */
@@ -1037,8 +1035,11 @@ struct ice_pf {
 	u64 cached_systime;
 	u8 ptp_tx_ts_ena;
 	u8 ptp_one_pps_out_ena;
-	bool ptp_quad_mem_reset[ICE_MAX_QUAD];
-	DECLARE_BITMAP(ptp_tx_idx, INDEX_PER_QUAD * ICE_MAX_QUAD);
+	atomic_t ptp_phy_reset_lock;
+	struct workqueue_struct *ov_wq;
+	struct mutex ptp_ps_lock; /* protects access to PTP PHY start */
+	u8 ptp_link_up;
+	struct ice_cgu_info cgu_info;
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
 	struct ice_peer_dev *rdma_peer;
@@ -1126,7 +1127,6 @@ struct ice_pf {
 	 */
 	spinlock_t tnl_lock;
 	struct list_head tnl_list;
-	struct ice_switchdev_info switchdev;
 
 #define ICE_INVALID_AGG_NODE_ID		0
 #define ICE_PF_AGG_NODE_ID_START	1
@@ -1161,7 +1161,6 @@ struct ice_netdev_priv {
 	struct notifier_block netdevice_nb;
 #endif
 #endif /* HAVE_TC_INDIR_BLOCK */
-	struct ice_repr *repr;
 };
 
 extern struct ida ice_peer_index_ida;
@@ -1349,7 +1348,7 @@ ice_irq_dynamic_ena(struct ice_hw *hw, struct ice_vsi *vsi,
 	val = GLINT_DYN_CTL_INTENA_M | GLINT_DYN_CTL_CLEARPBA_M |
 	      (itr << GLINT_DYN_CTL_ITR_INDX_S);
 	if (vsi)
-		if (test_bit(__ICE_DOWN, vsi->state))
+		if (test_bit(ICE_VSI_DOWN, vsi->state))
 			return;
 	wr32(hw, GLINT_DYN_CTL(vector), val);
 }
@@ -1422,6 +1421,15 @@ static inline struct ice_vsi *ice_get_main_vsi(struct ice_pf *pf)
 		return pf->vsi[0];
 
 	return NULL;
+}
+
+/**
+ * ice_get_netdev_priv_vsi - return VSI associated with netdev priv.
+ * @np: private netdev structure
+ */
+static inline struct ice_vsi *ice_get_netdev_priv_vsi(struct ice_netdev_priv *np)
+{
+	return np->vsi;
 }
 
 /**
@@ -1689,8 +1697,10 @@ ice_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 int ice_xdp_xmit(struct net_device *dev, struct xdp_buff *xdp);
 #endif /* HAVE_XDP_FRAME_STRUCT */
 #endif /* HAVE_XDP_SUPPORT */
-int ice_set_rss(struct ice_vsi *vsi, u8 *seed, u8 *lut, u16 lut_size);
-int ice_get_rss(struct ice_vsi *vsi, u8 *seed, u8 *lut, u16 lut_size);
+int ice_set_rss_lut(struct ice_vsi *vsi, u8 *lut, u16 lut_size);
+int ice_get_rss_lut(struct ice_vsi *vsi, u8 *lut, u16 lut_size);
+int ice_set_rss_key(struct ice_vsi *vsi, u8 *seed);
+int ice_get_rss_key(struct ice_vsi *vsi, u8 *seed);
 void ice_fill_rss_lut(u8 *lut, u16 rss_table_size, u16 rss_size);
 int ice_schedule_reset(struct ice_pf *pf, enum ice_reset_req reset);
 void ice_print_link_msg(struct ice_vsi *vsi, bool isup);
@@ -1793,6 +1803,7 @@ ice_ntuple_update_list_entry(struct ice_pf *pf, struct ice_fdir_fltr *input,
 			     int fltr_idx);
 void ice_update_ring_dest_vsi(struct ice_vsi *vsi, u16 *dest_vsi, u32 *ring);
 int ice_open(struct net_device *netdev);
+int ice_open_internal(struct net_device *netdev);
 int ice_stop(struct net_device *netdev);
 void ice_service_task_schedule(struct ice_pf *pf);
 int
@@ -1803,5 +1814,4 @@ int
 ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			   struct ice_tc_flower_fltr *tc_fltr);
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
-void ice_napi_add(struct ice_vsi *vsi);
 #endif /* _ICE_H_ */

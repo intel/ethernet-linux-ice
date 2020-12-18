@@ -20,7 +20,6 @@
 #include <linux/filter.h>
 #endif /* HAVE_XDP_BUFF_IN_XDP_H */
 #endif /* HAVE_XDP_SUPPORT */
-#include "ice_eswitch.h"
 
 #define ICE_RX_HDR_SIZE		256
 
@@ -248,6 +247,7 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 
 		smp_rmb();	/* prevent any other reads prior to eop_desc */
 
+		ice_trace(clean_tx_irq, tx_ring, tx_desc, tx_buf);
 		/* if the descriptor isn't done, no work yet to do */
 		if (!(eop_desc->cmd_type_offset_bsz &
 		      cpu_to_le64(ICE_TX_DESC_DTYPE_DESC_DONE)))
@@ -283,6 +283,7 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 
 		/* unmap remaining buffers */
 		while (tx_desc != eop_desc) {
+			ice_trace(clean_tx_irq_unmap, tx_ring, tx_desc, tx_buf);
 			tx_buf++;
 			tx_desc++;
 			i++;
@@ -301,6 +302,7 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 				dma_unmap_len_set(tx_buf, len, 0);
 			}
 		}
+		ice_trace(clean_tx_irq_unmap_eop, tx_ring, tx_desc, tx_buf);
 
 		/* move us one more past the eop_desc for start of next pkt */
 		tx_buf++;
@@ -340,7 +342,7 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 		smp_mb();
 		if (__netif_subqueue_stopped(tx_ring->netdev,
 					     tx_ring->q_index) &&
-		    !test_bit(__ICE_DOWN, vsi->state)) {
+		    !test_bit(ICE_VSI_DOWN, vsi->state)) {
 			netif_wake_subqueue(tx_ring->netdev,
 					    tx_ring->q_index);
 			++tx_ring->tx_stats.restart_q;
@@ -559,6 +561,32 @@ static unsigned int ice_rx_offset(struct ice_ring *rx_ring)
 	return 0;
 }
 
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+/**
+ * ice_rx_frame_truesize - Returns an actual size of Rx frame in memory
+ * @rx_ring: Rx ring we are requesting the frame size of
+ * @size: Packet length from rx_desc
+ *
+ * Returns an actual size of Rx frame in memory, considering page size
+ * and SKB data alignment.
+ */
+static unsigned int
+ice_rx_frame_truesize(struct ice_ring *rx_ring, unsigned int __maybe_unused size)
+{
+	unsigned int truesize;
+
+#if (PAGE_SIZE < 8192)
+	truesize = ice_rx_pg_size(rx_ring) / 2; /* Must be power-of-2 */
+#else
+	truesize = ice_rx_offset(rx_ring) ?
+		SKB_DATA_ALIGN(ice_rx_offset(rx_ring) + size) +
+		SKB_DATA_ALIGN(sizeof(struct skb_shared_info)) :
+		SKB_DATA_ALIGN(size);
+#endif
+	return truesize;
+}
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
+
 #ifdef HAVE_XDP_SUPPORT
 /**
  * ice_run_xdp - Executes an XDP program on initialized xdp_buff
@@ -632,7 +660,7 @@ int ice_xdp_xmit(struct net_device *dev, struct xdp_buff *xdp)
 	int err;
 #endif /* HAVE_XDP_FRAME_STRUCT */
 
-	if (test_bit(__ICE_DOWN, vsi->state))
+	if (test_bit(ICE_VSI_DOWN, vsi->state))
 		return -ENETDOWN;
 
 	if (!ice_is_xdp_ena_vsi(vsi) || queue_index >= vsi->num_xdp_txq)
@@ -679,7 +707,7 @@ void ice_xdp_flush(struct net_device *dev)
 	unsigned int queue_index = smp_processor_id();
 	struct ice_vsi *vsi = np->vsi;
 
-	if (test_bit(__ICE_DOWN, vsi->state))
+	if (test_bit(ICE_VSI_DOWN, vsi->state))
 		return;
 
 	if (!ice_is_xdp_ena_vsi(vsi) || queue_index >= vsi->num_xdp_txq)
@@ -1015,13 +1043,10 @@ ice_build_skb(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
 	 * likely have a consumer accessing first few bytes of meta
 	 * data, and then actual data.
 	 */
-	prefetch(xdp->data_meta);
+	net_prefetch(xdp->data_meta);
 #else
-	prefetch(xdp->data);
+	net_prefetch(xdp->data);
 #endif /* HAVE_XDP_BUFF_DATA_META */
-#if L1_CACHE_BYTES < 128
-	prefetch((void *)(xdp->data + L1_CACHE_BYTES));
-#endif
 	/* build an skb around the page buffer */
 	skb = build_skb(xdp->data_hard_start, truesize);
 	if (unlikely(!skb))
@@ -1065,10 +1090,7 @@ ice_construct_skb(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
 	struct sk_buff *skb;
 
 	/* prefetch first cache line of first page */
-	prefetch(xdp->data);
-#if L1_CACHE_BYTES < 128
-	prefetch((void *)(xdp->data + L1_CACHE_BYTES));
-#endif /* L1_CACHE_BYTES */
+	net_prefetch(xdp->data);
 
 	/* allocate a skb to store the frags */
 	skb = __napi_alloc_skb(&rx_ring->q_vector->napi, ICE_RX_HDR_SIZE,
@@ -1432,6 +1454,12 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 	xdp.rxq = &rx_ring->xdp_rxq;
 #endif /* HAVE_XDP_BUFF_RXQ */
 #endif /* HAVE_XDP_SUPPORT */
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+	/* Frame size depend on rx_ring setup when PAGE_SIZE=4K */
+#if (PAGE_SIZE < 8192)
+	xdp.frame_sz = ice_rx_frame_truesize(rx_ring, 0);
+#endif
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
 
 	/* start the loop to process Rx packets bounded by 'budget' */
 	while (likely(total_rx_pkts < (unsigned int)budget)) {
@@ -1461,6 +1489,7 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 		 */
 		dma_rmb();
 
+		ice_trace(clean_rx_irq, rx_ring, rx_desc);
 		if (rx_desc->wb.rxdid == FDIR_DESC_RXDID || !rx_ring->netdev) {
 			struct ice_vsi *ctrl_vsi = rx_ring->vsi;
 
@@ -1494,6 +1523,12 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 		xdp.data_meta = xdp.data;
 #endif /* HAVE_XDP_BUFF_DATA_META */
 		xdp.data_end = xdp.data + size;
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+#if (PAGE_SIZE > 4096)
+		/* At larger PAGE_SIZE, frame_sz depend on len size */
+		xdp.frame_sz = ice_rx_frame_truesize(rx_ring, size);
+#endif
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
 
 #ifdef HAVE_XDP_SUPPORT
 		rcu_read_lock();
@@ -1508,6 +1543,7 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 		if (!xdp_res)
 			goto construct_skb;
 		if (xdp_res & (ICE_XDP_TX | ICE_XDP_REDIR)) {
+#ifndef HAVE_XDP_BUFF_FRAME_SZ
 			unsigned int truesize;
 
 #if (PAGE_SIZE < 8192)
@@ -1516,8 +1552,13 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 			truesize = SKB_DATA_ALIGN(ice_rx_offset(rx_ring) +
 						  size);
 #endif
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
 			xdp_xmit |= xdp_res;
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+			ice_rx_buf_adjust_pg_offset(rx_buf, xdp.frame_sz);
+#else
 			ice_rx_buf_adjust_pg_offset(rx_buf, truesize);
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
 		} else {
 			rx_buf->pagecnt_bias++;
 		}
@@ -1590,6 +1631,7 @@ construct_skb:
 				ice_rx_queue_override(skb, rx_ring, flags);
 		}
 
+		ice_trace(clean_rx_irq_indicate, rx_ring, rx_desc, skb);
 		/* send completed skb up the stack */
 		ice_receive_skb(rx_ring, skb, vlan_tag);
 
@@ -1920,7 +1962,7 @@ static void ice_update_ena_itr(struct ice_q_vector *q_vector)
 			q_vector->itr_countdown--;
 	}
 
-	if (!test_bit(__ICE_DOWN, vsi->state))
+	if (!test_bit(ICE_VSI_DOWN, vsi->state))
 		wr32(&vsi->back->hw, GLINT_DYN_CTL(q_vector->reg_idx), itr_val);
 }
 
@@ -3492,6 +3534,8 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	int tso, csum;
 	int idx = -1;
 
+	ice_trace(xmit_frame_ring, tx_ring, skb);
+
 	count = ice_xmit_desc_count(skb);
 	if (ice_chk_linearize(skb, count)) {
 		if (__skb_linearize(skb))
@@ -3557,10 +3601,6 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	if (tsyn &&
 	    ice_tsyn(tx_ring, skb, first, &offload, &idx) == NETDEV_TX_BUSY)
 		goto out_ptp_drop;
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-	if (ice_is_eswitch_mode_switchdev(vsi->back))
-		ice_eswitch_set_target_vsi(skb, &offload);
-#endif /* CONFIG_NET_DEVLINK */
 	if (offload.cd_qw1 & ICE_TX_DESC_DTYPE_CTX) {
 		struct ice_tx_ctx_desc *cdesc;
 		u16 i = tx_ring->next_to_use;
@@ -3577,6 +3617,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 		cdesc->qw1 = cpu_to_le64(offload.cd_qw1);
 	}
 
+
 	if (ice_ring_ch_enabled(tx_ring))
 		ice_chnl_inline_fd(tx_ring, skb, first->tx_flags);
 
@@ -3586,6 +3627,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	return NETDEV_TX_OK;
 
 out_drop:
+	ice_trace(xmit_frame_ring_drop, tx_ring, skb);
 	dev_kfree_skb_any(skb);
 	return NETDEV_TX_OK;
 out_ptp_drop:

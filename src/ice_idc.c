@@ -13,6 +13,25 @@ DEFINE_IDA(ice_peer_index_ida);
 
 static struct mfd_cell ice_mfd_cells[] = ASSIGN_PEER_INFO;
 
+/**
+ * ice_is_vsi_state_nominal
+ * @vsi: pointer to the VSI struct
+ *
+ * returns true if VSI state is nominal, false otherwise
+ */
+static bool ice_is_vsi_state_nominal(struct ice_vsi *vsi)
+{
+	if (!vsi)
+		return false;
+
+	if (test_bit(ICE_VSI_DOWN, vsi->state) ||
+	    test_bit(ICE_VSI_NEEDS_RESTART, vsi->state) ||
+	    test_bit(ICE_VSI_BUSY, vsi->state))
+		return false;
+
+	return true;
+}
+
 
 /**
  * ice_peer_state_change - manage state machine for peer
@@ -182,9 +201,9 @@ int ice_peer_close(struct ice_peer_dev_int *peer_dev_int, void *data)
 		return 0;
 	pf = pci_get_drvdata(peer_dev->pdev);
 
-	if (test_bit(__ICE_DOWN, pf->state) ||
-	    test_bit(__ICE_SUSPENDED, pf->state) ||
-	    test_bit(__ICE_NEEDS_RESTART, pf->state))
+	if (test_bit(ICE_DOWN, pf->state) ||
+	    test_bit(ICE_SUSPENDED, pf->state) ||
+	    test_bit(ICE_NEEDS_RESTART, pf->state))
 		return 0;
 
 	mutex_lock(&peer_dev_int->peer_dev_state_mutex);
@@ -1152,7 +1171,6 @@ ice_peer_request_reset(struct ice_peer_dev *peer_dev,
  */
 static int ice_peer_is_vsi_ready(struct ice_peer_dev *peer_dev)
 {
-	DECLARE_BITMAP(check_bits, __ICE_STATE_NBITS) = { 0 };
 	struct ice_netdev_priv *np;
 	struct ice_vsi *vsi;
 
@@ -1170,14 +1188,8 @@ static int ice_peer_is_vsi_ready(struct ice_peer_dev *peer_dev)
 
 	np = netdev_priv(peer_dev->netdev);
 	vsi = np->vsi;
-	if (!vsi)
-		return 0;
 
-	bitmap_set(check_bits, 0, __ICE_STATE_NOMINAL_CHECK_BITS);
-	if (bitmap_intersects(vsi->state, check_bits, __ICE_STATE_NBITS))
-		return 0;
-
-	return 1;
+	return ice_is_vsi_state_nominal(vsi);
 }
 
 /**

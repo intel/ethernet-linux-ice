@@ -2236,33 +2236,6 @@ struct ice_aqc_nvm {
 
 #define ICE_AQC_NVM_MINSREV_MOD_ID		0x130
 
-/* The result of netlist NVM read comes in a TLV format. The actual data
- * (netlist header) starts from word offset 1 (byte 2). The FW strips
- * out the type field from the TLV header so all the netlist fields
- * should adjust their offset value by 1 word (2 bytes) in order to map
- * their correct location.
- */
-#define ICE_AQC_NVM_LINK_TOPO_NETLIST_MOD_ID		0x11B
-#define ICE_AQC_NVM_LINK_TOPO_NETLIST_LEN_OFFSET	1
-#define ICE_AQC_NVM_LINK_TOPO_NETLIST_LEN		2 /* In bytes */
-#define ICE_AQC_NVM_NETLIST_NODE_COUNT_OFFSET		2
-#define ICE_AQC_NVM_NETLIST_NODE_COUNT_LEN		2 /* In bytes */
-#define ICE_AQC_NVM_NETLIST_NODE_COUNT_M		ICE_M(0x3FF, 0)
-#define ICE_AQC_NVM_NETLIST_ID_BLK_START_OFFSET		5
-#define ICE_AQC_NVM_NETLIST_ID_BLK_LEN			0x30 /* In words */
-
-/* netlist ID block field offsets (word offsets) */
-#define ICE_AQC_NVM_NETLIST_ID_BLK_MAJOR_VER_LOW	2
-#define ICE_AQC_NVM_NETLIST_ID_BLK_MAJOR_VER_HIGH	3
-#define ICE_AQC_NVM_NETLIST_ID_BLK_MINOR_VER_LOW	4
-#define ICE_AQC_NVM_NETLIST_ID_BLK_MINOR_VER_HIGH	5
-#define ICE_AQC_NVM_NETLIST_ID_BLK_TYPE_LOW		6
-#define ICE_AQC_NVM_NETLIST_ID_BLK_TYPE_HIGH		7
-#define ICE_AQC_NVM_NETLIST_ID_BLK_REV_LOW		8
-#define ICE_AQC_NVM_NETLIST_ID_BLK_REV_HIGH		9
-#define ICE_AQC_NVM_NETLIST_ID_BLK_SHA_HASH		0xA
-#define ICE_AQC_NVM_NETLIST_ID_BLK_CUST_VER		0x2F
-
 
 /* Used for reading and writing MinSRev using 0x0701 and 0x0703. Note that the
  * type field is excluded from the section when reading and writing from
@@ -2333,6 +2306,7 @@ struct ice_aqc_nvm_pass_comp_tbl {
 #define ICE_AQ_NVM_PASS_COMP_CAN_BE_UPDATED		0x0
 #define ICE_AQ_NVM_PASS_COMP_CAN_MAY_BE_UPDATEABLE	0x1
 #define ICE_AQ_NVM_PASS_COMP_CAN_NOT_BE_UPDATED		0x2
+#define ICE_AQ_NVM_PASS_COMP_PARTIAL_CHECK		0x3
 	u8 component_response_code; /* Response only */
 #define ICE_AQ_NVM_PASS_COMP_CAN_BE_UPDATED_CODE	0x0
 #define ICE_AQ_NVM_PASS_COMP_STAMP_IDENTICAL_CODE	0x1
@@ -3352,6 +3326,85 @@ struct ice_aqc_event_lan_overflow {
 
 
 
+#ifdef FWLOG_SUPPORT
+/* Configure Firmware Logging Command (indirect 0xFF09)
+ * Logging Information Read Response (indirect 0xFF10)
+ * Note: The 0xFF10 command has no input parameters.
+ */
+struct ice_aqc_fw_logging {
+	u8 log_ctrl;
+#define ICE_AQC_FW_LOG_AQ_EN		BIT(0)
+#define ICE_AQC_FW_LOG_UART_EN		BIT(1)
+	u8 rsvd0;
+	u8 log_ctrl_valid; /* Not used by 0xFF10 Response */
+#define ICE_AQC_FW_LOG_AQ_VALID		BIT(0)
+#define ICE_AQC_FW_LOG_UART_VALID	BIT(1)
+	u8 rsvd1[5];
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+
+enum ice_aqc_fw_logging_mod {
+	ICE_AQC_FW_LOG_ID_GENERAL = 0,
+	ICE_AQC_FW_LOG_ID_CTRL,
+	ICE_AQC_FW_LOG_ID_LINK,
+	ICE_AQC_FW_LOG_ID_LINK_TOPO,
+	ICE_AQC_FW_LOG_ID_DNL,
+	ICE_AQC_FW_LOG_ID_I2C,
+	ICE_AQC_FW_LOG_ID_SDP,
+	ICE_AQC_FW_LOG_ID_MDIO,
+	ICE_AQC_FW_LOG_ID_ADMINQ,
+	ICE_AQC_FW_LOG_ID_HDMA,
+	ICE_AQC_FW_LOG_ID_LLDP,
+	ICE_AQC_FW_LOG_ID_DCBX,
+	ICE_AQC_FW_LOG_ID_DCB,
+	ICE_AQC_FW_LOG_ID_NETPROXY,
+	ICE_AQC_FW_LOG_ID_NVM,
+	ICE_AQC_FW_LOG_ID_AUTH,
+	ICE_AQC_FW_LOG_ID_VPD,
+	ICE_AQC_FW_LOG_ID_IOSF,
+	ICE_AQC_FW_LOG_ID_PARSER,
+	ICE_AQC_FW_LOG_ID_SW,
+	ICE_AQC_FW_LOG_ID_SCHEDULER,
+	ICE_AQC_FW_LOG_ID_TXQ,
+	ICE_AQC_FW_LOG_ID_ACL,
+	ICE_AQC_FW_LOG_ID_POST,
+	ICE_AQC_FW_LOG_ID_WATCHDOG,
+	ICE_AQC_FW_LOG_ID_TASK_DISPATCH,
+	ICE_AQC_FW_LOG_ID_MNG,
+	ICE_AQC_FW_LOG_ID_SYNCE,
+	ICE_AQC_FW_LOG_ID_HEALTH,
+	ICE_AQC_FW_LOG_ID_MAX,
+};
+
+/* Defines for both above FW logging command/response buffers */
+#define ICE_AQC_FW_LOG_ID_S		0
+#define ICE_AQC_FW_LOG_ID_M		(0xFFF << ICE_AQC_FW_LOG_ID_S)
+
+#define ICE_AQC_FW_LOG_CONF_SUCCESS	0	/* Used by response */
+#define ICE_AQC_FW_LOG_CONF_BAD_INDX	BIT(12)	/* Used by response */
+
+#define ICE_AQC_FW_LOG_EN_S		12
+#define ICE_AQC_FW_LOG_EN_M		(0xF << ICE_AQC_FW_LOG_EN_S)
+#define ICE_AQC_FW_LOG_INFO_EN		BIT(12)	/* Used by command */
+#define ICE_AQC_FW_LOG_INIT_EN		BIT(13)	/* Used by command */
+#define ICE_AQC_FW_LOG_FLOW_EN		BIT(14)	/* Used by command */
+#define ICE_AQC_FW_LOG_ERR_EN		BIT(15)	/* Used by command */
+
+#define ICE_AQC_FW_LOG_MIN_DATALEN	64	/* in bytes */
+
+/* Get/Clear FW Log (indirect 0xFF11) */
+struct ice_aqc_get_clear_fw_log {
+	u8 flags;
+#define ICE_AQC_FW_LOG_CLEAR		BIT(0)
+#define ICE_AQC_FW_LOG_MORE_DATA_AVAIL	BIT(1)
+	u8 rsvd1[7];
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+#endif /* FWLOG_SUPPORT */
 
 
 /* Set Health Status (direct 0xFF20) */
@@ -3363,6 +3416,35 @@ struct ice_aqc_set_health_status_config {
 	u8 reserved[15];
 };
 
+
+#define ICE_AQC_HEALTH_STATUS_ERR_UNKNOWN_MOD_STRICT		0x101
+#define ICE_AQC_HEALTH_STATUS_ERR_MOD_TYPE			0x102
+#define ICE_AQC_HEALTH_STATUS_ERR_MOD_QUAL			0x103
+#define ICE_AQC_HEALTH_STATUS_ERR_MOD_COMM			0x104
+#define ICE_AQC_HEALTH_STATUS_ERR_MOD_CONFLICT			0x105
+#define ICE_AQC_HEALTH_STATUS_ERR_MOD_NOT_PRESENT		0x106
+#define ICE_AQC_HEALTH_STATUS_INFO_MOD_UNDERUTILIZED		0x107
+#define ICE_AQC_HEALTH_STATUS_ERR_UNKNOWN_MOD_LENIENT		0x108
+#define ICE_AQC_HEALTH_STATUS_ERR_INVALID_LINK_CFG		0x10B
+#define ICE_AQC_HEALTH_STATUS_ERR_PORT_ACCESS			0x10C
+#define ICE_AQC_HEALTH_STATUS_ERR_PORT_UNREACHABLE		0x10D
+#define ICE_AQC_HEALTH_STATUS_INFO_PORT_SPEED_MOD_LIMITED	0x10F
+#define ICE_AQC_HEALTH_STATUS_ERR_PARALLEL_FAULT		0x110
+#define ICE_AQC_HEALTH_STATUS_INFO_PORT_SPEED_PHY_LIMITED	0x111
+#define ICE_AQC_HEALTH_STATUS_ERR_NETLIST_TOPO			0x112
+#define ICE_AQC_HEALTH_STATUS_ERR_NETLIST			0x113
+#define ICE_AQC_HEALTH_STATUS_ERR_TOPO_CONFLICT			0x114
+#define ICE_AQC_HEALTH_STATUS_ERR_LINK_HW_ACCESS		0x115
+#define ICE_AQC_HEALTH_STATUS_ERR_LINK_RUNTIME			0x116
+#define ICE_AQC_HEALTH_STATUS_ERR_DNL_INIT			0x117
+#define ICE_AQC_HEALTH_STATUS_INFO_RECOVERY			0x500
+#define ICE_AQC_HEALTH_STATUS_ERR_FLASH_ACCESS			0x501
+#define ICE_AQC_HEALTH_STATUS_ERR_NVM_AUTH			0x502
+#define ICE_AQC_HEALTH_STATUS_ERR_OROM_AUTH			0x503
+#define ICE_AQC_HEALTH_STATUS_ERR_DDP_AUTH			0x504
+#define ICE_AQC_HEALTH_STATUS_ERR_NVM_COMPAT			0x505
+#define ICE_AQC_HEALTH_STATUS_ERR_OROM_COMPAT			0x506
+#define ICE_AQC_HEALTH_STATUS_ERR_DCB_MIB			0x509
 
 /* Get Health Status codes (indirect 0xFF21) */
 struct ice_aqc_get_supported_health_status_codes {
@@ -3520,6 +3602,12 @@ struct ice_aq_desc {
 		struct ice_aqc_download_pkg download_pkg;
 		struct ice_aqc_get_pkg_info_list get_pkg_info_list;
 		struct ice_aqc_driver_shared_params drv_shared_params;
+#ifdef FWLOG_SUPPORT
+		struct ice_aqc_fw_logging fw_logging;
+#endif /* FWLOG_SUPPORT */
+#ifdef FWLOG_SUPPORT
+		struct ice_aqc_get_clear_fw_log get_clear_fw_log;
+#endif /* FWLOG_SUPPORT */
 		struct ice_aqc_set_mac_lb set_mac_lb;
 		struct ice_aqc_alloc_free_res_cmd sw_res_ctrl;
 		struct ice_aqc_get_res_alloc get_res;
@@ -3805,6 +3893,13 @@ enum ice_adminq_opc {
 
 	/* Standalone Commands/Events */
 	ice_aqc_opc_event_lan_overflow			= 0x1001,
+#ifdef FWLOG_SUPPORT
+
+	/* FW logging commands */
+	ice_aqc_opc_fw_logging				= 0xFF09,
+	ice_aqc_opc_fw_logging_info			= 0xFF10,
+	ice_aqc_opc_get_clear_fw_log			= 0xFF11,
+#endif /* FWLOG_SUPPORT */
 
 	/* SystemDiagnostic commands */
 	ice_aqc_opc_set_health_status_config		= 0xFF20,

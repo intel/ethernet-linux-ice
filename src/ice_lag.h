@@ -19,8 +19,8 @@ struct ice_pf;
 
 /* LAG info struct */
 struct ice_lag {
-	struct ice_pf *pf; /* backlink to pf struct */
-	struct net_device *netdev; /* this pf's netdev */
+	struct ice_pf *pf; /* backlink to PF struct */
+	struct net_device *netdev; /* this PF's netdev */
 	struct net_device *peer_netdev;
 	struct net_device *upper_netdev; /* upper bonding netdev */
 	struct notifier_block notif_block;
@@ -61,7 +61,7 @@ static inline void ice_disable_lag(struct ice_lag *lag)
  * @lag: LAG struct
  *
  * Decrement the disable counter for a port, and if that count reaches
- * zero, then remove the no-op rx handler from that netdev
+ * zero, then remove the no-op Rx handler from that netdev
  */
 static inline void ice_enable_lag(struct ice_lag *lag)
 {

@@ -442,9 +442,8 @@ ice_enum_labels(struct ice_seg *ice_seg, u32 type, struct ice_pkg_enum *state,
 	if (type && !(type >= ICE_SID_LBL_FIRST && type <= ICE_SID_LBL_LAST))
 		return NULL;
 
-	label = (struct ice_label *)ice_pkg_enum_entry(ice_seg, state, type,
-						       NULL,
-						       ice_label_enum_handler);
+	label = ice_pkg_enum_entry(ice_seg, state, type, NULL,
+				   ice_label_enum_handler);
 	if (!label)
 		return NULL;
 
@@ -1018,6 +1017,13 @@ ice_dwnld_cfg_bufs(struct ice_hw *hw, struct ice_buf *bufs, u32 count)
 
 		if (last)
 			break;
+	}
+
+	if (!status) {
+		status = ice_set_vlan_mode(hw);
+		if (status)
+			ice_debug(hw, ICE_DBG_PKG, "Failed to set VLAN mode: err %d\n",
+				  status);
 	}
 
 	ice_release_global_cfg_lock(hw);
@@ -1861,7 +1867,7 @@ ice_pkg_buf_reserve_section(struct ice_buf_build *bld, u16 count)
 	bld->reserved_section_table_entries += count;
 
 	data_end = le16_to_cpu(buf->data_end) +
-		   (count * sizeof(buf->section_entry[0]));
+		flex_array_size(buf, section_entry, count);
 	buf->data_end = cpu_to_le16(data_end);
 
 	return 0;
@@ -1993,7 +1999,7 @@ ice_pkg_buf_unreserve_section(struct ice_buf_build *bld, u16 count)
 	bld->reserved_section_table_entries -= count;
 
 	data_end = le16_to_cpu(buf->data_end) -
-		   (count * sizeof(buf->section_entry[0]));
+		flex_array_size(buf, section_entry, count);
 	buf->data_end = cpu_to_le16(data_end);
 
 	return 0;
@@ -2392,7 +2398,7 @@ ice_destroy_tunnel_end:
  */
 enum ice_status ice_replay_tunnels(struct ice_hw *hw)
 {
-	enum ice_status status = ICE_SUCCESS;
+	enum ice_status status = 0;
 	u16 i;
 
 	for (i = 0; i < hw->tnl.count && i < ICE_TUNNEL_MAX_ENTRIES; i++) {

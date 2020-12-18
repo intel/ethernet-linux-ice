@@ -4,27 +4,11 @@
 /* ethtool support for ice */
 
 #include "ice.h"
+#include "ice_ethtool.h"
 #include "ice_lib.h"
 #include "ice_fltr.h"
 #include "ice_dcb_lib.h"
 #include "ice_dcb_nl.h"
-
-struct ice_stats {
-	char stat_string[ETH_GSTRING_LEN];
-	int sizeof_stat;
-	int stat_offset;
-};
-
-#define ICE_STAT(_type, _name, _stat) { \
-	.stat_string = _name, \
-	.sizeof_stat = sizeof_field(_type, _stat), \
-	.stat_offset = offsetof(_type, _stat) \
-}
-
-#define ICE_VSI_STAT(_name, _stat) \
-		ICE_STAT(struct ice_vsi, _name, _stat)
-#define ICE_PF_STAT(_name, _stat) \
-		ICE_STAT(struct ice_pf, _name, _stat)
 
 static int ice_q_stats_len(struct net_device *netdev)
 {
@@ -89,26 +73,26 @@ static int ice_q_stats_len(struct net_device *netdev)
 				 ICE_VSI_STATS_LEN + ice_q_stats_len(n))
 
 static const struct ice_stats ice_gstrings_vsi_stats[] = {
-	ICE_VSI_STAT("rx_unicast", eth_stats.rx_unicast),
-	ICE_VSI_STAT("tx_unicast", eth_stats.tx_unicast),
-	ICE_VSI_STAT("rx_multicast", eth_stats.rx_multicast),
-	ICE_VSI_STAT("tx_multicast", eth_stats.tx_multicast),
-	ICE_VSI_STAT("rx_broadcast", eth_stats.rx_broadcast),
-	ICE_VSI_STAT("tx_broadcast", eth_stats.tx_broadcast),
-	ICE_VSI_STAT("rx_bytes", eth_stats.rx_bytes),
-	ICE_VSI_STAT("tx_bytes", eth_stats.tx_bytes),
-	ICE_VSI_STAT("rx_dropped", eth_stats.rx_discards),
-	ICE_VSI_STAT("rx_unknown_protocol", eth_stats.rx_unknown_protocol),
-	ICE_VSI_STAT("rx_alloc_fail", rx_buf_failed),
-	ICE_VSI_STAT("rx_pg_alloc_fail", rx_page_failed),
-	ICE_VSI_STAT("rx_gro_dropped", rx_gro_dropped),
+	ICE_VSI_STAT(ICE_RX_UNICAST, eth_stats.rx_unicast),
+	ICE_VSI_STAT(ICE_TX_UNICAST, eth_stats.tx_unicast),
+	ICE_VSI_STAT(ICE_RX_MULTICAST, eth_stats.rx_multicast),
+	ICE_VSI_STAT(ICE_TX_MULTICAST, eth_stats.tx_multicast),
+	ICE_VSI_STAT(ICE_RX_BROADCAST, eth_stats.rx_broadcast),
+	ICE_VSI_STAT(ICE_TX_BROADCAST, eth_stats.tx_broadcast),
+	ICE_VSI_STAT(ICE_RX_BYTES, eth_stats.rx_bytes),
+	ICE_VSI_STAT(ICE_TX_BYTES, eth_stats.tx_bytes),
+	ICE_VSI_STAT(ICE_RX_DROPPED, eth_stats.rx_discards),
+	ICE_VSI_STAT(ICE_RX_UNKNOWN_PROTO, eth_stats.rx_unknown_protocol),
+	ICE_VSI_STAT(ICE_RX_ALLOC_FAIL, rx_buf_failed),
+	ICE_VSI_STAT(ICE_RX_PAGE_ALLOC_FAIL, rx_page_failed),
+	ICE_VSI_STAT(ICE_RX_GRO_DROPPED, rx_gro_dropped),
 #ifdef ICE_ADD_PROBES
-	ICE_VSI_STAT("rx_page_reuse", rx_page_reuse),
+	ICE_VSI_STAT(ICE_RX_PAGE_REUSE, rx_page_reuse),
 #endif /* ICE_ADD_PROBES */
-	ICE_VSI_STAT("tx_errors", eth_stats.tx_errors),
-	ICE_VSI_STAT("tx_linearize", tx_linearize),
-	ICE_VSI_STAT("tx_busy", tx_busy),
-	ICE_VSI_STAT("tx_restart", tx_restart),
+	ICE_VSI_STAT(ICE_TX_ERRORS, eth_stats.tx_errors),
+	ICE_VSI_STAT(ICE_TX_LINEARIZE, tx_linearize),
+	ICE_VSI_STAT(ICE_TX_BUSY, tx_busy),
+	ICE_VSI_STAT(ICE_TX_RESTART, tx_restart),
 #ifdef ADQ_PERF_COUNTERS
 	ICE_VSI_STAT("chnl_trans_inline_fd", cnt_inline_fd_transition),
 	ICE_VSI_STAT("chnl_fd_table_flushed", cnt_table_flushed),
@@ -144,79 +128,79 @@ static const char ice_gstrings_test[][ETH_GSTRING_LEN] = {
  * is queried on the base PF netdev.
  */
 static const struct ice_stats ice_gstrings_pf_stats[] = {
-	ICE_PF_STAT("rx_bytes.nic", stats.eth.rx_bytes),
-	ICE_PF_STAT("tx_bytes.nic", stats.eth.tx_bytes),
-	ICE_PF_STAT("rx_unicast.nic", stats.eth.rx_unicast),
-	ICE_PF_STAT("tx_unicast.nic", stats.eth.tx_unicast),
-	ICE_PF_STAT("rx_multicast.nic", stats.eth.rx_multicast),
-	ICE_PF_STAT("tx_multicast.nic", stats.eth.tx_multicast),
-	ICE_PF_STAT("rx_broadcast.nic", stats.eth.rx_broadcast),
-	ICE_PF_STAT("tx_broadcast.nic", stats.eth.tx_broadcast),
-	ICE_PF_STAT("tx_errors.nic", stats.eth.tx_errors),
-	ICE_PF_STAT("tx_timeout.nic", tx_timeout_count),
-	ICE_PF_STAT("rx_size_64.nic", stats.rx_size_64),
-	ICE_PF_STAT("tx_size_64.nic", stats.tx_size_64),
-	ICE_PF_STAT("rx_size_127.nic", stats.rx_size_127),
-	ICE_PF_STAT("tx_size_127.nic", stats.tx_size_127),
-	ICE_PF_STAT("rx_size_255.nic", stats.rx_size_255),
-	ICE_PF_STAT("tx_size_255.nic", stats.tx_size_255),
-	ICE_PF_STAT("rx_size_511.nic", stats.rx_size_511),
-	ICE_PF_STAT("tx_size_511.nic", stats.tx_size_511),
-	ICE_PF_STAT("rx_size_1023.nic", stats.rx_size_1023),
-	ICE_PF_STAT("tx_size_1023.nic", stats.tx_size_1023),
-	ICE_PF_STAT("rx_size_1522.nic", stats.rx_size_1522),
-	ICE_PF_STAT("tx_size_1522.nic", stats.tx_size_1522),
-	ICE_PF_STAT("rx_size_big.nic", stats.rx_size_big),
-	ICE_PF_STAT("tx_size_big.nic", stats.tx_size_big),
-	ICE_PF_STAT("link_xon_rx.nic", stats.link_xon_rx),
-	ICE_PF_STAT("link_xon_tx.nic", stats.link_xon_tx),
-	ICE_PF_STAT("link_xoff_rx.nic", stats.link_xoff_rx),
-	ICE_PF_STAT("link_xoff_tx.nic", stats.link_xoff_tx),
-	ICE_PF_STAT("tx_dropped_link_down.nic", stats.tx_dropped_link_down),
-	ICE_PF_STAT("rx_undersize.nic", stats.rx_undersize),
-	ICE_PF_STAT("rx_fragments.nic", stats.rx_fragments),
-	ICE_PF_STAT("rx_oversize.nic", stats.rx_oversize),
-	ICE_PF_STAT("rx_jabber.nic", stats.rx_jabber),
-	ICE_PF_STAT("rx_csum_bad.nic", hw_csum_rx_error),
-	ICE_PF_STAT("rx_length_errors.nic", stats.rx_len_errors),
-	ICE_PF_STAT("rx_dropped.nic", stats.eth.rx_discards),
-	ICE_PF_STAT("rx_crc_errors.nic", stats.crc_errors),
-	ICE_PF_STAT("illegal_bytes.nic", stats.illegal_bytes),
-	ICE_PF_STAT("mac_local_faults.nic", stats.mac_local_faults),
-	ICE_PF_STAT("mac_remote_faults.nic", stats.mac_remote_faults),
+	ICE_PF_STAT(ICE_PORT_RX_BYTES, stats.eth.rx_bytes),
+	ICE_PF_STAT(ICE_PORT_TX_BYTES, stats.eth.tx_bytes),
+	ICE_PF_STAT(ICE_PORT_RX_UNICAST, stats.eth.rx_unicast),
+	ICE_PF_STAT(ICE_PORT_TX_UNICAST, stats.eth.tx_unicast),
+	ICE_PF_STAT(ICE_PORT_RX_MULTICAST, stats.eth.rx_multicast),
+	ICE_PF_STAT(ICE_PORT_TX_MULTICAST, stats.eth.tx_multicast),
+	ICE_PF_STAT(ICE_PORT_RX_BROADCAST, stats.eth.rx_broadcast),
+	ICE_PF_STAT(ICE_PORT_TX_BROADCAST, stats.eth.tx_broadcast),
+	ICE_PF_STAT(ICE_PORT_TX_ERRORS, stats.eth.tx_errors),
+	ICE_PF_STAT(ICE_PORT_TX_TIMEOUT, tx_timeout_count),
+	ICE_PF_STAT(ICE_PORT_RX_SIZE_64, stats.rx_size_64),
+	ICE_PF_STAT(ICE_PORT_TX_SIZE_64, stats.tx_size_64),
+	ICE_PF_STAT(ICE_PORT_RX_SIZE_127, stats.rx_size_127),
+	ICE_PF_STAT(ICE_PORT_TX_SIZE_127, stats.tx_size_127),
+	ICE_PF_STAT(ICE_PORT_RX_SIZE_255, stats.rx_size_255),
+	ICE_PF_STAT(ICE_PORT_TX_SIZE_255, stats.tx_size_255),
+	ICE_PF_STAT(ICE_PORT_RX_SIZE_511, stats.rx_size_511),
+	ICE_PF_STAT(ICE_PORT_TX_SIZE_511, stats.tx_size_511),
+	ICE_PF_STAT(ICE_PORT_RX_SIZE_1023, stats.rx_size_1023),
+	ICE_PF_STAT(ICE_PORT_TX_SIZE_1023, stats.tx_size_1023),
+	ICE_PF_STAT(ICE_PORT_RX_SIZE_1522, stats.rx_size_1522),
+	ICE_PF_STAT(ICE_PORT_TX_SIZE_1522, stats.tx_size_1522),
+	ICE_PF_STAT(ICE_PORT_RX_SIZE_JUMBO, stats.rx_size_big),
+	ICE_PF_STAT(ICE_PORT_TX_SIZE_JUMBO, stats.tx_size_big),
+	ICE_PF_STAT(ICE_PORT_RX_LINK_XON, stats.link_xon_rx),
+	ICE_PF_STAT(ICE_PORT_TX_LINK_XON, stats.link_xon_tx),
+	ICE_PF_STAT(ICE_PORT_RX_LINK_XOFF, stats.link_xoff_rx),
+	ICE_PF_STAT(ICE_PORT_TX_LINK_XOFF, stats.link_xoff_tx),
+	ICE_PF_STAT(ICE_PORT_TX_DROP_LINK_DOWN, stats.tx_dropped_link_down),
+	ICE_PF_STAT(ICE_PORT_RX_UNDERSIZE, stats.rx_undersize),
+	ICE_PF_STAT(ICE_PORT_RX_FRAGMENTS, stats.rx_fragments),
+	ICE_PF_STAT(ICE_PORT_RX_OVERSIZE, stats.rx_oversize),
+	ICE_PF_STAT(ICE_PORT_RX_JABBER, stats.rx_jabber),
+	ICE_PF_STAT(ICE_PORT_RX_CSUM_BAD, hw_csum_rx_error),
+	ICE_PF_STAT(ICE_PORT_RX_LEN_ERRORS, stats.rx_len_errors),
+	ICE_PF_STAT(ICE_PORT_RX_DROPPED, stats.eth.rx_discards),
+	ICE_PF_STAT(ICE_PORT_RX_CRC_ERRORS, stats.crc_errors),
+	ICE_PF_STAT(ICE_PORT_ILLEGAL_BYTES, stats.illegal_bytes),
+	ICE_PF_STAT(ICE_PORT_MAC_LOCAL_FAULTS, stats.mac_local_faults),
+	ICE_PF_STAT(ICE_PORT_MAC_REMOTE_FAULTS, stats.mac_remote_faults),
 #ifdef ICE_ADD_PROBES
-	ICE_PF_STAT("tx_tcp_segments.nic", tcp_segs),
-	ICE_PF_STAT("tx_udp_segments.nic", udp_segs),
-	ICE_PF_STAT("rx_tcp_cso.nic", rx_tcp_cso),
-	ICE_PF_STAT("tx_tcp_cso.nic", tx_tcp_cso),
-	ICE_PF_STAT("rx_udp_cso.nic", rx_udp_cso),
-	ICE_PF_STAT("tx_udp_cso.nic", tx_udp_cso),
-	ICE_PF_STAT("rx_sctp_cso.nic", rx_sctp_cso),
-	ICE_PF_STAT("tx_sctp_cso.nic", tx_sctp_cso),
-	ICE_PF_STAT("rx_ip4_cso.nic", rx_ip4_cso),
-	ICE_PF_STAT("tx_ip4_cso.nic", tx_ip4_cso),
-	ICE_PF_STAT("rx_ip4_cso_error.nic", rx_ip4_cso_err),
-	ICE_PF_STAT("rx_tcp_cso_error.nic", rx_tcp_cso_err),
-	ICE_PF_STAT("rx_udp_cso_error.nic", rx_udp_cso_err),
-	ICE_PF_STAT("rx_sctp_cso_error.nic", rx_sctp_cso_err),
-	ICE_PF_STAT("tx_l3_cso_err.nic", tx_l3_cso_err),
-	ICE_PF_STAT("tx_l4_cso_err.nic", tx_l4_cso_err),
-	ICE_PF_STAT("rx_vlano.nic", rx_vlano),
-	ICE_PF_STAT("tx_vlano.nic", tx_vlano),
+	ICE_PF_STAT(ICE_PORT_TX_TCP_SEGMENTS, tcp_segs),
+	ICE_PF_STAT(ICE_PORT_TX_UDP_SEGMENTS, udp_segs),
+	ICE_PF_STAT(ICE_PORT_RX_TCP_CSO, rx_tcp_cso),
+	ICE_PF_STAT(ICE_PORT_TX_TCP_CSO, tx_tcp_cso),
+	ICE_PF_STAT(ICE_PORT_RX_UDP_CSO, rx_udp_cso),
+	ICE_PF_STAT(ICE_PORT_TX_UDP_CSO, tx_udp_cso),
+	ICE_PF_STAT(ICE_PORT_RX_SCTP_CSO, rx_sctp_cso),
+	ICE_PF_STAT(ICE_PORT_TX_SCTP_CSO, tx_sctp_cso),
+	ICE_PF_STAT(ICE_PORT_RX_IP4_CSO, rx_ip4_cso),
+	ICE_PF_STAT(ICE_PORT_TX_IP4_CSO, tx_ip4_cso),
+	ICE_PF_STAT(ICE_PORT_RX_IP4_CSO_ERROR, rx_ip4_cso_err),
+	ICE_PF_STAT(ICE_PORT_RX_IP4_CSO_ERROR, rx_tcp_cso_err),
+	ICE_PF_STAT(ICE_PORT_RX_UDP_CSO_ERROR, rx_udp_cso_err),
+	ICE_PF_STAT(ICE_PORT_RX_SCTP_CSO_ERROR, rx_sctp_cso_err),
+	ICE_PF_STAT(ICE_PORT_TX_L3_CSO_ERROR, tx_l3_cso_err),
+	ICE_PF_STAT(ICE_PORT_TX_L4_CSO_ERROR, tx_l4_cso_err),
+	ICE_PF_STAT(ICE_PORT_RX_VLANO, rx_vlano),
+	ICE_PF_STAT(ICE_PORT_TX_VLANO, tx_vlano),
 #endif
 	/* LPI stats */
-	ICE_PF_STAT("rx_lpi_status.nic", stats.rx_lpi_status),
-	ICE_PF_STAT("tx_lpi_status.nic", stats.tx_lpi_status),
-	ICE_PF_STAT("rx_lpi_count.nic", stats.rx_lpi_count),
-	ICE_PF_STAT("tx_lpi_count.nic", stats.tx_lpi_count),
-	ICE_PF_STAT("fdir_sb_match.nic", stats.fd_sb_match),
-	ICE_PF_STAT("fdir_sb_status.nic", stats.fd_sb_status),
-	ICE_PF_STAT("chnl_inline_fd_match.nic", stats.ch_atr_match),
+	ICE_PF_STAT(ICE_PORT_RX_LPI_STATUS, stats.rx_lpi_status),
+	ICE_PF_STAT(ICE_PORT_TX_LPI_STATUS, stats.tx_lpi_status),
+	ICE_PF_STAT(ICE_PORT_RX_LPI_COUNT, stats.rx_lpi_count),
+	ICE_PF_STAT(ICE_PORT_TX_LPI_COUNT, stats.tx_lpi_count),
+	ICE_PF_STAT(ICE_PORT_FDIR_SB_MATCH, stats.fd_sb_match),
+	ICE_PF_STAT(ICE_PORT_FDIR_SB_STATUS, stats.fd_sb_status),
+	ICE_PF_STAT("chnl_inline_fd_match", stats.ch_atr_match),
 #ifdef ICE_ADD_PROBES
-	ICE_PF_STAT("arfs_tcpv4_match.nic", stats.arfs_tcpv4_match),
-	ICE_PF_STAT("arfs_tcpv6_match.nic", stats.arfs_tcpv6_match),
-	ICE_PF_STAT("arfs_udpv4_match.nic", stats.arfs_udpv4_match),
-	ICE_PF_STAT("arfs_udpv6_match.nic", stats.arfs_udpv6_match),
+	ICE_PF_STAT(ICE_PORT_ARFS_TCPV4_MATCH, stats.arfs_tcpv4_match),
+	ICE_PF_STAT(ICE_PORT_ARFS_TCPV6_MATCH, stats.arfs_tcpv6_match),
+	ICE_PF_STAT(ICE_PORT_ARFS_UDP4_MATCH, stats.arfs_udpv4_match),
+	ICE_PF_STAT(ICE_PORT_ARFS_UDP6_MATCH, stats.arfs_udpv6_match),
 #endif /* ICE_ADD_PROBES */
 };
 
@@ -269,7 +253,7 @@ static void
 ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_vsi *vsi = np->vsi;
+	struct ice_vsi *vsi = ice_get_netdev_priv_vsi(np);
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	struct ice_orom_info *orom;
@@ -307,7 +291,7 @@ ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 	strscpy(drvinfo->bus_info, pci_name(pf->pdev),
 		sizeof(drvinfo->bus_info));
 
-	if (test_bit(__ICE_RECOVERY_MODE, pf->state))
+	if (test_bit(ICE_RECOVERY_MODE, pf->state))
 		return;
 
 	drvinfo->n_priv_flags = ICE_PRIV_FLAG_ARRAY_SIZE;
@@ -995,7 +979,7 @@ ice_self_test(struct net_device *netdev, struct ethtool_test *eth_test,
 	if (eth_test->flags == ETH_TEST_FL_OFFLINE) {
 		netdev_info(netdev, "offline testing starting\n");
 
-		set_bit(__ICE_TESTING, pf->state);
+		set_bit(ICE_TESTING, pf->state);
 
 		if (ice_active_vfs(pf) || ice_active_vmdqs(pf)) {
 			dev_warn(dev, "Please take active VFs and Netqueues offline and restart the adapter before running NIC diagnostics\n");
@@ -1005,7 +989,7 @@ ice_self_test(struct net_device *netdev, struct ethtool_test *eth_test,
 			data[ICE_ETH_TEST_LOOP] = 1;
 			data[ICE_ETH_TEST_LINK] = 1;
 			eth_test->flags |= ETH_TEST_FL_FAILED;
-			clear_bit(__ICE_TESTING, pf->state);
+			clear_bit(ICE_TESTING, pf->state);
 			goto skip_ol_tests;
 		}
 		/* If the device is online then take it offline */
@@ -1026,7 +1010,7 @@ ice_self_test(struct net_device *netdev, struct ethtool_test *eth_test,
 		    data[ICE_ETH_TEST_REG])
 			eth_test->flags |= ETH_TEST_FL_FAILED;
 
-		clear_bit(__ICE_TESTING, pf->state);
+		clear_bit(ICE_TESTING, pf->state);
 
 		if (if_running) {
 			int status = ice_open(netdev);
@@ -1077,15 +1061,15 @@ ice_get_chnl_tx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
 	p = *loc_in_buf;
 
 	/* Tx queue specific extra counters */
-	snprintf(p, ETH_GSTRING_LEN, "tx_%u.pkt_busy_poll", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_BUSY_POLL, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "tx_%u.pkt_not_busy_poll", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_NOT_BUSY_POLL, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "tx_%u.atr_setup", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_SETUP, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "tx_%u.atr_teardown", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_TEARDOWN, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "tx_%u.atr_bailouts", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_BAIL, q);
 	p += ETH_GSTRING_LEN;
 
 	/* copy back updated length */
@@ -1266,119 +1250,119 @@ ice_get_chnl_rx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
 	/* Rx queue specific extra counters */
 
 	/* busy and non-busy poll packets */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.pkt_busy_poll", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BUSY_POLL, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.pkt_not_busy_poll", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NOT_BUSY_POLL, q);
 	p += ETH_GSTRING_LEN;
 	/* number of times Rx queue was set thru' Rx queue override logic */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.queue_set", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_SET, q);
 	p += ETH_GSTRING_LEN;
 	/* number of times Rx queue was not set thru' Rx queue override logic */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.queue_bailouts", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BAIL, q);
 	p += ETH_GSTRING_LEN;
 	/* total TCP ctrl pkts */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.tcp_ctrl_pkts", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_CTRL_PKTS, q);
 	p += ETH_GSTRING_LEN;
 	/* total "only ctrl pkts" */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.only_ctrl_pkts", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_ONLY_CTRL_PKTS, q);
 	p += ETH_GSTRING_LEN;
 	/* number of FIN recv */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.tcp_fin_recv", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_FIN_RECV, q);
 	p += ETH_GSTRING_LEN;
 	/* number of RST recv */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.tcp_rst_recv", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_RST_RECV, q);
 	p += ETH_GSTRING_LEN;
 	/* number of SYN recv */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.tcp_syn_recv", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_SYN_RECV, q);
 	p += ETH_GSTRING_LEN;
 	/* BP, but didn't clean any data packets */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_no_data_pkt", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_NO_DATA_PKT, q);
 	p += ETH_GSTRING_LEN;
 
 	/* Vector specific extra counters */
 
 	/* tracking BP, INT, BP->INT, INT->BP */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.in_bp", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_IN_BP, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.intr_to_bp", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_INTR_TO_BP, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_to_bp", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_TO_BP, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.in_intr", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_IN_INTR, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_to_intr", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_TO_INTR, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.intr_to_intr", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_INTR_TO_INTR, q);
 	p += ETH_GSTRING_LEN;
 	/* unlikely comeback to busy_poll */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.unlikely_cb_to_bp", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_UNLIKELY_CB_TO_BP, q);
 	p += ETH_GSTRING_LEN;
 	/* unlikely comeback to busy_poll and once_in_bp is true */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.ucb_once_in_bp", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_UCB_ONCE_IN_BP, q);
 	p += ETH_GSTRING_LEN;
 	/* once_in_bp is false */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.intr_once_in_bp_false", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_INTR_ONCE_IN_BP_FALSE, q);
 	p += ETH_GSTRING_LEN;
 	/* busy_poll stop due to need_resched() */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_stop_need_resched", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_STOP_NEED_RESCHED, q);
 	p += ETH_GSTRING_LEN;
 	/* busy_poll stop due to possible due to timeout */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_stop_timeout", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_STOP_TIMEOUT, q);
 	p += ETH_GSTRING_LEN;
 	/* Transition: BP->INT: previously cleaned data packets */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.cleaned_any_data_pkt", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_CLEANED_ANY_DATA_PKT, q);
 	p += ETH_GSTRING_LEN;
 	/* need_resched(), but didn't clean any data packets */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.need_resched_no_data", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NEED_RESCHED_NO_DATA, q);
 	p += ETH_GSTRING_LEN;
 	/* possible timeout(), but didn't clean any data packets */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.timeout_no_data", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TIMEOUT_NO_DATA, q);
 	p += ETH_GSTRING_LEN;
 	/* number of SW triggered interrupt from napi_poll due to
 	 * possible timeout detected
 	 */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.sw_intr_timeout", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_SW_INTR_TIMEOUT, q);
 	p += ETH_GSTRING_LEN;
 	/* number of SW triggered interrupt from service_task */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.sw_intr_service_task", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_SW_INTR_SERV_TASK, q);
 	p += ETH_GSTRING_LEN;
 	/* number of times, SW triggered interrupt is not triggered from
 	 * napi_poll even when unlikely_cb_to_bp is set, once_in_bp is set
 	 * but ethtool private featute flag is off (for interrupt optimization
 	 * strategy
 	 */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.no_sw_intr_opt_off", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NO_SW_INTR_OPT_OFF, q);
 	p += ETH_GSTRING_LEN;
 	/* number of times WB_ON_ITR is set */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.wb_on_itr_set", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_WB_ON_ITR_SET, q);
 	p += ETH_GSTRING_LEN;
 
 	/* number of Rx packet processed due busy_poll_stop */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.pkts_bp_stop_budget8", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_PKTS_BP_STOP_BUDGET8, q);
 	p += ETH_GSTRING_LEN;
 
 	/* number of Rx packet processed due to napi_schedule which gets invoked
 	 * if busy_poll_stop returned budget
 	 */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.pkts_bp_stop_budget64", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_PKTS_BP_STOP_BUDGET64, q);
 	p += ETH_GSTRING_LEN;
 
 	/* num of times work_done == budget condition met from
 	 * busy_poll_stop:napi_poll code path
 	 */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_wd_equal_budget8", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_WD_EQUAL_BUDGET8, q);
 	p += ETH_GSTRING_LEN;
 
 	/* num of times work_done == budget condition met from
 	 * napi_schedule:napi_poll code path (this happens if busy_poll_stop
 	 * returned "budget")
 	 */
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.bp_wd_equal_budget64", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_WD_EQUAL_BUDGET64, q);
 	p += ETH_GSTRING_LEN;
 
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.keep_state_bp_budget8", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_KEEP_STATE_BP_BUDGET8, q);
 	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "rx_%u.keep_state_bp_budget64", q);
+	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_KEEP_STATE_BP_BUDGET64, q);
 	p += ETH_GSTRING_LEN;
 
 	/* copy back updated length */
@@ -1431,16 +1415,16 @@ static void ice_get_macvlan_tx_strings(struct ice_pf *pf, char **loc_in_buf)
 		struct ice_macvlan *mv = ice_get_macvlan(i, pf);
 
 		if (mv) {
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%s-tx_pkts",
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_PKTS1,
 				 mv->vdev->name);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%s-tx_bytes",
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_BYTES1,
 				 mv->vdev->name);
 			p += ETH_GSTRING_LEN;
 		} else {
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%i.tx_pkts", i);
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_PKTS2, i);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%i.tx_bytes", i);
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_BYTES2, i);
 			p += ETH_GSTRING_LEN;
 		}
 	}
@@ -1502,16 +1486,16 @@ static void ice_get_macvlan_rx_strings(struct ice_pf *pf, char **loc_in_buf)
 		struct ice_macvlan *mv = ice_get_macvlan(i, pf);
 
 		if (mv) {
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%s-rx_pkts",
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_PKTS1,
 				 mv->vdev->name);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%s-rx_bytes",
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_BYTES1,
 				 mv->vdev->name);
 			p += ETH_GSTRING_LEN;
 		} else {
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%i.rx_pkts", i);
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_PKTS2, i);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, "l2-fwd-%i.rx_bytes", i);
+			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_BYTES2, i);
 			p += ETH_GSTRING_LEN;
 		}
 	}
@@ -1559,7 +1543,7 @@ ice_get_macvlan_rx_stats(struct ice_pf *pf, u64 *data, int *idx)
 static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_vsi *vsi = np->vsi;
+	struct ice_vsi *vsi = ice_get_netdev_priv_vsi(np);
 	char *p = (char *)data;
 	unsigned int i;
 
@@ -1572,14 +1556,12 @@ static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 		}
 
 		ice_for_each_alloc_txq(vsi, i) {
-			snprintf(p, ETH_GSTRING_LEN,
-				 "tx_queue_%u_packets", i);
+			snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_PACKETS, i);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, "tx_queue_%u_bytes", i);
+			snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_BYTES, i);
 			p += ETH_GSTRING_LEN;
 #ifdef ICE_ADD_PROBES
-			snprintf(p, ETH_GSTRING_LEN,
-				 "tx_queue_%u_napi_poll_cnt", i);
+			snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_NAPI_POLL, i);
 			p += ETH_GSTRING_LEN;
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
@@ -1593,14 +1575,12 @@ static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 #endif /* ICE_ADD_PROBES */
 
 		ice_for_each_alloc_rxq(vsi, i) {
-			snprintf(p, ETH_GSTRING_LEN,
-				 "rx_queue_%u_packets", i);
+			snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_PACKETS, i);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, "rx_queue_%u_bytes", i);
+			snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BYTES, i);
 			p += ETH_GSTRING_LEN;
 #ifdef ICE_ADD_PROBES
-			snprintf(p, ETH_GSTRING_LEN,
-				 "rx_queue_%u_napi_poll_cnt", i);
+			snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NAPI_POLL, i);
 			p += ETH_GSTRING_LEN;
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
@@ -1623,19 +1603,15 @@ static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 		}
 
 		for (i = 0; i < ICE_MAX_USER_PRIORITY; i++) {
-			snprintf(p, ETH_GSTRING_LEN,
-				 "tx_priority_%u_xon.nic", i);
+			snprintf(p, ETH_GSTRING_LEN, PORT_TX_PRIO_XON, i);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN,
-				 "tx_priority_%u_xoff.nic", i);
+			snprintf(p, ETH_GSTRING_LEN, PORT_TX_PRIO_XOFF, i);
 			p += ETH_GSTRING_LEN;
 		}
 		for (i = 0; i < ICE_MAX_USER_PRIORITY; i++) {
-			snprintf(p, ETH_GSTRING_LEN,
-				 "rx_priority_%u_xon.nic", i);
+			snprintf(p, ETH_GSTRING_LEN, PORT_RX_PRIO_XON, i);
 			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN,
-				 "rx_priority_%u_xoff.nic", i);
+			snprintf(p, ETH_GSTRING_LEN, PORT_RX_PRIO_XOFF, i);
 			p += ETH_GSTRING_LEN;
 		}
 		break;
@@ -1833,24 +1809,15 @@ static int ice_nway_reset(struct net_device *netdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
-	struct ice_port_info *pi;
-	enum ice_status status;
+	int err;
 
-	pi = vsi->port_info;
 	/* If VSI state is up, then restart autoneg with link up */
-	if (!test_bit(__ICE_DOWN, vsi->back->state))
-		status = ice_aq_set_link_restart_an(pi, true, NULL);
+	if (!test_bit(ICE_DOWN, vsi->back->state))
+		err = ice_set_link(vsi, true);
 	else
-		status = ice_aq_set_link_restart_an(pi, false, NULL);
+		err = ice_set_link(vsi, false);
 
-	if (status) {
-		netdev_info(netdev, "link restart failed, err %s aq_err %s\n",
-			    ice_stat_str(status),
-			    ice_aq_str(pi->hw->adminq.sq_last_status));
-		return -EIO;
-	}
-
-	return 0;
+	return err;
 }
 
 /**
@@ -2217,7 +2184,7 @@ ice_get_ethtool_stats(struct net_device *netdev,
 		      struct ethtool_stats __always_unused *stats, u64 *data)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_vsi *vsi = np->vsi;
+	struct ice_vsi *vsi = ice_get_netdev_priv_vsi(np);
 	struct ice_pf *pf = vsi->back;
 	struct ice_ring *ring;
 	unsigned int j;
@@ -2232,7 +2199,6 @@ ice_get_ethtool_stats(struct net_device *netdev,
 		data[i++] = (ice_gstrings_vsi_stats[j].sizeof_stat ==
 			     sizeof(u64)) ? *(u64 *)p : *(u32 *)p;
 	}
-
 	/* populate per queue stats */
 	rcu_read_lock();
 
@@ -3320,7 +3286,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 		goto done;
 	}
 
-	while (test_and_set_bit(__ICE_CFG_BUSY, pf->state)) {
+	while (test_and_set_bit(ICE_CFG_BUSY, pf->state)) {
 		timeout--;
 		if (!timeout) {
 			err = -EBUSY;
@@ -3430,7 +3396,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 	p->phy.curr_user_speed_req = adv_link_speed;
 done:
 	kfree(abilities);
-	clear_bit(__ICE_CFG_BUSY, pf->state);
+	clear_bit(ICE_CFG_BUSY, pf->state);
 
 	return err;
 }
@@ -3836,7 +3802,7 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	if (memcmp(ecmd, &safe_ecmd, sizeof(*ecmd)))
 		return -EOPNOTSUPP;
 
-	while (test_and_set_bit(__ICE_CFG_BUSY, pf->state)) {
+	while (test_and_set_bit(ICE_CFG_BUSY, pf->state)) {
 		timeout--;
 		if (!timeout)
 			return -EBUSY;
@@ -3938,7 +3904,7 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	p->phy.curr_user_speed_req = adv_link_speed;
 done:
 	kfree(abilities);
-	clear_bit(__ICE_CFG_BUSY, pf->state);
+	clear_bit(ICE_CFG_BUSY, pf->state);
 
 	return err;
 }
@@ -4069,6 +4035,7 @@ static int
 ice_set_rss_hash_opt(struct ice_vsi *vsi, struct ethtool_rxnfc *nfc)
 {
 	struct ice_pf *pf = vsi->back;
+	struct ice_rss_hash_cfg cfg;
 	enum ice_status status;
 	struct device *dev;
 	u64 hashed_flds;
@@ -4095,7 +4062,11 @@ ice_set_rss_hash_opt(struct ice_vsi *vsi, struct ethtool_rxnfc *nfc)
 		return -EINVAL;
 	}
 
-	status = ice_add_rss_cfg(&pf->hw, vsi->idx, hashed_flds, hdrs, false);
+	cfg.hash_flds = hashed_flds;
+	cfg.addl_hdrs = hdrs;
+	cfg.hdr_type = ICE_RSS_ANY_HEADERS;
+	cfg.symm = false;
+	status = ice_add_rss_cfg(&pf->hw, vsi->idx, &cfg);
 	if (status) {
 		dev_dbg(dev, "ice_add_rss_cfg failed, vsi num = %d, error = %s\n",
 			vsi->vsi_num, ice_stat_str(status));
@@ -4299,7 +4270,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		return -EBUSY;
 
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
-	while (test_and_set_bit(__ICE_CFG_BUSY, pf->state)) {
+	while (test_and_set_bit(ICE_CFG_BUSY, pf->state)) {
 		timeout--;
 		if (!timeout)
 			return -EBUSY;
@@ -4430,7 +4401,7 @@ process_link:
 	/* Bring interface down, copy in the new ring info, then restore the
 	 * interface. if VSI is up, bring it down and then back up
 	 */
-	if (!test_and_set_bit(__ICE_DOWN, vsi->state)) {
+	if (!test_and_set_bit(ICE_VSI_DOWN, vsi->state)) {
 		ice_down(vsi);
 
 		if (tx_rings) {
@@ -4484,7 +4455,7 @@ free_tx:
 	}
 
 done:
-	clear_bit(__ICE_CFG_BUSY, pf->state);
+	clear_bit(ICE_CFG_BUSY, pf->state);
 	return err;
 }
 
@@ -4662,7 +4633,7 @@ ice_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 	}
 
 	/* If we have link and don't have autoneg */
-	if (!test_bit(__ICE_DOWN, pf->state) &&
+	if (!test_bit(ICE_DOWN, pf->state) &&
 	    !(hw_link_info->an_info & ICE_AQ_AN_COMPLETED)) {
 		/* Send message that it might not necessarily work*/
 		netdev_info(netdev, "Autoneg did not complete so changing settings may not result in an actual change.\n");
@@ -4750,7 +4721,7 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
-	int ret = 0, i;
+	int err, i;
 	u8 *lut;
 
 #ifdef HAVE_RXFH_HASHFUNC
@@ -4771,17 +4742,20 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 	if (!lut)
 		return -ENOMEM;
 
-	if (ice_get_rss(vsi, key, lut, vsi->rss_table_size)) {
-		ret = -EIO;
+	err = ice_get_rss_key(vsi, key);
+	if (err)
 		goto out;
-	}
+
+	err = ice_get_rss_lut(vsi, lut, vsi->rss_table_size);
+	if (err)
+		goto out;
 
 	for (i = 0; i < vsi->rss_table_size; i++)
 		indir[i] = (u32)(lut[i]);
 
 out:
 	kfree(lut);
-	return ret;
+	return err;
 }
 
 #ifdef HAVE_RXFH_HASHFUNC
@@ -4809,7 +4783,7 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
 	struct device *dev;
-	u8 *seed = NULL;
+	int err;
 
 	dev = ice_pf_to_dev(pf);
 #ifdef HAVE_RXFH_HASHFUNC
@@ -4849,7 +4823,10 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 				return -ENOMEM;
 		}
 		memcpy(vsi->rss_hkey_user, key, ICE_VSIQF_HKEY_ARRAY_SIZE);
-		seed = vsi->rss_hkey_user;
+
+		err = ice_set_rss_key(vsi, vsi->rss_hkey_user);
+		if (err)
+			return err;
 	}
 
 	if (!vsi->rss_lut_user) {
@@ -4870,8 +4847,9 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 				 vsi->rss_size);
 	}
 
-	if (ice_set_rss(vsi, seed, vsi->rss_lut_user, vsi->rss_table_size))
-		return -EIO;
+	err = ice_set_rss_lut(vsi, vsi->rss_lut_user, vsi->rss_table_size);
+	if (err)
+		return err;
 
 	return 0;
 }
@@ -4982,21 +4960,30 @@ ice_get_channels(struct net_device *dev, struct ethtool_channels *ch)
 }
 
 /**
+ * ice_get_valid_rss_size - return valid number of RSS queues
+ * @hw: pointer to the HW structure
+ * @new_size: requested RSS queues
+ */
+static int ice_get_valid_rss_size(struct ice_hw *hw, int new_size)
+{
+	struct ice_hw_common_caps *caps = &hw->func_caps.common_cap;
+
+	return min_t(int, new_size, BIT(caps->rss_table_entry_width));
+}
+
+/**
  * ice_vsi_set_dflt_rss_lut - set default RSS LUT with requested RSS size
  * @vsi: VSI to reconfigure RSS LUT on
  * @req_rss_size: requested range of queue numbers for hashing
  *
- * Set the VSI's RSS parameters, configure the RSS LUT based on these, and then
- * clear the previous vsi->rss_lut_user because it is assumed to be invalid at
- * this point.
+ * Set the VSI's RSS parameters, configure the RSS LUT based on these.
  */
 static int ice_vsi_set_dflt_rss_lut(struct ice_vsi *vsi, int req_rss_size)
 {
 	struct ice_pf *pf = vsi->back;
-	enum ice_status status;
 	struct device *dev;
 	struct ice_hw *hw;
-	int err = 0;
+	int err;
 	u8 *lut;
 
 	dev = ice_pf_to_dev(pf);
@@ -5010,32 +4997,17 @@ static int ice_vsi_set_dflt_rss_lut(struct ice_vsi *vsi, int req_rss_size)
 		return -ENOMEM;
 
 	/* set RSS LUT parameters */
-	if (!test_bit(ICE_FLAG_RSS_ENA, pf->flags)) {
+	if (!test_bit(ICE_FLAG_RSS_ENA, pf->flags))
 		vsi->rss_size = 1;
-	} else {
-		struct ice_hw_common_caps *caps = &hw->func_caps.common_cap;
-
-		vsi->rss_size = min_t(int, req_rss_size,
-				      BIT(caps->rss_table_entry_width));
-	}
+	else
+		vsi->rss_size = ice_get_valid_rss_size(hw, req_rss_size);
 
 	/* create/set RSS LUT */
 	ice_fill_rss_lut(lut, vsi->rss_table_size, vsi->rss_size);
-	status = ice_aq_set_rss_lut(hw, vsi->idx, vsi->rss_lut_type, lut,
-				    vsi->rss_table_size);
-	if (status) {
-		dev_err(dev, "Cannot set RSS lut, err %s aq_err %s\n",
-			ice_stat_str(status),
-			ice_aq_str(hw->adminq.rq_last_status));
-		err = -EIO;
-	}
-
-	/* get rid of invalid user configuration */
-	if (vsi->rss_lut_user) {
-		netdev_info(vsi->netdev, "Rx queue count changed, clearing user modified RSS LUT, re-run ethtool [-x|-X] to [check|set] settings if needed\n");
-		devm_kfree(dev, vsi->rss_lut_user);
-		vsi->rss_lut_user = NULL;
-	}
+	err = ice_set_rss_lut(vsi, lut, vsi->rss_table_size);
+	if (err)
+		dev_err(dev, "Cannot set RSS lut, err %d aq_err %s\n", err,
+			ice_aq_str(hw->adminq.sq_last_status));
 
 	kfree(lut);
 	return err;
@@ -5116,8 +5088,26 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 
 	ice_vsi_recfg_qs(vsi, new_rx, new_tx);
 
-	if (new_rx)
+	if (new_rx) {
+#ifdef IFF_RXFH_CONFIGURED
+		if (!netif_is_rxfh_configured(dev))
+			return ice_vsi_set_dflt_rss_lut(vsi, new_rx);
+
+		/* Update rss_size due to change in Rx queues */
+		vsi->rss_size = ice_get_valid_rss_size(&pf->hw, new_rx);
+#else
+		/* Clear the previous vsi->rss_lut_user because it is assumed to
+		 * be invalid at this point.
+		 */
+		if (vsi->rss_lut_user) {
+			netdev_info(vsi->netdev, "Rx queue count changed, clearing user modified RSS LUT, re-run ethtool [-x|-X] to [check|set] settings if needed\n");
+			devm_kfree(ice_pf_to_dev(pf), vsi->rss_lut_user);
+			vsi->rss_lut_user = NULL;
+		}
+
 		return ice_vsi_set_dflt_rss_lut(vsi, new_rx);
+#endif /* IFF_RXFH_CONFIGURED */
+	}
 
 	return 0;
 }
@@ -5831,21 +5821,22 @@ static const struct ethtool_ops ice_ethtool_safe_mode_ops = {
 };
 
 /**
- * ice_set_ethtool_recovery_ops - setup FW recovery ethtool ops
- * @netdev: network interface device structure
- */
-void ice_set_ethtool_recovery_ops(struct net_device *netdev)
-{
-	netdev->ethtool_ops = &ice_ethtool_recovery_ops;
-}
-
-/**
  * ice_set_ethtool_safe_mode_ops - setup safe mode ethtool ops
  * @netdev: network interface device structure
  */
 void ice_set_ethtool_safe_mode_ops(struct net_device *netdev)
 {
 	netdev->ethtool_ops = &ice_ethtool_safe_mode_ops;
+}
+
+
+/**
+ * ice_set_ethtool_recovery_ops - setup FW recovery ethtool ops
+ * @netdev: network interface device structure
+ */
+void ice_set_ethtool_recovery_ops(struct net_device *netdev)
+{
+	netdev->ethtool_ops = &ice_ethtool_recovery_ops;
 }
 
 /**

@@ -12,16 +12,15 @@ bool ice_pf_state_is_nominal(struct ice_pf *pf);
 
 void ice_update_eth_stats(struct ice_vsi *vsi);
 
+int ice_vsi_cfg_single_rxq(struct ice_vsi *vsi, u16 q_idx);
+
+int ice_vsi_cfg_single_txq(struct ice_vsi *vsi, struct ice_ring **tx_rings, u16 q_idx);
+
 int ice_vsi_cfg_rxqs(struct ice_vsi *vsi);
 
 int ice_vsi_cfg_lan_txqs(struct ice_vsi *vsi);
 
 void ice_vsi_cfg_msix(struct ice_vsi *vsi);
-
-int
-ice_vsi_add_vlan(struct ice_vsi *vsi, u16 vid, enum ice_sw_fwd_act_type action);
-
-int ice_vsi_kill_vlan(struct ice_vsi *vsi, u16 vid);
 
 int ice_vsi_manage_vlan_insertion(struct ice_vsi *vsi);
 
@@ -48,6 +47,7 @@ int ice_cfg_vlan_pruning(struct ice_vsi *vsi, bool ena, bool vlan_promisc);
 
 void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create);
 
+int ice_set_link(struct ice_vsi *vsi, bool ena);
 
 void ice_vsi_delete(struct ice_vsi *vsi);
 int ice_vsi_clear(struct ice_vsi *vsi);
@@ -115,6 +115,9 @@ u32 ice_intrl_usec_to_reg(u8 intrl, u8 gran);
 
 enum ice_status
 ice_vsi_cfg_mac_fltr(struct ice_vsi *vsi, const u8 *macaddr, bool set);
+#ifdef FWLOG_SUPPORT
+void ice_setup_fw_log(struct ice_pf *pf, u8 level, u32 events);
+#endif /* FWLOG_SUPPORT */
 bool ice_is_safe_mode(struct ice_pf *pf);
 bool ice_is_peer_ena(struct ice_pf *pf);
 bool ice_is_dflt_vsi_in_use(struct ice_sw *sw);
@@ -125,12 +128,4 @@ int ice_set_min_bw_limit(struct ice_vsi *vsi, u64 min_tx_rate);
 int ice_set_max_bw_limit(struct ice_vsi *vsi, u64 max_tx_rate);
 int ice_get_link_speed_kbps(struct ice_vsi *vsi);
 int ice_get_link_speed_mbps(struct ice_vsi *vsi);
-int ice_vsi_update_security(struct ice_vsi *vsi,
-			    void (*fill)(struct ice_vsi_ctx *));
-#ifdef HAVE_METADATA_PORT_INFO
-void ice_vsi_ctx_set_antispoof(struct ice_vsi_ctx *ctx);
-void ice_vsi_ctx_clear_antispoof(struct ice_vsi_ctx *ctx);
-#endif /* HAVE_METADATA_PORT_INFO */
-void ice_vsi_ctx_set_allow_override(struct ice_vsi_ctx *ctx);
-void ice_vsi_ctx_clear_allow_override(struct ice_vsi_ctx *ctx);
 #endif /* !_ICE_LIB_H_ */

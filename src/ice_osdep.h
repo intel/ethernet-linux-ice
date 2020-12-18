@@ -35,6 +35,13 @@ struct ice_dma_mem {
 	print_hex_dump_debug(KBUILD_MODNAME " ",		\
 			     DUMP_PREFIX_OFFSET, rowsize,	\
 			     groupsize, buf, len, false)
+#ifdef FWLOG_SUPPORT
+
+#define ice_debug_fw_log(hw, type, rowsize, groupsize, buf, len) \
+	print_hex_dump_debug(KBUILD_MODNAME " FWLOG: ",		 \
+			     DUMP_PREFIX_NONE, rowsize,		 \
+			     groupsize, buf, len, false)
+#endif /* FWLOG_SUPPORT */
 #else
 #define ice_debug(hw, type, fmt, args...)			\
 do {								\
@@ -52,6 +59,16 @@ do {								\
 				     len, false);		\
 } while (0)
 
+#ifdef FWLOG_SUPPORT
+#define ice_debug_fw_log(hw, type, rowsize, groupsize, buf, len) \
+do {								 \
+	if ((type) & (hw)->debug_mask)				 \
+		print_hex_dump_debug(KBUILD_MODNAME " FWLOG: ",	 \
+				     DUMP_PREFIX_NONE,		 \
+				     rowsize, groupsize, buf,	 \
+				     len, false);		 \
+} while (0)
+#endif /* FWLOG_SUPPORT */
 #else
 #define ice_debug_array(hw, type, rowsize, groupsize, buf, len) \
 do {								\
@@ -69,6 +86,23 @@ do {								\
 	}							\
 } while (0)
 
+#ifdef FWLOG_SUPPORT
+#define ice_debug_fw_array(hw, type, rowsize, groupsize, buf, len) \
+do {								   \
+	struct ice_hw *hw_l = hw;				   \
+	if ((type) & (hw_l)->debug_mask) {			   \
+		u16 len_l = len;				   \
+		u8 *buf_l = buf;				   \
+		int i;						   \
+		for (i = 0; i < (len_l - 32); i += 32)		   \
+			ice_debug(hw_l, type, "FWLOG: 0x%04X  %16ph\n",\
+				  i, ((buf_l) + i));		   \
+		if (i < len_l)					   \
+			ice_debug(hw_l, type, "FWLOG: 0x%04X  %*ph\n", \
+				  i, ((len_l) - i), ((buf_l) + i));\
+	}							   \
+} while (0)
+#endif /* FWLOG_SUPPORT */
 #endif /* DEBUG */
 #endif /* CONFIG_DYNAMIC_DEBUG */
 

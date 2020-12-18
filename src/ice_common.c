@@ -381,6 +381,7 @@ static enum ice_media_type ice_get_media_type(struct ice_port_info *pi)
 	return ICE_MEDIA_UNKNOWN;
 }
 
+
 /**
  * ice_aq_get_link_info
  * @pi: port information structure
@@ -648,6 +649,217 @@ static void ice_cleanup_fltr_mgmt_struct(struct ice_hw *hw)
 	ice_cleanup_fltr_mgmt_single(hw, hw->switch_info);
 }
 
+#ifdef FWLOG_SUPPORT
+/**
+ * ice_get_fw_log_cfg - get FW logging configuration
+ * @hw: pointer to the HW struct
+ */
+static enum ice_status ice_get_fw_log_cfg(struct ice_hw *hw)
+{
+	struct ice_aq_desc desc;
+	enum ice_status status;
+	__le16 *config;
+	u16 size;
+
+	size = sizeof(*config) * ICE_AQC_FW_LOG_ID_MAX;
+
+	if (size < ICE_AQC_FW_LOG_MIN_DATALEN)
+		size = ICE_AQC_FW_LOG_MIN_DATALEN;
+
+	config = devm_kzalloc(ice_hw_to_dev(hw), size, GFP_KERNEL);
+
+	if (!config)
+		return ICE_ERR_NO_MEMORY;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_fw_logging_info);
+	status = ice_aq_send_cmd(hw, &desc, config, size, NULL);
+	if (!status) {
+		u16 i;
+
+		/* Save fw logging information into the HW structure */
+		for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
+			u16 v, m, flgs;
+
+			v = le16_to_cpu(config[i]);
+			m = (v & ICE_AQC_FW_LOG_ID_M) >> ICE_AQC_FW_LOG_ID_S;
+			flgs = (v & ICE_AQC_FW_LOG_EN_M) >> ICE_AQC_FW_LOG_EN_S;
+
+			if (m < ICE_AQC_FW_LOG_ID_MAX)
+				hw->fw_log.evnts[m].cur = flgs;
+		}
+	}
+
+	devm_kfree(ice_hw_to_dev(hw), config);
+
+	return status;
+}
+
+/**
+ * ice_cfg_fw_log - configure FW logging
+ * @hw: pointer to the HW struct
+ * @enable: enable certain FW logging events if true, disable all if false
+ *
+ * This function enables/disables the FW logging via Rx CQ events and a UART
+ * port based on predetermined configurations. FW logging via the Rx CQ can be
+ * enabled/disabled for individual PF's. However, FW logging via the UART can
+ * only be enabled/disabled for all PFs on the same device.
+ *
+ * To enable overall FW logging, the "cq_en" and "uart_en" enable bits in
+ * hw->fw_log need to be set accordingly, e.g. based on user-provided input,
+ * before initializing the device.
+ *
+ * When re/configuring FW logging, callers need to update the "cfg" elements of
+ * the hw->fw_log.evnts array with the desired logging event configurations for
+ * modules of interest. When disabling FW logging completely, the callers can
+ * just pass false in the "enable" parameter. On completion, the function will
+ * update the "cur" element of the hw->fw_log.evnts array with the resulting
+ * logging event configurations of the modules that are being re/configured. FW
+ * logging modules that are not part of a reconfiguration operation retain their
+ * previous states.
+ *
+ * Before resetting the device, it is recommended that the driver disables FW
+ * logging before shutting down the control queue. When disabling FW logging
+ * ("enable" = false), the latest configurations of FW logging events stored in
+ * hw->fw_log.evnts[] are not overridden to allow them to be reconfigured after
+ * a device reset.
+ *
+ * When enabling FW logging to emit log messages via the Rx CQ during the
+ * device's initialization phase, a mechanism alternative to interrupt handlers
+ * needs to be used to extract FW log messages from the Rx CQ periodically and
+ * to prevent the Rx CQ from being full and stalling other types of control
+ * messages from FW to SW. Interrupts are typically disabled during the device's
+ * initialization phase.
+ */
+enum ice_status ice_cfg_fw_log(struct ice_hw *hw, bool enable)
+{
+	struct ice_aqc_fw_logging *cmd;
+	enum ice_status status = 0;
+	u16 i, chgs = 0, len = 0;
+	struct ice_aq_desc desc;
+	__le16 *data = NULL;
+	u8 actv_evnts = 0;
+	void *buf = NULL;
+
+	if (!hw->fw_log.cq_en && !hw->fw_log.uart_en)
+		return 0;
+
+	/* Disable FW logging only when the control queue is still responsive */
+	if (!enable &&
+	    (!hw->fw_log.actv_evnts || !ice_check_sq_alive(hw, &hw->adminq)))
+		return 0;
+
+	/* Get current FW log settings */
+	status = ice_get_fw_log_cfg(hw);
+	if (status)
+		return status;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_fw_logging);
+	cmd = &desc.params.fw_logging;
+
+	/* Indicate which controls are valid, we always update control */
+	cmd->log_ctrl_valid |= ICE_AQC_FW_LOG_AQ_VALID;
+	cmd->log_ctrl_valid |= ICE_AQC_FW_LOG_UART_VALID;
+
+	/* assume we are disabling unless we find otherwise */
+	cmd->log_ctrl &= ~(ICE_AQC_FW_LOG_AQ_EN | ICE_AQC_FW_LOG_UART_EN);
+
+	if (enable) {
+		/* Fill in an array of entries with FW logging modules and
+		 * logging events being reconfigured.
+		 */
+		for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
+			u16 val;
+
+			/* Keep track of enabled event types */
+			actv_evnts |= hw->fw_log.evnts[i].cfg;
+
+			if (hw->fw_log.evnts[i].cfg == hw->fw_log.evnts[i].cur)
+				continue;
+
+			if (!data) {
+				data = devm_kcalloc(ice_hw_to_dev(hw),
+						    ICE_AQC_FW_LOG_ID_MAX,
+						    sizeof(*data), GFP_KERNEL);
+				if (!data)
+					return ICE_ERR_NO_MEMORY;
+			}
+
+			val = i << ICE_AQC_FW_LOG_ID_S;
+			val |= hw->fw_log.evnts[i].cfg << ICE_AQC_FW_LOG_EN_S;
+			data[chgs++] = cpu_to_le16(val);
+		}
+
+		/* Only enable FW logging if at least one module is specified.
+		 * If FW logging is currently enabled but all modules are not
+		 * enabled to emit log messages, disable FW logging altogether.
+		 */
+		if (actv_evnts) {
+			if (hw->fw_log.cq_en)
+				cmd->log_ctrl |= ICE_AQC_FW_LOG_AQ_EN;
+
+			/* Disable UART if CQ logging is active */
+			if (hw->fw_log.uart_en && !hw->fw_log.cq_en)
+				cmd->log_ctrl |= ICE_AQC_FW_LOG_UART_EN;
+
+			if (chgs > 0) {
+				buf = data;
+				len = sizeof(*data) * chgs;
+				desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+			}
+		}
+	}
+
+	status = ice_aq_send_cmd(hw, &desc, buf, len, NULL);
+	if (!status) {
+		/* Update the current configuration to reflect events enabled.
+		 * hw->fw_log.cq_en and hw->fw_log.uart_en indicate if the FW
+		 * logging mode is enabled for the device. They do not reflect
+		 * actual modules being enabled to emit log messages. So, their
+		 * values remain unchanged even when all modules are disabled.
+		 */
+		u16 cnt = enable ? chgs : (u16)ICE_AQC_FW_LOG_ID_MAX;
+
+		hw->fw_log.actv_evnts = actv_evnts;
+		for (i = 0; i < cnt; i++) {
+			u16 v, m;
+
+			if (!enable) {
+				/* When disabling all FW logging events as part
+				 * of device's de-initialization, the original
+				 * configurations are retained, and can be used
+				 * to reconfigure FW logging later if the device
+				 * is re-initialized.
+				 */
+				hw->fw_log.evnts[i].cur = 0;
+				continue;
+			}
+
+			v = le16_to_cpu(data[i]);
+			m = (v & ICE_AQC_FW_LOG_ID_M) >> ICE_AQC_FW_LOG_ID_S;
+			hw->fw_log.evnts[m].cur = hw->fw_log.evnts[m].cfg;
+		}
+	}
+
+	if (data)
+		devm_kfree(ice_hw_to_dev(hw), data);
+
+	return status;
+}
+
+/**
+ * ice_output_fw_log
+ * @hw: pointer to the HW struct
+ * @desc: pointer to the AQ message descriptor
+ * @buf: pointer to the buffer accompanying the AQ message
+ *
+ * Formats a FW Log message and outputs it via the standard driver logs.
+ */
+void ice_output_fw_log(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf)
+{
+	ice_debug_fw_log(hw, ICE_DBG_FW_LOG, 32, 1, buf,
+			 le16_to_cpu(desc->datalen));
+}
+#endif /* FWLOG_SUPPORT */
 
 /**
  * ice_get_itr_intrl_gran
@@ -729,6 +941,14 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_cqinit;
 
+#ifdef FWLOG_SUPPORT
+	/* Enable FW logging on PF0 only. Not fatal if this fails. */
+	if (hw->bus.func == 0) {
+		status = ice_cfg_fw_log(hw, true);
+		if (status)
+			ice_debug(hw, ICE_DBG_INIT, "Failed to enable FW logging.\n");
+	}
+#endif /* FWLOG_SUPPORT */
 	status = ice_init_nvm(hw);
 	if (status)
 		goto err_unroll_cqinit;
@@ -840,6 +1060,9 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_fltr_mgmt_struct;
 	mutex_init(&hw->tnl_lock);
+
+	ice_init_vlan_mode_ops(hw);
+
 	return 0;
 
 err_unroll_fltr_mgmt_struct:
@@ -878,6 +1101,10 @@ void ice_deinit_hw(struct ice_hw *hw)
 		hw->port_info = NULL;
 	}
 
+#ifdef FWLOG_SUPPORT
+	/* Attempt to disable FW logging before shutting down control queues */
+	ice_cfg_fw_log(hw, false);
+#endif /* FWLOG_SUPPORT */
 	ice_destroy_all_ctrlq(hw);
 
 	/* Clear VSI contexts if not already cleared */
@@ -1852,7 +2079,7 @@ ice_aq_alloc_free_res(struct ice_hw *hw, u16 num_entries,
 	if (!buf)
 		return ICE_ERR_PARAM;
 
-	if (buf_size < (num_entries * sizeof(buf->elem[0])))
+	if (buf_size < flex_array_size(buf, elem, num_entries))
 		return ICE_ERR_PARAM;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, opc);
@@ -2146,6 +2373,16 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		ice_debug(hw, ICE_DBG_INIT, "%s: update_pending_netlist\n", prefix);
 		break;
 	case ICE_AQC_CAPS_NVM_MGMT:
+		caps->sec_rev_disabled =
+			(number & ICE_NVM_MGMT_SEC_REV_DISABLED) ?
+			true : false;
+		ice_debug(hw, ICE_DBG_INIT, "%s: sec_rev_disabled = %d\n", prefix,
+			  caps->sec_rev_disabled);
+		caps->update_disabled =
+			(number & ICE_NVM_MGMT_UPDATE_DISABLED) ?
+			true : false;
+		ice_debug(hw, ICE_DBG_INIT, "%s: update_disabled = %d\n", prefix,
+			  caps->update_disabled);
 		caps->nvm_unified_update =
 			(number & ICE_NVM_MGMT_UNIFIED_UPD_SUPPORT) ?
 			true : false;
@@ -3151,6 +3388,10 @@ enum ice_status ice_update_link_info(struct ice_port_info *pi)
 		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP,
 					     pcaps, NULL);
 
+		if (!status)
+			memcpy(li->module_type, &pcaps->module_type,
+			       sizeof(li->module_type));
+
 		devm_kfree(ice_hw_to_dev(hw), pcaps);
 	}
 
@@ -3704,23 +3945,33 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 /**
  * __ice_aq_get_set_rss_lut
  * @hw: pointer to the hardware structure
- * @vsi_id: VSI FW index
- * @lut_type: LUT table type
- * @lut: pointer to the LUT buffer provided by the caller
- * @lut_size: size of the LUT buffer
- * @glob_lut_idx: global LUT index
+ * @params: RSS LUT parameters
  * @set: set true to set the table, false to get the table
  *
  * Internal function to get (0x0B05) or set (0x0B03) RSS look up table
  */
 static enum ice_status
-__ice_aq_get_set_rss_lut(struct ice_hw *hw, u16 vsi_id, u8 lut_type, u8 *lut,
-			 u16 lut_size, u8 glob_lut_idx, bool set)
+__ice_aq_get_set_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *params, bool set)
 {
+	u16 flags = 0, vsi_id, lut_type, lut_size, glob_lut_idx, vsi_handle;
 	struct ice_aqc_get_set_rss_lut *cmd_resp;
 	struct ice_aq_desc desc;
 	enum ice_status status;
-	u16 flags = 0;
+	u8 *lut;
+
+	if (!params)
+		return ICE_ERR_PARAM;
+
+	vsi_handle = params->vsi_handle;
+	lut = params->lut;
+
+	if (!ice_is_vsi_valid(hw, vsi_handle) || !lut)
+		return ICE_ERR_PARAM;
+
+	lut_size = params->lut_size;
+	lut_type = params->lut_type;
+	glob_lut_idx = params->global_lut_id;
+	vsi_id = ice_get_hw_vsi_num(hw, vsi_handle);
 
 	cmd_resp = &desc.params.get_set_rss_lut;
 
@@ -3794,43 +4045,27 @@ ice_aq_get_set_rss_lut_exit:
 /**
  * ice_aq_get_rss_lut
  * @hw: pointer to the hardware structure
- * @vsi_handle: software VSI handle
- * @lut_type: LUT table type
- * @lut: pointer to the LUT buffer provided by the caller
- * @lut_size: size of the LUT buffer
+ * @get_params: RSS LUT parameters used to specify which RSS LUT to get
  *
  * get the RSS lookup table, PF or VSI type
  */
 enum ice_status
-ice_aq_get_rss_lut(struct ice_hw *hw, u16 vsi_handle, u8 lut_type,
-		   u8 *lut, u16 lut_size)
+ice_aq_get_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *get_params)
 {
-	if (!ice_is_vsi_valid(hw, vsi_handle) || !lut)
-		return ICE_ERR_PARAM;
-
-	return __ice_aq_get_set_rss_lut(hw, ice_get_hw_vsi_num(hw, vsi_handle),
-					lut_type, lut, lut_size, 0, false);
+	return __ice_aq_get_set_rss_lut(hw, get_params, false);
 }
 
 /**
  * ice_aq_set_rss_lut
  * @hw: pointer to the hardware structure
- * @vsi_handle: software VSI handle
- * @lut_type: LUT table type
- * @lut: pointer to the LUT buffer provided by the caller
- * @lut_size: size of the LUT buffer
+ * @set_params: RSS LUT parameters used to specify how to set the RSS LUT
  *
  * set the RSS lookup table, PF or VSI type
  */
 enum ice_status
-ice_aq_set_rss_lut(struct ice_hw *hw, u16 vsi_handle, u8 lut_type,
-		   u8 *lut, u16 lut_size)
+ice_aq_set_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *set_params)
 {
-	if (!ice_is_vsi_valid(hw, vsi_handle) || !lut)
-		return ICE_ERR_PARAM;
-
-	return __ice_aq_get_set_rss_lut(hw, ice_get_hw_vsi_num(hw, vsi_handle),
-					lut_type, lut, lut_size, 0, true);
+	return __ice_aq_get_set_rss_lut(hw, set_params, true);
 }
 
 /**

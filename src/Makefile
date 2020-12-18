@@ -29,6 +29,9 @@ endif # KERNEL_CONFIG_INCLUDED
 # Makefile for the Intel(R) Ethernet Connection E800 Series Linux Driver
 #
 
+ccflags-y += -I$(src)
+subdir-ccflags-y += -I$(src)
+
 obj-$(CONFIG_ICE) += ice.o
 
 ice-y := ice_main.o	\
@@ -42,21 +45,23 @@ ice-y := ice_main.o	\
 	 ice_txrx_lib.o	\
 	 ice_txrx.o	\
 	 ice_fltr.o	\
+	 ice_vsi_vlan_ops.o \
 	 ice_fdir.o	\
 	 ice_ethtool_fdir.o	\
 	 ice_acl_main.o		\
 	 ice_acl.o		\
 	 ice_acl_ctrl.o		\
+	 ice_vlan_mode.o	\
 	 ice_flex_pipe.o	\
 	 ice_flow.o		\
 	 ice_lag.o		\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
-ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
 ice-$(CONFIG_MFD_CORE:m=y) += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
 ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_sriov.o ice_virtchnl_allowlist.o ice_dcf.o ice_virtchnl_fdir.o
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o
+ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_cgu_ops.o ice_cgu_util.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
 ice-$(CONFIG_XDP_SOCKETS) += ice_xsk.o
@@ -96,10 +101,16 @@ endif
 all:
 	+$(call kernelbuild,modules)
 	@gzip -c ../${DRIVER}.${MANSECTION} > ${DRIVER}.${MANSECTION}.gz
+ifneq ($(wildcard lttng),)
+	$(MAKE) -C lttng
+endif
 
 clean:
 	+$(call kernelbuild,clean)
 	@-rm -rf *.${MANSECTION}.gz *.ko
+ifneq ($(wildcard lttng),)
+	$(MAKE) -C lttng clean
+endif
 
 # Install kernel module files. This target is called by the RPM specfile when
 # generating binary RPMs, and is not expected to modify files outside of the

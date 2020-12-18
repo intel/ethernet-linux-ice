@@ -8,7 +8,7 @@
 #include "ice_lag.h"
 
 /**
- * ice_lag_nop_handler - no-op rx handler to disable LAG
+ * ice_lag_nop_handler - no-op Rx handler to disable LAG
  * @pskb: pointer to skb pointer
  */
 rx_handler_result_t ice_lag_nop_handler(struct sk_buff __always_unused **pskb)
@@ -18,7 +18,7 @@ rx_handler_result_t ice_lag_nop_handler(struct sk_buff __always_unused **pskb)
 
 /**
  * ice_lag_set_primary - set PF LAG state as Primary
- * @lag: lag info struct
+ * @lag: LAG info struct
  */
 static void ice_lag_set_primary(struct ice_lag *lag)
 {
@@ -28,8 +28,7 @@ static void ice_lag_set_primary(struct ice_lag *lag)
 		return;
 
 	if (lag->role != ICE_LAG_UNSET && lag->role != ICE_LAG_BACKUP) {
-		dev_warn(&pf->pdev->dev,
-			 "%s: Attempt to be Primary, but incompatible state.\n",
+		dev_warn(ice_pf_to_dev(pf), "%s: Attempt to be Primary, but incompatible state.\n",
 			 netdev_name(lag->netdev));
 		return;
 	}
@@ -39,7 +38,7 @@ static void ice_lag_set_primary(struct ice_lag *lag)
 
 /**
  * ice_lag_set_backup - set PF LAG state to Backup
- * @lag: lag info struct
+ * @lag: LAG info struct
  */
 static void ice_lag_set_backup(struct ice_lag *lag)
 {
@@ -49,8 +48,7 @@ static void ice_lag_set_backup(struct ice_lag *lag)
 		return;
 
 	if (lag->role != ICE_LAG_UNSET && lag->role != ICE_LAG_PRIMARY) {
-		dev_dbg(&pf->pdev->dev,
-			"%s: Attempt to be Backup, but incompatible state\n",
+		dev_dbg(ice_pf_to_dev(pf), "%s: Attempt to be Backup, but incompatible state\n",
 			netdev_name(lag->netdev));
 		return;
 	}
@@ -60,7 +58,7 @@ static void ice_lag_set_backup(struct ice_lag *lag)
 
 /**
  * ice_display_lag_info - print LAG info
- * @lag: lag info struct
+ * @lag: LAG info struct
  */
 static void ice_display_lag_info(struct ice_lag *lag)
 {
@@ -96,7 +94,7 @@ static void ice_display_lag_info(struct ice_lag *lag)
 
 /**
  * ice_lag_info_event - handle NETDEV_BONDING_INFO event
- * @lag: lag info struct
+ * @lag: LAG info struct
  * @ptr: opaque data pointer
  *
  * ptr is to be cast to (netdev_notifier_bonding_info *)
@@ -109,7 +107,7 @@ static void ice_lag_info_event(struct ice_lag *lag, void *ptr)
 	const char *lag_netdev_name;
 
 	event_netdev = netdev_notifier_info_to_dev(ptr);
-	info = (struct netdev_notifier_bonding_info *)ptr;
+	info = ptr;
 	lag_netdev_name = netdev_name(lag->netdev);
 	bonding_info = &info->bonding_info;
 
@@ -117,14 +115,12 @@ static void ice_lag_info_event(struct ice_lag *lag, void *ptr)
 		return;
 
 	if (bonding_info->master.bond_mode != BOND_MODE_ACTIVEBACKUP) {
-		netdev_dbg(lag->netdev,
-			   "Bonding event recv, but mode not active/backup\n");
+		netdev_dbg(lag->netdev, "Bonding event recv, but mode not active/backup\n");
 		goto lag_out;
 	}
 
 	if (strcmp(bonding_info->slave.slave_name, lag_netdev_name)) {
-		netdev_dbg(lag->netdev,
-			   "Bonding event recv, but slave info not for us\n");
+		netdev_dbg(lag->netdev, "Bonding event recv, but slave info not for us\n");
 		goto lag_out;
 	}
 
@@ -152,11 +148,11 @@ lag_out:
 
 /**
  * ice_lag_link - handle LAG link event
- * @lag: lag info struct
+ * @lag: LAG info struct
  * @info: info from the netdev notifier
  */
-static void ice_lag_link(struct ice_lag *lag,
-			 struct netdev_notifier_changeupper_info *info)
+static void
+ice_lag_link(struct ice_lag *lag, struct netdev_notifier_changeupper_info *info)
 {
 	struct net_device *netdev_tmp, *upper = info->upper_dev;
 	struct ice_pf *pf = lag->pf;
@@ -164,7 +160,7 @@ static void ice_lag_link(struct ice_lag *lag,
 
 
 	if (lag->bonded)
-		dev_warn(&pf->pdev->dev, "%s Already part of a bond\n",
+		dev_warn(ice_pf_to_dev(pf), "%s Already part of a bond\n",
 			 netdev_name(lag->netdev));
 
 	rcu_read_lock();
@@ -192,16 +188,16 @@ static void ice_lag_link(struct ice_lag *lag,
  * @lag: LAG info struct
  * @info: info from netdev notification
  */
-static void ice_lag_unlink(struct ice_lag *lag,
-			   struct netdev_notifier_changeupper_info *info)
+static void
+ice_lag_unlink(struct ice_lag *lag,
+	       struct netdev_notifier_changeupper_info *info)
 {
 	struct net_device *netdev_tmp, *upper = info->upper_dev;
 	struct ice_pf *pf = lag->pf;
 	bool found = false;
 
 	if (!lag->bonded) {
-		netdev_dbg(lag->netdev,
-			   "bonding unlink event on non-LAG netdev\n");
+		netdev_dbg(lag->netdev, "bonding unlink event on non-LAG netdev\n");
 		return;
 	}
 
@@ -246,7 +242,7 @@ static void ice_lag_changeupper_event(struct ice_lag *lag, void *ptr)
 	struct netdev_notifier_changeupper_info *info;
 	struct net_device *netdev;
 
-	info = (struct netdev_notifier_changeupper_info *)ptr;
+	info = ptr;
 	netdev = netdev_notifier_info_to_dev(ptr);
 
 	/* not for this netdev */
@@ -282,9 +278,7 @@ static void ice_lag_changeupper_event(struct ice_lag *lag, void *ptr)
  */
 static void ice_lag_changelower_event(struct ice_lag *lag, void *ptr)
 {
-	struct net_device *netdev;
-
-	netdev = netdev_notifier_info_to_dev(ptr);
+	struct net_device *netdev = netdev_notifier_info_to_dev(ptr);
 
 	if (netdev != lag->netdev)
 		return;
@@ -292,8 +286,7 @@ static void ice_lag_changelower_event(struct ice_lag *lag, void *ptr)
 	netdev_dbg(netdev, "bonding info\n");
 
 	if (!netif_is_lag_port(netdev)) {
-		netdev_dbg(netdev,
-			   "CHANGELOWER rcvd, but netdev not in LAG. Bail\n");
+		netdev_dbg(netdev, "CHANGELOWER rcvd, but netdev not in LAG. Bail\n");
 		return;
 	}
 
@@ -398,8 +391,7 @@ int ice_init_lag(struct ice_pf *pf)
 
 	vsi = ice_get_main_vsi(pf);
 	if (!vsi) {
-		dev_err(dev,
-			"couldn't get main vsi, link aggregation init fail\n");
+		dev_err(dev, "couldn't get main vsi, link aggregation init fail\n");
 		err = -EIO;
 		goto lag_error;
 	}
@@ -432,7 +424,7 @@ lag_error:
  * ice_deinit_lag - Clean up LAG
  * @pf: PF struct
  *
- * Clean up kernel lag info and free memory
+ * Clean up kernel LAG info and free memory
  * This function is meant to only be called on driver remove/shutdown
  */
 void ice_deinit_lag(struct ice_pf *pf)

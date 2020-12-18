@@ -1334,6 +1334,20 @@ static inline void __kc_skb_set_hash(struct sk_buff __maybe_unused *skb,
 
 #else	/* RHEL_RELEASE_CODE >= 7.0 || SLE_VERSION_CODE >= 12.0 */
 
+#if ((RHEL_RELEASE_CODE && RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7,0)) ||\
+     (SLE_VERSION_CODE && SLE_VERSION_CODE <= SLE_VERSION(12,1,0)))
+/* GPLv2 code taken from 5.10-rc2 kernel source include/linux/pci.h, Copyright
+ * original authors.
+ */
+static inline int pci_enable_msix_exact(struct pci_dev *dev,
+					struct msix_entry *entries, int nvec)
+{
+	int rc = pci_enable_msix_range(dev, entries, nvec, nvec);
+	if (rc < 0)
+		return rc;
+	return 0;
+}
+#endif /* <=EL7.0 || <=SLES 12.1 */
 #if (!(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,5)))
 #ifndef HAVE_VXLAN_RX_OFFLOAD
 #define HAVE_VXLAN_RX_OFFLOAD
@@ -1604,7 +1618,9 @@ int _kc_param_get_ullong(char *buffer, const struct kernel_param *kp);
 #define param_check_ullong(name, p) __param_check(name, p, unsigned long long)
 #endif /* RHEL_RELEASE_CODE < RHEL7.5 */
 
-#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3))
+#if RHEL_RELEASE_CODE && \
+	RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(6,3) && \
+	RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3)
 static inline u64 ktime_get_ns(void)
 {
 	return ktime_to_ns(ktime_get());
@@ -1863,6 +1879,8 @@ of_find_net_device_by_node(struct device_node __always_unused *np)
 #endif
 #if RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(7,2))
 #define HAVE_NDO_BRIDGE_GETLINK_NLFLAGS
+#define HAVE_RHEL7_EXTENDED_NDO_SET_TX_MAXRATE
+#define HAVE_NDO_SET_TX_MAXRATE
 #endif
 #if !((RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(6,8) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,0)) && \
       (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(7,2)) && \
@@ -2994,6 +3012,7 @@ _kc_devlink_port_attrs_set(struct devlink_port *devlink_port,
 #endif /* SLES < 15.1 */
 
 #else
+#include <linux/overflow.h>
 #include <net/xdp_sock.h>
 #define HAVE_XDP_FRAME_STRUCT
 #define HAVE_XDP_SOCK
@@ -3369,6 +3388,7 @@ int _kc_flow_block_cb_setup_simple(struct flow_block_offload *f,
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 #else /* RHEL >= 8.2 */
 #define HAVE_FLOW_BLOCK_API
+#define HAVE_DEVLINK_PORT_ATTR_PCI_VF
 #endif /* RHEL >= 8.2 */
 
 #ifndef ETH_P_LLDP
@@ -3401,6 +3421,7 @@ devlink_flash_update_status_notify(struct devlink __always_unused *devlink,
 #define XSK_UMEM_RETURNS_XDP_DESC
 #define HAVE_XSK_UMEM_HAS_ADDRS
 #define HAVE_FLOW_BLOCK_API
+#define HAVE_DEVLINK_PORT_ATTR_PCI_VF
 #endif /* 5.3.0 */
 
 /*****************************************************************************/
@@ -3514,6 +3535,8 @@ _kc_devlink_region_create(struct devlink *devlink,
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0))
 #define xdp_convert_buff_to_frame convert_to_xdp_frame
+#define flex_array_size(p, member, count) \
+	array_size(count, sizeof(*(p)->member) + __must_be_array((p)->member))
 #else /* >= 5.8.0 */
 #undef HAVE_AF_XDP_ZC_SUPPORT
 #define HAVE_TC_FLOW_INDIR_DEV
@@ -3542,6 +3565,7 @@ _kc_devlink_port_attrs_set(struct devlink_port *devlink_port,
 #define HAVE_XDP_QUERY_PROG
 #else /* >= 5.9.0 */
 #define HAVE_FLOW_INDIR_BLOCK_QDISC
+#define HAVE_UDP_TUNNEL_NIC_INFO
 #endif /* 5.9.0 */
 
 /*****************************************************************************/
@@ -3551,6 +3575,34 @@ struct devlink_flash_update_params {
 	const char *component;
 	u32 overwrite_mask;
 };
+
+#ifndef DEVLINK_FLASH_OVERWRITE_SETTINGS
+#define DEVLINK_FLASH_OVERWRITE_SETTINGS BIT(0)
+#endif
+
+#ifndef DEVLINK_FLASH_OVERWRITE_IDENTIFIERS
+#define DEVLINK_FLASH_OVERWRITE_IDENTIFIERS BIT(1)
+#endif
+
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+#include <net/devlink.h>
+static inline void
+devlink_flash_update_timeout_notify(struct devlink *devlink,
+				    const char *status_msg,
+				    const char *component,
+				    unsigned long __always_unused timeout)
+{
+	devlink_flash_update_status_notify(devlink, status_msg, component, 0, 0);
+}
+#endif /* CONFIG_NET_DEVLINK */
+
+static inline void net_prefetch(void *p)
+{
+	prefetch(p);
+#if L1_CACHE_BYTES < 128
+	prefetch((u8 *)p + L1_CACHE_BYTES);
+#endif
+}
 #else /* >= 5.10.0 */
 #define HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS
 #define HAVE_DEVLINK_FLASH_UPDATE_PARAMS

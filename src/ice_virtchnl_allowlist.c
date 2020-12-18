@@ -103,6 +103,13 @@ static const u32 fdir_pf_allowlist_opcodes[] = {
 };
 
 
+static const u32 large_num_qpairs_allowlist_opcodes[] = {
+	VIRTCHNL_OP_GET_MAX_RSS_QREGION,
+	VIRTCHNL_OP_ENABLE_QUEUES_V2,
+	VIRTCHNL_OP_DISABLE_QUEUES_V2,
+	VIRTCHNL_OP_MAP_QUEUE_VECTOR,
+};
+
 struct allowlist_opcode_info {
 	const u32 *opcodes;
 	size_t size;
@@ -143,6 +150,9 @@ static const struct allowlist_opcode_info allowlist_opcodes[] = {
 	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_FDIR_PF)] = {
 		.opcodes = fdir_pf_allowlist_opcodes,
 		.size = ARRAY_SIZE(fdir_pf_allowlist_opcodes)},
+	[BIT_INDEX(VIRTCHNL_VF_LARGE_NUM_QPAIRS)] = {
+		.opcodes = large_num_qpairs_allowlist_opcodes,
+		.size = ARRAY_SIZE(large_num_qpairs_allowlist_opcodes)},
 };
 
 /**
@@ -168,8 +178,8 @@ bool ice_vc_is_opcode_allowed(struct ice_vf *vf, u32 opcode)
  *
  * Function should be called to allowlist opcodes on VF.
  */
-void ice_vc_allowlist_opcodes(struct ice_vf *vf, const u32 *opcodes,
-			      size_t size)
+static void
+ice_vc_allowlist_opcodes(struct ice_vf *vf, const u32 *opcodes, size_t size)
 {
 	unsigned int i;
 
@@ -177,21 +187,14 @@ void ice_vc_allowlist_opcodes(struct ice_vf *vf, const u32 *opcodes,
 		set_bit(opcodes[i], vf->opcodes_allowlist);
 }
 
-/**
- * ice_vc_denylist_opcodes - denylist selected opcodes
- * @vf: pointer to VF structure
- * @opcodes: array of opocodes to denylist
- * @size: size of opcodes array
- *
- * Function should be called to denylist opcodes on VF.
- */
-void ice_vc_denylist_opcodes(struct ice_vf *vf, const u32 *opcodes,
-			     size_t size)
-{
-	unsigned int i;
 
-	for (i = 0; i < size; i++)
-		clear_bit(opcodes[i], vf->opcodes_allowlist);
+/**
+ * ice_vc_clear_allowlist - clear all allowlist opcodes
+ * @vf: pointer to VF structure
+ */
+static void ice_vc_clear_allowlist(struct ice_vf *vf)
+{
+	bitmap_zero(vf->opcodes_allowlist, VIRTCHNL_OP_MAX);
 }
 
 /**
@@ -200,6 +203,7 @@ void ice_vc_denylist_opcodes(struct ice_vf *vf, const u32 *opcodes,
  */
 void ice_vc_set_default_allowlist(struct ice_vf *vf)
 {
+	ice_vc_clear_allowlist(vf);
 	ice_vc_allowlist_opcodes(vf, default_allowlist_opcodes,
 				 ARRAY_SIZE(default_allowlist_opcodes));
 }

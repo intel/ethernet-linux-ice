@@ -40,6 +40,7 @@ static void ice_adminq_init_regs(struct ice_hw *hw)
 	ICE_CQ_INIT_REGS(cq, PF_FW);
 }
 
+
 /**
  * ice_mailbox_init_regs - Initialize Mailbox registers
  * @hw: pointer to the hardware structure
@@ -1047,9 +1048,19 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	}
 
 	/* Debug desc and buffer */
+#ifdef FWLOG_SUPPORT
+	/* Strip redundant printing of FWLOG messages. */
+	if (((le16_to_cpu(desc_on_ring->opcode) & 0xff00) != 0xff00) &&
+	    (le16_to_cpu(desc_on_ring->opcode) != 0)) {
+		ice_debug(hw, ICE_DBG_AQ_DESC, "ATQ: Control Send queue desc and buffer:\n");
+
+		ice_debug_cq(hw, (void *)desc_on_ring, buf, buf_size);
+	}
+#else
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ATQ: Control Send queue desc and buffer:\n");
 
 	ice_debug_cq(hw, (void *)desc_on_ring, buf, buf_size);
+#endif /* !FWLOG_SUPPORT */
 
 	(cq->sq.next_to_use)++;
 	if (cq->sq.next_to_use == cq->sq.count)
@@ -1094,9 +1105,19 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 		cq->sq_last_status = (enum ice_aq_err)retval;
 	}
 
+#ifdef FWLOG_SUPPORT
+	/* Strip redundant printing of FWLOG messages. */
+	if (((le16_to_cpu(desc->opcode) & 0xff00) != 0xff00) &&
+	    (le16_to_cpu(desc->opcode) != 0)) {
+		ice_debug(hw, ICE_DBG_AQ_MSG, "ATQ: desc and buffer writeback:\n");
+
+		ice_debug_cq(hw, (void *)desc, buf, buf_size);
+	}
+#else
 	ice_debug(hw, ICE_DBG_AQ_MSG, "ATQ: desc and buffer writeback:\n");
 
 	ice_debug_cq(hw, (void *)desc, buf, buf_size);
+#endif /* !FWLOG_SUPPORT */
 
 	/* save writeback AQ if requested */
 	if (details->wb_desc)
@@ -1227,10 +1248,20 @@ ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	if (e->msg_buf && e->msg_len)
 		memcpy(e->msg_buf, cq->rq.r.rq_bi[desc_idx].va, e->msg_len);
 
+#ifdef FWLOG_SUPPORT
+	/* Strip redundant printing of FWLOG messages. */
+	if (((le16_to_cpu(desc->opcode) & 0xff00) != 0xff00) &&
+	    (le16_to_cpu(desc->opcode) != 0)) {
+		ice_debug(hw, ICE_DBG_AQ_DESC, "ARQ: desc and buffer:\n");
+
+		ice_debug_cq(hw, (void *)desc, e->msg_buf, cq->rq_buf_size);
+	}
+#else
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ARQ: desc and buffer:\n");
 
 	ice_debug_cq(hw, (void *)desc, e->msg_buf, cq->rq_buf_size);
 
+#endif /* !FWLOG_SUPPORT */
 
 	/* Restore the original datalen and buffer address in the desc,
 	 * FW updates datalen to indicate the event message size

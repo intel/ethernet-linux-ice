@@ -613,7 +613,7 @@ void ice_clear_arfs(struct ice_vsi *vsi)
  * ice_free_cpu_rx_rmap - free setup cpu reverse map
  * @vsi: the VSI to be forwarded to
  */
-void ice_free_cpu_rx_rmap(struct ice_vsi *vsi)
+static void ice_free_cpu_rx_rmap(struct ice_vsi *vsi)
 {
 	struct net_device *netdev;
 

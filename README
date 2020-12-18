@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet Controller 800 Series
 ===============================================================================
 
-September 30, 2020
+November 5, 2020
 
 ===============================================================================
 
@@ -24,9 +24,9 @@ This driver supports kernel versions 3.10.0 and newer. However, some features
 may require a newer kernel version. The associated Virtual Function (VF) driver
 for this driver is iavf.
 
-Driver information can be obtained using ethtool, lspci, and ifconfig.
-Instructions on updating ethtool can be found in the section Additional
-Configurations later in this document.
+Driver information can be obtained using ethtool, lspci, and ip. Instructions
+on updating ethtool can be found in the section Additional Configurations later
+in this document.
 
 This driver is only supported as a loadable module at this time. Intel is not
 supplying patches against the kernel source to allow for static linking of the
@@ -201,6 +201,12 @@ To manually build the driver
 
    The install location listed above is the default location. This may differ
    for various Linux distributions.
+
+   NOTE: To build the driver using the schema for unified ethtool statistics
+   defined in https://sourceforge.net/p/e1000/wiki/Home/, use the following
+   command:
+
+   # make CFLAGS_EXTRA='-DUNIFIED_STATS' install
 
    NOTE: To compile the driver with ADQ (Application Device Queues) flags set,
    use the following command, where <nproc> is the number of logical cores:
@@ -384,7 +390,7 @@ details, contact your Intel Corp. representative to obtain the E810 ADQ
 Configuration Guide.
 
 Requirements:
-- Kernel version 4.19 or later
+- Kernel version 4.19.58 or later
 - Operating system: Red Hat* Enterprise Linux* 7.5+ or SUSE* Linux Enterprise
 Server* 12+
 - The sch_mqprio, act_mirred and cls_flower modules must be loaded. For example:
@@ -1055,12 +1061,8 @@ Jumbo Frames
 Jumbo Frames support is enabled by changing the Maximum Transmission Unit (MTU)
 to a value larger than the default value of 1500.
 
-Use the ifconfig command to increase the MTU size. For example, enter the
-following where <ethX> is the interface number:
-
-# ifconfig <ethX> mtu 9000 up
-
-Alternatively, you can use the ip command as follows:
+Use the ip command to increase the MTU size. For example, enter the following
+where <ethX> is the interface number:
 
 # ip link set mtu 9000 dev <ethX>
 # ip link set up dev <ethX>
@@ -1485,15 +1487,15 @@ PF Message Queue Overflow
 -------------------------
 The device driver can detect some types of anomalous behavior. When it does, it
 will log the VF MAC address and associated PF MAC address. Using this
-information, you can check the virtual machine (VM)that is using the VF MAC to
-ensure that the VM is operating correctly.
+information, you can check the virtual machine (VM) that is using the VF MAC
+address to ensure that the VM is operating correctly.
 
 
 'ethtool -S' does not display Tx/Rx packet statistics
 -----------------------------------------------------
 Issuing the command 'ethtool -S' does not display Tx/Rx packet statistics. This
-is by convention. Use other tools (e.g. ifconfig, ip) that display standard
-netdev statistics such as Tx/Rx packet statistics.
+is by convention. Use other tools (such as the 'ip' command) that display
+standard netdev statistics such as Tx/Rx packet statistics.
 
 
 Unexpected Issues when the device driver and DPDK share a device

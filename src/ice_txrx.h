@@ -244,8 +244,8 @@ struct ice_rxq_stats {
 };
 
 enum ice_ring_state_t {
-	__ICE_TX_XPS_INIT_DONE,
-	__ICE_TX_NBITS,
+	ICE_TX_XPS_INIT_DONE,
+	ICE_TX_NBITS,
 };
 
 /* this enum matches hardware bits and is meant to be used by DYN_CTLN
@@ -351,7 +351,7 @@ struct ice_ring {
 	};
 
 	struct rcu_head rcu;		/* to avoid race on free */
-	DECLARE_BITMAP(xps_state, __ICE_TX_NBITS);	/* XPS Config State */
+	DECLARE_BITMAP(xps_state, ICE_TX_NBITS);	/* XPS Config State */
 	struct ice_channel *ch;
 #ifdef HAVE_XDP_SUPPORT
 	struct bpf_prog *xdp_prog;

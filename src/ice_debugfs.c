@@ -76,85 +76,6 @@ static void ice_dump_pf_vsi_list(struct ice_pf *pf)
 	}
 }
 
-static void ice_dump_vf(struct ice_vf *vf)
-{
-	struct ice_vsi *vsi;
-	struct device *dev;
-	struct ice_pf *pf;
-
-	if (!vf)
-		return;
-
-	pf = vf->pf;
-	vsi = pf->vsi[vf->lan_vsi_idx];
-	if (!vsi)
-		return;
-
-	dev = ice_pf_to_dev(pf);
-	dev_info(dev, "VF[%d]:\n", vf->vf_id);
-	dev_info(dev, "\tvf_ver.major = %d vf_ver.minor = %d\n",
-		 vf->vf_ver.major, vf->vf_ver.minor);
-	dev_info(dev, "\tdriver_caps = 0x%08x\n", vf->driver_caps);
-	dev_info(dev, "\tvf_caps = 0x%08lx\n", vf->vf_caps);
-	dev_info(dev, "\tvf_states:\n");
-	if (test_bit(ICE_VF_STATE_INIT, vf->vf_states))
-		dev_info(dev, "\t\tICE_VF_STATE_INIT\n");
-	if (test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
-		dev_info(dev, "\t\tICE_VF_STATE_ACTIVE\n");
-	if (test_bit(ICE_VF_STATE_QS_ENA, vf->vf_states))
-		dev_info(dev, "\t\tICE_VF_STATE_QS_ENA\n");
-	if (test_bit(ICE_VF_STATE_MC_PROMISC, vf->vf_states))
-		dev_info(dev, "\t\tICE_VF_STATE_MC_PROMISC\n");
-	if (test_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states))
-		dev_info(dev, "\t\tICE_VF_STATE_UC_PROMISC\n");
-	dev_info(dev, "\tvsi = %pK, vsi->idx = %d, vsi->vsi_num = %d\n",
-		 vsi, vsi->idx, vsi->vsi_num);
-	dev_info(dev, "\tlan_vsi_idx = %d\n", vf->lan_vsi_idx);
-	dev_info(dev, "\tlan_vsi_num = %d\n", vf->lan_vsi_num);
-	dev_info(dev, "\tnum_mac = %d\n", vf->num_mac);
-	dev_info(dev, "\tdev_lan_addr = %pM\n", &vf->dev_lan_addr.addr[0]);
-	dev_info(dev, "\thw_lan_addr = %pM\n", &vf->hw_lan_addr.addr[0]);
-	dev_info(dev, "\tnum_req_qs = %d\n", vf->num_req_qs);
-	dev_info(dev, "\trxq_ena = 0x%lx\n", *vf->rxq_ena);
-	dev_info(dev, "\ttxq_ena = 0x%lx\n", *vf->txq_ena);
-	dev_info(dev, "\tport_vlan_info = 0x%x (0 means no port VLAN is configured):\n",
-		 vf->port_vlan_info);
-	dev_info(dev, "\t\tPort VLAN ID = %d\n",
-		 vf->port_vlan_info & VLAN_VID_MASK);
-	dev_info(dev, "\t\tQoS = %d\n",
-		 (vf->port_vlan_info & VLAN_PRIO_MASK) >> VLAN_PRIO_SHIFT);
-	dev_info(dev, "\tpf_set_mac = %s\n", vf->pf_set_mac ? "true" : "false");
-	dev_info(dev, "\ttrusted = %s\n", vf->trusted ? "true" : "false");
-	dev_info(dev, "\tspoofchk = %s\n", vf->spoofchk ? "true" : "false");
-#ifdef HAVE_NDO_SET_VF_LINK_STATE
-	dev_info(dev, "\tlink_forced = %s, link_up (only valid when link_forced is true) = %s\n",
-		 vf->link_forced ? "true" : "false",
-		 vf->link_up ? "true" : "false");
-#endif
-	dev_info(dev, "\tmax_tx_rate = %d\n", vf->max_tx_rate);
-	dev_info(dev, "\tmin_tx_rate = %d\n", vf->min_tx_rate);
-	dev_info(dev, "\tnum_inval_msgs = %lld\n", vf->num_inval_msgs);
-	dev_info(dev, "\tnum_valid_msgs = %lld\n", vf->num_valid_msgs);
-	dev_info(dev, "\tmdd_rx_events = %u\n", vf->mdd_rx_events.count);
-	dev_info(dev, "\tmdd_tx_events = %u\n", vf->mdd_tx_events.count);
-	dev_info(dev, "\tfirst_vector_idx = %d\n", vf->first_vector_idx);
-	dev_info(dev, "\tvf_sw_id = %pK\n", vf->vf_sw_id);
-	dev_info(dev, "\tadq_enabled = %s\n",
-		 vf->adq_enabled ? "true" : "false");
-	dev_info(dev, "\tadq_fltr_ena = %s\n",
-		 vf->adq_fltr_ena ? "true" : "false");
-	dev_info(dev, "\tnum_tc = %u\n", vf->num_tc);
-	dev_info(dev, "\tnum_dmac_chnl_fltrs = %u\n", vf->num_dmac_chnl_fltrs);
-}
-
-static void ice_dump_all_vfs(struct ice_pf *pf)
-{
-	u16 v;
-
-	ice_for_each_vf(pf, v)
-		ice_dump_vf(&pf->vf[v]);
-}
-
 /**
  * ice_dump_pf_fdir - output Flow Director stats to dmesg log
  * @pf: pointer to PF to get Flow Director HW stats for.
@@ -397,6 +318,27 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 		    !strncmp(argv[3], "topology", 8)) {
 			ice_dump_port_topo(hw->port_info);
 		}
+	} else if (argc == 4 && !strncmp(argv[0], "set_ts_pll", 10)) {
+		u8 time_ref_freq;
+		u8 time_ref_sel;
+		u8 mstr_tmr_mode;
+
+		ret = kstrtou8(argv[1], 0, &time_ref_freq);
+		if (ret)
+			goto command_help;
+		ret = kstrtou8(argv[2], 0, &time_ref_sel);
+		if (ret)
+			goto command_help;
+		ret = kstrtou8(argv[3], 0, &mstr_tmr_mode);
+		if (ret)
+			goto command_help;
+
+		ice_cgu_cfg_ts_pll(pf, false, (enum ice_time_ref_freq)time_ref_freq,
+				   (enum ice_cgu_time_ref_sel)time_ref_sel,
+				   (enum ice_mstr_tmr_mode)mstr_tmr_mode);
+		ice_cgu_cfg_ts_pll(pf, true, (enum ice_time_ref_freq)time_ref_freq,
+				   (enum ice_cgu_time_ref_sel)time_ref_sel,
+				   (enum ice_mstr_tmr_mode)mstr_tmr_mode);
 	} else {
 command_help:
 		dev_info(dev, "unknown or invalid command '%s'\n", cmd_buf);

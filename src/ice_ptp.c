@@ -3,10 +3,39 @@
 
 #include "ice.h"
 
+#define MASTER_IDX_INVALID 0xFF
+static u8 master_idx = MASTER_IDX_INVALID;
+
+static const u8 pps_out_prop_delay_ns[NUM_ICE_TIME_REF_FREQ] = {
+	11, /* 25 MHz */
+	12, /* 122.88 MHz */
+	12, /* 125 MHz */
+	12, /* 153.6 MHz */
+	11, /* 156.25 MHz */
+	12  /* 245.76 MHz */
+};
 
 
 #define DEFAULT_INCVAL 0x100000000ULL
 #define DEFAULT_INCVAL_EXT 0x13b13b13bULL
+
+static const s64 incval_values[NUM_ICE_TIME_REF_FREQ] = {
+	0x136e44fabULL, /* 25 MHz */
+	0x146cc2177ULL, /* 122.88 MHz */
+	0x141414141ULL, /* 125 MHz */
+	0x139b9b9baULL, /* 153.6 MHz */
+	0x134679aceULL, /* 156.25 MHz */
+	0x146cc2177ULL, /* 245.76 MHz */
+};
+
+static const u64 phy_clock_freq[NUM_ICE_TIME_REF_FREQ] = {
+	823437500, /* 25 MHz */
+	783360000, /* 122.88 MHz */
+	796875000, /* 125 MHz */
+	816000000, /* 153.6 MHz */
+	830078125, /* 156.25 MHz */
+	783360000, /* 245.76 MHz */
+};
 
 
 static enum ice_status ice_ptp_set_increment(struct ice_pf *pf, s32 ppb);
@@ -247,8 +276,9 @@ u64 ice_ptp_read_master_clk_reg(struct ice_pf *pf)
 	u32 hi, hi2, lo;
 	u8 tmr_idx;
 
-	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
-
+	tmr_idx = master_idx;
+	if (tmr_idx == MASTER_IDX_INVALID)
+		return 0;
 	hi = rd32(hw, GLTSYN_TIME_H(tmr_idx));
 	lo = rd32(hw, GLTSYN_TIME_L(tmr_idx));
 	hi2 = rd32(hw, GLTSYN_TIME_H(tmr_idx));
@@ -263,6 +293,32 @@ u64 ice_ptp_read_master_clk_reg(struct ice_pf *pf)
 }
 
 /**
+ * ice_ptp_read_incval - Read the master clock increment value
+ * @pf: Board private structure
+ */
+static u64 ice_ptp_read_incval(struct ice_pf *pf)
+{
+	u64 mstr_incval;
+	u8 tmr_idx;
+	u32 val;
+
+	tmr_idx = master_idx;
+	if (tmr_idx == MASTER_IDX_INVALID) {
+		struct ice_vsi *vsi = ice_get_main_vsi(pf);
+
+		if (!vsi)
+			return 0;
+		return incval_values[vsi->time_ref_freq];
+	}
+	val = rd32(&pf->hw, GLTSYN_INCVAL_L(tmr_idx));
+	mstr_incval = val;
+	val = rd32(&pf->hw, GLTSYN_INCVAL_H(tmr_idx));
+	mstr_incval |= ((u64)(val & TS_HIGH_MASK) << 32);
+
+	return mstr_incval;
+}
+
+/**
  * ice_ptp_read_perout_tgt - Read the periodic out target time registers
  * @pf: Board private structure
  * @chan: GPIO channel (0-3)
@@ -273,7 +329,9 @@ static u64 ice_ptp_read_perout_tgt(struct ice_pf *pf, unsigned int chan)
 	u32 hi, hi2, lo;
 	u8 tmr_idx;
 
-	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
+	tmr_idx = master_idx;
+	if (tmr_idx == MASTER_IDX_INVALID)
+		return 0;
 
 	hi = rd32(hw, GLTSYN_TGT_H(chan, tmr_idx));
 	lo = rd32(hw, GLTSYN_TGT_L(chan, tmr_idx));
@@ -838,6 +896,55 @@ exit:
 	return status;
 }
 
+/**
+ * ice_ptp_port_time_inc_pre_wr_subns - Fill PHY registers for sub ns cmd
+ * @pf: The PF private structure
+ * @port: Port number to be initialized
+ * @tx_time: Time with which the port Tx clock is initialized
+ * @rx_time: Time with which the port Rx clock is initialized
+ *
+ * Utility function for filling the port init shadow registers.  This version
+ * supports sub-nanosecond values for accurate sync of port and master timers.
+ */
+static enum ice_status
+ice_ptp_port_time_inc_pre_wr_subns(struct ice_pf *pf, int port, u64 tx_time,
+				   u64 rx_time)
+{
+	enum ice_status status;
+	u32 l_time, u_time;
+
+	if (tx_time != rx_time)
+		return ICE_ERR_PARAM;
+
+	l_time = (u32)(tx_time & TS_LOW_MASK);
+	u_time = (u32)((tx_time >> 32) & TS_LOW_MASK);
+
+	/* Tx case */
+	status = ice_phy_port_reg_write(pf, port, P_REG_TX_TIMER_INC_PRE_L,
+					l_time);
+	if (status)
+		goto exit;
+
+	status = ice_phy_port_reg_write(pf, port, P_REG_TX_TIMER_INC_PRE_U,
+					u_time);
+	if (status)
+		goto exit;
+
+	/* Rx case */
+	status = ice_phy_port_reg_write(pf, port, P_REG_RX_TIMER_INC_PRE_L,
+					l_time);
+	if (status)
+		goto exit;
+
+	status = ice_phy_port_reg_write(pf, port, P_REG_RX_TIMER_INC_PRE_U,
+					u_time);
+exit:
+	if (status)
+		dev_err(ice_pf_to_dev(pf), "PTP failed to init port %s\n",
+			ice_stat_str(status));
+
+	return status;
+}
 
 /**
  * ice_ptp_port_timer_inc_pre_write_lp - Fill all timer_inc_pre PHY registers
@@ -903,6 +1010,52 @@ ice_ptp_port_timer_inc_pre_write(struct ice_pf *pf, int port, u64 tx_ns,
 						   true);
 }
 
+/**
+ * ice_ptp_rd_port_capture - Read a port's local time capture
+ * @pf: The PF private structure
+ * @port: Port number to read
+ * @tx_ts: Where to put the read value from Tx capture register
+ * @rx_ts: Where to put the read value from Rx capture register
+ */
+static enum ice_status
+ice_ptp_rd_port_capture(struct ice_pf *pf, int port, u64 *tx_ts, u64 *rx_ts)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	enum ice_status status;
+	u32 high, low;
+	u64 ns;
+
+	/* Tx case */
+	status = ice_phy_port_reg_read(pf, port, P_REG_TX_CAPTURE_L, &low);
+	if (status)
+		goto exit;
+	status = ice_phy_port_reg_read(pf, port, P_REG_TX_CAPTURE_U, &high);
+	if (status)
+		goto exit;
+
+	ns = high;
+	*tx_ts = ns << 32 | low;
+	dev_dbg(dev, "tx_init = 0x%016llx\n", *tx_ts);
+
+	/* Rx case */
+	status = ice_phy_port_reg_read(pf, port, P_REG_RX_CAPTURE_L, &low);
+	if (status)
+		goto exit;
+	status = ice_phy_port_reg_read(pf, port, P_REG_RX_CAPTURE_U, &high);
+	if (status)
+		goto exit;
+
+	ns = high;
+	*rx_ts = ns << 32 | low;
+	dev_dbg(dev, "rx_init = 0x%016llx\n", *rx_ts);
+
+exit:
+	if (status)
+		dev_err(dev, "PTP failed to read port capture %s\n",
+			ice_stat_str(status));
+
+	return status;
+}
 
 /**
  * ice_ptp_port_time_clk_cyc_write - Utility function to fill port time_clk_cyc
@@ -969,7 +1122,6 @@ exit:
 	return status;
 }
 
-
 /**
  * ice_ptp_port_cmd_ext - Utility function to fill port command registers
  * @pf: The PF private structure
@@ -1034,13 +1186,14 @@ ice_ptp_port_cmd_lp(struct ice_pf *pf, int port, enum tmr_cmd cmd,
 		    bool lock_sbq)
 {
 	struct device *dev = ice_pf_to_dev(pf);
-	struct ice_hw *hw = &pf->hw;
 	enum ice_status status;
 	u32 cmd_val, val;
 	u8 tmr_idx;
 
 #define SEL_PHY_MASTER 3
-	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
+	tmr_idx = master_idx;
+	if (tmr_idx == MASTER_IDX_INVALID)
+		return ICE_ERR_NOT_READY;
 	cmd_val = tmr_idx << SEL_PHY_MASTER;
 	/* Coverity warns the default case is deadcode but removing it causes
 	 * other static analysis tools (and compilers) to warn that not all
@@ -1107,6 +1260,17 @@ exit:
 	return status;
 }
 
+/**
+ * ice_ptp_port_cmd - Utility function to fill port command registers
+ * @pf: The PF private structure
+ * @port: Port to which cmd has to be sent
+ * @cmd: Command to be sent to the port
+ */
+static enum ice_status ice_ptp_port_cmd(struct ice_pf *pf, int port,
+					enum tmr_cmd cmd)
+{
+	return ice_ptp_port_cmd_lp(pf, port, cmd, true);
+}
 
 /**
  * ice_ptp_port_set_wl - Set window length for port timestamping
@@ -1178,6 +1342,196 @@ ice_ptp_phy_get_link_speed(enum ice_ptp_link_spd *link_spd, u32 serdes,
 	return 0;
 }
 
+/**
+ * ice_ptp_port_phy_set_parpcs_incval - Set PAR/PCS PHY cycle count
+ * @pf: Board private struct
+ * @port: Port we are configuring PHY for
+ *
+ * Note that this function is only expected to be called during port up and
+ * during a link event.
+ */
+static void ice_ptp_port_phy_set_parpcs_incval(struct ice_pf *pf, int port)
+{
+	u64 rxtx_lane_par_clk[NUM_ICE_PTP_LNK_SPD] = { 31250000,  257812500,
+						       644531250, 161132812,
+						       257812500, 644531250,
+						       644531250, 644531250 };
+	u64 rxtx_lane_pcs_clk[NUM_ICE_PTP_LNK_SPD] = { 125000000, 156250000,
+						       390625000, 97656250,
+						       156250000, 390625000,
+						       644531250, 644531250 };
+	u64 rxtx_rsgb_par_clk[NUM_ICE_PTP_LNK_SPD] = {
+		0, 0, 0, 322265625, 0, 0, 644531250, 1289062500 };
+	u64 rxtx_rsgb_pcs_clk[NUM_ICE_PTP_LNK_SPD] = {
+		0, 0, 0, 97656250, 0, 0, 195312500, 390625000 };
+	u64 rx_desk_par_pcs_clk[NUM_ICE_PTP_LNK_SPD] = {
+		0, 0, 0, 0, 156250000, 19531250, 644531250, 644531250
+	};
+	u64 cur_freq, mstr_incval, uix, phy_tus;
+	enum ice_ptp_link_spd link_spd;
+	enum ice_ptp_fec_algo fec_algo;
+	enum ice_status status = 0;
+	struct ice_vsi *vsi;
+	u32 val, serdes;
+
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi)
+		return;
+
+	cur_freq = phy_clock_freq[vsi->time_ref_freq];
+	mstr_incval = ice_ptp_read_incval(pf);
+
+	status = ice_phy_port_reg_read(pf, port, P_REG_LINK_SPEED, &serdes);
+	if (status)
+		goto exit;
+	fec_algo = (serdes & P_REG_LINK_SPEED_FEC_ALGO_M) >>
+		   P_REG_LINK_SPEED_FEC_ALGO_S;
+	status = ice_ptp_phy_get_link_speed(&link_spd, serdes, fec_algo);
+	if (status)
+		goto exit;
+
+	/* UIX programming */
+	/* We split a 'divide by 1e11' operation into a 'divide by 256' and a
+	 * 'divide by 390625000' operation to be able to do the calculation
+	 * using fixed-point math.
+	 */
+	if (link_spd == ICE_PTP_LNK_SPD_10G ||
+	    link_spd == ICE_PTP_LNK_SPD_40G) {
+#define LINE_UI_10G_40G 640 /* 6600 UI at 10Gb line rate */
+		uix = (cur_freq * LINE_UI_10G_40G) >> 8;
+		uix *= mstr_incval;
+		uix /= 390625000;
+
+		val = TS_LOW_MASK & uix;
+		status = ice_phy_port_reg_write(pf, port, P_REG_UIX66_10G_40G_L,
+						val);
+		if (status)
+			goto exit;
+		val = (uix >> 32) & TS_LOW_MASK;
+		status = ice_phy_port_reg_write(pf, port, P_REG_UIX66_10G_40G_U,
+						val);
+		if (status)
+			goto exit;
+	} else if (link_spd == ICE_PTP_LNK_SPD_25G ||
+		   link_spd == ICE_PTP_LNK_SPD_100G_RS) {
+#define LINE_UI_25G_100G 256 /* 6600 UI at 25Gb line rate */
+		uix = (cur_freq * LINE_UI_25G_100G) >> 8;
+		uix *= mstr_incval;
+		uix /= 390625000;
+
+		val = TS_LOW_MASK & uix;
+		status = ice_phy_port_reg_write(pf, port,
+						P_REG_UIX66_25G_100G_L, val);
+		if (status)
+			goto exit;
+		val = (uix >> 32) & TS_LOW_MASK;
+		status = ice_phy_port_reg_write(pf, port,
+						P_REG_UIX66_25G_100G_U, val);
+		if (status)
+			goto exit;
+	}
+
+	if (link_spd == ICE_PTP_LNK_SPD_25G_RS) {
+		phy_tus = (cur_freq * mstr_incval * 2) /
+			  rxtx_rsgb_par_clk[link_spd];
+		val = phy_tus & TS_PHY_LOW_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PAR_RX_TUS_L, val);
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PAR_TX_TUS_L, val);
+		val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PAR_RX_TUS_U, val);
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PAR_TX_TUS_U, val);
+
+		phy_tus = (cur_freq * mstr_incval) /
+			  rxtx_rsgb_pcs_clk[link_spd];
+		val = phy_tus & TS_PHY_LOW_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PCS_RX_TUS_L, val);
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PCS_TX_TUS_L, val);
+		val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PCS_RX_TUS_U, val);
+		ice_phy_port_reg_write(pf, port, P_REG_DESK_PCS_TX_TUS_U, val);
+	} else {
+		phy_tus = (cur_freq * mstr_incval) /
+			  rxtx_lane_par_clk[link_spd];
+		val = phy_tus & TS_PHY_LOW_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_PAR_RX_TUS_L, val);
+		val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_PAR_RX_TUS_U, val);
+
+		if (link_spd != ICE_PTP_LNK_SPD_50G_RS &&
+		    link_spd != ICE_PTP_LNK_SPD_100G_RS) {
+			val = phy_tus & TS_PHY_LOW_MASK;
+			ice_phy_port_reg_write(pf, port, P_REG_PAR_TX_TUS_L,
+					       val);
+			val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+			ice_phy_port_reg_write(pf, port, P_REG_PAR_TX_TUS_U,
+					       val);
+		} else {
+			phy_tus = (cur_freq * mstr_incval * 2) /
+				  rxtx_rsgb_par_clk[link_spd];
+			val = phy_tus & TS_PHY_LOW_MASK;
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PAR_RX_TUS_L, val);
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PAR_TX_TUS_L, val);
+			val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PAR_RX_TUS_U, val);
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PAR_TX_TUS_U, val);
+		}
+
+		phy_tus = (cur_freq * mstr_incval) /
+			  rxtx_lane_pcs_clk[link_spd];
+		val = phy_tus & TS_PHY_LOW_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_PCS_RX_TUS_L, val);
+		val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+		ice_phy_port_reg_write(pf, port, P_REG_PCS_RX_TUS_U, val);
+
+		if (link_spd != ICE_PTP_LNK_SPD_50G_RS &&
+		    link_spd != ICE_PTP_LNK_SPD_100G_RS) {
+			val = phy_tus & TS_PHY_LOW_MASK;
+			ice_phy_port_reg_write(pf, port, P_REG_PCS_TX_TUS_L,
+					       val);
+			val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+			ice_phy_port_reg_write(pf, port, P_REG_PCS_TX_TUS_U,
+					       val);
+		} else {
+			phy_tus = (cur_freq * mstr_incval) /
+				  rxtx_rsgb_pcs_clk[link_spd];
+			val = phy_tus & TS_PHY_LOW_MASK;
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PCS_RX_TUS_L, val);
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PCS_TX_TUS_L, val);
+			val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PCS_RX_TUS_U, val);
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PCS_TX_TUS_U, val);
+		}
+
+		if (link_spd == ICE_PTP_LNK_SPD_40G ||
+		    link_spd == ICE_PTP_LNK_SPD_50G) {
+			phy_tus = (cur_freq * mstr_incval) /
+				  rx_desk_par_pcs_clk[link_spd];
+			val = phy_tus & TS_PHY_LOW_MASK;
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PAR_RX_TUS_L, val);
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PCS_RX_TUS_L, val);
+			val = (phy_tus >> 8) & TS_PHY_HIGH_MASK;
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PAR_RX_TUS_U, val);
+			ice_phy_port_reg_write(pf, port,
+					       P_REG_DESK_PCS_RX_TUS_U, val);
+		}
+	}
+
+exit:
+	if (status)
+		dev_err(ice_pf_to_dev(pf),
+			"PTP Vernier configuration failed on port %d\n", port);
+}
 
 /**
  * ice_ptp_tx_cfg_lane - Configure PHY quad for single/multi-lane timestamp
@@ -1234,8 +1588,9 @@ static void ice_ptp_master_cmd(struct ice_pf *pf, enum tmr_cmd cmd)
 	u8 tmr_idx;
 
 #define SEL_CPK_MASTER 8
-
-	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
+	tmr_idx = master_idx;
+	if (tmr_idx == MASTER_IDX_INVALID)
+		return;
 	cmd_val = tmr_idx << SEL_CPK_MASTER;
 
 	switch (cmd) {
@@ -1259,6 +1614,146 @@ static void ice_ptp_master_cmd(struct ice_pf *pf, enum tmr_cmd cmd)
 	wr32(hw, GLTSYN_CMD, cmd_val);
 }
 
+/**
+ * ice_ptp_port_sync_master_timer - Sync PHY timer with Master timer
+ * @pf: Board private structure
+ * @port: Port for which the PHY start is set
+ *
+ * Sync PHY timer with Master timer after calculating and setting Tx/Rx Vernier
+ * offset.
+ */
+static enum ice_status
+ice_ptp_port_sync_master_timer(struct ice_pf *pf, int port)
+{
+	u64 mstr_time = 0x0, tx_time, rx_time, temp_adj;
+	struct device *dev = ice_pf_to_dev(pf);
+	enum ice_status status;
+	s64 time_adj;
+	u32 zo, lo;
+	u8 tmr_idx;
+
+	/* Get the PTP HW lock */
+	if (!ice_ptp_lock(pf)) {
+		status = ICE_ERR_IN_USE;
+		goto exit;
+	}
+
+	/* Program cmd to master timer */
+	ice_ptp_master_cmd(pf, READ_TIME);
+
+	/* Program cmd to PHY port */
+	status = ice_ptp_port_cmd(pf, port, READ_TIME);
+	if (status)
+		goto unlock;
+
+	/* Issue sync to activate commands */
+	wr32(&pf->hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
+
+	tmr_idx = master_idx;
+	if (tmr_idx == MASTER_IDX_INVALID)
+		return ICE_ERR_NOT_READY;
+
+	/* Read master timer SHTIME_0 and SHTIME_L */
+	zo = rd32(&pf->hw, GLTSYN_SHTIME_0(tmr_idx));
+	lo = rd32(&pf->hw, GLTSYN_SHTIME_L(tmr_idx));
+	mstr_time |= (u64)lo;
+	mstr_time = (mstr_time << 32) | (u64)zo;
+
+	/* Read Tx and Rx capture from PHY */
+	status = ice_ptp_rd_port_capture(pf, port, &tx_time, &rx_time);
+	if (status)
+		goto unlock;
+
+	if (tx_time != rx_time)
+		dev_info(dev, "Port %d Rx and Tx times do not match\n", port);
+
+	/* Calculate amount to adjust port timer and account for case where
+	 * delta is larger/smaller than S64_MAX/S64_MIN
+	 */
+	if (mstr_time > tx_time) {
+		temp_adj = mstr_time - tx_time;
+		if (temp_adj & BIT_ULL(63)) {
+			time_adj = temp_adj >> 1;
+		} else {
+			time_adj = temp_adj;
+			/* Set to zero to indicate adjustment done */
+			temp_adj = 0x0;
+		}
+	} else {
+		temp_adj = tx_time - mstr_time;
+		if (temp_adj & BIT_ULL(63)) {
+			time_adj = -(temp_adj >> 1);
+		} else {
+			time_adj = -temp_adj;
+			/* Set to zero to indicate adjustment done */
+			temp_adj = 0x0;
+		}
+	}
+
+	status = ice_ptp_port_time_inc_pre_wr_subns(pf, port, time_adj,
+						    time_adj);
+	if (status)
+		goto unlock;
+
+	status = ice_ptp_port_cmd(pf, port, ADJ_TIME);
+	if (status)
+		goto unlock;
+
+	/* Issue sync to activate commands */
+	wr32(&pf->hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
+
+	/* Do a second adjustment if original was too large/small to fit into
+	 * a S64
+	 */
+	if (temp_adj) {
+		status = ice_ptp_port_time_inc_pre_wr_subns(pf, port, time_adj,
+							    time_adj);
+		if (status)
+			goto unlock;
+
+		status = ice_ptp_port_cmd(pf, port, ADJ_TIME);
+		if (!status)
+			/* Issue sync to activate commands */
+			wr32(&pf->hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
+	}
+
+	/* This second register read is to flush out the port and master command
+	 * registers. Multiple successive calls to this function require this
+	 */
+
+	/* Program cmd to master timer */
+	ice_ptp_master_cmd(pf, READ_TIME);
+
+	/* Program cmd to PHY port */
+	status = ice_ptp_port_cmd(pf, port, READ_TIME);
+	if (status)
+		goto unlock;
+
+	/* Issue sync to activate commands */
+	wr32(&pf->hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
+
+	/* Read master timer SHTIME_0 and SHTIME_L */
+	zo = rd32(&pf->hw, GLTSYN_SHTIME_0(tmr_idx));
+	lo = rd32(&pf->hw, GLTSYN_SHTIME_L(tmr_idx));
+	mstr_time = (u64)lo;
+	mstr_time = (mstr_time << 32) | (u64)zo;
+
+	/* Read Tx and Rx capture from PHY */
+	status = ice_ptp_rd_port_capture(pf, port, &tx_time, &rx_time);
+	if (status)
+		goto unlock;
+	dev_info(dev, "Port %d PTP synced to master 0x%016llX, 0x%016llX\n",
+		 port, mstr_time, tx_time);
+unlock:
+	ice_ptp_unlock(pf);
+exit:
+	if (status)
+		dev_err(dev,
+			"PTP failed to sync port %d PHY time, status %d\n",
+			port, status);
+
+	return status;
+}
 
 /**
  * ice_ptp_port_phy_start - Set or clear PHY start for port timestamping
@@ -1271,6 +1766,21 @@ ice_ptp_port_phy_start(struct ice_pf *pf, u8 port, bool phy_start)
 {
 	enum ice_status status;
 	u32 val;
+
+	mutex_lock(&pf->ptp_ps_lock);
+
+	/* Clear offset_ready registers to avoid marking invalid timestamps as
+	 * valid and providing incorrect TS values
+	 */
+
+	status = ice_phy_port_reg_write(pf, port, P_REG_TX_OR, 0);
+	if (status)
+		goto exit;
+
+	status = ice_phy_port_reg_write(pf, port, P_REG_RX_OR, 0);
+	if (status)
+		goto exit;
+
 
 	status = ice_phy_port_reg_read(pf, port, P_REG_PS, &val);
 	if (status)
@@ -1286,9 +1796,9 @@ ice_ptp_port_phy_start(struct ice_pf *pf, u8 port, bool phy_start)
 	if (status)
 		goto exit;
 
-
-	if (phy_start) {
+	if (phy_start && pf->ptp_link_up) {
 		ice_ptp_tx_cfg_lane(pf, port);
+		ice_ptp_port_phy_set_parpcs_incval(pf, port);
 
 		status = ice_ptp_set_increment(pf, 0);
 		if (status)
@@ -1326,13 +1836,15 @@ ice_ptp_port_phy_start(struct ice_pf *pf, u8 port, bool phy_start)
 		status = ice_phy_port_reg_write(pf, port, P_REG_PS, val);
 		if (status)
 			goto exit;
+		wr32(&pf->hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
+		status = ice_ptp_port_sync_master_timer(pf, port);
 	}
 exit:
 	if (status)
-		dev_err(ice_pf_to_dev(pf),
-			"PTP failed to set PHY port %d %s, ret=%s\n", port,
+		dev_err(ice_pf_to_dev(pf), "PTP failed to set PHY port %d %s, ret=%s\n", port,
 			phy_start ? "up" : "down", ice_stat_str(status));
 
+	mutex_unlock(&pf->ptp_ps_lock);
 
 	return status;
 }
@@ -1354,8 +1866,11 @@ enum ice_status ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup)
 	if (port >= ICE_NUM_EXTERNAL_PORTS)
 		return ICE_ERR_PARAM;
 
+	pf->ptp_link_up = linkup;
+
 	return ice_ptp_port_phy_start(pf, port, linkup);
 }
+
 
 /**
  * ice_ptp_tx_ena_intr - Enable or disable the Tx timestamp interrupt
@@ -1672,6 +2187,98 @@ exit:
 	return status;
 }
 
+/**
+ * ice_ptp_update_incval - Update clock increment rate
+ * @pf: Board private structure
+ * @time_ref_freq: TIME_REF frequency to use
+ * @mstr_tmr_mode: Master timer mode (nanoseconds or locked)
+ */
+enum ice_status
+ice_ptp_update_incval(struct ice_pf *pf, enum ice_time_ref_freq time_ref_freq,
+		      enum ice_mstr_tmr_mode mstr_tmr_mode)
+{
+	enum ice_status status;
+	struct timespec64 ts;
+	struct ice_vsi *vsi;
+	s64 incval;
+
+	if (!test_bit(ICE_FLAG_PTP, pf->flags)) {
+		dev_err(ice_pf_to_dev(pf),
+			"PTP not ready, failed to update incval\n");
+		return ICE_ERR_NOT_READY;
+	}
+
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi) {
+		status = ICE_ERR_NOT_IMPL;
+		goto exit;
+	}
+
+	if (time_ref_freq >= NUM_ICE_TIME_REF_FREQ ||
+	    mstr_tmr_mode >= NUM_ICE_MSTR_TMR_MODE) {
+		status = ICE_ERR_PARAM;
+		goto exit;
+	}
+
+	if (mstr_tmr_mode == ICE_MSTR_TMR_MODE_NANOSECONDS)
+		incval = incval_values[time_ref_freq];
+	else
+		incval = 0x100000000ULL;
+
+	status = ice_ptp_set_incval(pf, incval);
+	if (status)
+		goto exit;
+
+	/* Acquire the global hardware lock */
+	if (!ice_ptp_lock(pf)) {
+		status = ICE_ERR_IN_USE;
+		goto exit;
+	}
+
+	vsi->time_ref_freq = time_ref_freq;
+	vsi->mstr_tmr_mode = mstr_tmr_mode;
+
+	ts = ktime_to_timespec64(ktime_get_real());
+	status = ice_ptp_write_init(pf, &ts);
+	if (status)
+		goto exit;
+
+	/* Request HW to load the above shadow reg to the real timers */
+	status = ice_ptp_tmr_cmd(pf, INIT_TIME);
+	if (status)
+		goto exit;
+
+	ice_ptp_unlock(pf);
+exit:
+	if (status) {
+		ice_ptp_unlock(pf);
+		dev_err(&pf->pdev->dev, "PTP failed in update incval %s\n",
+			ice_stat_str(status));
+	}
+
+	return status;
+}
+
+/**
+ * ice_ptp_get_incval - Get clock increment params
+ * @pf: Board private structure
+ * @time_ref_freq: TIME_REF frequency
+ * @mstr_tmr_mode: Master timer mode (nanoseconds or locked)
+ */
+enum ice_status
+ice_ptp_get_incval(struct ice_pf *pf, enum ice_time_ref_freq *time_ref_freq,
+		   enum ice_mstr_tmr_mode *mstr_tmr_mode)
+{
+	struct ice_vsi *vsi = ice_get_main_vsi(pf);
+
+	if (!vsi)
+		return ICE_ERR_NOT_IMPL;
+
+	*time_ref_freq = vsi->time_ref_freq;
+	*mstr_tmr_mode = vsi->mstr_tmr_mode;
+
+	return 0;
+}
 
 /**
  * ice_ptp_set_increment - Adjust clock increment rate
@@ -1684,6 +2291,7 @@ static enum ice_status ice_ptp_set_increment(struct ice_pf *pf, s32 ppb)
 	s64 incval, freq, diff;
 	struct ice_vsi *vsi;
 	int neg_adj = 0;
+	int freq_idx;
 
 	vsi = ice_get_main_vsi(pf);
 	if (!vsi) {
@@ -1695,10 +2303,15 @@ static enum ice_status ice_ptp_set_increment(struct ice_pf *pf, s32 ppb)
 		neg_adj = 1;
 		ppb = -ppb;
 	}
-	if (ice_is_generic_mac(&pf->hw))
-		incval = DEFAULT_INCVAL;
-	else
+	if (ice_is_generic_mac(&pf->hw)) {
+		freq_idx = vsi->time_ref_freq;
+		if (freq_idx < NUM_ICE_TIME_REF_FREQ)
+			incval = incval_values[freq_idx];
+		else
+			incval = DEFAULT_INCVAL;
+	} else {
 		incval = DEFAULT_INCVAL_EXT;
+	}
 
 	freq = incval * ppb;
 	diff = div_u64(freq, 1000000000ULL);
@@ -1894,9 +2507,7 @@ static int ice_ptp_restart_pps(struct ice_pf *pf)
 
 	/* Round up to nearest second boundary */
 	start_time = roundup(start_time, NSEC_PER_SEC);
-
-#define PPS_OUT_PROP_DELAY_NS 11
-	start_time -= PPS_OUT_PROP_DELAY_NS;
+	start_time -= pps_out_prop_delay_ns[vsi->time_ref_freq];
 
 	return ice_ptp_cfg_periodic_clkout(pf, true, PPS_CLK_GEN_CHAN,
 					   PPS_PIN_INDEX, NSEC_PER_SEC,
@@ -2000,6 +2611,15 @@ ice_ptp_settime(struct ptp_clock_info *ptp, const struct timespec64 *ts)
 	struct ice_pf *pf = vsi->back;
 	struct timespec64 ts64 = *ts;
 	enum ice_status status;
+	u8 port;
+
+	/* For Vernier mode, we need to recalibrate after new settime
+	 * Start with disabling timestamp block
+	 */
+	port = pf->hw.port_info->lport;
+
+	if (pf->ptp_link_up)
+		ice_ptp_port_phy_start(pf, port, false);
 
 	if (!ice_ptp_lock(pf)) {
 		status = ICE_ERR_IN_USE;
@@ -2019,6 +2639,9 @@ ice_ptp_settime(struct ptp_clock_info *ptp, const struct timespec64 *ts)
 	if (!status)
 		ice_ptp_update_cached_systime(pf);
 
+	/* Recalibrate and re-enable timestamp block */
+	if (pf->ptp_link_up)
+		ice_ptp_port_phy_start(pf, port, true);
 exit:
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "PTP failed to set time %s\n",
@@ -2246,8 +2869,7 @@ ice_ptp_feature_ena(struct ptp_clock_info *ptp, struct ptp_clock_request *rq,
 		start_time = roundup(start_time, NSEC_PER_SEC);
 
 		/* Subtract propagation delay */
-#define PPS_OUT_PROP_DELAY_NS 11
-		start_time -= PPS_OUT_PROP_DELAY_NS;
+		start_time -= pps_out_prop_delay_ns[vsi->time_ref_freq];
 
 		break;
 	case PTP_CLK_REQ_PEROUT:
@@ -2392,7 +3014,6 @@ int ice_ptp_set_ts_config(struct ice_pf *pf, struct ifreq *ifr)
 								      0;
 }
 
-
 /**
  * ice_ptp_get_tx_hwtstamp_ver - Returns the Tx timestamp and valid bits
  * @pf: Board specific private structure
@@ -2437,11 +3058,6 @@ static int ice_ptp_get_tx_hwtstamp_ver(struct ice_pf *pf, u64 tx_idx_req,
 	if (!vsi)
 		return ICE_ERR_PARAM;
 
-	if (pf->ptp_quad_mem_reset[quad]) {
-		*ts_read = 0;
-		*ts_count = 0;
-		return -EINVAL;
-	}
 
 	for_each_set_bit(i, (unsigned long *)&tx_idx_req, INDEX_PER_QUAD) {
 		ts[i] = 0x0;
@@ -2495,6 +3111,7 @@ static int ice_ptp_get_tx_hwtstamp_ver(struct ice_pf *pf, u64 tx_idx_req,
 	return ret;
 }
 
+
 /**
  * ice_ptp_get_tx_hwtstamp_ready - Get the Tx timestamp ready bitmap
  * @pf: The PF private data structure
@@ -2534,8 +3151,6 @@ ice_ptp_get_tx_hwtstamp_ready(struct ice_pf *pf, u8 quad, u64 *ts_ready)
 
 	*ts_ready = bitmap;
 
-	if (bitmap)
-		pf->ptp_quad_mem_reset[quad] = false;
 }
 
 /**
@@ -2550,7 +3165,6 @@ ice_ptp_get_tx_hwtstamp_ready(struct ice_pf *pf, u8 quad, u64 *ts_ready)
 static void ice_ptp_tx_hwtstamp_vsi(struct ice_vsi *vsi, u8 quad, int idx, u64 hwtstamp)
 {
 	struct skb_shared_hwtstamps shhwtstamps;
-	struct ice_pf *pf = vsi->back;
 	struct sk_buff *skb;
 
 	skb = vsi->ptp_tx_skb[idx];
@@ -2564,30 +3178,26 @@ static void ice_ptp_tx_hwtstamp_vsi(struct ice_vsi *vsi, u8 quad, int idx, u64 h
 	/* Notify the stack and free the skb after we've unlocked */
 	skb_tstamp_tx(skb, &shhwtstamps);
 	dev_kfree_skb_any(skb);
-	clear_bit(idx, &pf->ptp_tx_idx[quad]);
 	clear_bit(idx, vsi->ptp_tx_idx);
 }
 
 /**
- * ice_ptp_tx_hwtstamp - Return the Tx timestamp
+ * ice_ptp_tx_hwtstamp - Return the Tx timestamps
  * @pf: Board private structure
  *
- * Read the value of the Tx timestamps from the registers, convert it into a
- * value consumable by the stack, and store that result into the shhwtstamps
- * struct before returning it up the stack.
+ * Read the tx_memory_status registers of the PHY timestamp module to determine which memory entries
+ * contain ready timestamps, and then read out the timestamps from those locations. While we are
+ * reading out the timestamps, new timestamps may be captured. No new interrupt will be generated
+ * until the intr_threshold is crossed again, so read the status registers in a loop until no more
+ * timestamps are ready.
+ * Convert read timestamps into a value consumable by the stack, and store that result into the
+ * shhwtstamps struct before returning it up the stack.
  */
 static void ice_ptp_tx_hwtstamp(struct ice_pf *pf)
 {
 	u8 quad;
 
 	for (quad = 0; quad < ICE_MAX_QUAD; quad++) {
-		/* Read the tx_memory_status registers of the PHY timestamp module to determine
-		 * which memory entries contain ready timestamps, and then read out the timestamps
-		 * from those locations. While we are reading out the timestamps, however, new
-		 * timestamps may be captured. No new interrupt will be generated until the
-		 * intr_threshold is crossed again, so read the status registers in a loop until no
-		 * more timestamps are ready.
-		 */
 		while (true) {
 			u64 ready_map = 0, valid_map = 0;
 			u64 hwtstamps[INDEX_PER_QUAD];
@@ -2814,7 +3424,6 @@ void ice_ptp_init(struct ice_pf *pf)
 
 	/* Check if this PF owns the master timer */
 	if (hw->func_caps.ts_func_info.master_tmr_owned) {
-		u8 master_idx;
 		int itr = 1;
 		long err;
 
@@ -2897,7 +3506,6 @@ void ice_ptp_init(struct ice_pf *pf)
 			status = ICE_ERR_NOT_IMPL;
 			goto err_clk;
 		}
-
 		/* Store the PTP clock index for other PFs */
 		ice_set_ptp_clock_index(pf);
 	}
@@ -2905,8 +3513,14 @@ void ice_ptp_init(struct ice_pf *pf)
 	/* Disable timestamping for both Tx and Rx */
 	ice_ptp_cfg_timestamp(pf, false);
 
+	mutex_init(&pf->ptp_ps_lock);
+	pf->ptp_link_up = false;
+
 	set_bit(ICE_FLAG_PTP, pf->flags);
 	dev_info(dev, "PTP init successful\n");
+
+	if (hw->func_caps.ts_func_info.master_tmr_owned && ice_is_generic_mac(hw))
+		ice_cgu_init_state(pf);
 	return;
 
 err_clk:
@@ -2948,6 +3562,7 @@ void ice_ptp_release(struct ice_pf *pf)
 		ice_clear_ptp_clock_index(pf);
 		ptp_clock_unregister(vsi->ptp_clock);
 		vsi->ptp_clock = NULL;
+		master_idx = MASTER_IDX_INVALID;
 		dev_info(ice_pf_to_dev(pf), "removed Clock from %s\n",
 			 dev_name);
 	}
@@ -2966,11 +3581,10 @@ void ice_clean_ptp_subtask(struct ice_pf *pf)
 		return;
 
 	ice_ptp_update_cached_systime(pf);
-	if (test_and_clear_bit(__ICE_PTP_TX_TS_READY, pf->state)) {
+	if (test_and_clear_bit(ICE_PTP_TX_TS_READY, pf->state)) {
 		if (ice_is_generic_mac(hw))
 			ice_ptp_tx_hwtstamp(pf);
 		else
 			ice_ptp_tx_hwtstamp_ext(pf);
 	}
-
 }

@@ -343,7 +343,7 @@ ice_vc_fdir_param_check(struct ice_vf *vf, u16 vsi_id)
 	if (!ice_vc_isvalid_vsi_id(vf, vsi_id))
 		return -EINVAL;
 
-	if (!pf->vsi[vf->lan_vsi_idx])
+	if (!ice_get_vf_vsi(vf))
 		return -EINVAL;
 
 	return 0;
@@ -629,7 +629,14 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_IP |
 					  ICE_FLOW_SEG_HDR_IPV4 |
 					  ICE_FLOW_SEG_HDR_IPV_OTHER);
-		} else if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
+		} else {
+			dev_dbg(dev, "Invalid tunnel type 0x%x for VF %d\n",
+				flow, vf->vf_id);
+			return -EINVAL;
+		}
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_OTHER:
+		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
 			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_EH |
 					  ICE_FLOW_SEG_HDR_GTPU_IP |
 					  ICE_FLOW_SEG_HDR_IPV4 |
@@ -645,7 +652,14 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_IP |
 					  ICE_FLOW_SEG_HDR_IPV6 |
 					  ICE_FLOW_SEG_HDR_IPV_OTHER);
-		} else if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
+		} else {
+			dev_dbg(dev, "Invalid tunnel type 0x%x for VF %d\n",
+				flow, vf->vf_id);
+			return -EINVAL;
+		}
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_IPV6_OTHER:
+		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
 			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_EH |
 					  ICE_FLOW_SEG_HDR_GTPU_IP |
 					  ICE_FLOW_SEG_HDR_IPV6 |
@@ -744,7 +758,7 @@ ice_vc_fdir_rem_prof(struct ice_vf *vf, enum ice_fltr_ptype flow, int tun)
 
 	vf_prof = fdir->fdir_prof[flow];
 
-	vf_vsi = pf->vsi[vf->lan_vsi_idx];
+	vf_vsi = ice_get_vf_vsi(vf);
 	if (!vf_vsi) {
 		dev_dbg(dev, "NULL vf %d vsi pointer\n", vf->vf_id);
 		return;
@@ -826,7 +840,7 @@ ice_vc_fdir_write_flow_prof(struct ice_vf *vf,
 	pf = vf->pf;
 	dev = ice_pf_to_dev(pf);
 	hw = &pf->hw;
-	vf_vsi = pf->vsi[vf->lan_vsi_idx];
+	vf_vsi = ice_get_vf_vsi(vf);
 	if (!vf_vsi)
 		return -EINVAL;
 
@@ -1356,6 +1370,12 @@ ice_vc_fdir_parse_pattern(struct ice_vf *vf,
 			break;
 		case VIRTCHNL_PROTO_HDR_GTPU_EH:
 			rawh = (u8 *)hdr->buffer;
+			if (input->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_OTHER)
+				input->flow_type =
+				    ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_OTHER;
+			else
+				input->flow_type =
+				    ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_IPV6_OTHER;
 
 			if (hdr->field_selector)
 				input->gtpu_data.qfi =
@@ -1653,7 +1673,7 @@ static int ice_vc_fdir_write_fltr(struct ice_vf *vf,
 	pf = vf->pf;
 	dev = ice_pf_to_dev(pf);
 	hw = &pf->hw;
-	vsi = pf->vsi[vf->lan_vsi_idx];
+	vsi = ice_get_vf_vsi(vf);
 	if (!vsi) {
 		dev_dbg(dev, "Invalid vsi for VF %d\n", vf->vf_id);
 		return -EINVAL;
@@ -1724,7 +1744,7 @@ static void ice_vf_fdir_timer(struct timer_list *t)
 	ctx_done->v_opcode = ctx_irq->v_opcode;
 	spin_unlock_irqrestore(&fdir->ctx_lock, flags);
 
-	set_bit(__ICE_FD_VF_FLUSH_CTX, pf->state);
+	set_bit(ICE_FD_VF_FLUSH_CTX, pf->state);
 	ice_service_task_schedule(pf);
 }
 
@@ -1772,7 +1792,7 @@ ice_vc_fdir_irq_handler(struct ice_vsi *ctrl_vsi,
 	if (!ret)
 		dev_err(dev, "VF %d: Unexpected inactive timer!\n", vf->vf_id);
 
-	set_bit(__ICE_FD_VF_FLUSH_CTX, pf->state);
+	set_bit(ICE_FD_VF_FLUSH_CTX, pf->state);
 	ice_service_task_schedule(pf);
 }
 
@@ -1792,7 +1812,7 @@ static void ice_vf_fdir_dump_info(struct ice_vf *vf)
 	pf = vf->pf;
 	hw = &pf->hw;
 	dev = ice_pf_to_dev(pf);
-	vf_vsi = pf->vsi[vf->lan_vsi_idx];
+	vf_vsi = ice_get_vf_vsi(vf);
 	vsi_num = ice_get_hw_vsi_num(hw, vf_vsi->idx);
 
 	fd_size = rd32(hw, VSIQF_FD_SIZE(vsi_num));
@@ -2026,7 +2046,7 @@ void ice_flush_fdir_ctx(struct ice_pf *pf)
 {
 	int i;
 
-	if (!test_and_clear_bit(__ICE_FD_VF_FLUSH_CTX, pf->state))
+	if (!test_and_clear_bit(ICE_FD_VF_FLUSH_CTX, pf->state))
 		return;
 
 	ice_for_each_vf(pf, i) {

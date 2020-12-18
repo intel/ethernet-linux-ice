@@ -93,9 +93,6 @@ ice_acl_set_ip4_seg(struct ice_flow_seg_info *seg,
 {
 	int err;
 
-	if (!seg)
-		return -EINVAL;
-
 	err = ice_ntuple_check_ip4_seg(tcp_ip4_spec);
 	if (err)
 		return err;
@@ -119,9 +116,6 @@ ice_acl_set_ip4_usr_seg(struct ice_flow_seg_info *seg,
 			struct ethtool_usrip4_spec *usr_ip4_spec)
 {
 	int err;
-
-	if (!seg)
-		return -EINVAL;
 
 	err = ice_ntuple_check_ip4_usr_seg(usr_ip4_spec);
 	if (err)
@@ -153,9 +147,6 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 	enum ice_status status;
 	struct device *dev;
 	int err;
-
-	if (!fsp)
-		return -EINVAL;
 
 	dev = ice_pf_to_dev(pf);
 	seg = devm_kzalloc(dev, sizeof(*seg), GFP_KERNEL);

@@ -112,11 +112,6 @@ VSP := $(foreach file, ${VSP}, ${test_file})
 CSP := $(foreach file, ${CSP}, ${test_file})
 MSP := $(foreach file, ${MSP}, ${test_file})
 
-ifneq ($(wildcard ./gcc-i-sys.sh),)
-GCC_I_SYS := $(call readlink,./gcc-i-sys.sh)
-$(shell chmod +x ${GCC_I_SYS})
-export REAL_CC := ${CC}
-endif
 
 # and use the first valid entry in the Search Paths
 ifeq (,${VERSION_FILE})
@@ -140,7 +135,7 @@ ifeq (,$(wildcard ${CONFIG_FILE}))
 endif
 
 ifeq (,$(wildcard ${SYSTEM_MAP_FILE}))
-  $(warning Missing System.map file - depmod will not check for missing symbols)
+  $(warning Missing System.map file - depmod will not check for missing symbols during module installation)
 endif
 
 ifneq ($(words $(subst :, ,$(CURDIR))), 1)

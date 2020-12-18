@@ -259,6 +259,12 @@ enum ice_status ptp_ts_enable(struct ice_pf *pf, int port, bool enable);
 int
 ice_ptp_cfg_periodic_clkout(struct ice_pf *pf, bool ena, unsigned int chan,
 			    u32 gpio_pin, u64 period, u64 start_time);
+enum ice_status
+ice_ptp_update_incval(struct ice_pf *pf, enum ice_time_ref_freq time_ref_freq,
+		      enum ice_mstr_tmr_mode mstr_tmr_mode);
+enum ice_status
+ice_ptp_get_incval(struct ice_pf *pf, enum ice_time_ref_freq *time_ref_freq,
+		   enum ice_mstr_tmr_mode *mstr_tmr_mode);
 #else /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
 static inline int
 ice_ptp_set_ts_config(struct ice_pf __always_unused *pf,
@@ -281,22 +287,20 @@ ice_ptp_check_rx_fifo(struct ice_pf __always_unused *pf,
 	return 0;
 }
 
-static inline int ice_get_ptp_clock_index(struct ice_pf __always_unused *pf)
-{
-	return 0;
-}
-
 static inline int ice_ptp_get_ts_idx(struct ice_vsi __always_unused *vsi)
 {
 	return 0;
 }
 
+static inline int ice_get_ptp_clock_index(struct ice_pf __always_unused *pf)
+{
+	return 0;
+}
 #define ice_clean_ptp_subtask(pf)			do {} while (0)
 #define ice_ptp_set_timestamp_offsets(pf)		do {} while (0)
 #define ice_ptp_rx_hwtstamp(r, d, s)			do {} while (0)
 #define ice_ptp_init(pf)				do {} while (0)
 #define ice_ptp_release(pf)				do {} while (0)
 #define ice_ptp_link_change(pf, port, linkup)		do {} while (0)
-#define ice_ptp_ts_ena_intr(d, e, i)			do {} while (0)
 #endif /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
 #endif /* _ICE_PTP_H_ */

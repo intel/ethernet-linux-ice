@@ -83,11 +83,9 @@ ice_write_tx_drbell_q_ctx(struct ice_hw *hw,
 			  u32 tx_drbell_q_index);
 
 enum ice_status
-ice_aq_get_rss_lut(struct ice_hw *hw, u16 vsi_handle, u8 lut_type, u8 *lut,
-		   u16 lut_size);
+ice_aq_get_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *get_params);
 enum ice_status
-ice_aq_set_rss_lut(struct ice_hw *hw, u16 vsi_handle, u8 lut_type, u8 *lut,
-		   u16 lut_size);
+ice_aq_set_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *set_params);
 enum ice_status
 ice_aq_get_rss_key(struct ice_hw *hw, u16 vsi_handle,
 		   struct ice_aqc_get_set_rss_keys *keys);
@@ -227,6 +225,10 @@ enum ice_status ice_sbq_rw_reg_lp(struct ice_hw *hw,
 void ice_sbq_lock(struct ice_hw *hw);
 void ice_sbq_unlock(struct ice_hw *hw);
 enum ice_status ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in);
+#ifdef FWLOG_SUPPORT
+enum ice_status ice_cfg_fw_log(struct ice_hw *hw, bool enable);
+void ice_output_fw_log(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf);
+#endif /* FWLOG_SUPPORT */
 void
 ice_stat_update40(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 		  u64 *prev_stat, u64 *cur_stat);
