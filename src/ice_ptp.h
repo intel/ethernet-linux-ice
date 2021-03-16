@@ -70,7 +70,6 @@ enum ice_ptp_fec_algo {
 /* PHY, quad and port definitions */
 #define INDEX_PER_QUAD			64
 #define INDEX_PER_PORT			(INDEX_PER_QUAD / ICE_PORTS_PER_QUAD)
-#define INDEX_PER_PORT_EXT		64
 #define TX_INTR_QUAD_MASK		0x03
 /* Per-channel register definitions */
 #define GLTSYN_AUX_OUT(_chan, _idx)	(GLTSYN_AUX_OUT_0(_idx) + ((_chan) * 8))
@@ -238,6 +237,9 @@ enum ice_ptp_fec_algo {
 #define LOW_TX_MEMORY_BANK_START	0x03090000
 #define HIGH_TX_MEMORY_BANK_START	0x03090004
 
+/* Time allowed for programming periodic clock output */
+#define START_OFFS_NS 100000000
+
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 struct ice_pf;
 int ice_ptp_set_ts_config(struct ice_pf *pf, struct ifreq *ifr);
@@ -247,42 +249,34 @@ int ice_get_ptp_clock_index(struct ice_pf *pf);
 
 void ice_clean_ptp_subtask(struct ice_pf *pf);
 void ice_ptp_set_timestamp_offsets(struct ice_pf *pf);
-u64 ice_ptp_read_master_clk_reg(struct ice_pf *pf);
-void
-ice_ptp_rx_hwtstamp(struct ice_ring *rx_ring,
-		    union ice_32b_rx_flex_desc *rx_desc, struct sk_buff *skb);
+u64 ice_ptp_read_src_clk_reg(struct ice_pf *pf);
+void ice_ptp_rx_hwtstamp(struct ice_ring *rx_ring, union ice_32b_rx_flex_desc *rx_desc,
+			 struct sk_buff *skb);
 void ice_ptp_init(struct ice_pf *pf);
 void ice_ptp_release(struct ice_pf *pf);
-enum ice_status ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup);
-enum ice_status ice_ptp_check_rx_fifo(struct ice_pf *pf, int port);
-enum ice_status ptp_ts_enable(struct ice_pf *pf, int port, bool enable);
-int
-ice_ptp_cfg_periodic_clkout(struct ice_pf *pf, bool ena, unsigned int chan,
-			    u32 gpio_pin, u64 period, u64 start_time);
-enum ice_status
-ice_ptp_update_incval(struct ice_pf *pf, enum ice_time_ref_freq time_ref_freq,
-		      enum ice_mstr_tmr_mode mstr_tmr_mode);
-enum ice_status
-ice_ptp_get_incval(struct ice_pf *pf, enum ice_time_ref_freq *time_ref_freq,
-		   enum ice_mstr_tmr_mode *mstr_tmr_mode);
+int ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup);
+int ice_ptp_check_rx_fifo(struct ice_pf *pf, int port);
+int ptp_ts_enable(struct ice_pf *pf, int port, bool enable);
+int ice_ptp_cfg_periodic_clkout(struct ice_pf *pf, bool ena, unsigned int chan, u32 gpio_pin,
+				u64 period, u64 start_time);
+int ice_ptp_update_incval(struct ice_pf *pf, enum ice_time_ref_freq time_ref_freq,
+			  enum ice_src_tmr_mode src_tmr_mode);
+int ice_ptp_get_incval(struct ice_pf *pf, enum ice_time_ref_freq *time_ref_freq,
+		       enum ice_src_tmr_mode *src_tmr_mode);
 #else /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
-static inline int
-ice_ptp_set_ts_config(struct ice_pf __always_unused *pf,
-		      struct ifreq __always_unused *ifr)
+static inline int ice_ptp_set_ts_config(struct ice_pf __always_unused *pf,
+					struct ifreq __always_unused *ifr)
 {
 	return 0;
 }
 
-static inline int
-ice_ptp_get_ts_config(struct ice_pf __always_unused *pf,
-		      struct ifreq __always_unused *ifr)
+static inline int ice_ptp_get_ts_config(struct ice_pf __always_unused *pf,
+					struct ifreq __always_unused *ifr)
 {
 	return 0;
 }
 
-static inline enum ice_status
-ice_ptp_check_rx_fifo(struct ice_pf __always_unused *pf,
-		      int __always_unused port)
+static inline int ice_ptp_check_rx_fifo(struct ice_pf __always_unused *pf, int __always_unused port)
 {
 	return 0;
 }

@@ -4,6 +4,7 @@
 #include "ice_base.h"
 #include "ice_lib.h"
 #include "ice_dcb_lib.h"
+#include "ice_virtchnl_pf.h"
 
 /**
  * __ice_vsi_get_qs_contig - Assign a contiguous chunk of queues to VSI
@@ -112,6 +113,9 @@ static int ice_vsi_alloc_q_vector(struct ice_vsi *vsi, u16 v_idx)
 	q_vector->v_idx = v_idx;
 	q_vector->tx.itr_setting = ICE_DFLT_TX_ITR;
 	q_vector->rx.itr_setting = ICE_DFLT_RX_ITR;
+	q_vector->tx.itr_mode = ITR_DYNAMIC;
+	q_vector->rx.itr_mode = ITR_DYNAMIC;
+
 	if (vsi->type == ICE_VSI_VF)
 		goto out;
 	/* only set affinity_mask if the CPU is online */
@@ -359,10 +363,24 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	/* Strip the Ethernet CRC bytes before the packet is posted to host
 	 * memory.
 	 */
-	rlan_ctx.crcstrip = 1;
+	rlan_ctx.crcstrip = ring->rx_crc_strip_dis ? 0 : 1;
 
-	/* L2TSEL flag defines the reported L2 Tags in the receive descriptor */
-	rlan_ctx.l2tsel = 1;
+	/* L2TSEL flag defines the reported L2 Tags in the receive descriptor
+	 * and it needs to remain 1 for non-DVM capable configurations to not
+	 * break backward compatibility for VF drivers. Setting this field to 0
+	 * will cause the single/outer VLAN tag to be stripped to the L2TAG2_2ND
+	 * field in the Rx descriptor. Setting it to 1 allows the VLAN tag to
+	 * be stripped in L2TAG1 of the Rx descriptor, which is where VFs will
+	 * check for the tag
+	 */
+	if (ice_is_dvm_ena(hw))
+		if (vsi->type == ICE_VSI_VF &&
+		    ice_vf_is_port_vlan_ena(&vsi->back->vf[vsi->vf_id]))
+			rlan_ctx.l2tsel = 1;
+		else
+			rlan_ctx.l2tsel = 0;
+	else
+		rlan_ctx.l2tsel = 1;
 
 	rlan_ctx.dtype = ICE_RX_DTYPE_NO_SPLIT;
 	rlan_ctx.hsplit_0 = ICE_RLAN_RX_HSPLIT_0_NO_SPLIT;
@@ -379,7 +397,7 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	 * multiple buffers, thus letting us skip that
 	 * handling in the fast-path.
 	 */
-	if (ring->xsk_umem)
+	if (ring->xsk_pool)
 		chain_len = 1;
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 	/* Max packet size for this queue - must not be set to a larger value
@@ -447,14 +465,15 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 		if (!xdp_rxq_info_is_reg(&ring->xdp_rxq))
 			/* coverity[check_return] */
 			xdp_rxq_info_reg(&ring->xdp_rxq, ring->netdev,
-					 ring->q_index);
+					 ring->q_index, ring->q_vector->napi.napi_id);
 
-		ring->xsk_umem = ice_xsk_umem(ring);
-		if (ring->xsk_umem) {
+		ring->xsk_pool = ice_xsk_umem(ring);
+		if (ring->xsk_pool) {
 			xdp_rxq_info_unreg_mem_model(&ring->xdp_rxq);
 
-			ring->rx_buf_len = ring->xsk_umem->chunk_size_nohr -
-					   XDP_PACKET_HEADROOM;
+			ring->rx_buf_len =
+				xsk_pool_get_rx_frame_size(ring->xsk_pool);
+#ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 			ring->zca.free = ice_zca_free;
 			err = xdp_rxq_info_reg_mem_model(&ring->xdp_rxq,
 							 MEM_TYPE_ZERO_COPY,
@@ -464,13 +483,26 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 
 			dev_info(dev, "Registered XDP mem model MEM_TYPE_ZERO_COPY on Rx ring %d\n",
 				 ring->q_index);
+#else
+			err = xdp_rxq_info_reg_mem_model(&ring->xdp_rxq,
+							 MEM_TYPE_XSK_BUFF_POOL,
+							 NULL);
+			if (err)
+				return err;
+			xsk_pool_set_rxq_info(ring->xsk_pool, &ring->xdp_rxq);
+
+			dev_info(dev, "Registered XDP mem model MEM_TYPE_XSK_BUFF_POOL on Rx ring %d\n",
+				 ring->q_index);
+#endif
 		} else {
+#ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 			ring->zca.free = NULL;
+#endif
 			if (!xdp_rxq_info_is_reg(&ring->xdp_rxq))
 				/* coverity[check_return] */
 				xdp_rxq_info_reg(&ring->xdp_rxq,
 						 ring->netdev,
-						 ring->q_index);
+						 ring->q_index, ring->q_vector->napi.napi_id);
 
 			err = xdp_rxq_info_reg_mem_model(&ring->xdp_rxq,
 							 MEM_TYPE_PAGE_SHARED,
@@ -484,7 +516,7 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 		if (!xdp_rxq_info_is_reg(&ring->xdp_rxq))
 			/* coverity[check_return] */
 			xdp_rxq_info_reg(&ring->xdp_rxq, ring->netdev,
-					 ring->q_index);
+					 ring->q_index, ring->q_vector->napi.napi_id);
 
 		err = xdp_rxq_info_reg_mem_model(&ring->xdp_rxq,
 						 MEM_TYPE_PAGE_SHARED, NULL);
@@ -501,9 +533,9 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 	}
 
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
-	if (ring->xsk_umem) {
+	if (ring->xsk_pool) {
 #ifdef HAVE_XSK_UMEM_HAS_ADDRS
-		if (!xsk_umem_has_addrs_rq(ring->xsk_umem, num_bufs)) {
+		if (!xsk_umem_has_addrs_rq(ring->xsk_pool, num_bufs)) {
 			dev_warn(dev, "UMEM does not provide enough addresses to fill %d buffers on Rx ring %d\n",
 				 num_bufs, ring->q_index);
 			dev_warn(dev, "Change Rx ring/fill queue size to avoid performance issues\n");
@@ -512,7 +544,11 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 		}
 #endif /* HAVE_XSK_UMEM_HAS_ADDRS */
 
+#ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 		err = ice_alloc_rx_bufs_slow_zc(ring, num_bufs);
+#else
+		err = ice_alloc_rx_bufs_zc(ring, ICE_DESC_UNUSED(ring));
+#endif
 		if (err) {
 			u16 pf_q = ring->vsi->rxq_map[ring->q_index];
 
@@ -795,25 +831,13 @@ void ice_cfg_itr(struct ice_hw *hw, struct ice_q_vector *q_vector)
 {
 	ice_cfg_itr_gran(hw);
 
-	if (q_vector->num_ring_rx) {
-		struct ice_ring_container *rc = &q_vector->rx;
+	if (q_vector->num_ring_rx)
+		ice_write_itr(&q_vector->rx, q_vector->rx.itr_setting);
 
-		rc->target_itr = ITR_TO_REG(rc->itr_setting);
-		rc->next_update = jiffies + 1;
-		rc->current_itr = rc->target_itr;
-		wr32(hw, GLINT_ITR(rc->itr_idx, q_vector->reg_idx),
-		     ITR_REG_ALIGN(rc->current_itr) >> ICE_ITR_GRAN_S);
-	}
+	if (q_vector->num_ring_tx)
+		ice_write_itr(&q_vector->tx, q_vector->tx.itr_setting);
 
-	if (q_vector->num_ring_tx) {
-		struct ice_ring_container *rc = &q_vector->tx;
-
-		rc->target_itr = ITR_TO_REG(rc->itr_setting);
-		rc->next_update = jiffies + 1;
-		rc->current_itr = rc->target_itr;
-		wr32(hw, GLINT_ITR(rc->itr_idx, q_vector->reg_idx),
-		     ITR_REG_ALIGN(rc->current_itr) >> ICE_ITR_GRAN_S);
-	}
+	ice_write_intrl(q_vector, q_vector->intrl);
 }
 
 /**

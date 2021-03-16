@@ -80,7 +80,7 @@ enum ice_close_reason {
 	ICE_REASON_HW_UNRESPONSIVE,
 	ICE_REASON_INTERFACE_DOWN, /* Administrative down */
 	ICE_REASON_PEER_DRV_UNREG, /* peer driver getting unregistered */
-	ICE_REASON_PEER_DEV_UNINIT,
+	ICE_REASON_PEER_OBJ_UNINIT,
 	ICE_REASON_GLOBR_REQ,
 	ICE_REASON_CORER_REQ,
 	ICE_REASON_EMPR_REQ,
@@ -114,8 +114,8 @@ struct ice_dcb_app_info {
 	u16 prot_id;
 };
 
-struct ice_peer_dev;
-struct ice_peer_dev_int;
+struct ice_peer_obj;
+struct ice_peer_obj_int;
 
 #define ICE_IDC_MAX_USER_PRIORITY        8
 #define ICE_IDC_MAX_APPS        8
@@ -132,12 +132,12 @@ enum ice_time_ref_freq {
 	NUM_ICE_TIME_REF_FREQ
 };
 
-/* Master timer mode */
-enum ice_mstr_tmr_mode {
-	ICE_MSTR_TMR_MODE_NANOSECONDS,
-	ICE_MSTR_TMR_MODE_LOCKED,
+/* Source timer mode */
+enum ice_src_tmr_mode {
+	ICE_SRC_TMR_MODE_NANOSECONDS,
+	ICE_SRC_TMR_MODE_LOCKED,
 
-	NUM_ICE_MSTR_TMR_MODE
+	NUM_ICE_SRC_TMR_MODE
 };
 
 
@@ -229,7 +229,7 @@ union ice_event_info {
  * generated or peer generated).
  *
  * For (un)registering for events, the structure needs to be populated with:
- *   reporter - pointer to the ice_peer_dev struct of the peer (un)registering
+ *   reporter - pointer to the ice_peer_obj struct of the peer (un)registering
  *   type - bitmap with bits set for event types to (un)register for
  *
  * For reporting events, the structure needs to be populated with:
@@ -238,7 +238,7 @@ union ice_event_info {
  *   info - union containing data relevant to this event type
  */
 struct ice_event {
-	struct ice_peer_dev *reporter;
+	struct ice_peer_obj *reporter;
 	DECLARE_BITMAP(type, ICE_EVENT_NBITS);
 	union ice_event_info info;
 };
@@ -248,35 +248,35 @@ struct ice_ops {
 	/* APIs to allocate resources such as VEB, VSI, Doorbell queues,
 	 * completion queues, Tx/Rx queues, etc...
 	 */
-	int (*alloc_res)(struct ice_peer_dev *peer_dev,
+	int (*alloc_res)(struct ice_peer_obj *peer_obj,
 			 struct ice_res *res,
 			 int partial_acceptable);
-	int (*free_res)(struct ice_peer_dev *peer_dev,
+	int (*free_res)(struct ice_peer_obj *peer_obj,
 			struct ice_res *res);
 
-	int (*is_vsi_ready)(struct ice_peer_dev *peer_dev);
-	int (*peer_register)(struct ice_peer_dev *peer_dev);
-	int (*peer_unregister)(struct ice_peer_dev *peer_dev);
-	int (*request_reset)(struct ice_peer_dev *dev,
+	int (*is_vsi_ready)(struct ice_peer_obj *peer_obj);
+	int (*peer_register)(struct ice_peer_obj *peer_obj);
+	int (*peer_unregister)(struct ice_peer_obj *peer_obj);
+	int (*request_reset)(struct ice_peer_obj *obj,
 			     enum ice_peer_reset_type reset_type);
 
-	void (*notify_state_change)(struct ice_peer_dev *dev,
+	void (*notify_state_change)(struct ice_peer_obj *obj,
 				    struct ice_event *event);
 
 	/* Notification APIs */
-	void (*reg_for_notification)(struct ice_peer_dev *dev,
+	void (*reg_for_notification)(struct ice_peer_obj *obj,
 				     struct ice_event *event);
-	void (*unreg_for_notification)(struct ice_peer_dev *dev,
+	void (*unreg_for_notification)(struct ice_peer_obj *obj,
 				       struct ice_event *event);
-	int (*update_vsi_filter)(struct ice_peer_dev *peer_dev,
+	int (*update_vsi_filter)(struct ice_peer_obj *peer_obj,
 				 enum ice_rdma_filter filter, bool enable);
-	int (*vc_send)(struct ice_peer_dev *peer_dev, u32 vf_id, u8 *msg,
+	int (*vc_send)(struct ice_peer_obj *peer_obj, u32 vf_id, u8 *msg,
 		       u16 len);
 };
 
 /* Following APIs are implemented by peer drivers and invoked by ICE driver */
 struct ice_peer_ops {
-	void (*event_handler)(struct ice_peer_dev *peer_dev,
+	void (*event_handler)(struct ice_peer_obj *peer_obj,
 			      struct ice_event *event);
 
 	/* Why we have 'open' and when it is expected to be called:
@@ -285,12 +285,12 @@ struct ice_peer_ops {
 	 *     - call peer_driver:open once ice driver is fully initialized
 	 * 3. To be invoked upon RESET complete
 	 *
-	 * Calls to open are performed from ice_finish_init_peer_device
-	 * which is invoked from the service task. This helps keep devices
+	 * Calls to open are performed from ice_finish_init_peer_obj
+	 * which is invoked from the service task. This helps keep objects
 	 * from having their open called until the ice driver is ready and
 	 * has scheduled its service task.
 	 */
-	int (*open)(struct ice_peer_dev *peer_dev);
+	int (*open)(struct ice_peer_obj *peer_obj);
 
 	/* Peer's close function is to be called when the peer needs to be
 	 * quiesced. This can be for a variety of reasons (enumerated in the
@@ -303,27 +303,27 @@ struct ice_peer_ops {
 	 * It's primary reason is for the peer's bookkeeping and in case the
 	 * peer want to perform any different tasks dictated by the reason.
 	 */
-	void (*close)(struct ice_peer_dev *peer_dev,
+	void (*close)(struct ice_peer_obj *peer_obj,
 		      enum ice_close_reason reason);
 
-	int (*vc_receive)(struct ice_peer_dev *peer_dev, u32 vf_id, u8 *msg,
+	int (*vc_receive)(struct ice_peer_obj *peer_obj, u32 vf_id, u8 *msg,
 			  u16 len);
 	/* tell RDMA peer to prepare for TC change in a blocking call
 	 * that will directly precede the change event
 	 */
-	void (*prep_tc_change)(struct ice_peer_dev *peer_dev);
+	void (*prep_tc_change)(struct ice_peer_obj *peer_obj);
 };
 
 #define ICE_PEER_RDMA_NAME	"ice_rdma"
 #define ICE_PEER_RDMA_ID	0x00000010
 #define ICE_MAX_NUM_PEERS	4
 
-/* The const struct that instantiates peer_dev_id needs to be initialized
+/* The const struct that instantiates peer_obj_id needs to be initialized
  * in the .c with the macro ASSIGN_PEER_INFO.
  * For example:
- * static const struct peer_dev_id peer_dev_ids[] = ASSIGN_PEER_INFO;
+ * static const struct peer_obj_id peer_obj_ids[] = ASSIGN_PEER_INFO;
  */
-struct peer_dev_id {
+struct peer_obj_id {
 	char *name;
 	int id;
 };
@@ -345,15 +345,15 @@ struct peer_dev_id {
 
 #define ice_peer_priv(x) ((x)->peer_priv)
 
-/* structure representing peer device */
-struct ice_peer_dev {
+/* structure representing peer_object */
+struct ice_peer_obj {
 	struct ice_ver_info ver;
 	struct pci_dev *pdev; /* PCI device of corresponding to main function */
 	/* KVA / Linear address corresponding to BAR0 of underlying
 	 * pci_device.
 	 */
 	u8 __iomem *hw_addr;
-	int peer_dev_id;
+	int peer_obj_id;
 
 	int index;
 
@@ -363,7 +363,7 @@ struct ice_peer_dev {
 	 * when this struct is passed to the peer via an IDC call, the data
 	 * can be accessed by the peer at that time.
 	 * The peers should only retrieve the pointer by the macro:
-	 *    ice_peer_priv(struct ice_peer_dev *)
+	 *    ice_peer_priv(struct ice_peer_obj *)
 	 */
 	void *peer_priv;
 
@@ -405,8 +405,8 @@ struct ice_peer_dev {
 	struct ice_peer_drv *peer_drv;
 };
 
-struct ice_peer_dev_platform_data {
-	struct ice_peer_dev *peer_dev;
+struct ice_peer_obj_platform_data {
+	struct ice_peer_obj *peer_obj;
 };
 
 /* structure representing peer driver

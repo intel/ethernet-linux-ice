@@ -6,6 +6,7 @@
 #include "ice_lib.h"
 #include "ice_fltr.h"
 #include "ice_dcb_lib.h"
+#include "ice_ptp.h"
 
 DEFINE_IDA(ice_peer_index_ida);
 
@@ -25,8 +26,7 @@ static bool ice_is_vsi_state_nominal(struct ice_vsi *vsi)
 		return false;
 
 	if (test_bit(ICE_VSI_DOWN, vsi->state) ||
-	    test_bit(ICE_VSI_NEEDS_RESTART, vsi->state) ||
-	    test_bit(ICE_VSI_BUSY, vsi->state))
+	    test_bit(ICE_VSI_NEEDS_RESTART, vsi->state))
 		return false;
 
 	return true;
@@ -35,11 +35,12 @@ static bool ice_is_vsi_state_nominal(struct ice_vsi *vsi)
 
 /**
  * ice_peer_state_change - manage state machine for peer
- * @peer_dev: pointer to peer's configuration
+ * @peer_obj: pointer to peer's configuration
  * @new_state: the state requested to transition into
  * @locked: boolean to determine if call made with mutex held
  *
- * This function handles all state transitions for peer devices.
+ * This function handles all state transitions for peer objects.
+ *
  * The state machine is as follows:
  *
  *     +<-----------------------+<-----------------------------+
@@ -58,115 +59,115 @@ static bool ice_is_vsi_state_nominal(struct ice_vsi *vsi)
  * to REMOVED.
  */
 static void
-ice_peer_state_change(struct ice_peer_dev_int *peer_dev, long new_state,
+ice_peer_state_change(struct ice_peer_obj_int *peer_obj, long new_state,
 		      bool locked)
 {
 	struct device *dev;
 
 	dev = bus_find_device_by_name(&platform_bus_type, NULL,
-				      peer_dev->plat_name);
+				      peer_obj->plat_name);
 
 	if (!locked)
-		mutex_lock(&peer_dev->peer_dev_state_mutex);
+		mutex_lock(&peer_obj->peer_obj_state_mutex);
 
 	switch (new_state) {
-	case ICE_PEER_DEV_STATE_INIT:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_REMOVED,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_INIT, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_INIT:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_REMOVED,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_INIT, peer_obj->state);
 			dev_dbg(dev, "state transition from _REMOVED to _INIT\n");
 		} else {
-			set_bit(ICE_PEER_DEV_STATE_INIT, peer_dev->state);
+			set_bit(ICE_PEER_OBJ_STATE_INIT, peer_obj->state);
 			if (dev)
 				dev_dbg(dev, "state set to _INIT\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_PROBED:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_INIT,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_PROBED, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_PROBED:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_INIT,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_PROBED, peer_obj->state);
 			dev_dbg(dev, "state transition from _INIT to _PROBED\n");
-		} else if (test_and_clear_bit(ICE_PEER_DEV_STATE_REMOVED,
-					      peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_PROBED, peer_dev->state);
+		} else if (test_and_clear_bit(ICE_PEER_OBJ_STATE_REMOVED,
+					      peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_PROBED, peer_obj->state);
 			dev_dbg(dev, "state transition from _REMOVED to _PROBED\n");
-		} else if (test_and_clear_bit(ICE_PEER_DEV_STATE_OPENING,
-					      peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_PROBED, peer_dev->state);
+		} else if (test_and_clear_bit(ICE_PEER_OBJ_STATE_OPENING,
+					      peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_PROBED, peer_obj->state);
 			dev_dbg(dev, "state transition from _OPENING to _PROBED\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_OPENING:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_PROBED,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_OPENING, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_OPENING:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_PROBED,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_OPENING, peer_obj->state);
 			dev_dbg(dev, "state transition from _PROBED to _OPENING\n");
-		} else if (test_and_clear_bit(ICE_PEER_DEV_STATE_CLOSED,
-					      peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_OPENING, peer_dev->state);
+		} else if (test_and_clear_bit(ICE_PEER_OBJ_STATE_CLOSED,
+					      peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_OPENING, peer_obj->state);
 			dev_dbg(dev, "state transition from _CLOSED to _OPENING\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_OPENED:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_OPENING,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_OPENED, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_OPENED:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_OPENING,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_OPENED, peer_obj->state);
 			dev_dbg(dev, "state transition from _OPENING to _OPENED\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_PREP_RST:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_OPENED,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_PREP_RST, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_PREP_RST:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_OPENED,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_PREP_RST, peer_obj->state);
 			dev_dbg(dev, "state transition from _OPENED to _PREP_RST\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_PREPPED:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_PREP_RST,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_PREPPED, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_PREPPED:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_PREP_RST,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_PREPPED, peer_obj->state);
 			dev_dbg(dev, "state transition _PREP_RST to _PREPPED\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_CLOSING:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_OPENED,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_CLOSING, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_CLOSING:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_OPENED,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_CLOSING, peer_obj->state);
 			dev_dbg(dev, "state transition from _OPENED to _CLOSING\n");
 		}
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_PREPPED,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_CLOSING, peer_dev->state);
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_PREPPED,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_CLOSING, peer_obj->state);
 			dev_dbg(dev, "state transition _PREPPED to _CLOSING\n");
 		}
 		/* NOTE - up to peer to handle this situation correctly */
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_PREP_RST,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_CLOSING, peer_dev->state);
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_PREP_RST,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_CLOSING, peer_obj->state);
 			dev_warn(dev,
 				 "WARN: Peer state _PREP_RST to _CLOSING\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_CLOSED:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_CLOSING,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_CLOSED, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_CLOSED:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_CLOSING,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_CLOSED, peer_obj->state);
 			dev_dbg(dev, "state transition from _CLOSING to _CLOSED\n");
 		}
 		break;
-	case ICE_PEER_DEV_STATE_REMOVED:
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_OPENED,
-				       peer_dev->state) ||
-		    test_and_clear_bit(ICE_PEER_DEV_STATE_CLOSED,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_REMOVED, peer_dev->state);
+	case ICE_PEER_OBJ_STATE_REMOVED:
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_OPENED,
+				       peer_obj->state) ||
+		    test_and_clear_bit(ICE_PEER_OBJ_STATE_CLOSED,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_REMOVED, peer_obj->state);
 			dev_dbg(dev, "state from _OPENED/_CLOSED to _REMOVED\n");
 			/* Clear registration for events when peer removed */
-			bitmap_zero(peer_dev->events, ICE_PEER_DEV_STATE_NBITS);
+			bitmap_zero(peer_obj->events, ICE_PEER_OBJ_STATE_NBITS);
 		}
-		if (test_and_clear_bit(ICE_PEER_DEV_STATE_OPENING,
-				       peer_dev->state)) {
-			set_bit(ICE_PEER_DEV_STATE_REMOVED, peer_dev->state);
+		if (test_and_clear_bit(ICE_PEER_OBJ_STATE_OPENING,
+				       peer_obj->state)) {
+			set_bit(ICE_PEER_OBJ_STATE_REMOVED, peer_obj->state);
 			dev_warn(dev, "Peer failed to open, set to _REMOVED");
 		}
 		break;
@@ -175,183 +176,164 @@ ice_peer_state_change(struct ice_peer_dev_int *peer_dev, long new_state,
 	}
 
 	if (!locked)
-		mutex_unlock(&peer_dev->peer_dev_state_mutex);
+		mutex_unlock(&peer_obj->peer_obj_state_mutex);
 
 	put_device(dev);
 }
 
 /**
- * ice_peer_close - close a peer device
- * @peer_dev_int: device to close
+ * ice_peer_close - close a peer object
+ * @peer_obj_int: peer object to close
  * @data: pointer to opaque data
  *
  * This function will also set the state bit for the peer to CLOSED. This
  * function is meant to be called from a ice_for_each_peer().
  */
-int ice_peer_close(struct ice_peer_dev_int *peer_dev_int, void *data)
+int ice_peer_close(struct ice_peer_obj_int *peer_obj_int, void *data)
 {
 	enum ice_close_reason reason = *(enum ice_close_reason *)(data);
-	struct ice_peer_dev *peer_dev;
+	struct ice_peer_obj *peer_obj;
 	struct ice_pf *pf;
 	int i;
 
-	peer_dev = ice_get_peer_dev(peer_dev_int);
+	peer_obj = ice_get_peer_obj(peer_obj_int);
 	/* return 0 so ice_for_each_peer will continue closing other peers */
-	if (!ice_validate_peer_dev(peer_dev))
+	if (!ice_validate_peer_obj(peer_obj))
 		return 0;
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 
 	if (test_bit(ICE_DOWN, pf->state) ||
 	    test_bit(ICE_SUSPENDED, pf->state) ||
 	    test_bit(ICE_NEEDS_RESTART, pf->state))
 		return 0;
 
-	mutex_lock(&peer_dev_int->peer_dev_state_mutex);
+	mutex_lock(&peer_obj_int->peer_obj_state_mutex);
 
 	/* no peer driver, already closed, closing or opening nothing to do */
-	if (test_bit(ICE_PEER_DEV_STATE_CLOSED, peer_dev_int->state) ||
-	    test_bit(ICE_PEER_DEV_STATE_CLOSING, peer_dev_int->state) ||
-	    test_bit(ICE_PEER_DEV_STATE_OPENING, peer_dev_int->state) ||
-	    test_bit(ICE_PEER_DEV_STATE_PROBED, peer_dev_int->state) ||
-	    test_bit(ICE_PEER_DEV_STATE_REMOVED, peer_dev_int->state))
+	if (test_bit(ICE_PEER_OBJ_STATE_CLOSED, peer_obj_int->state) ||
+	    test_bit(ICE_PEER_OBJ_STATE_CLOSING, peer_obj_int->state) ||
+	    test_bit(ICE_PEER_OBJ_STATE_OPENING, peer_obj_int->state) ||
+	    test_bit(ICE_PEER_OBJ_STATE_PROBED, peer_obj_int->state) ||
+	    test_bit(ICE_PEER_OBJ_STATE_REMOVED, peer_obj_int->state))
 		goto peer_close_out;
 
 	/* Set the peer state to CLOSING */
-	ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_CLOSING, true);
+	ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_CLOSING, true);
 
 	for (i = 0; i < ICE_EVENT_NBITS; i++)
-		bitmap_zero(peer_dev_int->current_events[i].type,
+		bitmap_zero(peer_obj_int->current_events[i].type,
 			    ICE_EVENT_NBITS);
 
-	if (peer_dev->peer_ops && peer_dev->peer_ops->close)
-		peer_dev->peer_ops->close(peer_dev, reason);
+	if (peer_obj->peer_ops && peer_obj->peer_ops->close)
+		peer_obj->peer_ops->close(peer_obj, reason);
 
 	/* Set the peer state to CLOSED */
-	ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_CLOSED, true);
+	ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_CLOSED, true);
 
 peer_close_out:
-	mutex_unlock(&peer_dev_int->peer_dev_state_mutex);
+	mutex_unlock(&peer_obj_int->peer_obj_state_mutex);
 
 	return 0;
 }
-
-/**
- * ice_peer_update_vsi - update the pf_vsi info in peer_dev struct
- * @peer_dev_int: pointer to peer dev internal struct
- * @data: opaque pointer - VSI to be updated
- */
-int ice_peer_update_vsi(struct ice_peer_dev_int *peer_dev_int, void *data)
-{
-	struct ice_vsi *vsi = (struct ice_vsi *)data;
-	struct ice_peer_dev *peer_dev;
-
-	peer_dev = ice_get_peer_dev(peer_dev_int);
-	if (!peer_dev)
-		return 0;
-
-	peer_dev->pf_vsi_num = vsi->vsi_num;
-	return 0;
-}
-
 
 /**
  * ice_close_peer_for_reset - queue work to close peer for reset
- * @peer_dev_int: pointer peer dev internal struct
+ * @peer_obj_int: pointer peer object internal struct
  * @data: pointer to opaque data used for reset type
  */
-int ice_close_peer_for_reset(struct ice_peer_dev_int *peer_dev_int, void *data)
+int ice_close_peer_for_reset(struct ice_peer_obj_int *peer_obj_int, void *data)
 {
-	struct ice_peer_dev *peer_dev;
+	struct ice_peer_obj *peer_obj;
 	enum ice_reset_req reset;
 
-	peer_dev = ice_get_peer_dev(peer_dev_int);
-	if (!ice_validate_peer_dev(peer_dev) ||
-	    (!test_bit(ICE_PEER_DEV_STATE_OPENED, peer_dev_int->state) &&
-	     !test_bit(ICE_PEER_DEV_STATE_PREPPED, peer_dev_int->state)))
+	peer_obj = ice_get_peer_obj(peer_obj_int);
+	if (!ice_validate_peer_obj(peer_obj) ||
+	    (!test_bit(ICE_PEER_OBJ_STATE_OPENED, peer_obj_int->state) &&
+	     !test_bit(ICE_PEER_OBJ_STATE_PREPPED, peer_obj_int->state)))
 		return 0;
 
 	reset = *(enum ice_reset_req *)data;
 
 	switch (reset) {
 	case ICE_RESET_EMPR:
-		peer_dev_int->rst_type = ICE_REASON_EMPR_REQ;
+		peer_obj_int->rst_type = ICE_REASON_EMPR_REQ;
 		break;
 	case ICE_RESET_GLOBR:
-		peer_dev_int->rst_type = ICE_REASON_GLOBR_REQ;
+		peer_obj_int->rst_type = ICE_REASON_GLOBR_REQ;
 		break;
 	case ICE_RESET_CORER:
-		peer_dev_int->rst_type = ICE_REASON_CORER_REQ;
+		peer_obj_int->rst_type = ICE_REASON_CORER_REQ;
 		break;
 	case ICE_RESET_PFR:
-		peer_dev_int->rst_type = ICE_REASON_PFR_REQ;
+		peer_obj_int->rst_type = ICE_REASON_PFR_REQ;
 		break;
 	default:
 		/* reset type is invalid */
 		return 1;
 	}
-	queue_work(peer_dev_int->ice_peer_wq, &peer_dev_int->peer_close_task);
+	queue_work(peer_obj_int->ice_peer_wq, &peer_obj_int->peer_close_task);
 	return 0;
 }
 
 /**
  * ice_check_peer_drv_for_events - check peer_drv for events to report
- * @peer_dev: peer device to report to
+ * @peer_obj: peer object to report to
  */
-static void ice_check_peer_drv_for_events(struct ice_peer_dev *peer_dev)
+static void ice_check_peer_drv_for_events(struct ice_peer_obj *peer_obj)
 {
-	const struct ice_peer_ops *p_ops = peer_dev->peer_ops;
-	struct ice_peer_dev_int *peer_dev_int;
+	const struct ice_peer_ops *p_ops = peer_obj->peer_ops;
+	struct ice_peer_obj_int *peer_obj_int;
 	struct ice_peer_drv_int *peer_drv_int;
 	int i;
 
-	peer_dev_int = peer_to_ice_dev_int(peer_dev);
-	if (!peer_dev_int)
+	peer_obj_int = peer_to_ice_obj_int(peer_obj);
+	if (!peer_obj_int)
 		return;
-	peer_drv_int = peer_dev_int->peer_drv_int;
+	peer_drv_int = peer_obj_int->peer_drv_int;
 
-	for_each_set_bit(i, peer_dev_int->events, ICE_EVENT_NBITS) {
+	for_each_set_bit(i, peer_obj_int->events, ICE_EVENT_NBITS) {
 		struct ice_event *curr = &peer_drv_int->current_events[i];
 
 		if (!bitmap_empty(curr->type, ICE_EVENT_NBITS) &&
 		    p_ops->event_handler)
-			p_ops->event_handler(peer_dev, curr);
+			p_ops->event_handler(peer_obj, curr);
 	}
 }
 
 /**
- * ice_check_peer_for_events - check peer_devs for events new peer reg'd for
+ * ice_check_peer_for_events - check peer_objs for events new peer reg'd for
  * @src_peer_int: peer to check for events
  * @data: ptr to opaque data, to be used for the peer struct that opened
  *
- * This function is to be called when a peer device is opened.
+ * This function is to be called when a peer object is opened.
  *
  * Since a new peer opening would have missed any events that would
  * have happened before its opening, we need to walk the peers and see
  * if any of them have events that the new peer cares about
  *
- * This function is meant to be called by a device_for_each_child.
+ * This function is meant to be called by a ice_for_each_peer.
  */
 static int
-ice_check_peer_for_events(struct ice_peer_dev_int *src_peer_int, void *data)
+ice_check_peer_for_events(struct ice_peer_obj_int *src_peer_int, void *data)
 {
-	struct ice_peer_dev *new_peer = (struct ice_peer_dev *)data;
+	struct ice_peer_obj *new_peer = (struct ice_peer_obj *)data;
 	const struct ice_peer_ops *p_ops = new_peer->peer_ops;
-	struct ice_peer_dev_int *new_peer_int;
-	struct ice_peer_dev *src_peer;
+	struct ice_peer_obj_int *new_peer_int;
+	struct ice_peer_obj *src_peer;
 	unsigned long i;
 
-	src_peer = ice_get_peer_dev(src_peer_int);
-	if (!ice_validate_peer_dev(new_peer) ||
-	    !ice_validate_peer_dev(src_peer))
+	src_peer = ice_get_peer_obj(src_peer_int);
+	if (!ice_validate_peer_obj(new_peer) ||
+	    !ice_validate_peer_obj(src_peer))
 		return 0;
 
-	new_peer_int = peer_to_ice_dev_int(new_peer);
+	new_peer_int = peer_to_ice_obj_int(new_peer);
 
 	for_each_set_bit(i, new_peer_int->events, ICE_EVENT_NBITS) {
 		struct ice_event *curr = &src_peer_int->current_events[i];
 
 		if (!bitmap_empty(curr->type, ICE_EVENT_NBITS) &&
-		    new_peer->peer_dev_id != src_peer->peer_dev_id &&
+		    new_peer->peer_obj_id != src_peer->peer_obj_id &&
 		    p_ops->event_handler)
 			p_ops->event_handler(new_peer, curr);
 	}
@@ -360,14 +342,14 @@ ice_check_peer_for_events(struct ice_peer_dev_int *src_peer_int, void *data)
 }
 
 /**
- * ice_for_each_peer - iterate across and call function for each peer dev
+ * ice_for_each_peer - iterate across and call function for each peer obj
  * @pf: pointer to private board struct
  * @data: data to pass to function on each call
  * @fn: pointer to function to call for each peer
  */
 int
 ice_for_each_peer(struct ice_pf *pf, void *data,
-		  int (*fn)(struct ice_peer_dev_int *, void *))
+		  int (*fn)(struct ice_peer_obj_int *, void *))
 {
 	unsigned int i;
 
@@ -375,11 +357,11 @@ ice_for_each_peer(struct ice_pf *pf, void *data,
 		return 0;
 
 	for (i = 0; i < ARRAY_SIZE(ice_mfd_cells); i++) {
-		struct ice_peer_dev_int *peer_dev_int;
+		struct ice_peer_obj_int *peer_obj_int;
 
-		peer_dev_int = pf->peers[i];
-		if (peer_dev_int) {
-			int ret = fn(peer_dev_int, data);
+		peer_obj_int = pf->peers[i];
+		if (peer_obj_int) {
+			int ret = fn(peer_obj_int, data);
 
 			if (ret)
 				return ret;
@@ -390,49 +372,49 @@ ice_for_each_peer(struct ice_pf *pf, void *data,
 }
 
 /**
- * ice_finish_init_peer_device - complete peer device initialization
- * @peer_dev_int: ptr to peer device internal struct
+ * ice_finish_init_peer_obj - complete peer object initialization
+ * @peer_obj_int: ptr to peer object internal struct
  * @data: ptr to opaque data
  *
- * This function completes remaining initialization of peer_devices
+ * This function completes remaining initialization of peer objects
  */
 int
-ice_finish_init_peer_device(struct ice_peer_dev_int *peer_dev_int,
-			    void __always_unused *data)
+ice_finish_init_peer_obj(struct ice_peer_obj_int *peer_obj_int,
+			 void __always_unused *data)
 {
-	struct ice_peer_dev *peer_dev;
+	struct ice_peer_obj *peer_obj;
 	struct ice_peer_drv *peer_drv;
 	struct device *dev;
 	struct ice_pf *pf;
 	int ret = 0;
 
-	peer_dev = ice_get_peer_dev(peer_dev_int);
-	/* peer_dev will not always be populated at the time of this check */
-	if (!ice_validate_peer_dev(peer_dev))
+	peer_obj = ice_get_peer_obj(peer_obj_int);
+	/* peer_obj will not always be populated at the time of this check */
+	if (!ice_validate_peer_obj(peer_obj))
 		return ret;
 
-	peer_drv = peer_dev->peer_drv;
-	pf = pci_get_drvdata(peer_dev->pdev);
+	peer_drv = peer_obj->peer_drv;
+	pf = pci_get_drvdata(peer_obj->pdev);
 	dev = ice_pf_to_dev(pf);
-	/* There will be several assessments of the peer_dev's state in this
-	 * chunk of logic.  We need to hold the peer_dev_int's state mutex
+	/* There will be several assessments of the peer_obj's state in this
+	 * chunk of logic.  We need to hold the peer_obj_int's state mutex
 	 * for the entire part so that the flow progresses without another
 	 * context changing things mid-flow
 	 */
-	mutex_lock(&peer_dev_int->peer_dev_state_mutex);
+	mutex_lock(&peer_obj_int->peer_obj_state_mutex);
 
-	if (!peer_dev->peer_ops) {
-		dev_err(dev, "peer_ops not defined on peer dev\n");
+	if (!peer_obj->peer_ops) {
+		dev_err(dev, "peer_ops not defined in peer obj\n");
 		goto init_unlock;
 	}
 
-	if (!peer_dev->peer_ops->open) {
-		dev_err(dev, "peer_ops:open not defined on peer dev\n");
+	if (!peer_obj->peer_ops->open) {
+		dev_err(dev, "peer_ops:open not defined in peer obj\n");
 		goto init_unlock;
 	}
 
-	if (!peer_dev->peer_ops->close) {
-		dev_err(dev, "peer_ops:close not defined on peer dev\n");
+	if (!peer_obj->peer_ops->close) {
+		dev_err(dev, "peer_ops:close not defined in peer obj\n");
 		goto init_unlock;
 	}
 
@@ -442,8 +424,8 @@ ice_finish_init_peer_device(struct ice_peer_dev_int *peer_dev_int,
 		goto init_unlock;
 	}
 
-	if ((test_bit(ICE_PEER_DEV_STATE_CLOSED, peer_dev_int->state) ||
-	     test_bit(ICE_PEER_DEV_STATE_PROBED, peer_dev_int->state)) &&
+	if ((test_bit(ICE_PEER_OBJ_STATE_CLOSED, peer_obj_int->state) ||
+	     test_bit(ICE_PEER_OBJ_STATE_PROBED, peer_obj_int->state)) &&
 	    ice_pf_state_is_nominal(pf)) {
 		/* If the RTNL is locked, we defer opening the peer
 		 * until the next time this function is called by the
@@ -451,75 +433,72 @@ ice_finish_init_peer_device(struct ice_peer_dev_int *peer_dev_int,
 		 */
 		if (rtnl_is_locked())
 			goto init_unlock;
-		ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_OPENING,
+		ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_OPENING,
 				      true);
-		ret = peer_dev->peer_ops->open(peer_dev);
+		ret = peer_obj->peer_ops->open(peer_obj);
 		if (ret == -EAGAIN) {
 			dev_err(dev, "Peer %d failed to open\n",
-				peer_dev->peer_dev_id);
-			ice_peer_state_change(peer_dev_int,
-					      ICE_PEER_DEV_STATE_PROBED, true);
+				peer_obj->peer_obj_id);
+			ice_peer_state_change(peer_obj_int,
+					      ICE_PEER_OBJ_STATE_PROBED, true);
 			goto init_unlock;
 		} else if (ret) {
-			ice_peer_state_change(peer_dev_int,
-					      ICE_PEER_DEV_STATE_REMOVED, true);
-			peer_dev->peer_ops = NULL;
+			ice_peer_state_change(peer_obj_int,
+					      ICE_PEER_OBJ_STATE_REMOVED, true);
+			peer_obj->peer_ops = NULL;
 			goto init_unlock;
 		}
 
-		ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_OPENED,
+		ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_OPENED,
 				      true);
-		ret = ice_for_each_peer(pf, peer_dev,
+		ret = ice_for_each_peer(pf, peer_obj,
 					ice_check_peer_for_events);
-		ice_check_peer_drv_for_events(peer_dev);
+		ice_check_peer_drv_for_events(peer_obj);
 	}
 
-	if (test_bit(ICE_PEER_DEV_STATE_PREPPED, peer_dev_int->state)) {
+	if (test_bit(ICE_PEER_OBJ_STATE_PREPPED, peer_obj_int->state)) {
 		enum ice_close_reason reason = ICE_REASON_CORER_REQ;
 		int i;
 
-		ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_CLOSING,
+		ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_CLOSING,
 				      true);
 		for (i = 0; i < ICE_EVENT_NBITS; i++)
-			bitmap_zero(peer_dev_int->current_events[i].type,
+			bitmap_zero(peer_obj_int->current_events[i].type,
 				    ICE_EVENT_NBITS);
 
-		peer_dev->peer_ops->close(peer_dev, reason);
+		peer_obj->peer_ops->close(peer_obj, reason);
 
-		ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_CLOSED,
+		ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_CLOSED,
 				      true);
 	}
 
 init_unlock:
-	mutex_unlock(&peer_dev_int->peer_dev_state_mutex);
+	mutex_unlock(&peer_obj_int->peer_obj_state_mutex);
 
 	return ret;
 }
 
-
 /**
- * ice_unreg_peer_device - unregister specified device
- * @peer_dev_int: ptr to peer device internal
+ * ice_unreg_peer_obj - unregister specified peer object
+ * @peer_obj_int: ptr to peer object internal
  * @data: ptr to opaque data
  *
- * This function invokes device unregistration, removes ID associated with
- * the specified device.
+ * This function invokes object unregistration, removes ID associated with
+ * the specified object.
  */
-int
-ice_unreg_peer_device(struct ice_peer_dev_int *peer_dev_int,
-		      void __always_unused *data)
+int ice_unreg_peer_obj(struct ice_peer_obj_int *peer_obj_int, void __always_unused *data)
 {
 	struct ice_peer_drv_int *peer_drv_int;
-	struct ice_peer_dev *peer_dev;
+	struct ice_peer_obj *peer_obj;
 	struct pci_dev *pdev;
 	struct device *dev;
 	struct ice_pf *pf;
 
-	if (!peer_dev_int)
+	if (!peer_obj_int)
 		return 0;
 
-	peer_dev = ice_get_peer_dev(peer_dev_int);
-	pdev = peer_dev->pdev;
+	peer_obj = ice_get_peer_obj(peer_obj_int);
+	pdev = peer_obj->pdev;
 	if (!pdev)
 		return 0;
 
@@ -530,67 +509,65 @@ ice_unreg_peer_device(struct ice_peer_dev_int *peer_dev_int,
 
 	mfd_remove_devices(&pdev->dev);
 
-	peer_drv_int = peer_dev_int->peer_drv_int;
+	peer_drv_int = peer_obj_int->peer_drv_int;
 
-	if (peer_dev_int->ice_peer_wq) {
-		if (peer_dev_int->peer_prep_task.func)
-			cancel_work_sync(&peer_dev_int->peer_prep_task);
+	if (peer_obj_int->ice_peer_wq) {
+		if (peer_obj_int->peer_prep_task.func)
+			cancel_work_sync(&peer_obj_int->peer_prep_task);
 
-		if (peer_dev_int->peer_close_task.func)
-			cancel_work_sync(&peer_dev_int->peer_close_task);
-		destroy_workqueue(peer_dev_int->ice_peer_wq);
+		if (peer_obj_int->peer_close_task.func)
+			cancel_work_sync(&peer_obj_int->peer_close_task);
+		destroy_workqueue(peer_obj_int->ice_peer_wq);
 	}
 
 	devm_kfree(dev, peer_drv_int);
 
-	devm_kfree(dev, peer_dev_int);
+	devm_kfree(dev, peer_obj_int);
 
 	return 0;
 }
 
 /**
  * ice_unroll_peer - destroy peers and peer_wq in case of error
- * @peer_dev_int: ptr to peer device internal struct
+ * @peer_obj_int: ptr to peer object internal struct
  * @data: ptr to opaque data
  *
  * This function releases resources in the event of a failure in creating
- * peer devices or their individual work_queues. Meant to be called from
+ * peer objects or their individual work_queues. Meant to be called from
  * a ice_for_each_peer invocation
  */
-int
-ice_unroll_peer(struct ice_peer_dev_int *peer_dev_int,
-		void __always_unused *data)
+int ice_unroll_peer(struct ice_peer_obj_int *peer_obj_int, void __always_unused *data)
 {
-	struct ice_peer_dev *peer_dev;
+	struct ice_peer_obj *peer_obj;
 	struct ice_pf *pf;
 
-	peer_dev = ice_get_peer_dev(peer_dev_int);
-	if (!peer_dev || !peer_dev->pdev)
+	peer_obj = ice_get_peer_obj(peer_obj_int);
+	if (!peer_obj || !peer_obj->pdev)
 		return 0;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 	if (!pf)
 		return 0;
 
-	if (peer_dev_int->ice_peer_wq)
-		destroy_workqueue(peer_dev_int->ice_peer_wq);
+	if (peer_obj_int->ice_peer_wq)
+		destroy_workqueue(peer_obj_int->ice_peer_wq);
 
-	if (peer_dev_int->peer_drv_int)
-		devm_kfree(ice_pf_to_dev(pf), peer_dev_int->peer_drv_int);
+	if (peer_obj_int->peer_drv_int)
+		devm_kfree(ice_pf_to_dev(pf), peer_obj_int->peer_drv_int);
 
-	devm_kfree(ice_pf_to_dev(pf), peer_dev_int);
+	devm_kfree(ice_pf_to_dev(pf), peer_obj_int);
 
 	return 0;
 }
 
 #ifdef CONFIG_PM
 /**
- * ice_peer_refresh_msix - load new values into ice_peer_dev structs
+ * ice_peer_refresh_msix - load new values into ice_peer_obj structs
  * @pf: pointer to private board struct
  */
 void ice_peer_refresh_msix(struct ice_pf *pf)
 {
-	struct ice_peer_dev *peer;
+	struct ice_peer_obj *peer;
 	unsigned int i;
 
 	if (!pf->peers)
@@ -600,15 +577,14 @@ void ice_peer_refresh_msix(struct ice_pf *pf)
 		if (!pf->peers[i])
 			continue;
 
-		peer = ice_get_peer_dev(pf->peers[i]);
+		peer = ice_get_peer_obj(pf->peers[i]);
 		if (!peer)
 			continue;
 
-		switch (peer->peer_dev_id) {
+		switch (peer->peer_obj_id) {
 		case ICE_PEER_RDMA_ID:
 			peer->msix_count = pf->num_rdma_msix;
-			peer->msix_entries =
-				&pf->msix_entries[pf->rdma_base_vector];
+			peer->msix_entries = &pf->msix_entries[pf->rdma_base_vector];
 			break;
 		default:
 			break;
@@ -617,7 +593,6 @@ void ice_peer_refresh_msix(struct ice_pf *pf)
 }
 
 #endif /* CONFIG_PM */
-
 /**
  * ice_find_vsi - Find the VSI from VSI ID
  * @pf: The PF pointer to search in
@@ -635,15 +610,15 @@ static struct ice_vsi *ice_find_vsi(struct ice_pf *pf, u16 vsi_num)
 
 /**
  * ice_peer_alloc_rdma_qsets - Allocate Leaf Nodes for RDMA Qset
- * @peer_dev: peer that is requesting the Leaf Nodes
+ * @peer_obj: peer that is requesting the Leaf Nodes
  * @res: Resources to be allocated
  * @partial_acceptable: If partial allocation is acceptable to the peer
  *
  * This function allocates Leaf Nodes for given RDMA Qset resources
- * for the peer device.
+ * for the peer object.
  */
 static int
-ice_peer_alloc_rdma_qsets(struct ice_peer_dev *peer_dev, struct ice_res *res,
+ice_peer_alloc_rdma_qsets(struct ice_peer_obj *peer_obj, struct ice_res *res,
 			  int __always_unused partial_acceptable)
 {
 	u16 max_rdmaqs[ICE_MAX_TRAFFIC_CLASS];
@@ -655,10 +630,10 @@ ice_peer_alloc_rdma_qsets(struct ice_peer_dev *peer_dev, struct ice_res *res,
 	u32 *qset_teid;
 	u16 *qs_handle;
 
-	if (!ice_validate_peer_dev(peer_dev) || !res)
+	if (!ice_validate_peer_obj(peer_obj) || !res)
 		return -EINVAL;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 	dev = ice_pf_to_dev(pf);
 
 	if (!test_bit(ICE_FLAG_IWARP_ENA, pf->flags))
@@ -684,7 +659,7 @@ ice_peer_alloc_rdma_qsets(struct ice_peer_dev *peer_dev, struct ice_res *res,
 		struct ice_rdma_qset_params *qset;
 
 		qset = &res->res[i].res.qsets;
-		if (qset->vsi_id != peer_dev->pf_vsi_num) {
+		if (qset->vsi_id != peer_obj->pf_vsi_num) {
 			dev_err(dev, "RDMA QSet invalid VSI requested\n");
 			ret = -EINVAL;
 			goto out;
@@ -693,7 +668,7 @@ ice_peer_alloc_rdma_qsets(struct ice_peer_dev *peer_dev, struct ice_res *res,
 		qs_handle[i] = qset->qs_handle;
 	}
 
-	vsi = ice_find_vsi(pf, peer_dev->pf_vsi_num);
+	vsi = ice_find_vsi(pf, peer_obj->pf_vsi_num);
 	if (!vsi) {
 		dev_err(dev, "RDMA QSet invalid VSI\n");
 		ret = -EINVAL;
@@ -732,11 +707,11 @@ out:
 
 /**
  * ice_peer_free_rdma_qsets - Free leaf nodes for RDMA Qset
- * @peer_dev: peer that requested qsets to be freed
+ * @peer_obj: peer that requested qsets to be freed
  * @res: Resource to be freed
  */
 static int
-ice_peer_free_rdma_qsets(struct ice_peer_dev *peer_dev, struct ice_res *res)
+ice_peer_free_rdma_qsets(struct ice_peer_obj *peer_obj, struct ice_res *res)
 {
 	enum ice_status status;
 	int count, i, ret = 0;
@@ -747,10 +722,10 @@ ice_peer_free_rdma_qsets(struct ice_peer_dev *peer_dev, struct ice_res *res)
 	u32 *teid;
 	u16 *q_id;
 
-	if (!ice_validate_peer_dev(peer_dev) || !res)
+	if (!ice_validate_peer_obj(peer_obj) || !res)
 		return -EINVAL;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 	dev = ice_pf_to_dev(pf);
 
 	count = res->res_allocated;
@@ -802,30 +777,30 @@ rdma_free_out:
 }
 
 /**
- * ice_peer_alloc_res - Allocate requested resources for peer device
- * @peer_dev: peer that is requesting resources
+ * ice_peer_alloc_res - Allocate requested resources for peer objects
+ * @peer_obj: peer that is requesting resources
  * @res: Resources to be allocated
  * @partial_acceptable: If partial allocation is acceptable to the peer
  *
- * This function allocates requested resources for the peer device.
+ * This function allocates requested resources for the peer object.
  */
 static int
-ice_peer_alloc_res(struct ice_peer_dev *peer_dev, struct ice_res *res,
+ice_peer_alloc_res(struct ice_peer_obj *peer_obj, struct ice_res *res,
 		   int partial_acceptable)
 {
 	struct ice_pf *pf;
 	int ret;
 
-	if (!ice_validate_peer_dev(peer_dev) || !res)
+	if (!ice_validate_peer_obj(peer_obj) || !res)
 		return -EINVAL;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 	if (!ice_pf_state_is_nominal(pf))
 		return -EBUSY;
 
 	switch (res->res_type) {
 	case ICE_RDMA_QSETS_TXSCHED:
-		ret = ice_peer_alloc_rdma_qsets(peer_dev, res,
+		ret = ice_peer_alloc_rdma_qsets(peer_obj, res,
 						partial_acceptable);
 		break;
 	default:
@@ -838,22 +813,22 @@ ice_peer_alloc_res(struct ice_peer_dev *peer_dev, struct ice_res *res,
 
 /**
  * ice_peer_free_res - Free given resources
- * @peer_dev: peer that is requesting freeing of resources
+ * @peer_obj: peer that is requesting freeing of resources
  * @res: Resources to be freed
  *
- * Free/Release resources allocated to given peer device.
+ * Free/Release resources allocated to given peer onjects.
  */
 static int
-ice_peer_free_res(struct ice_peer_dev *peer_dev, struct ice_res *res)
+ice_peer_free_res(struct ice_peer_obj *peer_obj, struct ice_res *res)
 {
 	int ret;
 
-	if (!ice_validate_peer_dev(peer_dev) || !res)
+	if (!ice_validate_peer_obj(peer_obj) || !res)
 		return -EINVAL;
 
 	switch (res->res_type) {
 	case ICE_RDMA_QSETS_TXSCHED:
-		ret = ice_peer_free_rdma_qsets(peer_dev, res);
+		ret = ice_peer_free_rdma_qsets(peer_obj, res);
 		break;
 	default:
 		ret = -EINVAL;
@@ -865,111 +840,111 @@ ice_peer_free_res(struct ice_peer_dev *peer_dev, struct ice_res *res)
 
 /**
  * ice_peer_reg_for_notif - register a peer to receive specific notifications
- * @peer_dev: peer that is registering for event notifications
+ * @peer_obj: peer that is registering for event notifications
  * @events: mask of event types peer is registering for
  */
 static void
-ice_peer_reg_for_notif(struct ice_peer_dev *peer_dev, struct ice_event *events)
+ice_peer_reg_for_notif(struct ice_peer_obj *peer_obj, struct ice_event *events)
 {
-	struct ice_peer_dev_int *peer_dev_int;
+	struct ice_peer_obj_int *peer_obj_int;
 	struct ice_pf *pf;
 
-	if (!ice_validate_peer_dev(peer_dev) || !events)
+	if (!ice_validate_peer_obj(peer_obj) || !events)
 		return;
 
-	peer_dev_int = peer_to_ice_dev_int(peer_dev);
-	pf = pci_get_drvdata(peer_dev->pdev);
+	peer_obj_int = peer_to_ice_obj_int(peer_obj);
+	pf = pci_get_drvdata(peer_obj->pdev);
 
-	bitmap_or(peer_dev_int->events, peer_dev_int->events, events->type,
+	bitmap_or(peer_obj_int->events, peer_obj_int->events, events->type,
 		  ICE_EVENT_NBITS);
 
 	/* Check to see if any events happened previous to peer registering */
-	ice_for_each_peer(pf, peer_dev, ice_check_peer_for_events);
-	ice_check_peer_drv_for_events(peer_dev);
+	ice_for_each_peer(pf, peer_obj, ice_check_peer_for_events);
+	ice_check_peer_drv_for_events(peer_obj);
 }
 
 /**
  * ice_peer_unreg_for_notif - unreg a peer from receiving certain notifications
- * @peer_dev: peer that is unregistering from event notifications
+ * @peer_obj: peer that is unregistering from event notifications
  * @events: mask of event types peer is unregistering for
  */
 static void
-ice_peer_unreg_for_notif(struct ice_peer_dev *peer_dev,
+ice_peer_unreg_for_notif(struct ice_peer_obj *peer_obj,
 			 struct ice_event *events)
 {
-	struct ice_peer_dev_int *peer_dev_int;
+	struct ice_peer_obj_int *peer_obj_int;
 
-	if (!ice_validate_peer_dev(peer_dev) || !events)
+	if (!ice_validate_peer_obj(peer_obj) || !events)
 		return;
 
-	peer_dev_int = peer_to_ice_dev_int(peer_dev);
+	peer_obj_int = peer_to_ice_obj_int(peer_obj);
 
-	bitmap_andnot(peer_dev_int->events, peer_dev_int->events, events->type,
+	bitmap_andnot(peer_obj_int->events, peer_obj_int->events, events->type,
 		      ICE_EVENT_NBITS);
 }
 
 /**
  * ice_peer_check_for_reg - check to see if any peers are reg'd for event
- * @peer_dev_int: ptr to peer device internal struct
+ * @peer_obj_int: ptr to peer object internal struct
  * @data: ptr to opaque data, to be used for ice_event to report
  *
- * This function is to be called by device_for_each_child to handle an
+ * This function is to be called by ice_for_each_peer to handle an
  * event reported by a peer or the ice driver.
  */
-int ice_peer_check_for_reg(struct ice_peer_dev_int *peer_dev_int, void *data)
+int ice_peer_check_for_reg(struct ice_peer_obj_int *peer_obj_int, void *data)
 {
 	struct ice_event *event = (struct ice_event *)data;
 	DECLARE_BITMAP(comp_events, ICE_EVENT_NBITS);
-	struct ice_peer_dev *peer_dev;
+	struct ice_peer_obj *peer_obj;
 	bool check = true;
 
-	peer_dev = ice_get_peer_dev(peer_dev_int);
+	peer_obj = ice_get_peer_obj(peer_obj_int);
 
-	if (!ice_validate_peer_dev(peer_dev) || !data)
-	/* If invalid dev, in this case return 0 instead of error
+	if (!ice_validate_peer_obj(peer_obj) || !data)
+	/* If invalid obj, in this case return 0 instead of error
 	 * because caller ignores this return value
 	 */
 		return 0;
 
 	if (event->reporter)
-		check = event->reporter->peer_dev_id != peer_dev->peer_dev_id;
+		check = event->reporter->peer_obj_id != peer_obj->peer_obj_id;
 
-	if (bitmap_and(comp_events, event->type, peer_dev_int->events,
+	if (bitmap_and(comp_events, event->type, peer_obj_int->events,
 		       ICE_EVENT_NBITS) &&
-	    (test_bit(ICE_PEER_DEV_STATE_OPENED, peer_dev_int->state) ||
-	     test_bit(ICE_PEER_DEV_STATE_PREP_RST, peer_dev_int->state) ||
-	     test_bit(ICE_PEER_DEV_STATE_PREPPED, peer_dev_int->state)) &&
+	    (test_bit(ICE_PEER_OBJ_STATE_OPENED, peer_obj_int->state) ||
+	     test_bit(ICE_PEER_OBJ_STATE_PREP_RST, peer_obj_int->state) ||
+	     test_bit(ICE_PEER_OBJ_STATE_PREPPED, peer_obj_int->state)) &&
 	    check &&
-	    peer_dev->peer_ops->event_handler)
-		peer_dev->peer_ops->event_handler(peer_dev, event);
+	    peer_obj->peer_ops->event_handler)
+		peer_obj->peer_ops->event_handler(peer_obj, event);
 
 	return 0;
 }
 
 /**
  * ice_peer_report_state_change - accept report of a peer state change
- * @peer_dev: peer that is sending notification about state change
+ * @peer_obj: peer that is sending notification about state change
  * @event: ice_event holding info on what the state change is
  *
  * We also need to parse the list of peers to see if anyone is registered
  * for notifications about this state change event, and if so, notify them.
  */
 static void
-ice_peer_report_state_change(struct ice_peer_dev *peer_dev,
+ice_peer_report_state_change(struct ice_peer_obj *peer_obj,
 			     struct ice_event *event)
 {
-	struct ice_peer_dev_int *peer_dev_int;
+	struct ice_peer_obj_int *peer_obj_int;
 	struct ice_peer_drv_int *peer_drv_int;
 	unsigned int e_type;
 	int drv_event = 0;
 	struct ice_pf *pf;
 
-	if (!ice_validate_peer_dev(peer_dev) || !event)
+	if (!ice_validate_peer_obj(peer_obj) || !event)
 		return;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
-	peer_dev_int = peer_to_ice_dev_int(peer_dev);
-	peer_drv_int = peer_dev_int->peer_drv_int;
+	pf = pci_get_drvdata(peer_obj->pdev);
+	peer_obj_int = peer_to_ice_obj_int(peer_obj);
+	peer_drv_int = peer_obj_int->peer_drv_int;
 
 	e_type = find_first_bit(event->type, ICE_EVENT_NBITS);
 	if (!e_type)
@@ -987,14 +962,14 @@ ice_peer_report_state_change(struct ice_peer_dev *peer_dev,
 				  peer_drv_int->state);
 		break;
 
-	/* Check for peer_dev events */
+	/* Check for peer_obj events */
 	case ICE_EVENT_API_CHANGE:
 		if (event->info.api_rdy) {
-			set_bit(ICE_PEER_DEV_STATE_API_RDY,
-				peer_dev_int->state);
+			set_bit(ICE_PEER_OBJ_STATE_API_RDY,
+				peer_obj_int->state);
 		} else {
-			clear_bit(ICE_PEER_DEV_STATE_API_RDY,
-				  peer_dev_int->state);
+			clear_bit(ICE_PEER_OBJ_STATE_API_RDY,
+				  peer_obj_int->state);
 		}
 		break;
 
@@ -1007,7 +982,7 @@ ice_peer_report_state_change(struct ice_peer_dev *peer_dev,
 		memcpy(&peer_drv_int->current_events[e_type], event,
 		       sizeof(*event));
 	else
-		memcpy(&peer_dev_int->current_events[e_type], event,
+		memcpy(&peer_obj_int->current_events[e_type], event,
 		       sizeof(*event));
 
 	ice_for_each_peer(pf, event, ice_peer_check_for_reg);
@@ -1015,32 +990,32 @@ ice_peer_report_state_change(struct ice_peer_dev *peer_dev,
 
 /**
  * ice_peer_unregister - request to unregister peer
- * @peer_dev: peer device
+ * @peer_obj: peer object
  *
- * This function triggers close/remove on peer_dev allowing peer
+ * This function triggers close/remove on peer_obj allowing peer
  * to unregister.
  */
-static int ice_peer_unregister(struct ice_peer_dev *peer_dev)
+static int ice_peer_unregister(struct ice_peer_obj *peer_obj)
 {
 	enum ice_close_reason reason = ICE_REASON_PEER_DRV_UNREG;
-	struct ice_peer_dev_int *peer_dev_int;
+	struct ice_peer_obj_int *peer_obj_int;
 	struct ice_pf *pf;
 	int ret;
 
-	if (!ice_validate_peer_dev(peer_dev))
+	if (!ice_validate_peer_obj(peer_obj))
 		return -EINVAL;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 	if (ice_is_reset_in_progress(pf->state))
 		return -EBUSY;
 
-	peer_dev_int = peer_to_ice_dev_int(peer_dev);
+	peer_obj_int = peer_to_ice_obj_int(peer_obj);
 
-	ret = ice_peer_close(peer_dev_int, &reason);
+	ret = ice_peer_close(peer_obj_int, &reason);
 	if (ret)
 		return ret;
 
-	switch (peer_dev->peer_dev_id) {
+	switch (peer_obj->peer_obj_id) {
 	case ICE_PEER_RDMA_ID:
 		pf->rdma_peer = NULL;
 #ifdef HAVE_NETDEV_UPPER_INFO
@@ -1052,43 +1027,44 @@ static int ice_peer_unregister(struct ice_peer_dev *peer_dev)
 		break;
 	}
 
-	peer_dev->peer_ops = NULL;
+	peer_obj->peer_ops = NULL;
 
-	ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_REMOVED, false);
+	ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_REMOVED, false);
 	return 0;
 }
 
 /**
  * ice_peer_register - Called by peer to open communication with LAN
- * @peer_dev: ptr to peer device
+ * @peer_obj: ptr to peer object
  *
  * registering peer is expected to populate the ice_peerdrv->name field
  * before calling this function.
  */
-static int ice_peer_register(struct ice_peer_dev *peer_dev)
+static int ice_peer_register(struct ice_peer_obj *peer_obj)
 {
 	struct ice_peer_drv_int *peer_drv_int;
-	struct ice_peer_dev_int *peer_dev_int;
+	struct ice_peer_obj_int *peer_obj_int;
 	struct ice_peer_drv *peer_drv;
 
-	if (!peer_dev) {
-		pr_err("Failed to reg peer dev: peer_dev ptr NULL\n");
+
+	if (!peer_obj) {
+		pr_err("Failed to reg peer_obj: peer_obj ptr NULL\n");
 		return -EINVAL;
 	}
 
-	if (!peer_dev->pdev) {
-		pr_err("Failed to reg peer dev: peer dev pdev NULL\n");
+	if (!peer_obj->pdev) {
+		pr_err("Failed to reg peer_obj: peer_obj pdev NULL\n");
 		return -EINVAL;
 	}
 
-	if (!peer_dev->peer_ops || !peer_dev->ops) {
-		pr_err("Failed to reg peer dev: peer dev peer_ops/ops NULL\n");
+	if (!peer_obj->peer_ops || !peer_obj->ops) {
+		pr_err("Failed to reg peer_obj: peer_obj peer_ops/ops NULL\n");
 		return -EINVAL;
 	}
 
-	peer_drv = peer_dev->peer_drv;
+	peer_drv = peer_obj->peer_drv;
 	if (!peer_drv) {
-		pr_err("Failed to reg peer dev: peer drv NULL\n");
+		pr_err("Failed to reg peer_obj: peer drv NULL\n");
 		return -EINVAL;
 	}
 
@@ -1103,8 +1079,8 @@ static int ice_peer_register(struct ice_peer_dev *peer_dev)
 		return -EINVAL;
 	}
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (peer_dev->peer_dev_id == ICE_PEER_RDMA_ID) {
-		struct ice_pf *pf = pf = pci_get_drvdata(peer_dev->pdev);
+	if (peer_obj->peer_obj_id == ICE_PEER_RDMA_ID) {
+		struct ice_pf *pf = pci_get_drvdata(peer_obj->pdev);
 
 		if (pf->lag) {
 			if (pf->lag->bonded)
@@ -1115,16 +1091,16 @@ static int ice_peer_register(struct ice_peer_dev *peer_dev)
 	}
 #endif /* HAVE_NETDEV_UPPER_INFO */
 
-	peer_dev_int = peer_to_ice_dev_int(peer_dev);
-	peer_drv_int = peer_dev_int->peer_drv_int;
+	peer_obj_int = peer_to_ice_obj_int(peer_obj);
+	peer_drv_int = peer_obj_int->peer_drv_int;
 	if (!peer_drv_int) {
-		pr_err("Failed to match peer_drv_int to peer_dev\n");
+		pr_err("Failed to match peer_drv_int to peer_obj\n");
 		return -EINVAL;
 	}
 
 	peer_drv_int->peer_drv = peer_drv;
 
-	ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_PROBED, false);
+	ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_PROBED, false);
 
 	return 0;
 }
@@ -1132,20 +1108,19 @@ static int ice_peer_register(struct ice_peer_dev *peer_dev)
 
 /**
  * ice_peer_request_reset - accept request from peer to perform a reset
- * @peer_dev: peer device that is request a reset
+ * @peer_obj: peer object that is requesting a reset
  * @reset_type: type of reset the peer is requesting
  */
 static int
-ice_peer_request_reset(struct ice_peer_dev *peer_dev,
-		       enum ice_peer_reset_type reset_type)
+ice_peer_request_reset(struct ice_peer_obj *peer_obj, enum ice_peer_reset_type reset_type)
 {
 	enum ice_reset_req reset;
 	struct ice_pf *pf;
 
-	if (!ice_validate_peer_dev(peer_dev))
+	if (!ice_validate_peer_obj(peer_obj))
 		return -EINVAL;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 
 	switch (reset_type) {
 	case ICE_PEER_PFR:
@@ -1167,26 +1142,26 @@ ice_peer_request_reset(struct ice_peer_dev *peer_dev,
 
 /**
  * ice_peer_is_vsi_ready - query if VSI in nominal state
- * @peer_dev: pointer to ice_peer_dev struct
+ * @peer_obj: pointer to ice_peer_obj struct
  */
-static int ice_peer_is_vsi_ready(struct ice_peer_dev *peer_dev)
+static int ice_peer_is_vsi_ready(struct ice_peer_obj *peer_obj)
 {
 	struct ice_netdev_priv *np;
 	struct ice_vsi *vsi;
 
-	/* If the peer_dev or associated values are not valid, then return
+	/* If the peer_obj or associated values are not valid, then return
 	 * 0 as there is no ready port associated with the values passed in
 	 * as parameters.
 	 */
 
-	if (!peer_dev || !peer_dev->pdev || !pci_get_drvdata(peer_dev->pdev) ||
-	    !peer_to_ice_dev_int(peer_dev))
+	if (!peer_obj || !peer_obj->pdev || !pci_get_drvdata(peer_obj->pdev) ||
+	    !peer_to_ice_obj_int(peer_obj))
 		return 0;
 
-	if (!peer_dev->netdev)
+	if (!peer_obj->netdev)
 		return 0;
 
-	np = netdev_priv(peer_dev->netdev);
+	np = netdev_priv(peer_obj->netdev);
 	vsi = np->vsi;
 
 	return ice_is_vsi_state_nominal(vsi);
@@ -1194,12 +1169,12 @@ static int ice_peer_is_vsi_ready(struct ice_peer_dev *peer_dev)
 
 /**
  * ice_peer_update_vsi_filter - update main VSI filters for RDMA
- * @peer_dev: pointer to RDMA peer device
+ * @peer_obj: pointer to RDMA peer object
  * @filter: selection of filters to enable or disable
  * @enable: bool whether to enable or disable filters
  */
 static int
-ice_peer_update_vsi_filter(struct ice_peer_dev *peer_dev,
+ice_peer_update_vsi_filter(struct ice_peer_obj *peer_obj,
 			   enum ice_rdma_filter __maybe_unused filter,
 			   bool enable)
 {
@@ -1207,10 +1182,10 @@ ice_peer_update_vsi_filter(struct ice_peer_dev *peer_dev,
 	struct ice_pf *pf;
 	int ret;
 
-	if (!ice_validate_peer_dev(peer_dev))
+	if (!ice_validate_peer_obj(peer_obj))
 		return -EINVAL;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 
 	vsi = ice_get_main_vsi(pf);
 	if (!vsi)
@@ -1233,27 +1208,27 @@ ice_peer_update_vsi_filter(struct ice_peer_dev *peer_dev,
 
 /**
  * ice_peer_vc_send - send a virt channel message from a peer
- * @peer_dev: pointer to a peer dev
+ * @peer_obj: pointer to a peer object
  * @vf_id: the absolute VF ID of recipient of message
  * @msg: pointer to message contents
  * @len: len of message
  */
 static int
-ice_peer_vc_send(struct ice_peer_dev *peer_dev, u32 vf_id, u8 *msg, u16 len)
+ice_peer_vc_send(struct ice_peer_obj *peer_obj, u32 vf_id, u8 *msg, u16 len)
 {
 	struct ice_pf *pf;
 	int err;
 
-	if (!ice_validate_peer_dev(peer_dev))
+	if (!ice_validate_peer_obj(peer_obj))
 		return -EINVAL;
 	if (!msg || !len)
 		return -ENOMEM;
 
-	pf = pci_get_drvdata(peer_dev->pdev);
+	pf = pci_get_drvdata(peer_obj->pdev);
 	if (len > ICE_AQ_MAX_BUF_LEN)
 		return -EINVAL;
 
-	switch (peer_dev->peer_drv->driver_id) {
+	switch (peer_obj->peer_drv->driver_id) {
 	case ICE_PEER_RDMA_DRIVER:
 		if (vf_id >= pf->num_alloc_vfs)
 			return -ENODEV;
@@ -1270,6 +1245,86 @@ ice_peer_vc_send(struct ice_peer_dev *peer_dev, u32 vf_id, u8 *msg, u16 len)
 		dev_err(ice_pf_to_dev(pf),
 			"Unable to send msg to VF, error %d\n", err);
 	return err;
+}
+
+/**
+ * ice_reserve_peer_qvector - Reserve vector resources for peer drivers
+ * @pf: board private structure to initialize
+ */
+static int ice_reserve_peer_qvector(struct ice_pf *pf)
+{
+	if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
+		int index;
+
+		index = ice_get_res(pf, pf->irq_tracker, pf->num_rdma_msix, ICE_RES_RDMA_VEC_ID);
+		if (index < 0)
+			return index;
+		pf->num_avail_sw_msix -= pf->num_rdma_msix;
+		pf->rdma_base_vector = (u16)index;
+	}
+	return 0;
+}
+
+/**
+ * ice_peer_close_task - call peer's close asynchronously
+ * @work: pointer to work_struct contained by the peer_obj_int struct
+ *
+ * This method (asynchronous) of calling a peer's close function is
+ * meant to be used in the reset path.
+ */
+static void ice_peer_close_task(struct work_struct *work)
+{
+	struct ice_peer_obj_int *peer_obj_int;
+	struct ice_peer_obj *peer_obj;
+
+	peer_obj_int = container_of(work, struct ice_peer_obj_int, peer_close_task);
+
+	peer_obj = ice_get_peer_obj(peer_obj_int);
+	if (!peer_obj || !peer_obj->peer_ops)
+		return;
+
+	/* If this peer_obj is going to close, we do not want any state changes
+	 * to happen until after we successfully finish or abort the close.
+	 * Grab the peer_obj_state_mutex to protect this flow
+	 */
+	mutex_lock(&peer_obj_int->peer_obj_state_mutex);
+
+	/* Only allow a close to go to the peer if they are in a state
+	 * to accept it. The last state of PREP_RST is a special case
+	 * that will not normally happen, but it is up to the peer
+	 * to handle it correctly.
+	 */
+	if (test_bit(ICE_PEER_OBJ_STATE_OPENED, peer_obj_int->state) ||
+	    test_bit(ICE_PEER_OBJ_STATE_PREPPED, peer_obj_int->state) ||
+	    test_bit(ICE_PEER_OBJ_STATE_PREP_RST, peer_obj_int->state)) {
+
+		ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_CLOSING, true);
+
+		if (peer_obj->peer_ops->close)
+			peer_obj->peer_ops->close(peer_obj, peer_obj_int->rst_type);
+
+		ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_CLOSED, true);
+	}
+
+	mutex_unlock(&peer_obj_int->peer_obj_state_mutex);
+}
+
+/**
+ * ice_peer_update_vsi - update the pf_vsi info in peer_obj struct
+ * @peer_obj_int: pointer to peer_obj internal struct
+ * @data: opaque pointer - VSI to be updated
+ */
+int ice_peer_update_vsi(struct ice_peer_obj_int *peer_obj_int, void *data)
+{
+	struct ice_vsi *vsi = (struct ice_vsi *)data;
+	struct ice_peer_obj *peer_obj;
+
+	peer_obj = ice_get_peer_obj(peer_obj_int);
+	if (!peer_obj)
+		return 0;
+
+	peer_obj->pf_vsi_num = vsi->vsi_num;
+	return 0;
 }
 
 /* Initialize the ice_ops struct, which is used in 'ice_init_peer_devices' */
@@ -1289,79 +1344,11 @@ static const struct ice_ops ops = {
 };
 
 /**
- * ice_reserve_peer_qvector - Reserve vector resources for peer drivers
- * @pf: board private structure to initialize
- */
-static int ice_reserve_peer_qvector(struct ice_pf *pf)
-{
-	if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
-		int index;
-
-		index = ice_get_res(pf, pf->irq_tracker, pf->num_rdma_msix,
-				    ICE_RES_RDMA_VEC_ID);
-		if (index < 0)
-			return index;
-		pf->num_avail_sw_msix -= pf->num_rdma_msix;
-		pf->rdma_base_vector = (u16)index;
-	}
-	return 0;
-}
-
-
-/**
- * ice_peer_close_task - call peer's close asynchronously
- * @work: pointer to work_struct contained by the peer_dev_int struct
- *
- * This method (asynchronous) of calling a peer's close function is
- * meant to be used in the reset path.
- */
-static void ice_peer_close_task(struct work_struct *work)
-{
-	struct ice_peer_dev_int *peer_dev_int;
-	struct ice_peer_dev *peer_dev;
-
-	peer_dev_int = container_of(work, struct ice_peer_dev_int,
-				    peer_close_task);
-
-	peer_dev = ice_get_peer_dev(peer_dev_int);
-	if (!peer_dev || !peer_dev->peer_ops)
-		return;
-
-	/* If this peer_dev is going to close, we do not want any state changes
-	 * to happen until after we successfully finish or abort the close.
-	 * Grab the peer_dev_state_mutex to protect this flow
-	 */
-	mutex_lock(&peer_dev_int->peer_dev_state_mutex);
-
-	/* Only allow a close to go to the peer if they are in a state
-	 * to accept it. The last state of PREP_RST is a special case
-	 * that will not normally happen, but it is up to the peer
-	 * to handle it correctly.
-	 */
-	if (test_bit(ICE_PEER_DEV_STATE_OPENED, peer_dev_int->state) ||
-	    test_bit(ICE_PEER_DEV_STATE_PREPPED, peer_dev_int->state) ||
-	    test_bit(ICE_PEER_DEV_STATE_PREP_RST, peer_dev_int->state)) {
-
-		ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_CLOSING,
-				      true);
-
-		if (peer_dev->peer_ops->close)
-			peer_dev->peer_ops->close(peer_dev,
-						  peer_dev_int->rst_type);
-
-		ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_CLOSED,
-				      true);
-	}
-
-	mutex_unlock(&peer_dev_int->peer_dev_state_mutex);
-}
-
-/**
- * ice_init_peer_devices - initializes peer devices
+ * ice_init_peer_devices - initializes peer objects and aux devices
  * @pf: ptr to ice_pf
  *
- * This function initializes peer devices and associates them with specified
- * pci_dev as their parent.
+ * This function initializes peer objects and auxiliary device, then
+ * associates them with specified pci_dev as their parent.
  */
 int ice_init_peer_devices(struct ice_pf *pf)
 {
@@ -1379,70 +1366,70 @@ int ice_init_peer_devices(struct ice_pf *pf)
 		return status;
 	}
 	for (i = 0; i < ARRAY_SIZE(ice_mfd_cells); i++) {
-		struct ice_peer_dev_platform_data *platform_data;
-		struct ice_peer_dev_int *peer_dev_int;
+		struct ice_peer_obj_platform_data *platform_data;
+		struct ice_peer_obj_int *peer_obj_int;
 		struct ice_peer_drv_int *peer_drv_int;
 		struct msix_entry *entry = NULL;
 		struct ice_qos_params *qos_info;
-		struct ice_peer_dev *peer_dev;
+		struct ice_peer_obj *peer_obj;
 		int j;
 
-		peer_dev_int = devm_kzalloc(dev, sizeof(*peer_dev_int),
+		peer_obj_int = devm_kzalloc(dev, sizeof(*peer_obj_int),
 					    GFP_KERNEL);
-		if (!peer_dev_int)
+		if (!peer_obj_int)
 			return -ENOMEM;
-		pf->peers[i] = peer_dev_int;
+		pf->peers[i] = peer_obj_int;
 
 		peer_drv_int = devm_kzalloc(dev, sizeof(*peer_drv_int),
 					    GFP_KERNEL);
 		if (!peer_drv_int)
 			return -ENOMEM;
 
-		peer_dev_int->peer_drv_int = peer_drv_int;
+		peer_obj_int->peer_drv_int = peer_drv_int;
 
 		/* Initialize driver values */
 		for (j = 0; j < ICE_EVENT_NBITS; j++)
 			bitmap_zero(peer_drv_int->current_events[j].type,
 				    ICE_EVENT_NBITS);
 
-		mutex_init(&peer_dev_int->peer_dev_state_mutex);
+		mutex_init(&peer_obj_int->peer_obj_state_mutex);
 
-		peer_dev = ice_get_peer_dev(peer_dev_int);
-		peer_dev_int->plat_data.peer_dev = peer_dev;
-		platform_data = &peer_dev_int->plat_data;
-		peer_dev->peer_ops = NULL;
-		peer_dev->hw_addr = (u8 __iomem *)pf->hw.hw_addr;
-		peer_dev->ver.major = ICE_PEER_MAJOR_VER;
-		peer_dev->ver.minor = ICE_PEER_MINOR_VER;
-		peer_dev->ver.support = ICE_IDC_FEATURES;
-		peer_dev->peer_dev_id = ice_mfd_cells[i].id;
-		peer_dev->pf_vsi_num = vsi->vsi_num;
-		peer_dev->netdev = vsi->netdev;
-		peer_dev->initial_mtu = vsi->netdev->mtu;
-		ether_addr_copy(peer_dev->lan_addr, port_info->mac.lan_addr);
+		peer_obj = ice_get_peer_obj(peer_obj_int);
+		peer_obj_int->plat_data.peer_obj = peer_obj;
+		platform_data = &peer_obj_int->plat_data;
+		peer_obj->peer_ops = NULL;
+		peer_obj->hw_addr = (u8 __iomem *)pf->hw.hw_addr;
+		peer_obj->ver.major = ICE_PEER_MAJOR_VER;
+		peer_obj->ver.minor = ICE_PEER_MINOR_VER;
+		peer_obj->ver.support = ICE_IDC_FEATURES;
+		peer_obj->peer_obj_id = ice_mfd_cells[i].id;
+		peer_obj->pf_vsi_num = vsi->vsi_num;
+		peer_obj->netdev = vsi->netdev;
+		peer_obj->initial_mtu = vsi->netdev->mtu;
+		ether_addr_copy(peer_obj->lan_addr, port_info->mac.lan_addr);
 
 		ice_mfd_cells[i].platform_data = platform_data;
 		ice_mfd_cells[i].pdata_size = sizeof(*platform_data);
 
-		peer_dev_int->ice_peer_wq =
+		peer_obj_int->ice_peer_wq =
 			alloc_ordered_workqueue("ice_peer_wq_%d", WQ_UNBOUND,
 						i);
-		if (!peer_dev_int->ice_peer_wq)
+		if (!peer_obj_int->ice_peer_wq)
 			return -ENOMEM;
-		INIT_WORK(&peer_dev_int->peer_close_task, ice_peer_close_task);
+		INIT_WORK(&peer_obj_int->peer_close_task, ice_peer_close_task);
 
-		peer_dev->pdev = pdev;
-		peer_dev->ari_ena = pci_ari_enabled(pdev->bus);
-		peer_dev->bus_num = PCI_BUS_NUM(pdev->devfn);
-		if (!peer_dev->ari_ena) {
-			peer_dev->dev_num = PCI_SLOT(pdev->devfn);
-			peer_dev->fn_num = PCI_FUNC(pdev->devfn);
+		peer_obj->pdev = pdev;
+		peer_obj->ari_ena = pci_ari_enabled(pdev->bus);
+		peer_obj->bus_num = PCI_BUS_NUM(pdev->devfn);
+		if (!peer_obj->ari_ena) {
+			peer_obj->dev_num = PCI_SLOT(pdev->devfn);
+			peer_obj->fn_num = PCI_FUNC(pdev->devfn);
 		} else {
-			peer_dev->dev_num = 0;
-			peer_dev->fn_num = pdev->devfn & 0xff;
+			peer_obj->dev_num = 0;
+			peer_obj->fn_num = pdev->devfn & 0xff;
 		}
 
-		qos_info = &peer_dev->initial_qos_info;
+		qos_info = &peer_obj->initial_qos_info;
 
 		/* setup qos_info fields with defaults */
 		qos_info->num_apps = 0;
@@ -1458,7 +1445,7 @@ int ice_init_peer_devices(struct ice_pf *pf)
 		/* for DCB, override the qos_info defaults. */
 		ice_setup_dcb_qos_info(pf, qos_info);
 		/* Initialize ice_ops */
-		peer_dev->ops = &ops;
+		peer_obj->ops = &ops;
 
 		/* make sure peer specific resources such as msix_count and
 		 * msix_entries are initialized
@@ -1466,17 +1453,17 @@ int ice_init_peer_devices(struct ice_pf *pf)
 		switch (ice_mfd_cells[i].id) {
 		case ICE_PEER_RDMA_ID:
 			if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
-				peer_dev->msix_count = pf->num_rdma_msix;
+				peer_obj->msix_count = pf->num_rdma_msix;
 				entry = &pf->msix_entries[pf->rdma_base_vector];
 			}
-			pf->rdma_peer = peer_dev;
+			pf->rdma_peer = peer_obj;
 			break;
 		default:
 			break;
 		}
 
-		peer_dev->msix_entries = entry;
-		ice_peer_state_change(peer_dev_int, ICE_PEER_DEV_STATE_INIT,
+		peer_obj->msix_entries = entry;
+		ice_peer_state_change(peer_obj_int, ICE_PEER_OBJ_STATE_INIT,
 				      false);
 	}
 
@@ -1510,4 +1497,3 @@ int ice_init_peer_devices(struct ice_pf *pf)
 
 	return status;
 }
-

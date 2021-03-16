@@ -97,11 +97,25 @@ struct ice_cgu_lcpll_per_rate_params {
 	u32 post_pll_div;
 };
 
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 /* Function to init internal state */
 void ice_cgu_init_state(struct ice_pf *pf);
-
 /* Function to configure TS PLL */
 int
 ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq time_ref_freq,
-		   enum ice_cgu_time_ref_sel time_ref_sel, enum ice_mstr_tmr_mode mstr_tmr_mode);
+		   enum ice_cgu_time_ref_sel time_ref_sel,
+		   enum ice_src_tmr_mode src_tmr_mode);
+#else /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
+#define ice_cgu_init_state(pf) do {} while (0)
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+static inline int
+ice_cgu_cfg_ts_pll(struct ice_pf __always_unused *pf, bool __always_unused enable,
+		   enum ice_time_ref_freq __always_unused time_ref_freq,
+		   enum ice_cgu_time_ref_sel __always_unused time_ref_sel,
+		   enum ice_src_tmr_mode __always_unused src_tmr_mode)
+{
+	return 0;
+}
+#endif /* IS_ENABLED(CONFIG_DEBUG_FS) */
+#endif /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
 #endif /* _ICE_CGU_OPS_H_ */

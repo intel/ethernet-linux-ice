@@ -417,6 +417,7 @@ int ice_init_lag(struct ice_pf *pf)
 
 lag_error:
 	kfree(lag);
+	pf->lag = NULL;
 	return err;
 }
 
@@ -446,5 +447,7 @@ void ice_deinit_lag(struct ice_pf *pf)
 		dev_put(lag->peer_netdev);
 
 	kfree(lag);
+
+	pf->lag = NULL;
 }
 #endif /* HAVE_NETDEV_UPPER_INFO */

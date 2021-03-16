@@ -312,9 +312,6 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 	struct ice_acl_tbl *tbl;
 	enum ice_status status;
 
-	if (hw->dcf_acl_enabled)
-		return ICE_ERR_IN_USE;
-
 	if (hw->acl_tbl)
 		return ICE_ERR_ALREADY_EXISTS;
 
@@ -747,9 +744,6 @@ ice_acl_create_scen(struct ice_hw *hw, u16 match_width, u16 num_entries,
 	struct ice_acl_scen *scen;
 	enum ice_status status;
 
-	if (hw->dcf_acl_enabled)
-		return ICE_ERR_IN_USE;
-
 	if (!hw->acl_tbl)
 		return ICE_ERR_DOES_NOT_EXIST;
 
@@ -854,9 +848,6 @@ static enum ice_status ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id)
 	struct ice_flow_prof *p, *tmp;
 	enum ice_status status;
 
-	if (hw->dcf_acl_enabled)
-		return ICE_ERR_IN_USE;
-
 	if (!hw->acl_tbl)
 		return ICE_ERR_DOES_NOT_EXIST;
 
@@ -901,9 +892,6 @@ enum ice_status ice_acl_destroy_tbl(struct ice_hw *hw)
 	struct ice_aqc_acl_scen buf;
 	enum ice_status status;
 	u8 i;
-
-	if (hw->dcf_acl_enabled)
-		return ICE_ERR_IN_USE;
 
 	if (!hw->acl_tbl)
 		return ICE_ERR_DOES_NOT_EXIST;
@@ -984,9 +972,6 @@ ice_acl_add_entry(struct ice_hw *hw, struct ice_acl_scen *scen,
 	enum ice_status status = 0;
 	u16 idx;
 
-	if (hw->dcf_acl_enabled)
-		return ICE_ERR_IN_USE;
-
 	if (!scen)
 		return ICE_ERR_DOES_NOT_EXIST;
 
@@ -1062,9 +1047,6 @@ ice_acl_prog_act(struct ice_hw *hw, struct ice_acl_scen *scen,
 	enum ice_status status = 0;
 	u16 idx;
 
-	if (hw->dcf_acl_enabled)
-		return ICE_ERR_IN_USE;
-
 	if (entry_idx >= scen->num_entry)
 		return ICE_ERR_MAX_LIMIT;
 
@@ -1122,9 +1104,6 @@ ice_acl_rem_entry(struct ice_hw *hw, struct ice_acl_scen *scen, u16 entry_idx)
 	u8 entry_tcam, num_cscd, i;
 	enum ice_status status = 0;
 	u16 idx;
-
-	if (hw->dcf_acl_enabled)
-		return ICE_ERR_IN_USE;
 
 	if (!scen)
 		return ICE_ERR_DOES_NOT_EXIST;

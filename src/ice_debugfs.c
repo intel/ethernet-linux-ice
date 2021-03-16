@@ -125,6 +125,98 @@ static void ice_dump_pf_fdir(struct ice_pf *pf)
 }
 
 /**
+ * ice_vsi_dump_ctxt - print the passed in VSI context structure
+ * @dev: Device used for dev_info prints
+ * @ctxt: VSI context structure to print
+ */
+static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
+{
+	struct ice_aqc_vsi_props *info;
+
+	if (!ctxt)
+		return;
+
+	info = &ctxt->info;
+	dev_info(dev, "Get VSI Parameters:\n");
+	dev_info(dev, "\tVSI Number: %d Valid sections: 0x%04x\n",
+		 ctxt->vsi_num, le16_to_cpu(info->valid_sections));
+
+	dev_info(dev, "========================\n");
+	dev_info(dev, "| Category - Switching |");
+	dev_info(dev, "========================\n");
+	dev_info(dev, "\tSwitch ID: %u\n", info->sw_id);
+	dev_info(dev, "\tAllow Loopback: %s\n", info->sw_flags &
+		 ICE_AQ_VSI_SW_FLAG_ALLOW_LB ? "enabled" : "disabled");
+	dev_info(dev, "\tAllow Local Loopback: %s\n", info->sw_flags &
+		 ICE_AQ_VSI_SW_FLAG_LOCAL_LB ? "enabled" : "disabled");
+	dev_info(dev, "\tApply source VSI pruning: %s\n", info->sw_flags &
+		 ICE_AQ_VSI_SW_FLAG_SRC_PRUNE ? "enabled" : "disabled");
+	dev_info(dev, "\tEgress (Rx VLAN) pruning: %s\n",
+		 info->sw_flags2 & ICE_AQ_VSI_SW_FLAG_RX_PRUNE_EN_M ?
+		 "enabled" : "disabled");
+	dev_info(dev, "\tLAN enable: %s\n", info->sw_flags2 &
+		 ICE_AQ_VSI_SW_FLAG_LAN_ENA ? "enabled" : "disabled");
+	dev_info(dev, "\tVEB statistic block ID: %u\n", info->veb_stat_id &
+		 ICE_AQ_VSI_SW_VEB_STAT_ID_M);
+	dev_info(dev, "\tVEB statistic block ID valid: %d\n",
+		 info->veb_stat_id & ICE_AQ_VSI_SW_VEB_STAT_ID_VALID ? 1 : 0);
+
+	dev_info(dev, "=======================\n");
+	dev_info(dev, "| Category - Security |\n");
+	dev_info(dev, "=======================\n");
+	dev_info(dev, "\tAllow destination override: %s\n", info->sec_flags &
+		 ICE_AQ_VSI_SEC_FLAG_ALLOW_DEST_OVRD ? "enabled" : "disabled");
+	dev_info(dev, "\tEnable MAC anti-spoof: %s\n", info->sec_flags &
+		 ICE_AQ_VSI_SEC_FLAG_ENA_MAC_ANTI_SPOOF ? "enabled" : "disabled");
+	dev_info(dev, "\tIngress (Tx VLAN) pruning enables: %s\n",
+		 info->sec_flags & ICE_AQ_VSI_SEC_TX_PRUNE_ENA_M ?
+		 "enabled" : "disabled");
+
+	dev_info(dev, "=================================\n");
+	dev_info(dev, "| Category: Inner VLAN Handling |\n");
+	dev_info(dev, "=================================\n");
+	dev_info(dev, "\tPort Based Inner VLAN Insertion: PVLAN ID: %d PRIO: %d\n",
+		 le16_to_cpu(info->port_based_inner_vlan) & VLAN_VID_MASK,
+		 (le16_to_cpu(info->port_based_inner_vlan) & VLAN_PRIO_MASK) >>
+		 VLAN_PRIO_SHIFT);
+	dev_info(dev, "\tInner VLAN TX Mode: 0x%02x\n",
+		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_TX_MODE_M) >>
+		 ICE_AQ_VSI_INNER_VLAN_TX_MODE_S);
+	dev_info(dev, "\tInsert PVID: %s\n", info->inner_vlan_flags &
+		 ICE_AQ_VSI_INNER_VLAN_INSERT_PVID ? "enabled" : "disabled");
+	dev_info(dev, "\tInner VLAN and UP expose mode (RX): 0x%02x\n",
+		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_EMODE_M) >>
+		 ICE_AQ_VSI_INNER_VLAN_EMODE_S);
+	dev_info(dev, "\tBlock Inner VLAN from TX Descriptor: %s\n",
+		 info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_BLOCK_TX_DESC ?
+		 "enabled" : "disabled");
+
+	dev_info(dev, "=================================\n");
+	dev_info(dev, "| Category: Outer VLAN Handling |\n");
+	dev_info(dev, "=================================\n");
+	dev_info(dev, "\tPort Based Outer VLAN Insertion: PVID: %d PRIO: %d\n",
+		 le16_to_cpu(info->port_based_outer_vlan) & VLAN_VID_MASK,
+		 (le16_to_cpu(info->port_based_outer_vlan) & VLAN_PRIO_MASK) >>
+		 VLAN_PRIO_SHIFT);
+	dev_info(dev, "\tOuter VLAN and UP expose mode (RX): 0x%02x\n",
+		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_EMODE_M) >>
+		 ICE_AQ_VSI_OUTER_VLAN_EMODE_S);
+	dev_info(dev, "\tOuter Tag type (Tx and Rx): 0x%02x\n",
+		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_TAG_TYPE_M) >>
+		 ICE_AQ_VSI_OUTER_TAG_TYPE_S);
+	dev_info(dev, "\tPort Based Outer VLAN Insert Enable: %s\n",
+		 info->outer_vlan_flags &
+		 ICE_AQ_VSI_OUTER_VLAN_PORT_BASED_INSERT ?
+		 "enabled" : "disabled");
+	dev_info(dev, "\tOuter VLAN TX Mode: 0x%02x\n",
+		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M) >>
+		 ICE_AQ_VSI_OUTER_VLAN_TX_MODE_S);
+	dev_info(dev, "\tBlock Outer VLAN from TX Descriptor: %s\n",
+		 info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_BLOCK_TX_DESC ?
+		 "enabled" : "disabled");
+}
+
+/**
  * ice_debugfs_command_write - write into command datum
  * @filp: the opened file
  * @buf: where to find the user's data
@@ -185,15 +277,8 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 				devm_kfree(dev, vsi_ctx);
 				goto command_help;
 			}
-			dev_info(dev, "Get VSI params\n");
-			dev_info(dev, "VSI Number: %d Context.valid_section : 0x%04x sw_id: %u sw_flags: 0x%02x security_flags: 0x%04x rx_prune_enabled: %u veb_stat_id : %u\n",
-				 vsi_ctx->vsi_num,
-				 le16_to_cpu(vsi_ctx->info.valid_sections),
-				 vsi_ctx->info.sw_id, vsi_ctx->info.sw_flags,
-				 vsi_ctx->info.sec_flags,
-				 (vsi_ctx->info.sec_flags) >>
-					ICE_AQ_VSI_SEC_TX_PRUNE_ENA_S,
-				 vsi_ctx->info.veb_stat_id);
+
+			ice_vsi_dump_ctxt(dev, vsi_ctx);
 			devm_kfree(dev, vsi_ctx);
 		} else {
 			goto command_help;
@@ -256,6 +341,9 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 			ice_dump_sw_rules(hw, ICE_SW_LKUP_ETHERTYPE);
 		} else if (!strncmp(argv[1], "pf_vsi", 6)) {
 			ice_dump_pf_vsi_list(pf);
+		} else if (!strncmp(argv[1], "pf_port_num", 11)) {
+			dev_info(dev, "pf_id = %d, port_num = %d\n",
+				 hw->pf_id, hw->port_info->lport);
 		} else if (!strncmp(argv[1], "pf", 2)) {
 			ice_dump_pf(pf);
 		} else if (!strncmp(argv[1], "vfs", 3)) {
@@ -321,7 +409,7 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 	} else if (argc == 4 && !strncmp(argv[0], "set_ts_pll", 10)) {
 		u8 time_ref_freq;
 		u8 time_ref_sel;
-		u8 mstr_tmr_mode;
+		u8 src_tmr_mode;
 
 		ret = kstrtou8(argv[1], 0, &time_ref_freq);
 		if (ret)
@@ -329,16 +417,16 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 		ret = kstrtou8(argv[2], 0, &time_ref_sel);
 		if (ret)
 			goto command_help;
-		ret = kstrtou8(argv[3], 0, &mstr_tmr_mode);
+		ret = kstrtou8(argv[3], 0, &src_tmr_mode);
 		if (ret)
 			goto command_help;
 
 		ice_cgu_cfg_ts_pll(pf, false, (enum ice_time_ref_freq)time_ref_freq,
 				   (enum ice_cgu_time_ref_sel)time_ref_sel,
-				   (enum ice_mstr_tmr_mode)mstr_tmr_mode);
+				   (enum ice_src_tmr_mode)src_tmr_mode);
 		ice_cgu_cfg_ts_pll(pf, true, (enum ice_time_ref_freq)time_ref_freq,
 				   (enum ice_cgu_time_ref_sel)time_ref_sel,
-				   (enum ice_mstr_tmr_mode)mstr_tmr_mode);
+				   (enum ice_src_tmr_mode)src_tmr_mode);
 	} else {
 command_help:
 		dev_info(dev, "unknown or invalid command '%s'\n", cmd_buf);
@@ -354,6 +442,7 @@ command_help:
 		dev_info(dev, "\t dump eth\n");
 		dev_info(dev, "\t dump pf_vsi\n");
 		dev_info(dev, "\t dump pf\n");
+		dev_info(dev, "\t dump pf_port_num\n");
 		dev_info(dev, "\t dump vfs\n");
 		dev_info(dev, "\t dump reset_stats\n");
 		dev_info(dev, "\t dump fdir_stats\n");

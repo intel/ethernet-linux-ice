@@ -56,6 +56,15 @@ static int ice_q_stats_len(struct net_device *netdev)
 #endif /* HAVE_NETDEV_SB_DEV */
 #endif /* ICE_ADD_PROBES */
 #endif /* ADQ_PERF_COUNTERS */
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+	stats_size = sizeof(struct ice_q_stats);
+	total_slen += np->vsi->num_xdp_txq * (stats_size / sizeof(u64));
+
+	stats_size = sizeof(struct ice_xdp_stats);
+	total_slen += np->vsi->alloc_rxq * (stats_size / sizeof(u64));
+#endif
+#endif
 
 	return total_slen;
 }
@@ -85,7 +94,6 @@ static const struct ice_stats ice_gstrings_vsi_stats[] = {
 	ICE_VSI_STAT(ICE_RX_UNKNOWN_PROTO, eth_stats.rx_unknown_protocol),
 	ICE_VSI_STAT(ICE_RX_ALLOC_FAIL, rx_buf_failed),
 	ICE_VSI_STAT(ICE_RX_PAGE_ALLOC_FAIL, rx_page_failed),
-	ICE_VSI_STAT(ICE_RX_GRO_DROPPED, rx_gro_dropped),
 #ifdef ICE_ADD_PROBES
 	ICE_VSI_STAT(ICE_RX_PAGE_REUSE, rx_page_reuse),
 #endif /* ICE_ADD_PROBES */
@@ -180,13 +188,15 @@ static const struct ice_stats ice_gstrings_pf_stats[] = {
 	ICE_PF_STAT(ICE_PORT_RX_IP4_CSO, rx_ip4_cso),
 	ICE_PF_STAT(ICE_PORT_TX_IP4_CSO, tx_ip4_cso),
 	ICE_PF_STAT(ICE_PORT_RX_IP4_CSO_ERROR, rx_ip4_cso_err),
-	ICE_PF_STAT(ICE_PORT_RX_IP4_CSO_ERROR, rx_tcp_cso_err),
+	ICE_PF_STAT(ICE_PORT_RX_TCP_CSO_ERROR, rx_tcp_cso_err),
 	ICE_PF_STAT(ICE_PORT_RX_UDP_CSO_ERROR, rx_udp_cso_err),
 	ICE_PF_STAT(ICE_PORT_RX_SCTP_CSO_ERROR, rx_sctp_cso_err),
 	ICE_PF_STAT(ICE_PORT_TX_L3_CSO_ERROR, tx_l3_cso_err),
 	ICE_PF_STAT(ICE_PORT_TX_L4_CSO_ERROR, tx_l4_cso_err),
-	ICE_PF_STAT(ICE_PORT_RX_VLANO, rx_vlano),
-	ICE_PF_STAT(ICE_PORT_TX_VLANO, tx_vlano),
+	ICE_PF_STAT(ICE_PORT_RX_Q_VLANO, rx_q_vlano),
+	ICE_PF_STAT(ICE_PORT_TX_Q_VLANO, tx_q_vlano),
+	ICE_PF_STAT(ICE_PORT_RX_AD_VLANO, rx_ad_vlano),
+	ICE_PF_STAT(ICE_PORT_TX_AD_VLANO, tx_ad_vlano),
 #endif
 	/* LPI stats */
 	ICE_PF_STAT(ICE_PORT_RX_LPI_STATUS, stats.rx_lpi_status),
@@ -244,6 +254,7 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 	ICE_PRIV_FLAG("vf-true-promisc-support",
 		      ICE_FLAG_VF_TRUE_PROMISC_ENA),
 	ICE_PRIV_FLAG("mdd-auto-reset-vf", ICE_FLAG_MDD_AUTO_RESET_VF),
+	ICE_PRIV_FLAG("vf-vlan-prune-disable", ICE_FLAG_VF_VLAN_PRUNE_DIS),
 	ICE_PRIV_FLAG("legacy-rx", ICE_FLAG_LEGACY_RX),
 };
 
@@ -1039,6 +1050,147 @@ skip_ol_tests:
 	netdev_info(netdev, "testing finished\n");
 }
 
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+/**
+ * ice_get_xdp_rx_strings
+ * @q: queue index
+ * @num_rxq: number of rx queue
+ * @loc_in_buf: ptr to ptr to location in buffer (input and output param)
+ *
+ * This function returns Rx queue XDP related counters strings
+ */
+static void
+ice_get_xdp_rx_strings(unsigned int q, u16 num_rxq, char **loc_in_buf)
+{
+	char *p;
+
+	if (!loc_in_buf || q >= num_rxq)
+		return;
+
+	p = *loc_in_buf;
+
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx_q-%u_bytes", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-passed_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-dropped_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-tx_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-tx-fail_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-unknown_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-redirected_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-redir-fail_q-%u_pkts", q);
+	p += ETH_GSTRING_LEN;
+
+	/* copy back updated length */
+	*loc_in_buf = p;
+}
+
+/**
+ * ice_get_xdp_tx_strings
+ * @vsi: pointer to the VSI structure
+ * @loc_in_buf: ptr to ptr to location in buffer (input and output param)
+ *
+ * This function returns Tx queue XDP related counters strings
+ */
+static void
+ice_get_xdp_tx_strings(struct ice_vsi *vsi, char **loc_in_buf)
+{
+	char *p;
+	int q;
+
+	if (!vsi || !loc_in_buf)
+		return;
+
+	for (q = 0; q < vsi->num_xdp_txq; ++q) {
+		p = *loc_in_buf;
+
+		snprintf(p, ETH_GSTRING_LEN, "xdp-tx_q-%u_pkts", q);
+		p += ETH_GSTRING_LEN;
+		snprintf(p, ETH_GSTRING_LEN, "xdp-tx_q-%u_bytes", q);
+		p += ETH_GSTRING_LEN;
+
+		/* copy back updated length */
+		*loc_in_buf = p;
+	}
+}
+
+/**
+ * ice_get_xdp_rx_stats - get stats for Rx rings if XDP is enabled
+ * @xdp_stats: ptr to stats being updated
+ * @data: ptr to data
+ * @idx: ptr to idx in data buffer (input/output param)
+ *
+ * This function reads XDP per-action Rx statistics.
+ */
+static void
+ice_get_xdp_rx_stats(struct ice_xdp_stats *xdp_stats, u64 *data, int *idx)
+{
+	bool set = !!xdp_stats;
+	int i;
+
+	if (!idx)
+		return;
+
+	i = *idx; /* start index in data buffer */
+
+	data[i++] = set ? xdp_stats->xdp_rx_pkts : 0;
+	data[i++] = set ? xdp_stats->xdp_rx_bytes : 0;
+	data[i++] = set ? xdp_stats->xdp_pass : 0;
+	data[i++] = set ? xdp_stats->xdp_drop : 0;
+	data[i++] = set ? xdp_stats->xdp_tx : 0;
+	data[i++] = set ? xdp_stats->xdp_tx_fail : 0;
+	data[i++] = set ? xdp_stats->xdp_unknown : 0;
+	data[i++] = set ? xdp_stats->xdp_redirect : 0;
+	data[i++] = set ? xdp_stats->xdp_redirect_fail : 0;
+
+	/* copy back updated index */
+	*idx = i;
+}
+
+/**
+ * ice_get_xdp_tx_stats - get stats for XDP Tx rings if XDP is enabled
+ * @vsi: pointer to the VSI structure
+ * @data: ptr to data
+ * @idx: ptr to idx in data buffer (input/output param)
+ *
+ * This function reads XDP per-action Tx statistics.
+ */
+static void
+ice_get_xdp_tx_stats(struct ice_vsi *vsi, u64 *data, int *idx)
+{
+	int i, q;
+
+	if (!idx || !vsi || !vsi->xdp_rings)
+		return;
+
+	i = *idx; /* start index in data buffer */
+
+	for (q = 0; q < vsi->num_xdp_txq; ++q) {
+		struct ice_q_stats *stats;
+		struct ice_ring *ring;
+
+		ring = READ_ONCE(vsi->xdp_rings[q]);
+
+		stats = !!ring ? &ring->stats : NULL;
+
+		data[i++] = !!ring ? stats->pkts : 0;
+		data[i++] = !!ring ? stats->bytes : 0;
+	}
+
+	/* copy back updated index */
+	*idx = i;
+}
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
+
 #ifdef ADQ_PERF_COUNTERS
 /**
  * ice_get_chnl_tx_strings
@@ -1568,6 +1720,11 @@ static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 			ice_get_chnl_tx_strings(vsi, i, &p);
 #endif /* ADQ_PERF_COUNTERS */
 		}
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+		ice_get_xdp_tx_strings(vsi, &p);
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
 #ifdef ICE_ADD_PROBES
 #ifdef HAVE_NETDEV_SB_DEV
 		ice_get_macvlan_tx_strings(vsi->back, &p);
@@ -1586,6 +1743,11 @@ static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_rx_strings(vsi, i, &p);
 #endif /* ADQ_PERF_COUNTERS */
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+			ice_get_xdp_rx_strings(i, vsi->num_rxq, &p);
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
 		}
 #ifdef ICE_ADD_PROBES
 #ifdef HAVE_NETDEV_SB_DEV
@@ -1773,7 +1935,7 @@ ice_get_fecparam(struct net_device *netdev, struct ethtool_fecparam *fecparam)
 	if (!caps)
 		return -ENOMEM;
 
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP,
+	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
 				     caps, NULL);
 	if (status) {
 		err = -EAGAIN;
@@ -2142,6 +2304,14 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 		change_bit(ICE_FLAG_VF_TRUE_PROMISC_ENA, pf->flags);
 		ret = -EAGAIN;
 	}
+
+	if (test_bit(ICE_FLAG_VF_VLAN_PRUNE_DIS, change_flags) &&
+	    pf->num_alloc_vfs) {
+		dev_err(dev, "Changing vf-vlan-prune-disable flag while VF(s) are active is not supported\n");
+		/* toggle bit back to previous state */
+		change_bit(ICE_FLAG_VF_VLAN_PRUNE_DIS, change_flags);
+		ret = -EOPNOTSUPP;
+	}
 ethtool_exit:
 	clear_bit(ICE_FLAG_ETHTOOL_CTXT, pf->flags);
 	return ret;
@@ -2221,6 +2391,11 @@ ice_get_ethtool_stats(struct net_device *netdev,
 #endif /* ADQ_PERF_COUNTERS */
 		}
 	}
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+	ice_get_xdp_tx_stats(vsi, data, &i);
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
 #ifdef ICE_ADD_PROBES
 #ifdef HAVE_NETDEV_SB_DEV
 	ice_get_macvlan_tx_stats(vsi->back, data, &i);
@@ -2238,12 +2413,22 @@ ice_get_ethtool_stats(struct net_device *netdev,
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_rx_stats(vsi, j, data, &i, true);
 #endif /* ADQ_PERF_COUNTERS */
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+			ice_get_xdp_rx_stats(&ring->xdp_stats, data, &i);
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
 		} else {
 			data[i++] = 0;
 			data[i++] = 0;
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_rx_stats(vsi, j, data, &i, false);
 #endif /* ADQ_PERF_COUNTERS */
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+			ice_get_xdp_rx_stats(NULL, data, &i);
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
 		}
 	}
 #ifdef ICE_ADD_PROBES
@@ -2348,8 +2533,8 @@ static void ice_mask_min_supported_speeds(u64 *phy_types_low)
 	do {								     \
 		if (req_speeds & (aq_link_speed) ||			     \
 		    (!req_speeds &&					     \
-		     (adv_phy_type_lo & phy_type_mask_lo ||		     \
-		      adv_phy_type_hi & phy_type_mask_hi)))		     \
+		     (advert_phy_type_lo & phy_type_mask_lo ||		     \
+		      advert_phy_type_hi & phy_type_mask_hi)))		     \
 			ethtool_link_ksettings_add_link_mode(ks, advertising,\
 							ethtool_link_mode);  \
 	} while (0)
@@ -2357,7 +2542,7 @@ static void ice_mask_min_supported_speeds(u64 *phy_types_low)
 #define ice_ethtool_advertise_link_mode(aq_link_speed, ethtool_link_mode)    \
 	do {								     \
 		if (req_speeds & (aq_link_speed) ||			     \
-		    (req_speeds && adv_phy_type_lo & phy_type_mask_lo))	     \
+		    (req_speeds && advert_phy_type_lo & phy_type_mask_lo))   \
 			ethtool_link_ksettings_add_link_mode(ks, advertising,\
 							ethtool_link_mode);  \
 	} while (0)
@@ -2379,9 +2564,9 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 #ifdef HAVE_ETHTOOL_100G_BITS
 	u64 phy_type_mask_hi = 0;
 #endif /* HAVE_ETHTOOL_100G_BITS */
-	u64 adv_phy_type_lo = 0;
+	u64 advert_phy_type_lo = 0;
 #ifdef HAVE_ETHTOOL_100G_BITS
-	u64 adv_phy_type_hi = 0;
+	u64 advert_phy_type_hi = 0;
 	u64 phy_types_high = 0;
 #endif /* HAVE_ETHTOOL_100G_BITS */
 	u64 phy_types_low = 0;
@@ -2400,9 +2585,6 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 	 * requested by user.
 	 */
 	if (test_bit(ICE_FLAG_LINK_LENIENT_MODE_ENA, pf->flags)) {
-		struct ice_link_default_override_tlv *ldo;
-
-		ldo = &pf->link_dflt_override;
 		phy_types_low = le64_to_cpu(pf->nvm_phy_type_lo);
 #ifdef HAVE_ETHTOOL_100G_BITS
 		phy_types_high = le64_to_cpu(pf->nvm_phy_type_hi);
@@ -2411,23 +2593,33 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 #else /* HAVE_ETHTOOL_100G_BITS */
 		ice_mask_min_supported_speeds(&phy_types_low);
 #endif /* !HAVE_ETHTOOL_100G_BITS */
-
-		/* If override enabled and PHY mask set, then
-		 * Advertising link mode is the intersection of the PHY
-		 * types without media and the override PHY mask.
+		/* determine advertised modes based on link override only
+		 * if it's supported and if the FW doesn't abstract the
+		 * driver from having to account for link overrides
 		 */
-		if (ldo->options & ICE_LINK_OVERRIDE_EN &&
-		    (ldo->phy_type_low || ldo->phy_type_high)) {
-			adv_phy_type_lo =
-				le64_to_cpu(pf->nvm_phy_type_lo) &
-				ldo->phy_type_low;
+		if (ice_fw_supports_link_override(&pf->hw) &&
+		    !ice_fw_supports_report_dflt_cfg(&pf->hw)) {
+			struct ice_link_default_override_tlv *ldo;
+
+			ldo = &pf->link_dflt_override;
+			/* If override enabled and PHY mask set, then
+			 * Advertising link mode is the intersection of the PHY
+			 * types without media and the override PHY mask.
+			 */
+			if (ldo->options & ICE_LINK_OVERRIDE_EN &&
+			    (ldo->phy_type_low || ldo->phy_type_high)) {
+				advert_phy_type_lo =
+					le64_to_cpu(pf->nvm_phy_type_lo) &
+					ldo->phy_type_low;
 #ifdef HAVE_ETHTOOL_100G_BITS
-			adv_phy_type_hi =
-				le64_to_cpu(pf->nvm_phy_type_hi) &
-				ldo->phy_type_high;
+				advert_phy_type_hi =
+					le64_to_cpu(pf->nvm_phy_type_hi) &
+					ldo->phy_type_high;
 #endif /* HAVE_ETHTOOL_100G_BITS */
+			}
 		}
 	} else {
+		/* strict mode */
 		phy_types_low = vsi->port_info->phy.phy_type_low;
 #ifdef HAVE_ETHTOOL_100G_BITS
 		phy_types_high = vsi->port_info->phy.phy_type_high;
@@ -2438,13 +2630,13 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 	 * then use PHY type with media.
 	 */
 #ifdef HAVE_ETHTOOL_100G_BITS
-	if (!adv_phy_type_lo && !adv_phy_type_hi) {
-		adv_phy_type_lo = vsi->port_info->phy.phy_type_low;
-		adv_phy_type_hi = vsi->port_info->phy.phy_type_high;
+	if (!advert_phy_type_lo && !advert_phy_type_hi) {
+		advert_phy_type_lo = vsi->port_info->phy.phy_type_low;
+		advert_phy_type_hi = vsi->port_info->phy.phy_type_high;
 	}
 #else
-	if (!adv_phy_type_lo)
-		adv_phy_type_lo = vsi->port_info->phy.phy_type_low;
+	if (!advert_phy_type_lo)
+		advert_phy_type_lo = vsi->port_info->phy.phy_type_low;
 #endif /* !HAVE_ETHTOOL_100G_BITS */
 
 	ethtool_link_ksettings_zero_link_mode(ks, supported);
@@ -2975,7 +3167,7 @@ ice_get_link_ksettings(struct net_device *netdev,
 		return -ENOMEM;
 
 	status = ice_aq_get_phy_caps(vsi->port_info, false,
-				     ICE_AQC_REPORT_SW_CFG, caps, NULL);
+				     ICE_AQC_REPORT_ACTIVE_CFG, caps, NULL);
 	if (status) {
 		err = -EIO;
 		goto done;
@@ -3013,7 +3205,7 @@ ice_get_link_ksettings(struct net_device *netdev,
 		ethtool_link_ksettings_add_link_mode(ks, advertising, FEC_RS);
 
 	status = ice_aq_get_phy_caps(vsi->port_info, false,
-				     ICE_AQC_REPORT_TOPO_CAP, caps, NULL);
+				     ICE_AQC_REPORT_TOPO_CAP_MEDIA, caps, NULL);
 	if (status) {
 		err = -EIO;
 		goto done;
@@ -3197,13 +3389,14 @@ ice_set_link_ksettings(struct net_device *netdev,
 		       const struct ethtool_link_ksettings *ks)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ethtool_link_ksettings safe_ks, copy_ks;
-	struct ice_aqc_get_phy_caps_data *abilities;
 	u8 autoneg, timeout = TEST_SET_BITS_TIMEOUT;
-	u16 adv_link_speed, curr_link_speed, idx;
+	struct ethtool_link_ksettings copy_ks = *ks;
+	struct ethtool_link_ksettings safe_ks = {};
+	struct ice_aqc_get_phy_caps_data *phy_caps;
 	struct ice_aqc_set_phy_cfg_data config;
+	u16 adv_link_speed, curr_link_speed;
 	struct ice_pf *pf = np->vsi->back;
-	struct ice_port_info *p;
+	struct ice_port_info *pi;
 	u8 autoneg_changed = 0;
 	enum ice_status status;
 	u64 phy_type_high = 0;
@@ -3211,45 +3404,36 @@ ice_set_link_ksettings(struct net_device *netdev,
 	int err = 0;
 	bool linkup;
 
-	p = np->vsi->port_info;
+	pi = np->vsi->port_info;
 
-	if (!p)
+	if (!pi)
+		return -EIO;
+
+	if (pi->phy.media_type != ICE_MEDIA_BASET &&
+	    pi->phy.media_type != ICE_MEDIA_FIBER &&
+	    pi->phy.media_type != ICE_MEDIA_BACKPLANE &&
+	    pi->phy.media_type != ICE_MEDIA_DA &&
+	    pi->phy.link_info.link_info & ICE_AQ_LINK_UP)
 		return -EOPNOTSUPP;
 
-	/* Check if this is LAN VSI */
-	ice_for_each_vsi(pf, idx)
-		if (pf->vsi[idx]->type == ICE_VSI_PF) {
-			if (np->vsi != pf->vsi[idx])
-				return -EOPNOTSUPP;
-			break;
-		}
-
-	if (p->phy.media_type != ICE_MEDIA_BASET &&
-	    p->phy.media_type != ICE_MEDIA_FIBER &&
-	    p->phy.media_type != ICE_MEDIA_BACKPLANE &&
-	    p->phy.media_type != ICE_MEDIA_DA &&
-	    p->phy.link_info.link_info & ICE_AQ_LINK_UP)
-		return -EOPNOTSUPP;
-
-	abilities = kzalloc(sizeof(*abilities), GFP_KERNEL);
-	if (!abilities)
+	phy_caps = kzalloc(sizeof(*phy_caps), GFP_KERNEL);
+	if (!phy_caps)
 		return -ENOMEM;
 
 	/* Get the PHY capabilities based on media */
-	status = ice_aq_get_phy_caps(p, false, ICE_AQC_REPORT_TOPO_CAP,
-				     abilities, NULL);
+	if (ice_fw_supports_report_dflt_cfg(pi->hw))
+		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_DFLT_CFG,
+					     phy_caps, NULL);
+	else
+		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+					     phy_caps, NULL);
 	if (status) {
-		err = -EAGAIN;
+		err = -EIO;
 		goto done;
 	}
 
-	/* copy the ksettings to copy_ks to avoid modifying the original */
-	memcpy(&copy_ks, ks, sizeof(copy_ks));
-
 	/* save autoneg out of ksettings */
 	autoneg = copy_ks.base.autoneg;
-
-	memset(&safe_ks, 0, sizeof(safe_ks));
 
 	/* Get link modes supported by hardware.*/
 	ice_phy_type_to_ethtool(netdev, &safe_ks);
@@ -3262,7 +3446,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 			   __ETHTOOL_LINK_MODE_MASK_NBITS)) {
 		if (!test_bit(ICE_FLAG_LINK_LENIENT_MODE_ENA, pf->flags))
 			netdev_info(netdev, "The selected speed is not supported by the current media. Please select a link speed that is supported by the current media.\n");
-		err = -EINVAL;
+		err = -EOPNOTSUPP;
 		goto done;
 	}
 
@@ -3299,26 +3483,26 @@ ice_set_link_ksettings(struct net_device *netdev,
 	 * configuration is initialized during probe from PHY capabilities
 	 * software mode, and updated on set PHY configuration.
 	 */
-	memcpy(&config, &p->phy.curr_user_phy_cfg, sizeof(config));
+	config = pi->phy.curr_user_phy_cfg;
 
 	config.caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 
 	/* Check autoneg */
-	err = ice_setup_autoneg(p, &safe_ks, &config, autoneg, &autoneg_changed,
+	err = ice_setup_autoneg(pi, &safe_ks, &config, autoneg, &autoneg_changed,
 				netdev);
 
 	if (err)
 		goto done;
 
 	/* Call to get the current link speed */
-	p->phy.get_link_info = true;
-	status = ice_get_link_status(p, &linkup);
+	pi->phy.get_link_info = true;
+	status = ice_get_link_status(pi, &linkup);
 	if (status) {
-		err = -EAGAIN;
+		err = -EIO;
 		goto done;
 	}
 
-	curr_link_speed = p->phy.link_info.link_speed;
+	curr_link_speed = pi->phy.link_info.link_speed;
 	adv_link_speed = ice_ksettings_find_adv_link_speed(ks);
 
 	/* If speed didn't get set, set it to what it currently is.
@@ -3337,7 +3521,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 	}
 
 	/* save the requested speeds */
-	p->phy.link_info.req_speeds = adv_link_speed;
+	pi->phy.link_info.req_speeds = adv_link_speed;
 
 	/* set link and auto negotiation so changes take effect */
 	config.caps |= ICE_AQ_PHY_ENA_LINK;
@@ -3345,7 +3529,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 	/* check if there is a PHY type for the requested advertised speed */
 	if (!(phy_type_low || phy_type_high)) {
 		netdev_info(netdev, "The selected speed is not supported by the current media. Please select a link speed that is supported by the current media.\n");
-		err = -EAGAIN;
+		err = -EOPNOTSUPP;
 		goto done;
 	}
 
@@ -3353,9 +3537,9 @@ ice_set_link_ksettings(struct net_device *netdev,
 	 * for set PHY configuration
 	 */
 	config.phy_type_high = cpu_to_le64(phy_type_high) &
-			abilities->phy_type_high;
+			phy_caps->phy_type_high;
 	config.phy_type_low = cpu_to_le64(phy_type_low) &
-			abilities->phy_type_low;
+			phy_caps->phy_type_low;
 
 	if (!(config.phy_type_high || config.phy_type_low)) {
 		/* If there is no intersection and lenient mode is enabled, then
@@ -3369,13 +3553,13 @@ ice_set_link_ksettings(struct net_device *netdev,
 					      pf->nvm_phy_type_lo;
 		} else {
 			netdev_info(netdev, "The selected speed is not supported by the current media. Please select a link speed that is supported by the current media.\n");
-			err = -EAGAIN;
+			err = -EOPNOTSUPP;
 			goto done;
 		}
 	}
 
 	/* If link is up put link down */
-	if (p->phy.link_info.link_info & ICE_AQ_LINK_UP) {
+	if (pi->phy.link_info.link_info & ICE_AQ_LINK_UP) {
 		/* Tell the OS link is going down, the link will go
 		 * back up when fw says it is ready asynchronously
 		 */
@@ -3385,17 +3569,17 @@ ice_set_link_ksettings(struct net_device *netdev,
 	}
 
 	/* make the aq call */
-	status = ice_aq_set_phy_cfg(&pf->hw, p, &config, NULL);
+	status = ice_aq_set_phy_cfg(&pf->hw, pi, &config, NULL);
 	if (status) {
 		netdev_info(netdev, "Set phy config failed,\n");
-		err = -EAGAIN;
+		err = -EIO;
 		goto done;
 	}
 
 	/* Save speed request */
-	p->phy.curr_user_speed_req = adv_link_speed;
+	pi->phy.curr_user_speed_req = adv_link_speed;
 done:
-	kfree(abilities);
+	kfree(phy_caps);
 	clear_bit(ICE_CFG_BUSY, pf->state);
 
 	return err;
@@ -3814,7 +3998,7 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 		return -ENOMEM;
 
 	/* Get the current PHY config */
-	status = ice_aq_get_phy_caps(p, false, ICE_AQC_REPORT_TOPO_CAP,
+	status = ice_aq_get_phy_caps(p, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
 				     abilities, NULL);
 	if (status) {
 		err = -EAGAIN;
@@ -4490,7 +4674,7 @@ ice_get_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 		return;
 
 	/* Get current PHY config */
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_SW_CFG, pcaps,
+	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_ACTIVE_CFG, pcaps,
 				     NULL);
 	if (status)
 		goto out;
@@ -4609,7 +4793,7 @@ ice_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 		return -ENOMEM;
 
 	/* Get current PHY config */
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_SW_CFG, pcaps,
+	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_ACTIVE_CFG, pcaps,
 				     NULL);
 	if (status) {
 		kfree(pcaps);
@@ -5088,28 +5272,26 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 
 	ice_vsi_recfg_qs(vsi, new_rx, new_tx);
 
-	if (new_rx) {
 #ifdef IFF_RXFH_CONFIGURED
-		if (!netif_is_rxfh_configured(dev))
-			return ice_vsi_set_dflt_rss_lut(vsi, new_rx);
-
-		/* Update rss_size due to change in Rx queues */
-		vsi->rss_size = ice_get_valid_rss_size(&pf->hw, new_rx);
-#else
-		/* Clear the previous vsi->rss_lut_user because it is assumed to
-		 * be invalid at this point.
-		 */
-		if (vsi->rss_lut_user) {
-			netdev_info(vsi->netdev, "Rx queue count changed, clearing user modified RSS LUT, re-run ethtool [-x|-X] to [check|set] settings if needed\n");
-			devm_kfree(ice_pf_to_dev(pf), vsi->rss_lut_user);
-			vsi->rss_lut_user = NULL;
-		}
-
+	if (!netif_is_rxfh_configured(dev))
 		return ice_vsi_set_dflt_rss_lut(vsi, new_rx);
-#endif /* IFF_RXFH_CONFIGURED */
-	}
+
+	/* Update rss_size due to change in Rx queues */
+	vsi->rss_size = ice_get_valid_rss_size(&pf->hw, new_rx);
 
 	return 0;
+#else
+	/* Clear the previous vsi->rss_lut_user because it is assumed to
+	 * be invalid at this point.
+	 */
+	if (vsi->rss_lut_user) {
+		netdev_info(vsi->netdev, "Rx queue count changed, clearing user modified RSS LUT, re-run ethtool [-x|-X] to [check|set] settings if needed\n");
+		devm_kfree(ice_pf_to_dev(pf), vsi->rss_lut_user);
+		vsi->rss_lut_user = NULL;
+	}
+
+	return ice_vsi_set_dflt_rss_lut(vsi, new_rx);
+#endif /* IFF_RXFH_CONFIGURED */
 }
 
 /**
@@ -5126,7 +5308,7 @@ static void ice_get_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 		netdev_warn(netdev, "Wake on LAN is not supported on this interface!\n");
 
 	/* Get WoL settings based on the HW capability */
-	if (ice_is_wol_supported(pf)) {
+	if (ice_is_wol_supported(&pf->hw)) {
 		wol->supported = WAKE_MAGIC;
 		wol->wolopts = pf->wol_ena ? WAKE_MAGIC : 0;
 	} else {
@@ -5146,7 +5328,7 @@ static int ice_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
 
-	if (vsi->type != ICE_VSI_PF || !ice_is_wol_supported(pf))
+	if (vsi->type != ICE_VSI_PF || !ice_is_wol_supported(&pf->hw))
 		return -EOPNOTSUPP;
 
 	/* only magic packet is supported */
@@ -5185,25 +5367,21 @@ static int
 ice_get_rc_coalesce(struct ethtool_coalesce *ec, enum ice_container_type c_type,
 		    struct ice_ring_container *rc)
 {
-	struct ice_pf *pf;
-
 	if (!rc->ring)
 		return -EINVAL;
 
-	pf = rc->ring->vsi->back;
-
 	switch (c_type) {
 	case ICE_RX_CONTAINER:
-		ec->use_adaptive_rx_coalesce = ITR_IS_DYNAMIC(rc->itr_setting);
-		ec->rx_coalesce_usecs = rc->itr_setting & ~ICE_ITR_DYNAMIC;
+		ec->use_adaptive_rx_coalesce = ITR_IS_DYNAMIC(rc);
+		ec->rx_coalesce_usecs = rc->itr_setting;
 		ec->rx_coalesce_usecs_high = rc->ring->q_vector->intrl;
 		break;
 	case ICE_TX_CONTAINER:
-		ec->use_adaptive_tx_coalesce = ITR_IS_DYNAMIC(rc->itr_setting);
-		ec->tx_coalesce_usecs = rc->itr_setting & ~ICE_ITR_DYNAMIC;
+		ec->use_adaptive_tx_coalesce = ITR_IS_DYNAMIC(rc);
+		ec->tx_coalesce_usecs = rc->itr_setting;
 		break;
 	default:
-		dev_dbg(ice_pf_to_dev(pf), "Invalid c_type %d\n", c_type);
+		dev_dbg(ice_pf_to_dev(rc->ring->vsi->back), "Invalid c_type %d\n", c_type);
 		return -EINVAL;
 	}
 
@@ -5320,11 +5498,16 @@ ice_set_rc_coalesce(enum ice_container_type c_type, struct ethtool_coalesce *ec,
 				    ICE_MAX_INTRL);
 			return -EINVAL;
 		}
+		if (ec->rx_coalesce_usecs_high != rc->ring->q_vector->intrl &&
+		    (ec->use_adaptive_rx_coalesce || ec->use_adaptive_tx_coalesce)) {
+			netdev_info(vsi->netdev, "Invalid value, %s-usecs-high cannot be changed if adaptive-tx or adaptive-rx is enabled\n",
+				    c_type_str);
+			return -EINVAL;
+		}
 		if (ec->rx_coalesce_usecs_high != rc->ring->q_vector->intrl) {
 			rc->ring->q_vector->intrl = ec->rx_coalesce_usecs_high;
-			wr32(&pf->hw, GLINT_RATE(rc->ring->q_vector->reg_idx),
-			     ice_intrl_usec_to_reg(ec->rx_coalesce_usecs_high,
-						   pf->hw.intrl_gran));
+			ice_write_intrl(rc->ring->q_vector,
+					ec->rx_coalesce_usecs_high);
 		}
 
 		use_adaptive_coalesce = ec->use_adaptive_rx_coalesce;
@@ -5347,7 +5530,7 @@ ice_set_rc_coalesce(enum ice_container_type c_type, struct ethtool_coalesce *ec,
 		return -EINVAL;
 	}
 
-	itr_setting = rc->itr_setting & ~ICE_ITR_DYNAMIC;
+	itr_setting = rc->itr_setting;
 	if (coalesce_usecs != itr_setting && use_adaptive_coalesce) {
 		netdev_info(vsi->netdev, "%s interrupt throttling cannot be changed if adaptive-%s is enabled\n",
 			    c_type_str, c_type_str);
@@ -5361,46 +5544,21 @@ ice_set_rc_coalesce(enum ice_container_type c_type, struct ethtool_coalesce *ec,
 	}
 
 	if (use_adaptive_coalesce) {
-		rc->itr_setting |= ICE_ITR_DYNAMIC;
+		rc->itr_mode = ITR_DYNAMIC;
 	} else {
-		/* save the user set usecs */
+		rc->itr_mode = ITR_STATIC;
+		/* store user facing value how it was set */
 		rc->itr_setting = coalesce_usecs;
-		/* device ITR granularity is in 2 usec increments */
-		rc->target_itr = ITR_REG_ALIGN(rc->itr_setting);
+		/* write the change to the register */
+		ice_write_itr(rc, coalesce_usecs);
+		/* force writes to take effect immediately, the flush shouldn't
+		 * be done in the functions above because the intent is for
+		 * them to do lazy writes.
+		 */
+		ice_flush(&pf->hw);
 	}
 
 	return 0;
-}
-
-/**
- * ice_inline_itr_update - sets the ITR value instead of deferring
- * @vsi: VSI associated to the ring container
- * @q_vector: ptr to vector
- * @ec: ptr to ethtool coalesce
- *
- * Set specific ITR values. This is done per vector by writing to
- * GLINT_ITR register twice (once for Tx and Rx)
- */
-static void
-ice_inline_itr_update(struct ice_vsi *vsi, struct ice_q_vector *q_vector,
-		      struct ethtool_coalesce *ec)
-{
-	if (!ec->use_adaptive_tx_coalesce) {
-		struct ice_ring_container *tx_rc = &q_vector->tx;
-
-		wr32(&vsi->back->hw,
-		     GLINT_ITR(tx_rc->itr_idx, q_vector->reg_idx),
-		     tx_rc->target_itr >> ICE_ITR_GRAN_S);
-		tx_rc->current_itr = tx_rc->target_itr;
-	}
-	if (!ec->use_adaptive_rx_coalesce) {
-		struct ice_ring_container *rx_rc = &q_vector->rx;
-
-		wr32(&vsi->back->hw,
-		     GLINT_ITR(rx_rc->itr_idx, q_vector->reg_idx),
-		     rx_rc->target_itr >> ICE_ITR_GRAN_S);
-		rx_rc->current_itr = rx_rc->target_itr;
-	}
 }
 
 /**
@@ -5481,8 +5639,6 @@ ice_print_if_odd_usecs(struct net_device *netdev, u16 itr_setting,
 	if (use_adaptive_coalesce)
 		return;
 
-	itr_setting = ITR_TO_REG(itr_setting);
-
 	if (itr_setting != coalesce_usecs && (coalesce_usecs % 2))
 		netdev_info(netdev, "User set %s-usecs to %d, device only supports even values. Rounding down and attempting to set %s-usecs to %d\n",
 			    c_type_str, coalesce_usecs, c_type_str,
@@ -5534,15 +5690,6 @@ __ice_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec,
 
 			if (ice_set_q_coalesce(vsi, ec, v_idx))
 				return -EINVAL;
-			/* perform in-context ITR update only if ADQ is
-			 * supported and "AIM" is off (for either Tx or Rx
-			 * ITR setting)
-			 */
-			if (!(ec->use_adaptive_rx_coalesce &&
-			      ec->use_adaptive_tx_coalesce))
-				ice_inline_itr_update(vsi,
-						      vsi->q_vectors[v_idx],
-						      ec);
 		}
 		goto set_complete;
 	}
@@ -5551,13 +5698,6 @@ __ice_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec,
 		return -EINVAL;
 
 set_complete:
-	/* make sure to flush writes to GLINT_ITR, only if ADQ SUPPORT is ON
-	 * and "aim" setting for Tx or Rx ITR is off
-	 */
-	if (q_num < 0 &&
-	    (!(ec->use_adaptive_rx_coalesce && ec->use_adaptive_tx_coalesce)))
-		ice_flush(&vsi->back->hw);
-
 	return 0;
 }
 
@@ -5673,30 +5813,33 @@ ice_get_module_eeprom(struct net_device *netdev,
 		      struct ethtool_eeprom *ee, u8 *data)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+#define SFF_READ_BLOCK_SIZE 8
+	u8 value[SFF_READ_BLOCK_SIZE] = {0};
 	u8 addr = ICE_I2C_EEPROM_DEV_ADDR;
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	enum ice_status status;
 	bool is_sfp = false;
-	unsigned int i;
+	unsigned int i, j;
 	u16 offset = 0;
-	u8 value = 0;
 	u8 page = 0;
 
 	if (!ee || !ee->len || !data)
 		return -EINVAL;
 
-	status = ice_aq_sff_eeprom(hw, 0, addr, offset, page, 0, &value, 1, 0,
+	status = ice_aq_sff_eeprom(hw, 0, addr, offset, page, 0, value, 1, 0,
 				   NULL);
 	if (status)
 		return -EIO;
 
-	if (value == ICE_MODULE_TYPE_SFP)
+	if (value[0] == ICE_MODULE_TYPE_SFP)
 		is_sfp = true;
 
-	for (i = 0; i < ee->len; i++) {
+	memset(data, 0, ee->len);
+	for (i = 0; i < ee->len; i += SFF_READ_BLOCK_SIZE) {
 		offset = i + ee->offset;
+		page = 0;
 
 		/* Check if we need to access the other memory page */
 		if (is_sfp) {
@@ -5712,11 +5855,38 @@ ice_get_module_eeprom(struct net_device *netdev,
 			}
 		}
 
-		status = ice_aq_sff_eeprom(hw, 0, addr, offset, page, !is_sfp,
-					   &value, 1, 0, NULL);
-		if (status)
-			value = 0;
-		data[i] = value;
+		/* Bit 2 of eeprom address 0x02 declares upper
+		 * pages are disabled on QSFP modules.
+		 * SFP modules only ever use page 0.
+		 */
+		if (page == 0 || !(data[0x2] & 0x4)) {
+			/* If i2c bus is busy due to slow page change or
+			 * link management access, call can fail. This is normal.
+			 * So we retry this a few times.
+			 */
+			for (j = 0; j < 4; j++) {
+				status = ice_aq_sff_eeprom(hw, 0, addr, offset, page,
+							   !is_sfp, value,
+							   SFF_READ_BLOCK_SIZE,
+							   0, NULL);
+				netdev_dbg(netdev,
+					   "SFF %02X %02X %02X %X = %02X%02X%02X%02X.%02X%02X%02X%02X (%X)\n",
+					   addr, offset, page, is_sfp,
+					   value[0], value[1], value[2], value[3],
+					   value[4], value[5], value[6], value[7],
+					   status);
+				if (status) {
+					usleep_range(1500, 2500);
+					memset(value, 0, SFF_READ_BLOCK_SIZE);
+					continue;
+				}
+				break;
+			}
+
+			/* Make sure we have enough room for the new block */
+			if ((i + SFF_READ_BLOCK_SIZE) < ee->len)
+				memcpy(data + i, value, SFF_READ_BLOCK_SIZE);
+		}
 	}
 	return 0;
 }

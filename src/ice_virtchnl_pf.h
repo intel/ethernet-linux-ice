@@ -6,6 +6,7 @@
 #include "ice.h"
 #include "ice_virtchnl_fdir.h"
 #include "ice_dcf.h"
+#include "ice_vsi_vlan_ops.h"
 
 #define ICE_VIRTCHNL_SUPPORTED_QTYPES	2
 
@@ -71,6 +72,16 @@ enum ice_virtchnl_cap {
 	ICE_VIRTCHNL_VF_CAP_PRIVILEGE,
 };
 
+/* DDP package type */
+enum ice_pkg_type {
+	ICE_PKG_TYPE_UNKNOWN = 0,
+	ICE_PKG_TYPE_OS_DEFAULT,
+	ICE_PKG_TYPE_COMMS,
+	ICE_PKG_TYPE_WIRELESS_EDGE,
+	ICE_PKG_TYPE_GTP_OVER_GRE,
+	ICE_PKG_TYPE_END,
+};
+
 /* In ADQ, max 4 VSI's can be allocated per VF including primary VF VSI.
  * These variables are used to store indices, ID's and number of queues
  * for each VSI including that of primary VF VSI. Each Traffic class is
@@ -98,6 +109,14 @@ struct ice_mdd_vf_events {
 	u16 count;			/* total count of Rx|Tx events */
 	/* count number of the last printed event */
 	u16 last_printed;
+};
+
+/* The VF VLAN information controlled by DCF */
+struct ice_dcf_vlan_info {
+	struct ice_vlan outer_port_vlan;
+	u16 outer_stripping_tpid;
+	u8 outer_stripping_ena:1;
+	u8 applying:1;
 };
 
 #define ICE_HASH_IP_CTX_IP		0
@@ -157,7 +176,9 @@ struct ice_vf {
 	struct ice_time_mac legacy_last_added_umac;
 	DECLARE_BITMAP(txq_ena, ICE_MAX_QS_PER_VF);
 	DECLARE_BITMAP(rxq_ena, ICE_MAX_QS_PER_VF);
-	u16 port_vlan_info;		/* Port VLAN ID and QoS */
+	struct ice_vlan port_vlan_info;	/* Port VLAN ID, QoS, and TPID */
+	struct virtchnl_vlan_caps vlan_v2_caps;
+	struct ice_dcf_vlan_info dcf_vlan_info;
 	u8 pf_set_mac:1;		/* VF MAC address set by VMM admin */
 	u8 trusted:1;
 	u8 spoofchk:1;
@@ -180,6 +201,9 @@ struct ice_vf {
 	u16 num_req_qs;			/* num of queue pairs requested by VF */
 	u16 num_mac;
 	u16 num_vf_qs;			/* num of queue configured per VF */
+	u8 vlan_strip_ena;		/* Outer and Inner VLAN strip enable */
+#define ICE_INNER_VLAN_STRIP_ENA	BIT(0)
+#define ICE_OUTER_VLAN_STRIP_ENA	BIT(1)
 	/* ADQ related variables */
 	u8 adq_enabled; /* flag to enable ADQ */
 	u8 adq_fltr_ena; /* flag to denote that ADQ filters are applied */
@@ -280,11 +304,13 @@ void
 ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event);
 void ice_print_vfs_mdd_events(struct ice_pf *pf);
 void ice_print_vf_rx_mdd_event(struct ice_vf *vf);
+enum ice_pkg_type ice_pkg_name_to_type(struct ice_hw *hw);
 struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf);
 int
 ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen);
 bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
+bool ice_vf_is_port_vlan_ena(struct ice_vf *vf);
 #else /* CONFIG_PCI_IOV */
 #define ice_dump_all_vfs(pf) do {} while (0)
 #define ice_process_vflr_event(pf) do {} while (0)
@@ -421,6 +447,11 @@ static inline bool ice_is_any_vf_in_promisc(struct ice_pf __always_unused *pf)
 	return false;
 }
 
+static inline enum ice_pkg_type ice_pkg_name_to_type(struct ice_hw *hw)
+{
+	return ICE_PKG_TYPE_UNKNOWN;
+}
+
 static inline struct ice_vsi *
 ice_vf_ctrl_vsi_setup(struct ice_vf __always_unused *vf)
 {
@@ -437,6 +468,10 @@ ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 static inline bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id)
 {
 	return 0;
+}
+static inline bool ice_vf_is_port_vlan_ena(struct ice_vf __always_unused *vf)
+{
+	return false;
 }
 #endif /* CONFIG_PCI_IOV */
 #endif /* _ICE_VIRTCHNL_PF_H_ */

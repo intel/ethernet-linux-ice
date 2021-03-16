@@ -45,7 +45,9 @@ ice-y := ice_main.o	\
 	 ice_txrx_lib.o	\
 	 ice_txrx.o	\
 	 ice_fltr.o	\
+	 ice_pf_vsi_vlan_ops.o \
 	 ice_vsi_vlan_ops.o \
+	 ice_vsi_vlan_lib.o \
 	 ice_fdir.o	\
 	 ice_ethtool_fdir.o	\
 	 ice_acl_main.o		\
@@ -59,7 +61,10 @@ ice-y := ice_main.o	\
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
 ice-$(CONFIG_MFD_CORE:m=y) += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
-ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_sriov.o ice_virtchnl_allowlist.o ice_dcf.o ice_virtchnl_fdir.o
+ice-$(CONFIG_PCI_IOV) += ice_virtchnl_allowlist.o
+ice-$(CONFIG_PCI_IOV) += ice_dcf.o
+ice-$(CONFIG_PCI_IOV) += ice_virtchnl_fdir.o
+ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_sriov.o ice_vf_vsi_vlan_ops.o
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_cgu_ops.o ice_cgu_util.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
@@ -70,7 +75,10 @@ ice-y += kcompat.o
 ifndef CONFIG_PLDMFW
 ice-y += kcompat_pldmfw.o
 endif
-
+# Use kcompat DIMLIB if kernel doesn't provide it
+ifndef CONFIG_DIMLIB
+ice-y += kcompat_dim.o kcompat_net_dim.o
+endif
 else	# ifneq($(KERNELRELEASE),)
 # normal makefile
 

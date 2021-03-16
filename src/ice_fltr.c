@@ -230,21 +230,22 @@ ice_fltr_add_mac_to_list(struct ice_vsi *vsi, struct list_head *list,
  * ice_fltr_add_vlan_to_list - add VLAN filter info to exsisting list
  * @vsi: pointer to VSI struct
  * @list: list to add filter info to
- * @vlan_id: VLAN ID to add
- * @action: filter action
+ * @vlan: VLAN filter details
  */
 static int
 ice_fltr_add_vlan_to_list(struct ice_vsi *vsi, struct list_head *list,
-			  u16 vlan_id, enum ice_sw_fwd_act_type action)
+			  struct ice_vlan vlan)
 {
 	struct ice_fltr_info info = { 0 };
 
 	info.flag = ICE_FLTR_TX;
 	info.src_id = ICE_SRC_ID_VSI;
 	info.lkup_type = ICE_SW_LKUP_VLAN;
-	info.fltr_act = action;
+	info.fltr_act = vlan.fwd_act;
 	info.vsi_handle = vsi->idx;
-	info.l_data.vlan.vlan_id = vlan_id;
+	info.l_data.vlan.vlan_id = vlan.vid;
+	info.l_data.vlan.tpid = vlan.tpid;
+	info.l_data.vlan.tpid_valid = true;
 
 	return ice_fltr_add_entry_to_list(ice_pf_to_dev(vsi->back), &info,
 					  list);
@@ -371,20 +372,18 @@ ice_fltr_prepare_mac_and_broadcast(struct ice_vsi *vsi, const u8 *mac,
 /**
  * ice_fltr_prepare_vlan - add or remove VLAN filter
  * @vsi: pointer to VSI struct
- * @vlan_id: VLAN ID to add
- * @action: action to be performed on filter match
+ * @vlan: VLAN filter details
  * @vlan_action: pointer to add or remove VLAN function
  */
 static enum ice_status
-ice_fltr_prepare_vlan(struct ice_vsi *vsi, u16 vlan_id,
-		      enum ice_sw_fwd_act_type action,
+ice_fltr_prepare_vlan(struct ice_vsi *vsi, struct ice_vlan vlan,
 		      enum ice_status (*vlan_action)(struct ice_vsi *,
 						     struct list_head *))
 {
 	enum ice_status result;
 	LIST_HEAD(tmp_list);
 
-	if (ice_fltr_add_vlan_to_list(vsi, &tmp_list, vlan_id, action))
+	if (ice_fltr_add_vlan_to_list(vsi, &tmp_list, vlan))
 		return ICE_ERR_NO_MEMORY;
 
 	result = vlan_action(vsi, &tmp_list);
@@ -484,27 +483,21 @@ enum ice_status ice_fltr_remove_mac(struct ice_vsi *vsi, const u8 *mac,
 /**
  * ice_fltr_add_vlan - add single VLAN filter
  * @vsi: pointer to VSI struct
- * @vlan_id: VLAN ID to add
- * @action: action to be performed on filter match
+ * @vlan: VLAN filter details
  */
-enum ice_status ice_fltr_add_vlan(struct ice_vsi *vsi, u16 vlan_id,
-				  enum ice_sw_fwd_act_type action)
+enum ice_status ice_fltr_add_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
 {
-	return ice_fltr_prepare_vlan(vsi, vlan_id, action,
-				     ice_fltr_add_vlan_list);
+	return ice_fltr_prepare_vlan(vsi, vlan, ice_fltr_add_vlan_list);
 }
 
 /**
  * ice_fltr_remove_vlan - remove VLAN filter
  * @vsi: pointer to VSI struct
- * @vlan_id: filter VLAN to remove
- * @action: action to remove
+ * @vlan: VLAN filter details
  */
-enum ice_status ice_fltr_remove_vlan(struct ice_vsi *vsi, u16 vlan_id,
-				     enum ice_sw_fwd_act_type action)
+enum ice_status ice_fltr_remove_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
 {
-	return ice_fltr_prepare_vlan(vsi, vlan_id, action,
-				     ice_fltr_remove_vlan_list);
+	return ice_fltr_prepare_vlan(vsi, vlan, ice_fltr_remove_vlan_list);
 }
 
 /**
@@ -564,3 +557,4 @@ enum ice_status ice_fltr_remove_eth(struct ice_vsi *vsi, u16 ethertype,
 	return ice_fltr_prepare_eth(vsi, ethertype, flag, action,
 				    ice_fltr_remove_eth_list);
 }
+

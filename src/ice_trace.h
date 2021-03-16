@@ -94,6 +94,67 @@ DEFINE_EVENT(ice_print_msg, name, \
 
 DEFINE_PRINT_MSG_EVENT(ice_print_err);
 DEFINE_PRINT_MSG_EVENT(ice_print_warn);
+DEFINE_PRINT_MSG_EVENT(ice_print_adminq_msg);
+DEFINE_PRINT_MSG_EVENT(ice_print_adminq_desc);
+DEFINE_PRINT_MSG_EVENT(ice_print_netdev_err);
+DEFINE_PRINT_MSG_EVENT(ice_print_netdev_warn);
+DEFINE_PRINT_MSG_EVENT(ice_print_netdev_info);
+DEFINE_PRINT_MSG_EVENT(ice_print_peer_err);
+
+/* Events related to DIM, q_vectors and ring containers */
+DECLARE_EVENT_CLASS(ice_rx_dim_template,
+		    TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
+		    TP_ARGS(q_vector, dim),
+		    TP_STRUCT__entry(__field(struct ice_q_vector *, q_vector)
+				     __field(struct dim *, dim)
+				     __string(devname, q_vector->rx.ring->netdev->name)),
+
+		    TP_fast_assign(__entry->q_vector = q_vector;
+				   __entry->dim = dim;
+				   __assign_str(devname, q_vector->rx.ring->netdev->name);),
+
+		    TP_printk("netdev: %s Rx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
+			      __get_str(devname),
+			      __entry->q_vector->rx.ring->q_index,
+			      __entry->dim->state,
+			      __entry->dim->profile_ix,
+			      __entry->dim->tune_state,
+			      __entry->dim->steps_right,
+			      __entry->dim->steps_left,
+			      __entry->dim->tired)
+);
+
+DEFINE_EVENT(ice_rx_dim_template, ice_rx_dim_work,
+	     TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
+	     TP_ARGS(q_vector, dim)
+);
+
+DECLARE_EVENT_CLASS(ice_tx_dim_template,
+		    TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
+		    TP_ARGS(q_vector, dim),
+		    TP_STRUCT__entry(__field(struct ice_q_vector *, q_vector)
+				     __field(struct dim *, dim)
+				     __string(devname, q_vector->tx.ring->netdev->name)),
+
+		    TP_fast_assign(__entry->q_vector = q_vector;
+				   __entry->dim = dim;
+				   __assign_str(devname, q_vector->tx.ring->netdev->name);),
+
+		    TP_printk("netdev: %s Tx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
+			      __get_str(devname),
+			      __entry->q_vector->rx.ring->q_index,
+			      __entry->dim->state,
+			      __entry->dim->profile_ix,
+			      __entry->dim->tune_state,
+			      __entry->dim->steps_right,
+			      __entry->dim->steps_left,
+			      __entry->dim->tired)
+);
+
+DEFINE_EVENT(ice_tx_dim_template, ice_tx_dim_work,
+	     TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
+	     TP_ARGS(q_vector, dim)
+);
 
 /* Events related to a vsi & ring */
 DECLARE_EVENT_CLASS(ice_tx_template,

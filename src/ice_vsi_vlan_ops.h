@@ -5,18 +5,9 @@
 #define _ICE_VSI_VLAN_OPS_H_
 
 #include "ice_type.h"
+#include "ice_vsi_vlan_lib.h"
 
 struct ice_vsi;
-
-struct ice_vlan {
-	u16 tpid;
-	u16 vid;
-	u8 prio;
-	enum ice_sw_fwd_act_type fwd_act;
-};
-
-#define ICE_VLAN(tpid, vid, prio, fwd_action)	\
-	(struct ice_vlan){ tpid, vid, prio, fwd_action }
 
 struct ice_vsi_vlan_ops {
 	int (*add_vlan)(struct ice_vsi *vsi, struct ice_vlan vlan);
@@ -25,10 +16,15 @@ struct ice_vsi_vlan_ops {
 	int (*dis_stripping)(struct ice_vsi *vsi);
 	int (*ena_insertion)(struct ice_vsi *vsi, const u16 tpid);
 	int (*dis_insertion)(struct ice_vsi *vsi);
+	int (*ena_rx_filtering)(struct ice_vsi *vsi);
+	int (*dis_rx_filtering)(struct ice_vsi *vsi);
+	int (*ena_tx_filtering)(struct ice_vsi *vsi);
+	int (*dis_tx_filtering)(struct ice_vsi *vsi);
 	int (*set_port_vlan)(struct ice_vsi *vsi, struct ice_vlan vlan);
 };
 
 void ice_vsi_init_vlan_ops(struct ice_vsi *vsi);
+struct ice_vsi_vlan_ops *ice_get_compat_vsi_vlan_ops(struct ice_vsi *vsi);
 
 #endif /* _ICE_VSI_VLAN_OPS_H_ */
 

@@ -36,25 +36,29 @@ enum ice_status
 ice_get_sw_fv_list(struct ice_hw *hw, u8 *prot_ids, u16 ids_cnt,
 		   unsigned long *bm, struct list_head *fv_list);
 enum ice_status
-ice_aq_upload_section(struct ice_hw *hw, struct ice_buf_hdr *pkg_buf,
-		      u16 buf_size, struct ice_sq_cd *cd);
-
-enum ice_status
 ice_pkg_buf_unreserve_section(struct ice_buf_build *bld, u16 count);
 u16 ice_pkg_buf_get_free_space(struct ice_buf_build *bld);
+enum ice_status
+ice_aq_upload_section(struct ice_hw *hw, struct ice_buf_hdr *pkg_buf,
+		      u16 buf_size, struct ice_sq_cd *cd);
 bool
 ice_get_open_tunnel_port(struct ice_hw *hw, enum ice_tunnel_type type,
 			 u16 *port);
 enum ice_status
 ice_is_create_tunnel_possible(struct ice_hw *hw, enum ice_tunnel_type type,
 			      u16 port);
+bool ice_is_tunnel_empty(struct ice_hw *hw);
 enum ice_status
 ice_create_tunnel(struct ice_hw *hw, enum ice_tunnel_type type, u16 port);
+enum ice_status ice_set_dvm_boost_entries(struct ice_hw *hw);
 enum ice_status ice_destroy_tunnel(struct ice_hw *hw, u16 port, bool all);
 bool ice_tunnel_port_in_use(struct ice_hw *hw, u16 port, u16 *index);
 bool
 ice_tunnel_get_type(struct ice_hw *hw, u16 port, enum ice_tunnel_type *type);
 enum ice_status ice_replay_tunnels(struct ice_hw *hw);
+
+/* RX parser PType functions */
+bool ice_hw_ptype_ena(struct ice_hw *hw, u16 ptype);
 
 /* XLT1/PType group functions */
 enum ice_status ice_ptg_update_xlt1(struct ice_hw *hw, enum ice_block blk);
@@ -96,6 +100,11 @@ ice_rem_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi[], u8 count,
 	     u64 id);
 enum ice_status
 ice_rem_prof(struct ice_hw *hw, enum ice_block blk, u64 id);
+struct ice_buf_build *
+ice_pkg_buf_alloc_single_section(struct ice_hw *hw, u32 type, u16 size,
+				 void **section);
+struct ice_buf *ice_pkg_buf(struct ice_buf_build *bld);
+void ice_pkg_buf_free(struct ice_hw *hw, struct ice_buf_build *bld);
 
 enum ice_status
 ice_set_key(u8 *key, u16 size, u8 *val, u8 *upd, u8 *dc, u8 *nm, u16 off,

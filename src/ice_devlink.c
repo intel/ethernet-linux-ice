@@ -305,6 +305,12 @@ static int ice_devlink_info_get(struct devlink *devlink,
 	size_t i;
 	int err;
 
+	err = ice_wait_for_reset(pf, 10 * HZ);
+	if (err) {
+		NL_SET_ERR_MSG_MOD(extack, "Device is busy resetting");
+		return err;
+	}
+
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
@@ -617,9 +623,13 @@ ice_devlink_flash_update(struct devlink *devlink,
 			 struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
+#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_FW
 	struct device *dev = &pf->pdev->dev;
+#endif
 	struct ice_hw *hw = &pf->hw;
+#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_FW
 	const struct firmware *fw;
+#endif
 	u8 preservation;
 	int err;
 
@@ -647,28 +657,45 @@ ice_devlink_flash_update(struct devlink *devlink,
 	if (err)
 		return err;
 
+	devlink_flash_update_status_notify(devlink, "Preparing to flash", NULL, 0, 0);
+
+#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_FW
 	err = request_firmware(&fw, params->file_name, dev);
 	if (err) {
 		NL_SET_ERR_MSG_MOD(extack, "Unable to read file from disk");
 		return err;
 	}
 
-	dev_dbg(dev, "Beginning flash update with file '%s'\n", params->file_name);
-
-	devlink_flash_update_begin_notify(devlink);
-	devlink_flash_update_status_notify(devlink, "Preparing to flash", NULL, 0, 0);
 	err = ice_flash_pldm_image(pf, fw, preservation, extack);
-	devlink_flash_update_end_notify(devlink);
 
 	release_firmware(fw);
 
 	return err;
+#else
+	return ice_flash_pldm_image(pf, params->fw, preservation, extack);
+#endif
 }
+
+#ifdef HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY
+static int
+ice_devlink_flash_update_notify_compat(struct devlink *devlink,
+				       struct devlink_flash_update_params *params,
+				       struct netlink_ext_ack *extack)
+{
+	int err;
+
+	devlink_flash_update_begin_notify(devlink);
+	err = ice_devlink_flash_update(devlink, params, extack);
+	devlink_flash_update_end_notify(devlink);
+
+	return err;
+}
+#endif
 
 #ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
 static int
-ice_devlink_flash_update_compat(struct devlink *devlink, const char *file_name,
-				const char *component, struct netlink_ext_ack *extack)
+ice_devlink_flash_update_params_compat(struct devlink *devlink, const char *file_name,
+				       const char *component, struct netlink_ext_ack *extack)
 {
 	struct devlink_flash_update_params params = {};
 
@@ -680,7 +707,11 @@ ice_devlink_flash_update_compat(struct devlink *devlink, const char *file_name,
 
 	params.file_name = file_name;
 
+#ifdef HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY
+	return ice_devlink_flash_update_notify_compat(devlink, &params, extack);
+#else
 	return ice_devlink_flash_update(devlink, &params, extack);
+#endif
 }
 #endif /* !HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
 #endif /* HAVE_DEVLINK_FLASH_UPDATE */
@@ -693,10 +724,12 @@ static const struct devlink_ops ice_devlink_ops = {
 	.info_get = ice_devlink_info_get,
 #endif /* HAVE_DEVLINK_INFO_GET */
 #ifdef HAVE_DEVLINK_FLASH_UPDATE
-#ifdef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
-	.flash_update = ice_devlink_flash_update,
+#if !defined(HAVE_DEVLINK_FLASH_UPDATE_PARAMS)
+	.flash_update = ice_devlink_flash_update_params_compat,
+#elif defined(HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY)
+	.flash_update = ice_devlink_flash_update_notify_compat,
 #else
-	.flash_update = ice_devlink_flash_update_compat,
+	.flash_update = ice_devlink_flash_update,
 #endif
 #endif /* HAVE_DEVLINK_FLASH_UPDATE */
 };

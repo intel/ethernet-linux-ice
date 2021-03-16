@@ -61,6 +61,15 @@ static const u32 vlan_allowlist_opcodes[] = {
 	VIRTCHNL_OP_ENABLE_VLAN_STRIPPING, VIRTCHNL_OP_DISABLE_VLAN_STRIPPING,
 };
 
+/* VIRTCHNL_VF_OFFLOAD_VLAN_V2 */
+static const u32 vlan_v2_allowlist_opcodes[] = {
+	VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS, VIRTCHNL_OP_ADD_VLAN_V2,
+	VIRTCHNL_OP_DEL_VLAN_V2, VIRTCHNL_OP_ENABLE_VLAN_STRIPPING_V2,
+	VIRTCHNL_OP_DISABLE_VLAN_STRIPPING_V2,
+	VIRTCHNL_OP_ENABLE_VLAN_INSERTION_V2,
+	VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2,
+};
+
 /* VIRTCHNL_VF_OFFLOAD_RSS_PF */
 static const u32 rss_pf_allowlist_opcodes[] = {
 	VIRTCHNL_OP_CONFIG_RSS_KEY, VIRTCHNL_OP_CONFIG_RSS_LUT,
@@ -81,6 +90,7 @@ static const u32 adq_v2_allowlist_opcodes[] = {
 
 /* VIRTCHNL_VF_CAP_DCF */
 static const u32 cap_dcf_allowlist_opcodes[] = {
+	VIRTCHNL_OP_DCF_VLAN_OFFLOAD,
 	VIRTCHNL_OP_DCF_CMD_DESC, VIRTCHNL_OP_DCF_CMD_BUFF,
 	VIRTCHNL_OP_DCF_DISABLE, VIRTCHNL_OP_DCF_GET_VSI_MAP,
 	VIRTCHNL_OP_DCF_GET_PKG_INFO,
@@ -116,43 +126,25 @@ struct allowlist_opcode_info {
 };
 
 #define BIT_INDEX(caps) (HWEIGHT((caps) - 1))
+#define ALLOW_ITEM(caps, list) \
+	[BIT_INDEX(caps)] = { \
+		.opcodes = list, \
+		.size = ARRAY_SIZE(list) \
+	}
 static const struct allowlist_opcode_info allowlist_opcodes[] = {
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_L2)] = {
-		.opcodes = l2_allowlist_opcodes,
-		.size = ARRAY_SIZE(l2_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_IWARP)] = {
-		.opcodes = iwarp_allowlist_opcodes,
-		.size = ARRAY_SIZE(iwarp_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_REQ_QUEUES)] = {
-		.opcodes = req_queues_allowlist_opcodes,
-		.size = ARRAY_SIZE(req_queues_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_VLAN)] = {
-		.opcodes = vlan_allowlist_opcodes,
-		.size = ARRAY_SIZE(vlan_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_RSS_PF)] = {
-		.opcodes = rss_pf_allowlist_opcodes,
-		.size = ARRAY_SIZE(rss_pf_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_ADQ)] = {
-		.opcodes = adq_allowlist_opcodes,
-		.size = ARRAY_SIZE(adq_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_ADQ_V2)] = {
-		.opcodes = adq_v2_allowlist_opcodes,
-		.size = ARRAY_SIZE(adq_v2_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_CAP_DCF)] = {
-		.opcodes = cap_dcf_allowlist_opcodes,
-		.size = ARRAY_SIZE(cap_dcf_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC)] = {
-		.opcodes = rx_flex_desc_allowlist_opcodes,
-		.size = ARRAY_SIZE(rx_flex_desc_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF)] = {
-		.opcodes = adv_rss_pf_allowlist_opcodes,
-		.size = ARRAY_SIZE(adv_rss_pf_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_OFFLOAD_FDIR_PF)] = {
-		.opcodes = fdir_pf_allowlist_opcodes,
-		.size = ARRAY_SIZE(fdir_pf_allowlist_opcodes)},
-	[BIT_INDEX(VIRTCHNL_VF_LARGE_NUM_QPAIRS)] = {
-		.opcodes = large_num_qpairs_allowlist_opcodes,
-		.size = ARRAY_SIZE(large_num_qpairs_allowlist_opcodes)},
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_L2, l2_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_IWARP, iwarp_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_REQ_QUEUES, req_queues_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_VLAN, vlan_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_RSS_PF, rss_pf_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_ADQ, adq_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_ADQ_V2, adq_v2_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_CAP_DCF, cap_dcf_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC, rx_flex_desc_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF, adv_rss_pf_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_FDIR_PF, fdir_pf_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_LARGE_NUM_QPAIRS, large_num_qpairs_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_VLAN_V2, vlan_v2_allowlist_opcodes),
 };
 
 /**

@@ -289,24 +289,24 @@ void ice_vsi_cfg_dcb_rings(struct ice_vsi *vsi)
 
 /**
  * ice_peer_prep_tc_change - Pre-notify RDMA Peer in blocking call of TC change
- * @peer_dev_int: ptr to peer device internal struct
+ * @peer_obj_int: ptr to peer device internal struct
  * @data: ptr to opaque data
  */
 static int
-ice_peer_prep_tc_change(struct ice_peer_dev_int *peer_dev_int,
+ice_peer_prep_tc_change(struct ice_peer_obj_int *peer_obj_int,
 			void __always_unused *data)
 {
-	struct ice_peer_dev *peer_dev;
+	struct ice_peer_obj *peer_obj;
 
-	peer_dev = ice_get_peer_dev(peer_dev_int);
-	if (!ice_validate_peer_dev(peer_dev))
+	peer_obj = ice_get_peer_obj(peer_obj_int);
+	if (!ice_validate_peer_obj(peer_obj))
 		return 0;
 
-	if (!test_bit(ICE_PEER_DEV_STATE_OPENED, peer_dev_int->state))
+	if (!test_bit(ICE_PEER_OBJ_STATE_OPENED, peer_obj_int->state))
 		return 0;
 
-	if (peer_dev->peer_ops && peer_dev->peer_ops->prep_tc_change)
-		peer_dev->peer_ops->prep_tc_change(peer_dev);
+	if (peer_obj->peer_ops && peer_obj->peer_ops->prep_tc_change)
+		peer_obj->peer_ops->prep_tc_change(peer_obj);
 
 	return 0;
 }
@@ -937,7 +937,8 @@ ice_tx_prepare_vlan_flags_dcb(struct ice_ring *tx_ring,
 		return;
 
 	/* Insert 802.1p priority into VLAN header */
-	if ((first->tx_flags & ICE_TX_FLAGS_HW_VLAN) ||
+	if ((first->tx_flags & ICE_TX_FLAGS_HW_VLAN ||
+	     first->tx_flags & ICE_TX_FLAGS_HW_OUTER_SINGLE_VLAN) ||
 	    skb->priority != TC_PRIO_CONTROL) {
 		first->tx_flags &= ~ICE_TX_FLAGS_VLAN_PR_M;
 		/* Mask the lower 3 bits to set the 802.1p priority */
@@ -946,7 +947,10 @@ ice_tx_prepare_vlan_flags_dcb(struct ice_ring *tx_ring,
 		/* if this is not already set it means a VLAN 0 + priority needs
 		 * to be offloaded
 		 */
-		first->tx_flags |= ICE_TX_FLAGS_HW_VLAN;
+		if (tx_ring->flags & ICE_TX_FLAGS_VLAN_TAG_LOC_L2TAG2)
+			first->tx_flags |= ICE_TX_FLAGS_HW_OUTER_SINGLE_VLAN;
+		else
+			first->tx_flags |= ICE_TX_FLAGS_HW_VLAN;
 	}
 }
 

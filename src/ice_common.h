@@ -12,6 +12,9 @@
 #include "ice_switch.h"
 #include "ice_fdir.h"
 
+#define ICE_SQ_SEND_DELAY_TIME_MS	10
+#define ICE_SQ_SEND_MAX_EXECUTE		3
+
 enum ice_fw_modes {
 	ICE_FW_MODE_NORMAL,
 	ICE_FW_MODE_DBG,
@@ -196,6 +199,11 @@ enum ice_status ice_dump_port_dflt_topo(struct ice_port_info *pi);
 void ice_dump_port_topo(struct ice_port_info *pi);
 
 enum ice_status
+ice_aq_get_port_options(struct ice_hw *hw,
+			struct ice_aqc_get_port_options_elem *options,
+			u8 *option_count, u8 lport, bool lport_valid,
+			u8 *active_option_idx, bool *active_option_valid);
+enum ice_status
 ice_cfg_vsi_rdma(struct ice_port_info *pi, u16 vsi_handle, u16 tc_bitmap,
 		 u16 *max_rdmaqs);
 enum ice_status
@@ -253,4 +261,11 @@ ice_aq_set_lldp_mib(struct ice_hw *hw, u8 mib_type, void *buf, u16 buf_size,
 bool ice_fw_supports_lldp_fltr_ctrl(struct ice_hw *hw);
 enum ice_status
 ice_lldp_fltr_add_remove(struct ice_hw *hw, u16 vsi_num, bool add);
+#ifdef HEALTH_STATUS_SUPPORT
+enum ice_status
+ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,
+				struct ice_sq_cd *cd);
+bool ice_is_fw_health_report_supported(struct ice_hw *hw);
+#endif /* HEALTH_STATUS_SUPPORT */
+bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
 #endif /* _ICE_COMMON_H_ */

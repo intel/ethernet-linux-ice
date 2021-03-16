@@ -52,6 +52,11 @@
 #if IS_ENABLED(CONFIG_DCB)
 #include <scsi/iscsi_proto.h>
 #endif /* CONFIG_DCB */
+#ifdef HAVE_CONFIG_DIMLIB
+#include <linux/dim.h>
+#else
+#include "kcompat_dim.h"
+#endif
 #include "ice_devids.h"
 #include "ice_type.h"
 #include "ice_txrx.h"
@@ -394,7 +399,6 @@ enum ice_pf_state {
 enum ice_vsi_state {
 	ICE_VSI_DOWN,
 	ICE_VSI_NEEDS_RESTART,
-	ICE_VSI_BUSY,
 	ICE_VSI_NETDEV_ALLOCD,
 	ICE_VSI_NETDEV_REGISTERED,
 	ICE_VSI_UMAC_FLTR_CHANGED,
@@ -523,6 +527,11 @@ struct ice_tc_flower_lyr_2_4_hdrs {
 	struct ice_tc_l4_hdr l4_mask;
 };
 
+enum ice_eswitch_fltr_direction {
+	ICE_ESWITCH_FLTR_INGRESS,
+	ICE_ESWITCH_FLTR_EGRESS,
+};
+
 struct ice_tc_flower_fltr {
 	struct hlist_node tc_flower_node;
 
@@ -540,6 +549,8 @@ struct ice_tc_flower_fltr {
 	u16 dest_id;
 	/* if dest_id is vsi_idx, then need to store destination VSI ptr */
 	struct ice_vsi *dest_vsi;
+	/* direction of fltr for eswitch use case */
+	enum ice_eswitch_fltr_direction direction;
 
 	/* Parsed TC flower configuration params */
 	struct ice_tc_flower_lyr_2_4_hdrs outer_headers;
@@ -591,7 +602,6 @@ struct ice_vsi {
 	u32 tx_busy;
 	u32 rx_buf_failed;
 	u32 rx_page_failed;
-	u32 rx_gro_dropped;
 #ifdef ICE_ADD_PROBES
 	u32 rx_page_reuse;
 #endif /* ICE_ADD_PROBES */
@@ -647,7 +657,8 @@ struct ice_vsi {
 	u8 irqs_ready:1;
 	u8 current_isup:1;		 /* Sync 'link up' logging */
 	u8 stat_offsets_loaded:1;
-	struct ice_vsi_vlan_ops vlan_ops;
+	struct ice_vsi_vlan_ops inner_vlan_ops;
+	struct ice_vsi_vlan_ops outer_vlan_ops;
 	u16 num_vlan;
 
 
@@ -692,7 +703,7 @@ struct ice_vsi {
 	u32 tx_hwtstamp_skipped;
 	u8 ptp_tx:1;
 	enum ice_time_ref_freq time_ref_freq;
-	enum ice_mstr_tmr_mode mstr_tmr_mode;
+	enum ice_src_tmr_mode src_tmr_mode;
 
 	/* Channel Specific Fields */
 	struct ice_vsi *tc_map_vsi[ICE_CHNL_MAX_TC];
@@ -814,7 +825,7 @@ struct ice_q_vector {
 	u16 reg_idx;
 	u8 num_ring_rx;			/* total number of Rx rings in vector */
 	u8 num_ring_tx;			/* total number of Tx rings in vector */
-	u8 itr_countdown;		/* when 0 should adjust adaptive ITR */
+	u8 wb_on_itr:1;			/* if true, WB on ITR is enabled */
 	/* in usecs, need to use ice_intrl_to_usecs_reg() before writing this
 	 * value to the device
 	 */
@@ -831,6 +842,8 @@ struct ice_q_vector {
 	struct ice_channel *ch;
 
 	char name[ICE_INT_NAME_STR_LEN];
+
+	u16 total_events;	/* net_dim(): number of interrupts processed */
 	/* This tracks current state of vector, BUSY_POLL or INTR */
 #define ICE_CHNL_IN_BP			BIT(ICE_CHNL_VECTOR_IN_BP)
 	/* This tracks prev state of vector, BUSY_POLL or INTR */
@@ -932,6 +945,7 @@ enum ice_pf_flags {
 	ICE_FLAG_LEGACY_RX,
 	ICE_FLAG_VF_TRUE_PROMISC_ENA,
 	ICE_FLAG_MDD_AUTO_RESET_VF,
+	ICE_FLAG_VF_VLAN_PRUNE_DIS,
 	ICE_FLAG_LINK_LENIENT_MODE_ENA,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
@@ -1037,12 +1051,19 @@ struct ice_pf {
 	u8 ptp_one_pps_out_ena;
 	atomic_t ptp_phy_reset_lock;
 	struct workqueue_struct *ov_wq;
+	/* bitmap of ports timestamp offset calculated */
+	atomic_t ptp_tx_offset_ready;
+	atomic_t ptp_rx_offset_ready;
+	atomic_t ptp_tx_offset_lock;
+	atomic_t ptp_rx_offset_lock;
 	struct mutex ptp_ps_lock; /* protects access to PTP PHY start */
 	u8 ptp_link_up;
+	u8 ptp_ts_ena;
+	u8 ptp_tx_fifo_busy_cnt;
 	struct ice_cgu_info cgu_info;
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
-	struct ice_peer_dev *rdma_peer;
+	struct ice_peer_obj *rdma_peer;
 #ifdef HAVE_NETDEV_SB_DEV
 	/* MACVLAN specific variables */
 	DECLARE_BITMAP(avail_macvlan, ICE_MAX_MACVLANS);
@@ -1055,6 +1076,8 @@ struct ice_pf {
 	spinlock_t aq_wait_lock;
 	struct hlist_head aq_wait_list;
 	wait_queue_head_t aq_wait_queue;
+
+	wait_queue_head_t reset_wait_queue;
 
 	u32 hw_csum_rx_error;
 	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
@@ -1094,15 +1117,17 @@ struct ice_pf {
 	u64 rx_tcp_cso_err;
 	u64 rx_udp_cso_err;
 	u64 rx_sctp_cso_err;
-	u64 tx_vlano;
-	u64 rx_vlano;
+	u64 tx_q_vlano;
+	u64 rx_q_vlano;
+	u64 tx_ad_vlano;
+	u64 rx_ad_vlano;
 #endif
 	u16 dcbx_cap;
 	u32 tx_timeout_count;
 	unsigned long tx_timeout_last_recovery;
 	u32 tx_timeout_recovery_level;
 	char int_name[ICE_INT_NAME_STR_LEN];
-	struct ice_peer_dev_int **peers;
+	struct ice_peer_obj_int **peers;
 	int peer_idx;
 	u32 sw_int_count;
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -1300,7 +1325,7 @@ ice_force_wb(struct ice_hw *hw, struct ice_q_vector *q_vector)
 	/* needed to avoid triggering WB_ON_ITR again which typically
 	 * happens from ice_set_wb_on_itr function
 	 */
-	q_vector->itr_countdown = ICE_IN_WB_ON_ITR_MODE;
+	q_vector->wb_on_itr = true;
 }
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -1384,7 +1409,11 @@ static inline void ice_set_ring_xdp(struct ice_ring *ring)
  * Returns a pointer to xdp_umem structure if there is an UMEM present,
  * NULL otherwise.
  */
+#ifdef HAVE_NETDEV_BPF_XSK_POOL
+static inline struct xsk_buff_pool *ice_xsk_umem(struct ice_ring *ring)
+#else
 static inline struct xdp_umem *ice_xsk_umem(struct ice_ring *ring)
+#endif
 {
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
 	struct xdp_umem **umems = ring->vsi->xsk_umems;
@@ -1404,7 +1433,7 @@ static inline struct xdp_umem *ice_xsk_umem(struct ice_ring *ring)
 	if (!ice_is_xdp_ena_vsi(ring->vsi))
 		return NULL;
 
-	return xdp_get_umem_from_qid(ring->vsi->netdev, qid);
+	return xsk_get_pool_from_qid(ring->vsi->netdev, qid);
 #endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 }
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
@@ -1431,6 +1460,7 @@ static inline struct ice_vsi *ice_get_netdev_priv_vsi(struct ice_netdev_priv *np
 {
 	return np->vsi;
 }
+
 
 /**
  * ice_get_ctrl_vsi - Get the control VSI
@@ -1708,7 +1738,7 @@ void ice_print_link_msg(struct ice_vsi *vsi, bool isup);
 int ice_init_peer_devices(struct ice_pf *pf);
 int
 ice_for_each_peer(struct ice_pf *pf, void *data,
-		  int (*fn)(struct ice_peer_dev_int *, void *));
+		  int (*fn)(struct ice_peer_obj_int *, void *));
 #ifdef CONFIG_PM
 void ice_peer_refresh_msix(struct ice_pf *pf);
 #endif /* CONFIG_PM */
@@ -1717,7 +1747,7 @@ static inline int ice_init_peer_devices(struct ice_pf *pf) { return 0; }
 
 static inline int
 ice_for_each_peer(struct ice_pf *pf, void *data,
-		  int (*fn)(struct ice_peer_dev_int *, void *))
+		  int (*fn)(struct ice_peer_obj_int *, void *))
 {
 	return 0;
 }
@@ -1768,7 +1798,7 @@ static inline void ice_clear_rdma_cap(struct ice_pf *pf)
 #endif /* HAVE_NETDEV_UPPER_INFO */
 const char *ice_stat_str(enum ice_status stat_err);
 const char *ice_aq_str(enum ice_aq_err aq_err);
-bool ice_is_wol_supported(struct ice_pf *pf);
+bool ice_is_wol_supported(struct ice_hw *hw);
 int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
 			  struct ice_rq_event_info *event);
 int

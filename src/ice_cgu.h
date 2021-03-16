@@ -129,12 +129,12 @@ enum ice_cgu_time_ref_sel {
 		(_trs) == ICE_CGU_TIME_REF_SEL_TIME_REF ? "TIME_REF" : \
 		"invalid"; \
 	})
-/* Macro to convert an enum ice_mstr_tmr_mode to a string for printing */
-#define ICE_MSTR_TMR_MODE_TO_STR(__mtm)                                    \
-	({                                                                 \
-		enum ice_mstr_tmr_mode _mtm = (__mtm);                     \
-		(_mtm) == ICE_MSTR_TMR_MODE_NANOSECONDS ? "nanoseconds" :  \
-		(_mtm) == ICE_MSTR_TMR_MODE_LOCKED ? "locked" :            \
+/* Macro to convert an enum ice_src_tmr_mode to a string for printing */
+#define ICE_SRC_TMR_MODE_TO_STR(__mtm)                                    \
+	({                                                                \
+		enum ice_src_tmr_mode _mtm = (__mtm);                     \
+		(_mtm) == ICE_SRC_TMR_MODE_NANOSECONDS ? "nanoseconds" :  \
+		(_mtm) == ICE_SRC_TMR_MODE_LOCKED ? "locked" :            \
 		"invalid"; \
 	})
 
@@ -225,7 +225,7 @@ struct ice_cgu_info {
 	enum ice_time_ref_freq out_1588_ref_freq;
 
 	enum ice_time_ref_freq time_ref_freq;
-	enum ice_mstr_tmr_mode mstr_tmr_mode;
+	enum ice_src_tmr_mode src_tmr_mode;
 };
 
 #endif /* _ICE_CGU_H_ */

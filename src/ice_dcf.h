@@ -89,12 +89,27 @@ enum virtchnl_status_code
 ice_dcf_post_aq_send_cmd(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
 			 u8 *aq_buf);
 bool ice_dcf_is_acl_aq_cmd(struct ice_aq_desc *desc);
-void ice_dis_dcf_acl_cap(struct ice_pf *pf);
+bool ice_dcf_is_udp_tunnel_aq_cmd(struct ice_aq_desc *desc, u8 *aq_buf);
+void ice_clear_dcf_acl_cfg(struct ice_pf *pf);
+bool ice_dcf_is_acl_capable(struct ice_hw *hw);
+void ice_clear_dcf_udp_tunnel_cfg(struct ice_pf *pf);
+bool ice_dcf_is_udp_tunnel_capable(struct ice_hw *hw);
 enum virtchnl_status_code
 ice_dcf_update_acl_rule_info(struct ice_pf *pf, struct ice_aq_desc *desc,
 			     u8 *aq_buf);
 #else
 static inline bool ice_is_dcf_enabled(struct ice_pf __always_unused *pf)
+{
+	return false;
+}
+
+static inline bool
+ice_dcf_is_udp_tunnel_capable(struct ice_hw __always_unused *hw)
+{
+	return false;
+}
+
+static inline bool ice_dcf_is_acl_capable(struct ice_hw __always_unused *hw)
 {
 	return false;
 }

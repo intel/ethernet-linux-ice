@@ -1095,6 +1095,7 @@ struct ice_tx_cmpltnq {
 /* LAN Tx Completion Queue Context */
 struct ice_tx_cmpltnq_ctx {
 	u64 base;
+#define ICE_TX_CMPLTNQ_CTX_BASE_S	7
 	u32 q_len;
 #define ICE_TX_CMPLTNQ_CTX_Q_LEN_S	4
 	u8 generation;
@@ -1102,6 +1103,9 @@ struct ice_tx_cmpltnq_ctx {
 	u8 pf_num;
 	u16 vmvf_num;
 	u8 vmvf_type;
+#define ICE_TX_CMPLTNQ_CTX_VMVF_TYPE_VF		0
+#define ICE_TX_CMPLTNQ_CTX_VMVF_TYPE_VMQ	1
+#define ICE_TX_CMPLTNQ_CTX_VMVF_TYPE_PF		2
 	u8 tph_desc_wr;
 	u8 cpuid;
 	u32 cmpltn_cache[16];
@@ -1119,10 +1123,15 @@ struct ice_tx_drbell_fmt {
 /* LAN Tx Doorbell Queue Context */
 struct ice_tx_drbell_q_ctx {
 	u64 base;
+#define ICE_TX_DRBELL_Q_CTX_BASE_S	7
 	u16 ring_len;
+#define ICE_TX_DRBELL_Q_CTX_RING_LEN_S	4
 	u8 pf_num;
 	u16 vf_num;
 	u8 vmvf_type;
+#define ICE_TX_DRBELL_Q_CTX_VMVF_TYPE_VF	0
+#define ICE_TX_DRBELL_Q_CTX_VMVF_TYPE_VMQ	1
+#define ICE_TX_DRBELL_Q_CTX_VMVF_TYPE_PF	2
 	u8 cpuid;
 	u8 tph_desc_rd;
 	u8 tph_desc_wr;

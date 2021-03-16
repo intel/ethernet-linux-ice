@@ -123,6 +123,7 @@ static inline int ice_skb_pad(void)
 #define ICE_TX_FLAGS_IPV4	BIT(5)
 #define ICE_TX_FLAGS_IPV6	BIT(6)
 #define ICE_TX_FLAGS_TUNNEL	BIT(7)
+#define ICE_TX_FLAGS_HW_OUTER_SINGLE_VLAN	BIT(8)
 #define ICE_TX_FLAGS_VLAN_M	0xffff0000
 #define ICE_TX_FLAGS_VLAN_PR_M	0xe0000000
 #define ICE_TX_FLAGS_VLAN_PR_S	29
@@ -178,8 +179,13 @@ struct ice_rx_buf {
 		};
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 		struct {
-			void *addr;
+			union {
+				struct xdp_buff *xdp;
+				void *addr;
+			};
+#ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 			u64 handle;
+#endif
 		};
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 	};
@@ -237,7 +243,6 @@ struct ice_rxq_stats {
 	u64 non_eop_descs;
 	u64 alloc_page_failed;
 	u64 alloc_buf_failed;
-	u64 gro_dropped; /* GRO returned dropped */
 #ifdef ICE_ADD_PROBES
 	u64 page_reuse;
 #endif /* ICE_ADD_PROBES */
@@ -272,22 +277,19 @@ enum ice_rx_dtype {
 #define ICE_TX_ITR	ICE_IDX_ITR1
 #define ICE_ITR_8K	124
 #define ICE_ITR_20K	50
-#define ICE_ITR_MAX	8160
-#define ICE_DFLT_TX_ITR	(ICE_ITR_20K | ICE_ITR_DYNAMIC)
-#define ICE_DFLT_RX_ITR	(ICE_ITR_20K | ICE_ITR_DYNAMIC)
-#define ICE_ITR_DYNAMIC	0x8000  /* used as flag for itr_setting */
-#define ITR_IS_DYNAMIC(setting) (!!((setting) & ICE_ITR_DYNAMIC))
-#define ITR_TO_REG(setting)	((setting) & ~ICE_ITR_DYNAMIC)
+#define ICE_ITR_MAX	8160 /* 0x1FE0 */
+#define ICE_DFLT_TX_ITR	ICE_ITR_20K
+#define ICE_DFLT_RX_ITR	ICE_ITR_20K
+enum ice_dynamic_itr {
+	ITR_STATIC = 0,
+	ITR_DYNAMIC = 1
+};
+
+#define ITR_IS_DYNAMIC(rc) ((rc)->itr_mode == ITR_DYNAMIC)
 #define ICE_ITR_GRAN_S		1	/* ITR granularity is always 2us */
 #define ICE_ITR_GRAN_US		BIT(ICE_ITR_GRAN_S)
 #define ICE_ITR_MASK		0x1FFE	/* ITR register value alignment mask */
 #define ITR_REG_ALIGN(setting)	((setting) & ICE_ITR_MASK)
-
-#define ICE_ITR_ADAPTIVE_MIN_INC	0x0002
-#define ICE_ITR_ADAPTIVE_MIN_USECS	0x0002
-#define ICE_ITR_ADAPTIVE_MAX_USECS	0x00FA
-#define ICE_ITR_ADAPTIVE_LATENCY	0x8000
-#define ICE_ITR_ADAPTIVE_BULK		0x0000
 
 #define ICE_DFLT_INTRL	0
 #define ICE_MAX_INTRL	236
@@ -307,6 +309,22 @@ enum ice_rx_dtype {
 /* Legacy or Advanced Mode Queue */
 #define ICE_TX_ADVANCED	0
 #define ICE_TX_LEGACY	1
+
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+struct ice_xdp_stats {
+	u64 xdp_rx_pkts;
+	u64 xdp_rx_bytes;
+	u64 xdp_pass;
+	u64 xdp_drop;
+	u64 xdp_tx;
+	u64 xdp_tx_fail;
+	u64 xdp_unknown;
+	u64 xdp_redirect;
+	u64 xdp_redirect_fail;
+};
+#endif
+#endif
 
 /* descriptor ring, associated with a VSI */
 struct ice_ring {
@@ -355,9 +373,18 @@ struct ice_ring {
 	struct ice_channel *ch;
 #ifdef HAVE_XDP_SUPPORT
 	struct bpf_prog *xdp_prog;
+#ifdef ICE_ADD_PROBES
+	struct ice_xdp_stats xdp_stats;
+#endif
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
-	struct xdp_umem *xsk_umem;
+#ifdef HAVE_NETDEV_BPF_XSK_POOL
+	struct xsk_buff_pool *xsk_pool;
+#else
+	struct xdp_umem *xsk_pool;
+#endif
+#ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 	struct zero_copy_allocator zca;
+#endif
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 	/* CL3 - 3rd cacheline starts here */
 #ifdef HAVE_XDP_BUFF_RXQ
@@ -369,14 +396,17 @@ struct ice_ring {
 	 * in their own cache line if possible
 	 */
 #ifdef HAVE_XDP_SUPPORT
-#define ICE_TX_FLAGS_RING_XDP		BIT(0)
+#define ICE_TX_FLAGS_RING_XDP			BIT(0)
 #endif /* HAVE_XDP_SUPPORT */
-#define ICE_RX_FLAGS_RING_BUILD_SKB	BIT(1)
+#define ICE_RX_FLAGS_RING_BUILD_SKB		BIT(1)
+#define ICE_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1	BIT(2)
+#define ICE_TX_FLAGS_VLAN_TAG_LOC_L2TAG2	BIT(3)
 	u8 flags;
 	dma_addr_t dma;			/* physical address of ring */
 	unsigned int size;		/* length of descriptor ring in bytes */
 	u32 txq_teid;			/* Added Tx queue TEID */
 	u16 rx_buf_len;
+	u8 rx_crc_strip_dis;
 	u8 dcb_tc;			/* Traffic class of ring */
 	u64 cached_systime;
 	u8 ptp_rx:1;
@@ -416,17 +446,14 @@ static inline bool ice_ring_is_xdp(struct ice_ring *ring)
 struct ice_ring_container {
 	/* head of linked-list of rings */
 	struct ice_ring *ring;
-	unsigned long next_update;	/* jiffies value of next queue update */
-	unsigned int total_bytes;	/* total bytes processed this int */
-	unsigned int total_pkts;	/* total packets processed this int */
+	struct dim dim;		/* data for net_dim algorithm */
 	u16 itr_idx;		/* index in the interrupt vector */
-	u16 target_itr;		/* value in usecs divided by the hw->itr_gran */
-	u16 current_itr;	/* value in usecs divided by the hw->itr_gran */
-	/* high bit set means dynamic ITR, rest is used to store user
-	 * readable ITR value in usecs and must be converted before programming
-	 * to a register.
+	/* this matches the maximum number of ITR bits, but in usec
+	 * values, so it is shifted left one bit (bit zero is ignored)
 	 */
-	u16 itr_setting;
+	u16 itr_setting:13;
+	u16 itr_reserved:2;
+	u16 itr_mode:1;
 };
 
 struct ice_coalesce_stored {

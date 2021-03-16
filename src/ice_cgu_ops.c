@@ -9,10 +9,10 @@
  * @enable: True to enable TS PLL
  * @time_ref_freq: Master timer frequency
  * @time_ref_sel: Time source
- * @mstr_tmr_mode: Master timer mode
+ * @src_tmr_mode: Master timer mode
  */
 int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq time_ref_freq,
-		       enum ice_cgu_time_ref_sel time_ref_sel, enum ice_mstr_tmr_mode mstr_tmr_mode)
+		       enum ice_cgu_time_ref_sel time_ref_sel, enum ice_src_tmr_mode src_tmr_mode)
 {
 	struct ice_cgu_info *cgu_info = &pf->cgu_info;
 	union tspll_ro_bwm_lf bwm_lf;
@@ -23,9 +23,9 @@ int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq ti
 	int err;
 
 	dev_info(ice_pf_to_dev(pf),
-		 "Requested %s, time_ref_freq %s, time_ref_sel %s, mstr_tmr_mode %s\n",
+		 "Requested %s, time_ref_freq %s, time_ref_sel %s, src_tmr_mode %s\n",
 		 enable ? "enable" : "disable", ICE_TIME_REF_FREQ_TO_STR(time_ref_freq),
-		 ICE_TIME_REF_SEL_TO_STR(time_ref_sel), ICE_MSTR_TMR_MODE_TO_STR(mstr_tmr_mode));
+		 ICE_TIME_REF_SEL_TO_STR(time_ref_sel), ICE_SRC_TMR_MODE_TO_STR(src_tmr_mode));
 
 	if (time_ref_freq >= NUM_ICE_TIME_REF_FREQ) {
 		dev_err(ice_pf_to_dev(pf), "Invalid TIME_REF freq %u\n", time_ref_freq);
@@ -37,8 +37,8 @@ int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq ti
 		return -EIO;
 	}
 
-	if (mstr_tmr_mode >= NUM_ICE_MSTR_TMR_MODE) {
-		dev_err(ice_pf_to_dev(pf), "Invalid mstr_tmr_mode %u\n", mstr_tmr_mode);
+	if (src_tmr_mode >= NUM_ICE_SRC_TMR_MODE) {
+		dev_err(ice_pf_to_dev(pf), "Invalid src_tmr_mode %u\n", src_tmr_mode);
 		return -EIO;
 	}
 
@@ -115,8 +115,8 @@ int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq ti
 
 	if (!err) {
 		cgu_info->time_ref_freq = time_ref_freq;
-		cgu_info->mstr_tmr_mode = mstr_tmr_mode;
-		err = ice_ptp_update_incval(pf, time_ref_freq, mstr_tmr_mode);
+		cgu_info->src_tmr_mode = src_tmr_mode;
+		err = ice_ptp_update_incval(pf, time_ref_freq, src_tmr_mode);
 		if (err) {
 			dev_err(ice_pf_to_dev(pf), "Failed to update INCVAL\n");
 			return err;
@@ -212,12 +212,12 @@ void ice_cgu_init_state(struct ice_pf *pf)
 	/* first, try to lock the timestamp PLL with the parameters from the soft straps */
 	/* disable first, then re-enable with correct parameters */
 	err = ice_cgu_cfg_ts_pll(pf, false, dw9.field.time_ref_freq_sel, dw24.field.time_ref_sel,
-				 ICE_MSTR_TMR_MODE_NANOSECONDS);
+				 ICE_SRC_TMR_MODE_NANOSECONDS);
 	if (err)
 		dev_err(ice_pf_to_dev(pf), "Failed to disable TS PLL\n");
 	else
 		err = ice_cgu_cfg_ts_pll(pf, true, dw9.field.time_ref_freq_sel,
-					 dw24.field.time_ref_sel, ICE_MSTR_TMR_MODE_NANOSECONDS);
+					 dw24.field.time_ref_sel, ICE_SRC_TMR_MODE_NANOSECONDS);
 	if (err) {
 		/* if that fails, try to lock the timestamp PLL with the TCXO
 		 */
@@ -227,13 +227,13 @@ void ice_cgu_init_state(struct ice_pf *pf)
 			/* disable first, then re-enable with correct parameters */
 			err = ice_cgu_cfg_ts_pll(pf, false, ICE_TIME_REF_FREQ_25_000,
 						 ICE_CGU_TIME_REF_SEL_TCXO,
-						 ICE_MSTR_TMR_MODE_NANOSECONDS);
+						 ICE_SRC_TMR_MODE_NANOSECONDS);
 		if (err)
 			dev_err(ice_pf_to_dev(pf), "Failed to disable TS PLL with TCXO\n");
 		else
 			err = ice_cgu_cfg_ts_pll(pf, true, ICE_TIME_REF_FREQ_25_000,
 						 ICE_CGU_TIME_REF_SEL_TCXO,
-						 ICE_MSTR_TMR_MODE_NANOSECONDS);
+						 ICE_SRC_TMR_MODE_NANOSECONDS);
 		if (err) {
 			dev_err(ice_pf_to_dev(pf), "Failed to lock TS PLL with TCXO\n");
 			goto err;

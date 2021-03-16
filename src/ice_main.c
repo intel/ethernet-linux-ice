@@ -18,12 +18,14 @@
  */
 #define CREATE_TRACE_POINTS
 #include "ice_trace.h"
+#undef CREATE_TRACE_POINTS
+#include "ice_vsi_vlan_ops.h"
 
 #define DRV_VERSION_MAJOR 1
-#define DRV_VERSION_MINOR 3
-#define DRV_VERSION_BUILD 2
+#define DRV_VERSION_MINOR 4
+#define DRV_VERSION_BUILD 11
 
-#define DRV_VERSION	"1.3.2"
+#define DRV_VERSION	"1.4.11"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -551,7 +553,7 @@ static int ice_set_promisc(struct ice_vsi *vsi, u8 promisc_m)
 	if (vsi->type != ICE_VSI_PF)
 		return 0;
 
-	if (vsi->num_vlan > 1)
+	if (ice_vsi_has_non_zero_vlans(vsi))
 		status = ice_fltr_set_vlan_vsi_promisc(&vsi->back->hw, vsi, promisc_m);
 	else
 		status = ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m, 0,
@@ -576,7 +578,7 @@ static int ice_clear_promisc(struct ice_vsi *vsi, u8 promisc_m)
 	if (vsi->type != ICE_VSI_PF)
 		return 0;
 
-	if (vsi->num_vlan > 1)
+	if (ice_vsi_has_non_zero_vlans(vsi))
 		status = ice_fltr_clear_vlan_vsi_promisc(&vsi->back->hw, vsi, promisc_m);
 	else
 		status = ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m, 0,
@@ -597,6 +599,7 @@ static int ice_clear_promisc(struct ice_vsi *vsi, u8 promisc_m)
  */
 static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 {
+	struct ice_vsi_vlan_ops *vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
 	struct device *dev = ice_pf_to_dev(vsi->back);
 	struct net_device *netdev = vsi->netdev;
 	bool promisc_forced_on = false;
@@ -673,7 +676,7 @@ static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 	/* check for changes in promiscuous modes */
 	if (changed_flags & IFF_ALLMULTI) {
 		if (vsi->current_netdev_flags & IFF_ALLMULTI) {
-			if (vsi->num_vlan > 1)
+			if (ice_vsi_has_non_zero_vlans(vsi))
 				promisc_m = ICE_MCAST_VLAN_PROMISC_BITS;
 			else
 				promisc_m = ICE_MCAST_PROMISC_BITS;
@@ -687,7 +690,7 @@ static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 			}
 		} else {
 			/* !(vsi->current_netdev_flags & IFF_ALLMULTI) */
-			if (vsi->num_vlan > 1)
+			if (ice_vsi_has_non_zero_vlans(vsi))
 				promisc_m = ICE_MCAST_VLAN_PROMISC_BITS;
 			else
 				promisc_m = ICE_MCAST_PROMISC_BITS;
@@ -716,7 +719,7 @@ static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 						~IFF_PROMISC;
 					goto out_promisc;
 				}
-				ice_cfg_vlan_pruning(vsi, false, false);
+				vlan_ops->dis_rx_filtering(vsi);
 			}
 		} else {
 			/* Clear Rx filter to remove traffic from wire */
@@ -729,8 +732,9 @@ static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 						IFF_PROMISC;
 					goto out_promisc;
 				}
-				if (vsi->num_vlan > 1)
-					ice_cfg_vlan_pruning(vsi, true, false);
+				if (vsi->current_netdev_flags &
+				    NETIF_F_HW_VLAN_CTAG_FILTER)
+					vlan_ops->ena_rx_filtering(vsi);
 			}
 		}
 	}
@@ -1030,6 +1034,7 @@ static void ice_do_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 		clear_bit(ICE_PFR_REQ, pf->state);
 		clear_bit(ICE_CORER_REQ, pf->state);
 		clear_bit(ICE_GLOBR_REQ, pf->state);
+		wake_up(&pf->reset_wait_queue);
 		return;
 	}
 
@@ -1042,6 +1047,7 @@ static void ice_do_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 		ice_rebuild(pf, reset_type);
 		clear_bit(ICE_PREPARED_FOR_RESET, pf->state);
 		clear_bit(ICE_PFR_REQ, pf->state);
+		wake_up(&pf->reset_wait_queue);
 		ice_reset_all_vfs(pf, true);
 	}
 }
@@ -1088,6 +1094,7 @@ static void ice_reset_subtask(struct ice_pf *pf)
 			clear_bit(ICE_PFR_REQ, pf->state);
 			clear_bit(ICE_CORER_REQ, pf->state);
 			clear_bit(ICE_GLOBR_REQ, pf->state);
+			wake_up(&pf->reset_wait_queue);
 			if (ice_get_fw_mode(&pf->hw) == ICE_FW_MODE_REC)
 				ice_prepare_for_recovery_mode(pf);
 			return;
@@ -1108,6 +1115,7 @@ static void ice_reset_subtask(struct ice_pf *pf)
 		clear_bit(ICE_PFR_REQ, pf->state);
 		clear_bit(ICE_CORER_REQ, pf->state);
 		clear_bit(ICE_GLOBR_REQ, pf->state);
+		wake_up(&pf->reset_wait_queue);
 		ice_reset_all_vfs(pf, true);
 		return;
 	}
@@ -1273,7 +1281,7 @@ void ice_print_link_msg(struct ice_vsi *vsi, bool isup)
 	}
 
 	status = ice_aq_get_phy_caps(vsi->port_info, false,
-				     ICE_AQC_REPORT_SW_CFG, caps, NULL);
+				     ICE_AQC_REPORT_ACTIVE_CFG, caps, NULL);
 	if (status)
 		netdev_info(vsi->netdev, "Get phy capability failed.\n");
 
@@ -1469,7 +1477,7 @@ ice_link_event(struct ice_pf *pf, struct ice_port_info *pi, bool link_up,
 		return 0;
 
 	if (ice_is_generic_mac(&pf->hw))
-		ice_ptp_link_change(pf, pi->lport, link_up);
+		ice_ptp_link_change(pf, pf->hw.pf_id, link_up);
 
 	if (ice_is_dcb_active(pf)) {
 		if (test_bit(ICE_FLAG_DCB_ENA, pf->flags))
@@ -1506,6 +1514,8 @@ static void ice_watchdog_subtask(struct ice_pf *pf)
 		return;
 
 	pf->serv_tmr_prev = jiffies;
+	if (ice_is_generic_mac(&pf->hw))
+		ice_ptp_set_timestamp_offsets(pf);
 
 	/* Update the stats for active netdevs so the network stack
 	 * can look at updated numbers whenever it cares to
@@ -1579,6 +1589,189 @@ ice_handle_link_event(struct ice_pf *pf, struct ice_rq_event_info *event)
 }
 
 
+#ifdef HEALTH_STATUS_SUPPORT
+/**
+ * ice_print_health_status_string - Print message for given FW health event
+ * @pf: pointer to the PF structure
+ * @hse: pointer to the health status element containing the health status code
+ *
+ * Print the error/diagnostic string in response to the given Health Status
+ * Event code.
+ */
+static void
+ice_print_health_status_string(struct ice_pf *pf,
+			       struct ice_aqc_health_status_elem *hse)
+{
+	struct ice_vsi *vsi = ice_get_main_vsi(pf);
+	struct net_device *netdev;
+	u16 status_code;
+
+	if (!hse || !vsi)
+		return;
+
+	netdev = vsi->netdev;
+	status_code = le16_to_cpu(hse->health_status_code);
+
+	switch (status_code) {
+	case ICE_AQC_HEALTH_STATUS_INFO_RECOVERY:
+		netdev_info(netdev, "The device is in firmware recovery mode.\n");
+		netdev_info(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_FLASH_ACCESS:
+		netdev_err(netdev, "The flash chip cannot be accessed.\n");
+		netdev_err(netdev, "Possible Solution: If issue persists, call customer support.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_NVM_AUTH:
+		netdev_err(netdev, "NVM authentication failed.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_OROM_AUTH:
+		netdev_err(netdev, "Option ROM authentication failed.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_DDP_AUTH:
+		netdev_err(netdev, "DDP package failed.\n");
+		netdev_err(netdev, "Possible Solution: Update to latest base driver and DDP package.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_NVM_COMPAT:
+		netdev_err(netdev, "NVM image is incompatible.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_OROM_COMPAT:
+		netdev_err(netdev, "Option ROM is incompatible.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_DCB_MIB:
+		netdev_err(netdev, "Supplied MIB file is invalid. DCB reverted to default configuration.\n");
+		netdev_err(netdev, "Possible Solution: Disable FW-LLDP and check DCBx system configuration.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_UNKNOWN_MOD_STRICT:
+	case ICE_AQC_HEALTH_STATUS_ERR_UNKNOWN_MOD_LENIENT:
+		netdev_err(netdev, "An unsupported module was detected.\n");
+		netdev_err(netdev, "Possible Solution 1: Check your cable connection.\n");
+		netdev_err(netdev, "Possible Solution 2: Change or replace the module or cable.\n");
+		netdev_err(netdev, "Possible Solution 3: Manually set speed and duplex.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_MOD_TYPE:
+		netdev_err(netdev, "Module type is not supported.\n");
+		netdev_err(netdev, "Possible Solution: Change or replace the module or cable.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_MOD_QUAL:
+		netdev_err(netdev, "Module is not qualified.\n");
+		netdev_err(netdev, "Possible Solution 1: Check your cable connection.\n");
+		netdev_err(netdev, "Possible Solution 2: Change or replace the module or cable.\n");
+		netdev_err(netdev, "Possible Solution 3: Manually set speed and duplex.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_MOD_COMM:
+		netdev_err(netdev, "Device cannot communicate with the module.\n");
+		netdev_err(netdev, "Possible Solution 1: Check your cable connection.\n");
+		netdev_err(netdev, "Possible Solution 2: Change or replace the module or cable.\n");
+		netdev_err(netdev, "Possible Solution 3: Manually set speed and duplex.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_MOD_CONFLICT:
+		netdev_err(netdev, "Unresolved module conflict.\n");
+		netdev_err(netdev, "Possible Solution 1: Manually set speed/duplex or use Intel(R) Ethernet Port Configuration Tool to change the port option.\n");
+		netdev_err(netdev, "Possible Solution 2: If the problem persists, use a cable/module that is found in the supported modules and cables list for this device.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_MOD_NOT_PRESENT:
+		netdev_err(netdev, "Module is not present.\n");
+		netdev_err(netdev, "Possible Solution 1: Check that the module is inserted correctly.\n");
+		netdev_err(netdev, "Possible Solution 2: If the problem persists, use a cable/module that is found in the supported modules and cables list for this device.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_INFO_MOD_UNDERUTILIZED:
+		netdev_info(netdev, "Underutilized module.\n");
+		netdev_info(netdev, "Possible Solution 1: Change or replace the module or cable.\n");
+		netdev_info(netdev, "Possible Solution 2: Use Intel(R) Ethernet Port Configuration Tool to change the port option.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_INVALID_LINK_CFG:
+		netdev_err(netdev, "Invalid link configuration.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_PORT_ACCESS:
+		netdev_err(netdev, "Port hardware access error.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_PORT_UNREACHABLE:
+		netdev_err(netdev, "A port is unreachable.\n");
+		netdev_err(netdev, "Possible Solution 1: Use Intel(R) Ethernet Port Configuration Tool to change the port option.\n");
+		netdev_err(netdev, "Possible Solution 2: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_INFO_PORT_SPEED_MOD_LIMITED:
+		netdev_info(netdev, "Port speed is limited due to module.\n");
+		netdev_info(netdev, "Possible Solution: Change the module or use Intel(R) Ethernet Port Configuration Tool to configure the port option to match the current module speed.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_PARALLEL_FAULT:
+		netdev_err(netdev, "A parallel fault was detected.\n");
+		netdev_err(netdev, "Possible Solution: Check link partner connection and configuration.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_INFO_PORT_SPEED_PHY_LIMITED:
+		netdev_info(netdev, "Port speed is limited by PHY capabilities.\n");
+		netdev_info(netdev, "Possible Solution 1: Change the module to align to port option.\n");
+		netdev_info(netdev, "Possible Solution 2: Use Intel(R) Ethernet Port Configuration Tool to change the port option.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_NETLIST_TOPO:
+		netdev_err(netdev, "LOM topology netlist is corrupted.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_NETLIST:
+		netdev_err(netdev, "Unrecoverable netlist error.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_TOPO_CONFLICT:
+		netdev_err(netdev, "Port topology conflict.\n");
+		netdev_err(netdev, "Possible Solution 1: Use Intel(R) Ethernet Port Configuration Tool to change the port option.\n");
+		netdev_err(netdev, "Possible Solution 2: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_LINK_HW_ACCESS:
+		netdev_err(netdev, "Unrecoverable hardware access error.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_LINK_RUNTIME:
+		netdev_err(netdev, "Unrecoverable runtime error.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	case ICE_AQC_HEALTH_STATUS_ERR_DNL_INIT:
+		netdev_err(netdev, "Link management engine failed to initialize.\n");
+		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
+		break;
+	default:
+		break;
+	}
+}
+
+/**
+ * ice_process_health_status_event - Process the health status event from FW
+ * @pf: pointer to the PF structure
+ * @event: event structure containing the Health Status Event opcode
+ *
+ * Decode the Health Status Events and print the associated messages
+ */
+static void ice_process_health_status_event(struct ice_pf *pf,
+					    struct ice_rq_event_info *event)
+{
+	struct ice_aqc_health_status_elem *health_info;
+	u16 count;
+	int i;
+
+	health_info = (struct ice_aqc_health_status_elem *)event->msg_buf;
+	count = le16_to_cpu(event->desc.params.get_health_status.health_status_count);
+
+	/* In practice it's rare to encounter this event, and even more uncommon
+	 * to observe multiple health status elements in a single message, but
+	 * there's no boundary defined that separates an unlikely scenario from
+	 * an erroneous one. If the count reported by the firmware is clearly
+	 * incorrect then don't process the message and return.
+	 */
+	if (count > (event->buf_len / sizeof(*health_info))) {
+		dev_err(ice_pf_to_dev(pf), "Received a health status event with invalid element count\n");
+		return;
+	}
+
+	for (i = 0; i < count; i++) {
+		ice_print_health_status_string(pf, health_info);
+		health_info++;
+	}
+}
+#endif /* HEALTH_STATUS_SUPPORT */
 
 
 enum ice_aq_task_state {
@@ -1869,6 +2062,11 @@ static int __ice_clean_ctrlq(struct ice_pf *pf, enum ice_ctl_q q_type)
 		case ice_aqc_opc_lldp_set_mib_change:
 			ice_dcb_process_lldp_set_mib_change(pf, &event);
 			break;
+#ifdef HEALTH_STATUS_SUPPORT
+		case ice_aqc_opc_get_health_status:
+			ice_process_health_status_event(pf, &event);
+			break;
+#endif
 		default:
 			dev_dbg(dev, "%s Receive Queue unknown event 0x%04x ignored\n",
 				qtype, opcode);
@@ -2243,7 +2441,7 @@ static int ice_force_phys_link_state(struct ice_vsi *vsi, bool link_up)
 	if (!pcaps)
 		return -ENOMEM;
 
-	retcode = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_SW_CFG, pcaps,
+	retcode = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_ACTIVE_CFG, pcaps,
 				      NULL);
 	if (retcode) {
 		dev_err(dev, "Failed to get phy capabilities, VSI %d error %d\n",
@@ -2303,7 +2501,7 @@ static int ice_init_nvm_phy_type(struct ice_port_info *pi)
 	if (!pcaps)
 		return -ENOMEM;
 
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_NVM_CAP, pcaps,
+	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP_NO_MEDIA, pcaps,
 				     NULL);
 
 	if (status) {
@@ -2349,7 +2547,7 @@ static void ice_init_link_dflt_override(struct ice_port_info *pi)
  * ice_init_phy_cfg_dflt_override - Initialize PHY cfg default override settings
  * @pi: port info structure
  *
- * If default override is enabled, initialized the user PHY cfg speed and FEC
+ * If default override is enabled, initialize the user PHY cfg speed and FEC
  * settings using the default override mask from the NVM.
  *
  * The PHY should only be configured with the default override settings the
@@ -2358,6 +2556,9 @@ static void ice_init_link_dflt_override(struct ice_port_info *pi)
  * and the PHY has not been configured with the default override settings. The
  * state is set here, and cleared in ice_configure_phy the first time the PHY is
  * configured.
+ *
+ * This function should be called only if the FW doesn't support default
+ * configuration mode, as reported by ice_fw_supports_report_dflt_cfg.
  */
 static void ice_init_phy_cfg_dflt_override(struct ice_port_info *pi)
 {
@@ -2405,22 +2606,21 @@ static int ice_init_phy_user_cfg(struct ice_port_info *pi)
 	struct ice_phy_info *phy = &pi->phy;
 	struct ice_pf *pf = pi->hw->back;
 	enum ice_status status;
-	struct ice_vsi *vsi;
 	int err = 0;
 
 	if (!(phy->link_info.link_info & ICE_AQ_MEDIA_AVAILABLE))
 		return -EIO;
 
-	vsi = ice_get_main_vsi(pf);
-	if (!vsi)
-		return -EINVAL;
-
 	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps)
 		return -ENOMEM;
 
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP, pcaps,
-				     NULL);
+	if (ice_fw_supports_report_dflt_cfg(pi->hw))
+		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_DFLT_CFG,
+					     pcaps, NULL);
+	else
+		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+					     pcaps, NULL);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "Get PHY capability failed.\n");
 		err = -EIO;
@@ -2430,22 +2630,24 @@ static int ice_init_phy_user_cfg(struct ice_port_info *pi)
 	ice_copy_phy_caps_to_cfg(pi, pcaps, &pi->phy.curr_user_phy_cfg);
 
 	/* check if lenient mode is supported and enabled */
-	if (ice_fw_supports_link_override(&vsi->back->hw) &&
+	if (ice_fw_supports_link_override(pi->hw) &&
 	    !(pcaps->module_compliance_enforcement &
 	      ICE_AQC_MOD_ENFORCE_STRICT_MODE)) {
 		set_bit(ICE_FLAG_LINK_LENIENT_MODE_ENA, pf->flags);
 
-		/* if link default override is enabled, initialize user PHY
-		 * configuration with link default override values
+		/* if the FW supports default PHY configuration mode, then the driver
+		 * does not have to apply link override settings. If not,
+		 * initialize user PHY configuration with link override values
 		 */
-		if (pf->link_dflt_override.options & ICE_LINK_OVERRIDE_EN) {
+		if (!ice_fw_supports_report_dflt_cfg(pi->hw) &&
+		    (pf->link_dflt_override.options & ICE_LINK_OVERRIDE_EN)) {
 			ice_init_phy_cfg_dflt_override(pi);
 			goto out;
 		}
 	}
 
-	/* if link default override is not enabled, initialize PHY using
-	 * topology with media
+	/* if link default override is not enabled, set user flow control and
+	 * FEC settings based on what get_phy_caps returned
 	 */
 	phy->curr_user_fec_req = ice_caps_to_fec_mode(pcaps->caps,
 						      pcaps->link_fec_options);
@@ -2470,27 +2672,24 @@ err_out:
 static int ice_configure_phy(struct ice_vsi *vsi)
 {
 	struct device *dev = ice_pf_to_dev(vsi->back);
+	struct ice_port_info *pi = vsi->port_info;
 	struct ice_aqc_get_phy_caps_data *pcaps;
 	struct ice_aqc_set_phy_cfg_data *cfg;
-	struct ice_port_info *pi;
+	struct ice_phy_info *phy = &pi->phy;
+	struct ice_pf *pf = vsi->back;
 	enum ice_status status;
 	int err = 0;
 
-	pi = vsi->port_info;
-	if (!pi)
-		return -EINVAL;
-
 	/* Ensure we have media as we cannot configure a medialess port */
-	if (!(pi->phy.link_info.link_info & ICE_AQ_MEDIA_AVAILABLE))
+	if (!(phy->link_info.link_info & ICE_AQ_MEDIA_AVAILABLE))
 		return -EPERM;
 
 	ice_print_topo_conflict(vsi);
 
-	if (vsi->port_info->phy.link_info.topo_media_conflict ==
-	    ICE_AQ_LINK_TOPO_UNSUPP_MEDIA)
+	if (phy->link_info.topo_media_conflict == ICE_AQ_LINK_TOPO_UNSUPP_MEDIA)
 		return -EPERM;
 
-	if (test_bit(ICE_FLAG_LINK_DOWN_ON_CLOSE_ENA, vsi->back->flags))
+	if (test_bit(ICE_FLAG_LINK_DOWN_ON_CLOSE_ENA, pf->flags))
 		return ice_force_phys_link_state(vsi, true);
 
 	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
@@ -2498,7 +2697,7 @@ static int ice_configure_phy(struct ice_vsi *vsi)
 		return -ENOMEM;
 
 	/* Get current PHY config */
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_SW_CFG, pcaps,
+	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_ACTIVE_CFG, pcaps,
 				     NULL);
 	if (status) {
 		dev_err(dev, "Failed to get PHY configuration, VSI %d error %s\n",
@@ -2511,15 +2710,19 @@ static int ice_configure_phy(struct ice_vsi *vsi)
 	 * there's nothing to do
 	 */
 	if (pcaps->caps & ICE_AQC_PHY_EN_LINK &&
-	    ice_phy_caps_equals_cfg(pcaps, &pi->phy.curr_user_phy_cfg))
+	    ice_phy_caps_equals_cfg(pcaps, &phy->curr_user_phy_cfg))
 		goto done;
 
 	/* Use PHY topology as baseline for configuration */
 	memset(pcaps, 0, sizeof(*pcaps));
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP, pcaps,
-				     NULL);
+	if (ice_fw_supports_report_dflt_cfg(pi->hw))
+		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_DFLT_CFG,
+					     pcaps, NULL);
+	else
+		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+					     pcaps, NULL);
 	if (status) {
-		dev_err(dev, "Failed to get PHY topology, VSI %d error %s\n",
+		dev_err(dev, "Failed to get PHY caps, VSI %d error %s\n",
 			vsi->vsi_num, ice_stat_str(status));
 		err = -EIO;
 		goto done;
@@ -2536,15 +2739,14 @@ static int ice_configure_phy(struct ice_vsi *vsi)
 	/* Speed - If default override pending, use curr_user_phy_cfg set in
 	 * ice_init_phy_user_cfg_ldo.
 	 */
-	if (test_and_clear_bit(ICE_LINK_DEFAULT_OVERRIDE_PENDING,
-			       vsi->back->state)) {
-		cfg->phy_type_low = pi->phy.curr_user_phy_cfg.phy_type_low;
-		cfg->phy_type_high = pi->phy.curr_user_phy_cfg.phy_type_high;
+	if (test_and_clear_bit(ICE_LINK_DEFAULT_OVERRIDE_PENDING, pf->state)) {
+		cfg->phy_type_low = phy->curr_user_phy_cfg.phy_type_low;
+		cfg->phy_type_high = phy->curr_user_phy_cfg.phy_type_high;
 	} else {
 		u64 phy_low = 0, phy_high = 0;
 
 		ice_update_phy_type(&phy_low, &phy_high,
-				    pi->phy.curr_user_speed_req);
+				    phy->curr_user_speed_req);
 		cfg->phy_type_low = pcaps->phy_type_low & cpu_to_le64(phy_low);
 		cfg->phy_type_high = pcaps->phy_type_high &
 				     cpu_to_le64(phy_high);
@@ -2557,7 +2759,7 @@ static int ice_configure_phy(struct ice_vsi *vsi)
 	}
 
 	/* FEC */
-	ice_cfg_phy_fec(pi, cfg, pi->phy.curr_user_fec_req);
+	ice_cfg_phy_fec(pi, cfg, phy->curr_user_fec_req);
 
 	/* Can't provide what was requested; use PHY capabilities */
 	if (cfg->link_fec_opt !=
@@ -2569,12 +2771,12 @@ static int ice_configure_phy(struct ice_vsi *vsi)
 	/* Flow Control - always supported; no need to check against
 	 * capabilities
 	 */
-	ice_cfg_phy_fc(pi, cfg, pi->phy.curr_user_fc_req);
+	ice_cfg_phy_fc(pi, cfg, phy->curr_user_fc_req);
 
 	/* Enable link and link update */
 	cfg->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT | ICE_AQ_PHY_ENA_LINK;
 
-	status = ice_aq_set_phy_cfg(&vsi->back->hw, pi, cfg, NULL);
+	status = ice_aq_set_phy_cfg(&pf->hw, pi, cfg, NULL);
 	if (status) {
 		dev_err(dev, "Failed to set phy config, VSI %d error %s\n",
 			vsi->vsi_num, ice_stat_str(status));
@@ -2791,8 +2993,8 @@ static void ice_service_task(struct work_struct *work)
 		return;
 	}
 
-	/* Invoke remaining initialization of peer devices */
-	ice_for_each_peer(pf, NULL, ice_finish_init_peer_device);
+	/* Invoke remaining initialization of peer_objs */
+	ice_for_each_peer(pf, NULL, ice_finish_init_peer_obj);
 
 	ice_chnl_subtask_handle_interrupt(pf);
 	ice_channel_sync_global_cntrs(pf);
@@ -3035,7 +3237,7 @@ static int ice_xdp_alloc_setup_rings(struct ice_vsi *vsi)
 			goto free_xdp_rings;
 		ice_set_ring_xdp(xdp_ring);
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
-		xdp_ring->xsk_umem = ice_xsk_umem(xdp_ring);
+		xdp_ring->xsk_pool = ice_xsk_umem(xdp_ring);
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 	}
 
@@ -3065,6 +3267,26 @@ static void ice_vsi_assign_bpf_prog(struct ice_vsi *vsi, struct bpf_prog *prog)
 	ice_for_each_rxq(vsi, i)
 		WRITE_ONCE(vsi->rx_rings[i]->xdp_prog, vsi->xdp_prog);
 }
+
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+/**
+ * ice_clear_xdp_stats - clear all Rx XDP statistics on VSI
+ * @vsi: VSI to clear Rx XDP statistics on
+ */
+static void ice_clear_xdp_stats(struct ice_vsi *vsi)
+{
+	int i;
+	struct ice_ring *ring;
+
+	ice_for_each_alloc_rxq(vsi, i) {
+		ring = READ_ONCE(vsi->rx_rings[i]);
+		if (ring)
+			memset(&ring->xdp_stats, 0, sizeof(ring->xdp_stats));
+	}
+}
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
 
 /**
  * ice_prepare_xdp_rings - Allocate, configure and setup Tx rings for XDP
@@ -3248,7 +3470,7 @@ static void ice_vsi_rx_napi_schedule(struct ice_vsi *vsi)
 	ice_for_each_rxq(vsi, i) {
 		struct ice_ring *rx_ring = vsi->rx_rings[i];
 
-		if (rx_ring->xsk_umem)
+		if (rx_ring->xsk_pool)
 			napi_schedule(&rx_ring->q_vector->napi);
 	}
 }
@@ -3287,6 +3509,11 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 		xdp_ring_err = ice_prepare_xdp_rings(vsi, prog);
 		if (xdp_ring_err)
 			NL_SET_ERR_MSG_MOD(extack, "Setting up XDP Tx resources failed");
+#ifdef HAVE_XDP_SUPPORT
+#ifdef ICE_ADD_PROBES
+		ice_clear_xdp_stats(vsi);
+#endif /* ICE_ADD_PROBES */
+#endif /* HAVE_XDP_SUPPORT */
 	} else if (ice_is_xdp_ena_vsi(vsi) && !prog) {
 		xdp_ring_err = ice_destroy_xdp_rings(vsi);
 		if (xdp_ring_err)
@@ -3303,7 +3530,7 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 	if (!ret && prog && vsi->xsk_umems)
 		ice_vsi_rx_napi_schedule(vsi);
 #else
-	if (!ret && prog && xdp_get_umem_from_qid(vsi->netdev, 0))
+	if (!ret && prog)
 		ice_vsi_rx_napi_schedule(vsi);
 #endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
@@ -3342,8 +3569,12 @@ static int ice_xdp(struct net_device *dev, struct netdev_xdp *xdp)
 		return 0;
 #endif /* HAVE_XDP_QUERY_PROG */
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
-	case XDP_SETUP_XSK_UMEM:
+	case XDP_SETUP_XSK_POOL:
+#ifdef HAVE_NETDEV_BPF_XSK_POOL
+		return ice_xsk_umem_setup(vsi, xdp->xsk.pool,
+#else
 		return ice_xsk_umem_setup(vsi, xdp->xsk.umem,
+#endif /* HAVE_NETDEV_BPF_XSK_POOL */
 					  xdp->xsk.queue_id);
 #ifndef NO_XDP_QUERY_XSK_UMEM
 	case XDP_QUERY_XSK_UMEM:
@@ -3742,6 +3973,7 @@ static void ice_set_ops(struct net_device *netdev)
 static void ice_set_netdev_features(struct net_device *netdev)
 {
 	struct ice_pf *pf = ice_netdev_to_pf(netdev);
+	bool is_dvm_ena = ice_is_dvm_ena(&pf->hw);
 	netdev_features_t csumo_features;
 	netdev_features_t vlano_features;
 	netdev_features_t dflt_features;
@@ -3767,6 +3999,10 @@ static void ice_set_netdev_features(struct net_device *netdev)
 	vlano_features = NETIF_F_HW_VLAN_CTAG_FILTER |
 			 NETIF_F_HW_VLAN_CTAG_TX     |
 			 NETIF_F_HW_VLAN_CTAG_RX;
+
+	/* Enable CTAG/STAG filtering by default in Double VLAN Mode (DVM) */
+	if (is_dvm_ena)
+		vlano_features |= NETIF_F_HW_VLAN_STAG_FILTER;
 
 	tso_features = NETIF_F_TSO			|
 		       NETIF_F_TSO_ECN			|
@@ -3820,6 +4056,16 @@ static void ice_set_netdev_features(struct net_device *netdev)
 #ifdef NETIF_F_HW_TC
 	netdev->hw_features |= NETIF_F_HW_TC;
 #endif /* NETIF_F_HW_TC */
+
+	/* advertise support but don't enable by default since only one type of
+	 * VLAN offload can be enabled at a time (i.e. CTAG or STAG). When one
+	 * type turns on the other has to be turned off. This is enforced by the
+	 * ice_fix_features() ndo callback.
+	 */
+	if (is_dvm_ena) {
+		netdev->hw_features |= NETIF_F_HW_VLAN_STAG_RX |
+			NETIF_F_HW_VLAN_STAG_TX;
+	}
 
 #ifdef HAVE_NETDEV_SB_DEV
 	/* Enable macvlan offloads */
@@ -3980,87 +4226,32 @@ ice_lb_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 }
 
 /**
- * ice_cfg_vlan_chnl_pruning - set/reset prune and vlan_promisc setting
- * @netdev: network interface to be adjusted
- * @main_vsi: Pointer to main VSI (ICE_VSI_PF)
- * @prune: set to true to enable VLAN pruning and false to disable it
- * @vlan_promisc: enable valid security flags if not in VLAN promiscuous mode
- *
- * Sets/Reset prune and vlan_promisc setting for channel VSIs
- */
-static int
-ice_cfg_vlan_chnl_pruning(struct net_device *netdev, struct ice_vsi *main_vsi,
-			  bool prune, bool vlan_promisc)
-{
-	struct ice_channel *ch;
-	int ret;
-
-	if (!main_vsi)
-		return -EINVAL;
-
-	if (main_vsi->type != ICE_VSI_PF)
-		return -EOPNOTSUPP;
-
-	/* Iterate thru channel VSI and set/reset prune and promisc setting */
-	list_for_each_entry(ch, &main_vsi->ch_list, list) {
-		struct ice_vsi *chnl_vsi;
-
-		chnl_vsi = ch->ch_vsi;
-		if (!chnl_vsi)
-			continue;
-		ret = ice_cfg_vlan_pruning(chnl_vsi, prune, vlan_promisc);
-		if (ret) {
-			netdev_err(netdev, "failed to set prune %d and promisc %d setting for channel VSI (num:%d), ret %d\n",
-				   prune, vlan_promisc, chnl_vsi->vsi_num, ret);
-			return ret;
-		}
-	}
-	return 0;
-}
-
-/**
  * ice_vlan_rx_add_vid - Add a VLAN ID filter to HW offload
  * @netdev: network interface to be adjusted
- * @proto: unused protocol
+ * @proto: VLAN TPID
  * @vid: VLAN ID to be added
  *
  * net_device_ops implementation for adding VLAN IDs
  */
 static int
-ice_vlan_rx_add_vid(struct net_device *netdev, __always_unused __be16 proto,
-		    u16 vid)
+ice_vlan_rx_add_vid(struct net_device *netdev, __be16 proto, u16 vid)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_vsi_vlan_ops *vlan_ops;
 	struct ice_vsi *vsi = np->vsi;
+	struct ice_vlan vlan;
 	int ret;
 
-	if (vid >= VLAN_N_VID) {
-		netdev_err(netdev, "VLAN id requested %d is out of range %d\n",
-			   vid, VLAN_N_VID);
-		return -EINVAL;
-	}
-
-	if (vsi->info.pvid)
-		return -EINVAL;
-
-	/* VLAN 0 is added by default during load/reset */
 	if (!vid)
 		return 0;
 
-	/* Enable VLAN pruning when a VLAN other than 0 is added */
-	if (!ice_vsi_is_vlan_pruning_ena(vsi)) {
-		ret = ice_cfg_vlan_pruning(vsi, true, false);
-		if (ret)
-			return ret;
-		ret = ice_cfg_vlan_chnl_pruning(netdev, vsi, true, false);
-		if (ret)
-			return ret;
-	}
+	vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
 
 	/* Add a switch rule for this VLAN ID so its corresponding VLAN tagged
 	 * packets aren't pruned by the device's internal switch on Rx
 	 */
-	ret = vsi->vlan_ops.add_vlan(vsi, ICE_VLAN(ETH_P_8021Q, vid, 0, ICE_FWD_TO_VSI));
+	vlan = ICE_VLAN(be16_to_cpu(proto), vid, 0, ICE_FWD_TO_VSI);
+	ret = vlan_ops->add_vlan(vsi, vlan);
 	if (!ret)
 		set_bit(ICE_VSI_VLAN_FLTR_CHANGED, vsi->state);
 
@@ -4070,42 +4261,35 @@ ice_vlan_rx_add_vid(struct net_device *netdev, __always_unused __be16 proto,
 /**
  * ice_vlan_rx_kill_vid - Remove a VLAN ID filter from HW offload
  * @netdev: network interface to be adjusted
- * @proto: unused protocol
+ * @proto: VLAN TPID
  * @vid: VLAN ID to be removed
  *
  * net_device_ops implementation for removing VLAN IDs
  */
 static int
-ice_vlan_rx_kill_vid(struct net_device *netdev, __always_unused __be16 proto,
-		     u16 vid)
+ice_vlan_rx_kill_vid(struct net_device *netdev, __be16 proto, u16 vid)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_vsi_vlan_ops *vlan_ops;
 	struct ice_vsi *vsi = np->vsi;
+	struct ice_vlan vlan;
 	int ret;
 
-	if (vsi->info.pvid)
-		return -EINVAL;
-
-	/* don't allow removal of VLAN 0 */
 	if (!vid)
 		return 0;
+
+	vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
 
 	/* Make sure VLAN delete is successful before updating VLAN
 	 * information
 	 */
-	ret = vsi->vlan_ops.del_vlan(vsi, ICE_VLAN(ETH_P_8021Q, vid, 0, ICE_FWD_TO_VSI));
+	vlan = ICE_VLAN(be16_to_cpu(proto), vid, 0, ICE_FWD_TO_VSI);
+	ret = vlan_ops->del_vlan(vsi, vlan);
 	if (ret)
 		return ret;
 
-	/* Disable pruning when VLAN 0 is the only VLAN rule */
-	if (vsi->num_vlan == 1 && ice_vsi_is_vlan_pruning_ena(vsi)) {
-		ret = ice_cfg_vlan_pruning(vsi, false, false);
-
-		ret = ice_cfg_vlan_chnl_pruning(netdev, vsi, false, false);
-	}
-
 	set_bit(ICE_VSI_VLAN_FLTR_CHANGED, vsi->state);
-	return ret;
+	return 0;
 }
 
 /**
@@ -4136,8 +4320,10 @@ static void ice_pf_reset_stats(struct ice_pf *pf)
 	pf->rx_tcp_cso_err = 0;
 	pf->rx_udp_cso_err = 0;
 	pf->rx_sctp_cso_err = 0;
-	pf->tx_vlano = 0;
-	pf->rx_vlano = 0;
+	pf->tx_q_vlano = 0;
+	pf->rx_q_vlano = 0;
+	pf->tx_ad_vlano = 0;
+	pf->rx_ad_vlano = 0;
 #endif
 }
 
@@ -4226,12 +4412,18 @@ static int ice_tc_indir_block_register(struct ice_vsi *vsi)
 static int ice_setup_pf_sw(struct ice_pf *pf)
 {
 	struct device *dev = ice_pf_to_dev(pf);
+	bool dvm = ice_is_dvm_ena(&pf->hw);
 	struct ice_vsi *vsi;
 	int status = 0;
 
 	if (ice_is_reset_in_progress(pf->state))
 		return -EBUSY;
 
+
+	status = ice_aq_set_port_params(pf->hw.port_info, 0, false, false, dvm,
+					NULL);
+	if (status)
+		return -EIO;
 
 	vsi = ice_pf_vsi_setup(pf, pf->hw.port_info);
 	if (!vsi)
@@ -4428,6 +4620,8 @@ static int ice_init_pf(struct ice_pf *pf)
 	INIT_HLIST_HEAD(&pf->aq_wait_list);
 	spin_lock_init(&pf->aq_wait_lock);
 	init_waitqueue_head(&pf->aq_wait_queue);
+
+	init_waitqueue_head(&pf->reset_wait_queue);
 
 	/* setup service timer and periodic service task */
 	timer_setup(&pf->serv_tmr, ice_service_timer, 0);
@@ -4654,15 +4848,14 @@ static int ice_init_interrupt_scheme(struct ice_pf *pf)
 }
 
 /**
- * ice_is_wol_supported - get NVM state of WoL
- * @pf: board private structure
+ * ice_is_wol_supported - check if WoL is supported
+ * @hw: pointer to hardware info
  *
  * Check if WoL is supported based on the HW configuration.
  * Returns true if NVM supports and enables WoL for this port, false otherwise
  */
-bool ice_is_wol_supported(struct ice_pf *pf)
+bool ice_is_wol_supported(struct ice_hw *hw)
 {
-	struct ice_hw *hw = &pf->hw;
 	u16 wol_ctrl;
 
 	/* A bit set to 1 in the NVM Software Reserved Word 2 (WoL control
@@ -4671,7 +4864,7 @@ bool ice_is_wol_supported(struct ice_pf *pf)
 	if (ice_read_sr_word(hw, ICE_SR_NVM_WOL_CFG, &wol_ctrl))
 		return false;
 
-	return !(BIT(hw->pf_id) & wol_ctrl);
+	return !(BIT(hw->port_info->lport) & wol_ctrl);
 }
 
 /**
@@ -4757,8 +4950,8 @@ static void ice_set_safe_mode_vlan_cfg(struct ice_pf *pf)
 	ctxt->info.sw_flags2 &= ~ICE_AQ_VSI_SW_FLAG_RX_VLAN_PRUNE_ENA;
 
 	/* allow all VLANs on Tx and don't strip on Rx */
-	ctxt->info.vlan_flags = ICE_AQ_VSI_VLAN_MODE_ALL |
-		ICE_AQ_VSI_VLAN_EMOD_NOTHING;
+	ctxt->info.inner_vlan_flags = ICE_AQ_VSI_INNER_VLAN_TX_MODE_ALL |
+		ICE_AQ_VSI_INNER_VLAN_EMODE_NOTHING;
 
 	status = ice_update_vsi(hw, vsi->idx, ctxt, NULL);
 	if (status) {
@@ -4768,7 +4961,7 @@ static void ice_set_safe_mode_vlan_cfg(struct ice_pf *pf)
 	} else {
 		vsi->info.sec_flags = ctxt->info.sec_flags;
 		vsi->info.sw_flags2 = ctxt->info.sw_flags2;
-		vsi->info.vlan_flags = ctxt->info.vlan_flags;
+		vsi->info.inner_vlan_flags = ctxt->info.inner_vlan_flags;
 	}
 
 	kfree(ctxt);
@@ -5068,9 +5261,6 @@ int ice_init_acl(struct ice_pf *pf)
 	params.concurr = false;
 
 
-	/* set DCF ACL enable flag as false by default */
-	hw->dcf_acl_enabled = false;
-
 	status = ice_acl_create_tbl(hw, &params);
 	if (status)
 		return ice_status_to_errno(status);
@@ -5253,6 +5443,34 @@ static void ice_print_wake_reason(struct ice_pf *pf)
 	dev_info(ice_pf_to_dev(pf), "Wake reason: %s", wake_str);
 }
 
+#ifdef HEALTH_STATUS_SUPPORT
+/*
+ * ice_config_health_events - Enable or disable FW health event reporting
+ * @pf: pointer to the PF struct
+ * @enable: whether to enable or disable the events
+ */
+static void
+ice_config_health_events(struct ice_pf *pf, bool enable)
+{
+	enum ice_status ret;
+	u8 enable_bits = 0;
+
+	if (!ice_is_fw_health_report_supported(&pf->hw))
+		return;
+
+	if (enable)
+		enable_bits = ICE_AQC_HEALTH_STATUS_SET_PF_SPECIFIC_MASK |
+			      ICE_AQC_HEALTH_STATUS_SET_GLOBAL_MASK;
+
+	ret = ice_aq_set_health_status_config(&pf->hw, enable_bits, NULL);
+
+	if (ret)
+		dev_err(ice_pf_to_dev(pf), "Failed to %sable firmware health events, err %s aq_err %s\n",
+			enable ? "en" : "dis",
+			ice_stat_str(ret),
+			ice_aq_str(pf->hw.adminq.sq_last_status));
+}
+#endif /* HEALTH_STATUS_SUPPORT */
 
 /*
  * ice_register_netdev - register netdev and devlink port
@@ -5316,7 +5534,7 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (err)
 		return err;
 
-	err = pcim_iomap_regions(pdev, BIT(ICE_BAR0), pci_name(pdev));
+	err = pcim_iomap_regions(pdev, BIT(ICE_BAR0), dev_driver_string(dev));
 	if (err) {
 		dev_err(dev, "BAR0 I/O map error %d\n", err);
 		return err;
@@ -5416,6 +5634,7 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 		 */
 		ice_set_safe_mode_caps(hw);
 	}
+
 
 	err = ice_init_pf(pf);
 	if (err) {
@@ -5577,7 +5796,7 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 
 		err = ice_init_peer_devices(pf);
 		if (err) {
-			dev_err(dev, "Failed to initialize peer devices: 0x%x\n",
+			dev_err(dev, "Failed to initialize peer_objs: 0x%x\n",
 				err);
 			err = -EIO;
 			goto err_init_peer_unroll;
@@ -5598,6 +5817,8 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (ice_init_fdir(pf))
 		dev_err(dev, "could not initialize flow director\n");
 
+	/* set DCF ACL enable flag as false by default */
+	hw->dcf_caps &= ~DCF_ACL_CAP;
 	if (test_bit(ICE_FLAG_FD_ENA, pf->flags)) {
 		/* Note: ACL init failure is non-fatal to load */
 		err = ice_init_acl(pf);
@@ -5606,6 +5827,8 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 				"Failed to initialize ACL: %d\n", err);
 	}
 
+	/* set DCF UDP tunnel enable flag as false by default */
+	hw->dcf_caps &= ~DCF_UDP_TUNNEL_CAP;
 	/* Note: DCB init failure is non-fatal to load */
 	if (ice_init_pf_dcb(pf, false)) {
 		clear_bit(ICE_FLAG_DCB_CAPABLE, pf->flags);
@@ -5627,6 +5850,10 @@ probe_done:
 	if (err)
 		goto err_netdev_reg;
 
+#ifdef HEALTH_STATUS_SUPPORT
+	ice_config_health_events(pf, true);
+
+#endif
 	/* ready to go, so clear down state bit */
 	clear_bit(ICE_DOWN, pf->state);
 
@@ -5802,7 +6029,7 @@ static void ice_remove(struct pci_dev *pdev)
 #if IS_ENABLED(CONFIG_MFD_CORE)
 		ida_simple_remove(&ice_peer_index_ida, pf->peer_idx);
 #endif
-		ice_for_each_peer(pf, NULL, ice_unreg_peer_device);
+		ice_for_each_peer(pf, NULL, ice_unreg_peer_obj);
 		devm_kfree(&pdev->dev, pf->peers);
 	}
 	ice_set_wake(pf);
@@ -6971,6 +7198,194 @@ static void ice_vsi_replay_macvlan(struct ice_pf *pf)
 }
 #endif /* HAVE_NETDEV_SB_DEV */
 
+#define NETIF_VLAN_OFFLOAD_FEATURES	(NETIF_F_HW_VLAN_CTAG_RX | \
+					 NETIF_F_HW_VLAN_CTAG_TX | \
+					 NETIF_F_HW_VLAN_STAG_RX | \
+					 NETIF_F_HW_VLAN_STAG_TX)
+
+#define NETIF_VLAN_FILTERING_FEATURES	(NETIF_F_HW_VLAN_CTAG_FILTER | \
+					 NETIF_F_HW_VLAN_STAG_FILTER)
+
+/**
+ * ice_fix_features - fix the netdev features flags based on device limitations
+ * @netdev: ptr to the netdev that flags are being fixed on
+ * @features: features that need to be checked and possibly fixed
+ *
+ * Make sure any fixups are made to features in this callback. This enables the
+ * driver to not have to check unsupported configurations throughout the driver
+ * because that's the responsiblity of this callback.
+ *
+ * Single VLAN Mode (SVM) Supported Features:
+ *	NETIF_F_HW_VLAN_CTAG_FILTER
+ *	NETIF_F_HW_VLAN_CTAG_RX
+ *	NETIF_F_HW_VLAN_CTAG_TX
+ *
+ * Double VLAN Mode (DVM) Supported Features:
+ *	NETIF_F_HW_VLAN_CTAG_FILTER
+ *	NETIF_F_HW_VLAN_CTAG_RX
+ *	NETIF_F_HW_VLAN_CTAG_TX
+ *
+ *	NETIF_F_HW_VLAN_STAG_FILTER
+ *	NETIF_HW_VLAN_STAG_RX
+ *	NETIF_HW_VLAN_STAG_TX
+ *
+ * Features that need fixing:
+ *	Cannot simultaneously enable CTAG and STAG stripping and/or insertion.
+ *	These are mutually exlusive as the VSI context cannot support multiple
+ *	VLAN ethertypes simultaneously for stripping and/or insertion. If this
+ *	is not done, then default to clearing the requested STAG offload
+ *	settings.
+ *
+ *	All supported filtering has to be enabled or disabled together. For
+ *	example, in DVM, CTAG and STAG filtering have to be enabled and disabled
+ *	together. If this is not done, then default to VLAN filtering disabled.
+ *	These are mutually exclusive as there is currently no way to
+ *	enable/disable VLAN filtering based on VLAN ethertype when using VLAN
+ *	prune rules.
+ */
+static netdev_features_t
+ice_fix_features(struct net_device *netdev, netdev_features_t features)
+{
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+	netdev_features_t supported_vlan_filtering;
+	netdev_features_t requested_vlan_filtering;
+	struct ice_vsi *vsi = np->vsi;
+
+	requested_vlan_filtering = features & NETIF_VLAN_FILTERING_FEATURES;
+
+	/* make sure supported_vlan_filtering works for both SVM and DVM */
+	supported_vlan_filtering = NETIF_F_HW_VLAN_CTAG_FILTER;
+	if (ice_is_dvm_ena(&vsi->back->hw))
+		supported_vlan_filtering |= NETIF_F_HW_VLAN_STAG_FILTER;
+
+	if (requested_vlan_filtering &&
+	    requested_vlan_filtering != supported_vlan_filtering) {
+		if (requested_vlan_filtering & NETIF_F_HW_VLAN_CTAG_FILTER) {
+			netdev_warn(netdev, "cannot support requested VLAN filtering settings, enabling all supported VLAN filtering settings\n");
+			features |= supported_vlan_filtering;
+		} else {
+			netdev_warn(netdev, "cannot support requested VLAN filtering settings, clearing all supported VLAN filtering settings\n");
+			features &= ~supported_vlan_filtering;
+		}
+	}
+
+	if ((features & (NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_TX)) &&
+	    (features & (NETIF_F_HW_VLAN_STAG_RX | NETIF_F_HW_VLAN_STAG_TX))) {
+		netdev_warn(netdev, "cannot support CTAG and STAG VLAN stripping and/or insertion simultaneously since CTAG and STAG offloads are mutually exclusive, clearing STAG offload settings\n");
+		features &= ~(NETIF_F_HW_VLAN_STAG_RX |
+			      NETIF_F_HW_VLAN_STAG_TX);
+	}
+
+	return features;
+}
+
+/**
+ * ice_set_vlan_offload_features - set VLAN offload features for the PF VSI
+ * @vsi: PF's VSI
+ * @features: features used to determine VLAN offload settings
+ *
+ * First, determine the vlan_ethertype based on the VLAN offload bits in
+ * features. Then determine if stripping and insertion should be enabled or
+ * disabled. Finally enable or disable VLAN stripping and insertion.
+ */
+static int
+ice_set_vlan_offload_features(struct ice_vsi *vsi, netdev_features_t features)
+{
+	bool enable_stripping = true, enable_insertion = true;
+	struct ice_vsi_vlan_ops *vlan_ops;
+	int strip_err = 0, insert_err = 0;
+	u16 vlan_ethertype = 0;
+
+	vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
+
+	if (features & (NETIF_F_HW_VLAN_STAG_RX | NETIF_F_HW_VLAN_STAG_TX))
+		vlan_ethertype = ETH_P_8021AD;
+	else if (features & (NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_TX))
+		vlan_ethertype = ETH_P_8021Q;
+
+	if (!(features & (NETIF_F_HW_VLAN_STAG_RX | NETIF_F_HW_VLAN_CTAG_RX)))
+		enable_stripping = false;
+	if (!(features & (NETIF_F_HW_VLAN_STAG_TX | NETIF_F_HW_VLAN_CTAG_TX)))
+		enable_insertion = false;
+
+	if (enable_stripping)
+		strip_err = vlan_ops->ena_stripping(vsi, vlan_ethertype);
+	else
+		strip_err = vlan_ops->dis_stripping(vsi);
+
+	if (enable_insertion)
+		insert_err = vlan_ops->ena_insertion(vsi, vlan_ethertype);
+	else
+		insert_err = vlan_ops->dis_insertion(vsi);
+
+	if (strip_err || insert_err)
+		return -EIO;
+
+	return 0;
+}
+
+/**
+ * ice_set_vlan_filtering_features - set VLAN filtering features for the PF VSI
+ * @vsi: PF's VSI
+ * @features: features used to determine VLAN filtering settings
+ *
+ * Enable or disable Rx VLAN filtering based on the VLAN filtering bits in the
+ * features.
+ */
+static int
+ice_set_vlan_filtering_features(struct ice_vsi *vsi, netdev_features_t features)
+{
+	struct ice_vsi_vlan_ops *vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
+	int err = 0;
+
+	/* support Single VLAN Mode (SVM) and Double VLAN Mode (DVM) by checking
+	 * if either bit is set
+	 */
+	if (features &
+	    (NETIF_F_HW_VLAN_CTAG_FILTER | NETIF_F_HW_VLAN_STAG_FILTER))
+		err = vlan_ops->ena_rx_filtering(vsi);
+	else
+		err = vlan_ops->dis_rx_filtering(vsi);
+
+	return err;
+}
+
+/**
+ * ice_set_vlan_features - set VLAN settings based on suggested feature set
+ * @netdev: ptr to the netdev being adjusted
+ * @features: the feature set that the stack is suggesting
+ *
+ * Only update VLAN settings if the requested_vlan_features are different than
+ * the current_vlan_features.
+ */
+static int
+ice_set_vlan_features(struct net_device *netdev, netdev_features_t features)
+{
+	netdev_features_t current_vlan_features, requested_vlan_features;
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_vsi *vsi = np->vsi;
+	int err;
+
+	current_vlan_features = netdev->features & NETIF_VLAN_OFFLOAD_FEATURES;
+	requested_vlan_features = features & NETIF_VLAN_OFFLOAD_FEATURES;
+	if (current_vlan_features ^ requested_vlan_features) {
+		err = ice_set_vlan_offload_features(vsi, features);
+		if (err)
+			return err;
+	}
+
+	current_vlan_features = netdev->features &
+		NETIF_VLAN_FILTERING_FEATURES;
+	requested_vlan_features = features & NETIF_VLAN_FILTERING_FEATURES;
+	if (current_vlan_features ^ requested_vlan_features) {
+		err = ice_set_vlan_filtering_features(vsi, features);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 /**
  * ice_set_features - set the netdev feature flags
  * @netdev: ptr to the netdev being adjusted
@@ -7000,31 +7415,15 @@ ice_set_features(struct net_device *netdev, netdev_features_t features)
 	 * separate if/else statements to guarantee each feature is checked
 	 */
 	if (features & NETIF_F_RXHASH && !(netdev->features & NETIF_F_RXHASH))
-		ret = ice_vsi_manage_rss_lut(vsi, true);
+		ice_vsi_manage_rss_lut(vsi, true);
 	else if (!(features & NETIF_F_RXHASH) &&
 		 netdev->features & NETIF_F_RXHASH)
-		ret = ice_vsi_manage_rss_lut(vsi, false);
+		ice_vsi_manage_rss_lut(vsi, false);
 
-	if ((features & NETIF_F_HW_VLAN_CTAG_RX) &&
-	    !(netdev->features & NETIF_F_HW_VLAN_CTAG_RX))
-		ret = vsi->vlan_ops.ena_stripping(vsi, ETH_P_8021Q);
-	else if (!(features & NETIF_F_HW_VLAN_CTAG_RX) &&
-		 (netdev->features & NETIF_F_HW_VLAN_CTAG_RX))
-		ret = vsi->vlan_ops.dis_stripping(vsi);
+	ret = ice_set_vlan_features(netdev, features);
+	if (ret)
+		return ret;
 
-	if ((features & NETIF_F_HW_VLAN_CTAG_TX) &&
-	    !(netdev->features & NETIF_F_HW_VLAN_CTAG_TX))
-		ret = vsi->vlan_ops.ena_insertion(vsi, ETH_P_8021Q);
-	else if (!(features & NETIF_F_HW_VLAN_CTAG_TX) &&
-		 (netdev->features & NETIF_F_HW_VLAN_CTAG_TX))
-		ret = vsi->vlan_ops.dis_insertion(vsi);
-
-	if ((features & NETIF_F_HW_VLAN_CTAG_FILTER) &&
-	    !(netdev->features & NETIF_F_HW_VLAN_CTAG_FILTER))
-		ret = ice_cfg_vlan_pruning(vsi, true, false);
-	else if (!(features & NETIF_F_HW_VLAN_CTAG_FILTER) &&
-		 (netdev->features & NETIF_F_HW_VLAN_CTAG_FILTER))
-		ret = ice_cfg_vlan_pruning(vsi, false, false);
 #ifdef HAVE_NETDEV_SB_DEV
 
 	if ((features & NETIF_F_HW_L2FW_DOFFLOAD) &&
@@ -7063,19 +7462,26 @@ ice_set_features(struct net_device *netdev, netdev_features_t features)
 }
 
 /**
- * ice_vsi_vlan_setup - Setup VLAN offload properties on a VSI
+ * ice_vsi_vlan_setup - Setup VLAN offload properties on a PF VSI
  * @vsi: VSI to setup VLAN properties for
  */
 static int ice_vsi_vlan_setup(struct ice_vsi *vsi)
 {
-	int ret = 0;
+	int err;
 
-	if (vsi->netdev->features & NETIF_F_HW_VLAN_CTAG_RX)
-		ret = vsi->vlan_ops.ena_stripping(vsi, ETH_P_8021Q);
-	if (vsi->netdev->features & NETIF_F_HW_VLAN_CTAG_TX)
-		ret = vsi->vlan_ops.dis_stripping(vsi);
+	err = ice_set_vlan_offload_features(vsi, vsi->netdev->features);
+	if (err)
+		return err;
 
-	return ret;
+	err = ice_set_vlan_filtering_features(vsi, vsi->netdev->features);
+	if (err)
+		return err;
+
+	err = ice_vsi_add_vlan_zero(vsi);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 /**
@@ -7109,6 +7515,107 @@ int ice_vsi_cfg(struct ice_vsi *vsi)
 	return err;
 }
 
+/* THEORY OF MODERATION:
+ * The below code creates custom DIM profiles for use by this driver, because
+ * the ice driver hardware works differently than the hardware that DIMLIB was
+ * originally made for. ice hardware doesn't have packet count limits that
+ * can trigger an interrupt, but it *does* have interrupt rate limit support,
+ * and this code adds that capability to be used by the driver when it's using
+ * DIMLIB. The DIMLIB code was always designed to be a suggestion to the driver
+ * for how to "respond" to traffic and interrupts, so this driver uses a
+ * slightly different set of moderation parameters to get best performance.
+ */
+struct ice_dim {
+	/* the throttle rate for interrupts, basically worst case delay before
+	 * an initial interrupt fires, value is stored in microseconds.
+	 */
+	u16 itr;
+	/* the rate limit for interrupts, which can cap a delay from a small
+	 * ITR at a certain amount of interrupts per second. f.e. a 2us ITR
+	 * could yield as much as 500,000 interrupts per second, but with a
+	 * 10us rate limit, it limits to 100,000 interrupts per second. Value
+	 * is stored in microseconds.
+	 */
+	u16 intrl;
+};
+
+/* Make a different profile for RX that doesn't allow quite so aggressive
+ * moderation at the high end (it maxxes out at 128us or about 8k interrupts a
+ * second. The INTRL/rate parameters here are only useful to cap small ITR
+ * values, which is why for largers ITR's - like 128, which can only generate
+ * 8k interrupts per second, there is no point to rate limit and the values
+ * are set to zero. The rate limit values do affect latency, and so must
+ * be reasonably small so to not impact latency sensitive tests.
+ */
+static const struct ice_dim rx_profile[] = {
+	{2, 10},
+	{8, 16},
+	{32, 0},
+	{96, 0},
+	{128, 0}
+};
+
+/* The transmit profile, which has the same sorts of values
+ * as the previous struct
+ */
+static const struct ice_dim tx_profile[] = {
+	{2, 10},
+	{8, 16},
+	{64, 0},
+	{128, 0},
+	{256, 0}
+};
+
+static void ice_tx_dim_work(struct work_struct *work)
+{
+	struct ice_ring_container *rc;
+	struct ice_q_vector *q_vector;
+	struct dim *dim;
+	u16 itr, intrl;
+
+	dim = container_of(work, struct dim, work);
+	rc = container_of(dim, struct ice_ring_container, dim);
+	q_vector = container_of(rc, struct ice_q_vector, tx);
+
+	if (dim->profile_ix >= ARRAY_SIZE(tx_profile))
+		dim->profile_ix = ARRAY_SIZE(tx_profile) - 1;
+
+	/* look up the values in our local table */
+	itr = tx_profile[dim->profile_ix].itr;
+	intrl = tx_profile[dim->profile_ix].intrl;
+
+	ice_trace(tx_dim_work, q_vector, dim);
+	ice_write_itr(rc, itr);
+	ice_write_intrl(q_vector, intrl);
+
+	dim->state = DIM_START_MEASURE;
+}
+
+static void ice_rx_dim_work(struct work_struct *work)
+{
+	struct ice_ring_container *rc;
+	struct ice_q_vector *q_vector;
+	struct dim *dim;
+	u16 itr, intrl;
+
+	dim = container_of(work, struct dim, work);
+	rc = container_of(dim, struct ice_ring_container, dim);
+	q_vector = container_of(rc, struct ice_q_vector, rx);
+
+	if (dim->profile_ix >= ARRAY_SIZE(rx_profile))
+		dim->profile_ix = ARRAY_SIZE(rx_profile) - 1;
+
+	/* look up the values in our local table */
+	itr = rx_profile[dim->profile_ix].itr;
+	intrl = rx_profile[dim->profile_ix].intrl;
+
+	ice_trace(rx_dim_work, q_vector, dim);
+	ice_write_itr(rc, itr);
+	ice_write_intrl(q_vector, intrl);
+
+	dim->state = DIM_START_MEASURE;
+}
+
 /**
  * ice_napi_enable_all - Enable NAPI for all q_vectors in the VSI
  * @vsi: the VSI being configured
@@ -7122,6 +7629,12 @@ static void ice_napi_enable_all(struct ice_vsi *vsi)
 
 	ice_for_each_q_vector(vsi, q_idx) {
 		struct ice_q_vector *q_vector = vsi->q_vectors[q_idx];
+
+		INIT_WORK(&q_vector->tx.dim.work, ice_tx_dim_work);
+		q_vector->tx.dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
+
+		INIT_WORK(&q_vector->rx.dim.work, ice_rx_dim_work);
+		q_vector->rx.dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
 
 		if (q_vector->rx.ring || q_vector->tx.ring)
 			napi_enable(&q_vector->napi);
@@ -7161,7 +7674,7 @@ static int ice_up_complete(struct ice_vsi *vsi)
 		netif_tx_start_all_queues(vsi->netdev);
 		netif_carrier_on(vsi->netdev);
 		if (ice_is_generic_mac(&pf->hw))
-			ice_ptp_link_change(pf, vsi->port_info->lport, true);
+			ice_ptp_link_change(pf, pf->hw.pf_id, true);
 	}
 
 
@@ -7262,7 +7775,6 @@ static void ice_update_vsi_ring_stats(struct ice_vsi *vsi)
 	vsi->tx_linearize = 0;
 	vsi->rx_buf_failed = 0;
 	vsi->rx_page_failed = 0;
-	vsi->rx_gro_dropped = 0;
 #ifdef ICE_ADD_PROBES
 	vsi->rx_page_reuse = 0;
 #endif /* ICE_ADD_PROBES */
@@ -7280,7 +7792,6 @@ static void ice_update_vsi_ring_stats(struct ice_vsi *vsi)
 		vsi_stats->rx_bytes += bytes;
 		vsi->rx_buf_failed += ring->rx_stats.alloc_buf_failed;
 		vsi->rx_page_failed += ring->rx_stats.alloc_page_failed;
-		vsi->rx_gro_dropped += ring->rx_stats.gro_dropped;
 #ifdef ICE_ADD_PROBES
 		vsi->rx_page_reuse += ring->rx_stats.page_reuse;
 #endif /* ICE_ADD_PROBES */
@@ -7317,7 +7828,7 @@ void ice_update_vsi_stats(struct ice_vsi *vsi)
 	ice_update_eth_stats(vsi);
 
 	cur_ns->tx_errors = cur_es->tx_errors;
-	cur_ns->rx_dropped = cur_es->rx_discards + vsi->rx_gro_dropped;
+	cur_ns->rx_dropped = cur_es->rx_discards;
 	cur_ns->tx_dropped = cur_es->tx_discards;
 	cur_ns->multicast = cur_es->rx_multicast;
 
@@ -7609,6 +8120,9 @@ static void ice_napi_disable_all(struct ice_vsi *vsi)
 
 		if (q_vector->rx.ring || q_vector->tx.ring)
 			napi_disable(&q_vector->napi);
+
+		cancel_work_sync(&q_vector->tx.dim.work);
+		cancel_work_sync(&q_vector->rx.dim.work);
 	}
 }
 
@@ -7618,14 +8132,15 @@ static void ice_napi_disable_all(struct ice_vsi *vsi)
  */
 int ice_down(struct ice_vsi *vsi)
 {
-	int i, tx_err, rx_err, link_err = 0;
+	int i, tx_err, rx_err, link_err = 0, vlan_err = 0;
 
 	/* Caller of this function is expected to set the
 	 * vsi->state ICE_DOWN bit
 	 */
 	if (vsi->netdev && vsi->type == ICE_VSI_PF) {
+		vlan_err = ice_vsi_del_vlan_zero(vsi);
 		if (ice_is_generic_mac(&vsi->back->hw))
-			ice_ptp_link_change(vsi->back, vsi->port_info->lport, false);
+			ice_ptp_link_change(vsi->back, vsi->back->hw.pf_id, false);
 		netif_carrier_off(vsi->netdev);
 		netif_tx_disable(vsi->netdev);
 	}
@@ -7666,7 +8181,7 @@ int ice_down(struct ice_vsi *vsi)
 	ice_for_each_rxq(vsi, i)
 		ice_clean_rx_ring(vsi->rx_rings[i]);
 
-	if (tx_err || rx_err || link_err) {
+	if (tx_err || rx_err || link_err || vlan_err) {
 		netdev_err(vsi->netdev, "Failed to close VSI 0x%04X on switch 0x%04X\n",
 			   vsi->vsi_num, vsi->vsw->sw_id);
 		return -EIO;
@@ -7696,8 +8211,8 @@ int ice_vsi_setup_tx_rings(struct ice_vsi *vsi)
 
 		if (!ring)
 			return -EINVAL;
-
-		ring->netdev = vsi->netdev;
+		if (vsi->netdev)
+			ring->netdev = vsi->netdev;
 		err = ice_setup_tx_ring(ring);
 		if (err)
 			break;
@@ -7727,8 +8242,8 @@ int ice_vsi_setup_rx_rings(struct ice_vsi *vsi)
 
 		if (!ring)
 			return -EINVAL;
-
-		ring->netdev = vsi->netdev;
+		if (vsi->netdev)
+			ring->netdev = vsi->netdev;
 		err = ice_setup_rx_ring(ring);
 		if (err)
 			break;
@@ -7986,6 +8501,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
 	enum ice_status ret;
+	bool dvm;
 	int err;
 
 	if (test_bit(ICE_DOWN, pf->state))
@@ -8064,6 +8580,13 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 		dev_err(dev, "set_mac_cfg failed %s\n", ice_stat_str(ret));
 		goto err_init_ctrlq;
 	}
+
+	dvm = ice_is_dvm_ena(hw);
+
+	err = ice_aq_set_port_params(pf->hw.port_info, 0, false, false, dvm,
+				     NULL);
+	if (err)
+		goto err_init_ctrlq;
 
 	err = ice_sched_init_port(hw->port_info);
 	if (err)
@@ -8174,6 +8697,9 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 
 	ice_update_pf_netdev_link(pf);
 
+#ifdef HEALTH_STATUS_SUPPORT
+	ice_config_health_events(pf, true);
+#endif
 
 	/* tell the firmware we are up */
 	ret = ice_send_version(pf);
@@ -8912,11 +9438,7 @@ static void ice_tx_timeout(struct net_device *netdev)
  * @netdev: This physical port's netdev
  * @ti: Tunnel endpoint information
  */
-#ifdef HAVE_UDP_ENC_RX_OFFLOAD
-static void
-#else
 static void __maybe_unused
-#endif
 ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
@@ -8926,6 +9448,11 @@ ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
 	enum ice_tunnel_type tnl_type;
 	u16 port = ntohs(ti->port);
 	enum ice_status status;
+
+	if (ice_dcf_is_udp_tunnel_capable(&pf->hw)) {
+		netdev_info(netdev, "Cannot config tunnel, the capability is used by DCF\n");
+		return;
+	}
 
 	switch (ti->type) {
 	case UDP_TUNNEL_TYPE_VXLAN:
@@ -8978,11 +9505,7 @@ ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
  * @netdev: This physical port's netdev
  * @ti: Tunnel endpoint information
  */
-#ifdef HAVE_UDP_ENC_RX_OFFLOAD
-static void
-#else
 static void __maybe_unused
-#endif
 ice_udp_tunnel_del(struct net_device *netdev, struct udp_tunnel_info *ti)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
@@ -8991,6 +9514,11 @@ ice_udp_tunnel_del(struct net_device *netdev, struct udp_tunnel_info *ti)
 	enum ice_tunnel_type tnl_type;
 	struct ice_tnl_entry *entry;
 	u16 port = ntohs(ti->port);
+
+	if (ice_dcf_is_udp_tunnel_capable(&pf->hw)) {
+		netdev_info(netdev, "Cannot config tunnel, the capability is used by DCF\n");
+		return;
+	}
 
 	switch (ti->type) {
 	case UDP_TUNNEL_TYPE_VXLAN:
@@ -9634,6 +10162,7 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 				   struct ice_tc_flower_fltr *tc_fltr, bool add)
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
+	struct ice_vsi_vlan_ops *vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
 	enum ice_sw_fwd_act_type act = tc_fltr->action.fltr_act;
 	u16 vlan_id =  be16_to_cpu(headers->vlan_hdr.vlan_id);
 	const u8 *dst_mac = headers->l2_key.dst_mac;
@@ -9655,12 +10184,12 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 		break;
 	case ICE_TC_FLWR_FLTR_FLAGS_VLAN:
 		if (add) {
-			err = vsi->vlan_ops.add_vlan(vsi, ICE_VLAN(ETH_P_8021Q, vlan_id, 0, act));
+			err = vlan_ops->add_vlan(vsi, ICE_VLAN(ETH_P_8021Q, vlan_id, 0, act));
 			if (err)
 				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
 						   "Could not add VLAN filters");
 		} else {
-			err = vsi->vlan_ops.del_vlan(vsi, ICE_VLAN(ETH_P_8021Q, vlan_id, 0, act));
+			err = vlan_ops->del_vlan(vsi, ICE_VLAN(ETH_P_8021Q, vlan_id, 0, act));
 			if (err)
 				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
 						   "Could not delete VLAN filters");
@@ -9750,57 +10279,10 @@ ice_chnl_fltr_type_chk(struct ice_tc_flower_fltr *tc_fltr,
 	return 0;
 }
 
-/**
- * ice_add_tc_flower_adv_fltr - add appropriate filter rules
- * @vsi: Pointer to VSI
- * @tc_fltr: Pointer to TC flower filter structure
- *
- * based on filter parameters using Advance recipes supported
- * by OS package.
- */
-int
-ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
-			   struct ice_tc_flower_fltr *tc_fltr)
+static int
+ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers)
 {
-	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
-	enum ice_channel_fltr_type fltr_type = ICE_CHNL_FLTR_TYPE_INVALID;
-	struct ice_adv_rule_info rule_info = {0};
-	struct ice_rule_query_data rule_added;
-	struct ice_adv_lkup_elem *list;
-	struct ice_pf *pf = vsi->back;
-	struct ice_channel_vf *vf_ch;
-	struct ice_hw *hw = &pf->hw;
-	u32 flags = tc_fltr->flags;
-	enum ice_status status;
-	struct ice_vsi *ch_vsi;
-	struct device *dev;
-	struct ice_vf *vf;
-	u16 lkups_cnt = 0;
-	int ret = 0;
-	u16 i = 0;
-
-	dev = ice_pf_to_dev(pf);
-	if (ice_is_safe_mode(pf)) {
-		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-				   "Unable to add filter because driver is in safe mode");
-		return -EOPNOTSUPP;
-	}
-
-	if (!flags || (flags & (ICE_TC_FLWR_FIELD_ENC_DEST_IPV4 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
-				ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
-		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-				   "Unsupported encap field(s)");
-		return -EOPNOTSUPP;
-	}
-
-	/* get the channel (aka ADQ VSI) */
-	if (tc_fltr->dest_vsi)
-		ch_vsi = tc_fltr->dest_vsi;
-	else
-		ch_vsi = vsi->tc_map_vsi[tc_fltr->action.tc_class];
+	int lkups_cnt = 0;
 
 	/* Is outer dest port specified, only support UDP based encapsulation */
 	if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT)
@@ -9834,24 +10316,42 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		     ICE_TC_FLWR_FIELD_SRC_L4_PORT))
 		lkups_cnt++;
 
+	return lkups_cnt;
+}
 
-	list = kcalloc(lkups_cnt, sizeof(*list), GFP_ATOMIC);
-	if (!list)
-		return -ENOMEM;
+/**
+ * ice_tc_fill_rules - fill filter rules based on tc fltr
+ * @hw: pointer to hw structure
+ * @flags: tc flower field flags
+ * @tc_fltr: pointer to tc flower filter
+ * @list: list of advance rule elements
+ * @rule_info: pointer to information about rule
+ *
+ * Fill ice_adv_lkup_elem list based on tc flower flags and
+ * tc flower headers. This list should be used to add
+ * advance filter in hardware.
+ */
+static int
+ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
+		  struct ice_tc_flower_fltr *tc_fltr,
+		  struct ice_adv_lkup_elem *list,
+		  struct ice_adv_rule_info *rule_info)
+{
+	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
+	int i = 0;
 
 	/* copy outer dest port */
-	if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT) {
-		if (headers->l3_key.ip_proto == IPPROTO_UDP) {
-			list[i].type = ICE_UDP_OF;
-			list[i].h_u.l4_hdr.dst_port = headers->l4_key.dst_port;
-			list[i].m_u.l4_hdr.dst_port = headers->l4_mask.dst_port;
-			i++;
-		}
+	if ((flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT) &&
+	    headers->l3_key.ip_proto == IPPROTO_UDP) {
+		list[i].type = ICE_UDP_OF;
+		list[i].h_u.l4_hdr.dst_port = headers->l4_key.dst_port;
+		list[i].m_u.l4_hdr.dst_port = headers->l4_mask.dst_port;
+		i++;
 	}
 
 	/* copy L2 (MAC) fields */
 	if (tc_fltr->tunnel_type == TNL_VXLAN) {
-		rule_info.tun_type = ICE_SW_TUN_VXLAN;
+		rule_info->tun_type = ICE_SW_TUN_VXLAN;
 		/* copy L2 (MAC) fields if specified, For tunnel outer DMAC
 		 * is needed and supported and is part of outer_headers.dst_mac
 		 * For VxLAN tunnel, supported ADQ filter config is:
@@ -9866,12 +10366,12 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			i++;
 		}
 		/* now access values from inner_headers such as inner MAC (if
-		 * supported), inner IPv4[6], Inner L4 ports , hence update
+		 * supported), inner IPv4[6], Inner L4 ports, hence update
 		 * "headers" to point to inner_headers
 		 */
 		headers = &tc_fltr->inner_headers;
 	} else {
-		rule_info.tun_type = ICE_NON_TUN;
+		rule_info->tun_type = ICE_NON_TUN;
 		/* copy L2 (MAC) fields, for non-tunnel case */
 		if (flags & (ICE_TC_FLWR_FIELD_DST_MAC |
 			     ICE_TC_FLWR_FIELD_SRC_MAC)) {
@@ -9927,7 +10427,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		     ICE_TC_FLWR_FIELD_SRC_IPV4)) {
 		struct ice_tc_l3_hdr *l3_key, *l3_mask;
 
-		if (rule_info.tun_type == ICE_SW_TUN_VXLAN)
+		if (rule_info->tun_type == ICE_SW_TUN_VXLAN)
 			list[i].type = ICE_IPV4_IL;
 		else
 			list[i].type = ICE_IPV4_OFOS;
@@ -9948,7 +10448,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		struct ice_ipv6_hdr *ipv6_hdr, *ipv6_mask;
 		struct ice_tc_l3_hdr *l3_key, *l3_mask;
 
-		if (rule_info.tun_type == ICE_SW_TUN_VXLAN)
+		if (rule_info->tun_type == ICE_SW_TUN_VXLAN)
 			list[i].type = ICE_IPV6_IL;
 		else
 			list[i].type = ICE_IPV6_OFOS;
@@ -9988,7 +10488,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			/* Check if UDP dst port is known as a tunnel port */
 			if (ice_tunnel_port_in_use(hw, dst_port, NULL)) {
 				list[i].type = ICE_UDP_OF;
-				rule_info.tun_type = ICE_SW_TUN_VXLAN;
+				rule_info->tun_type = ICE_SW_TUN_VXLAN;
 			} else {
 				list[i].type = ICE_UDP_ILOS;
 			}
@@ -10004,6 +10504,68 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		i++;
 	}
 
+	return i;
+}
+
+
+/**
+ * ice_add_tc_flower_adv_fltr - add appropriate filter rules
+ * @vsi: Pointer to VSI
+ * @tc_fltr: Pointer to TC flower filter structure
+ *
+ * based on filter parameters using Advance recipes supported
+ * by OS package.
+ */
+int
+ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
+			   struct ice_tc_flower_fltr *tc_fltr)
+{
+	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
+	enum ice_channel_fltr_type fltr_type = ICE_CHNL_FLTR_TYPE_INVALID;
+	struct ice_adv_rule_info rule_info = {0};
+	struct ice_rule_query_data rule_added;
+	struct ice_channel_vf *vf_ch = NULL;
+	struct ice_adv_lkup_elem *list;
+	struct ice_pf *pf = vsi->back;
+	struct ice_hw *hw = &pf->hw;
+	u32 flags = tc_fltr->flags;
+	enum ice_status status;
+	struct ice_vsi *ch_vsi;
+	struct device *dev;
+	struct ice_vf *vf;
+	u16 lkups_cnt = 0;
+	int ret = 0;
+	u16 i = 0;
+
+	dev = ice_pf_to_dev(pf);
+	if (ice_is_safe_mode(pf)) {
+		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
+				   "Unable to add filter because driver is in safe mode");
+		return -EOPNOTSUPP;
+	}
+
+	if (!flags || (flags & (ICE_TC_FLWR_FIELD_ENC_DEST_IPV4 |
+				ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
+				ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
+				ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
+				ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
+		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
+				   "Unsupported encap field(s)");
+		return -EOPNOTSUPP;
+	}
+
+	/* get the channel (aka ADQ VSI) */
+	if (tc_fltr->dest_vsi)
+		ch_vsi = tc_fltr->dest_vsi;
+	else
+		ch_vsi = vsi->tc_map_vsi[tc_fltr->action.tc_class];
+
+	lkups_cnt = ice_tc_count_lkups(flags, headers);
+	list = kcalloc(lkups_cnt, sizeof(*list), GFP_ATOMIC);
+	if (!list)
+		return -ENOMEM;
+
+	i = ice_tc_fill_rules(hw, flags, tc_fltr, list, &rule_info);
 	if (i != lkups_cnt) {
 		ret = -EINVAL;
 		goto exit;
@@ -10246,6 +10808,7 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 }
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 
+
 /**
  * ice_parse_tc_flower_actions - Parse the actions for a TC filter
  * @vsi: Pointer to VSI
@@ -10484,12 +11047,11 @@ ice_find_tc_flower_fltr(struct ice_pf *pf, unsigned long cookie)
  * @vsi: Pointer to VSI
  * @cls_flower: Pointer to flower offload structure
  */
-#ifdef HAVE_TC_INDIR_BLOCK
 static int
+#ifdef HAVE_TC_INDIR_BLOCK
 ice_add_cls_flower(struct net_device *netdev, struct ice_vsi *vsi,
 		   struct flow_cls_offload *cls_flower)
 #else
-static int
 ice_add_cls_flower(struct net_device __always_unused *netdev,
 		   struct ice_vsi *vsi,
 		   struct tc_cls_flower_offload *cls_flower)
@@ -10498,6 +11060,7 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 #ifdef HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK
 	struct netlink_ext_ack *extack = cls_flower->common.extack;
 #endif /* HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK */
+	struct net_device *vsi_netdev = vsi->netdev;
 	struct ice_tc_flower_fltr *fltr;
 	struct ice_pf *pf = vsi->back;
 	int err = 0;
@@ -10507,7 +11070,8 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 	if (test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags))
 		return -EINVAL;
 
-	if (!(vsi->netdev->features & NETIF_F_HW_TC) &&
+
+	if (!(vsi_netdev->features & NETIF_F_HW_TC) &&
 	    !test_bit(ICE_FLAG_CLS_FLOWER, pf->flags)) {
 #ifdef HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK
 #ifdef HAVE_TC_INDIR_BLOCK
@@ -10515,7 +11079,7 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 		 * devices get an instance of rule from higher level device.
 		 * Avoid triggering explicit error in this case.
 		 */
-		if (netdev == vsi->netdev)
+		if (netdev == vsi_netdev)
 			NL_SET_ERR_MSG_MOD(extack,
 					   "can't apply TC flower filters, turn ON hw-tc-offload and try again");
 #else
@@ -10523,7 +11087,7 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 				   "can't apply TC flower filters, turn ON hw-tc-offload and try again");
 #endif /* HAVE_TC_INDIR_BLOCK */
 #else  /* !HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK */
-		netdev_err(vsi->netdev,
+		netdev_err(vsi_netdev,
 			   "can't apply TC flower filters, turn ON hw-tc-offload and try again\n");
 #endif /* HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK */
 		return -EINVAL;
@@ -10536,7 +11100,7 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 		NL_SET_ERR_MSG_MOD(extack,
 				   "filter cookie already exists, ignoring");
 #else
-		netdev_warn(vsi->netdev,
+		netdev_warn(vsi_netdev,
 			    "filter cookie %lx already exists, ignoring\n",
 			    fltr->cookie);
 #endif /* HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK */
@@ -10544,7 +11108,7 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 	}
 
 	/* prep and add tc-flower filter in HW */
-	err = ice_add_tc_fltr(netdev, vsi, cls_flower, &fltr);
+	err = ice_add_tc_fltr(vsi_netdev, vsi, cls_flower, &fltr);
 	if (err)
 		return err;
 
@@ -10969,26 +11533,6 @@ static int ice_add_channel(struct ice_pf *pf, u16 sw_id, struct ice_channel *ch)
 }
 
 /**
- * ice_setup_chnl_itr - setup ITR for specified vector
- * @vsi: ptr to VSI
- * @q_vector: ptr to vector
- * @rc: ptr to ring container
- *
- * Configure ITR setting only if "aim" is off for specified vector as part of
- * configuring channel (aka ADQ).
- */
-static void
-ice_setup_chnl_itr(struct ice_vsi *vsi, struct ice_q_vector *q_vector,
-		   struct ice_ring_container *rc)
-{
-	/* proceed only if ITR is not dynamic (means, aim is off) */
-	if (!ITR_IS_DYNAMIC(rc->itr_setting)) {
-		wr32(&vsi->back->hw, GLINT_ITR(rc->itr_idx, q_vector->reg_idx),
-		     rc->target_itr >> ICE_ITR_GRAN_S);
-	}
-}
-
-/**
  * ice_chnl_cfg_res
  * @vsi: the VSI being setup
  * @ch: ptr to channel structure
@@ -11001,8 +11545,9 @@ static void ice_chnl_cfg_res(struct ice_vsi *vsi, struct ice_channel *ch)
 
 
 	for (i = 0; i < ch->num_txq; i++) {
-		struct ice_ring *tx_ring, *rx_ring;
 		struct ice_q_vector *tx_q_vector, *rx_q_vector;
+		struct ice_ring *tx_ring, *rx_ring;
+		struct ice_ring_container *rc;
 
 		tx_ring = vsi->tx_rings[ch->base_q + i];
 		rx_ring = vsi->rx_rings[ch->base_q + i];
@@ -11026,16 +11571,20 @@ static void ice_chnl_cfg_res(struct ice_vsi *vsi, struct ice_channel *ch)
 			tx_q_vector->state_flags = 0;
 			tx_q_vector->max_limit_process_rx_queues =
 					ICE_MAX_LIMIT_PROCESS_RX_PKTS_DFLT;
-			/* setup Tx and Rx ITR setting if aim is off */
-			ice_setup_chnl_itr(vsi, tx_q_vector, &tx_q_vector->tx);
+			/* setup Tx and Rx ITR setting if DIM is off */
+			rc = &tx_q_vector->tx;
+			if (!ITR_IS_DYNAMIC(rc))
+				ice_write_itr(rc, rc->itr_setting);
 		}
 		if (rx_q_vector) {
 			rx_q_vector->ch = ch;
 			rx_q_vector->state_flags = 0;
 			rx_q_vector->max_limit_process_rx_queues =
 					ICE_MAX_LIMIT_PROCESS_RX_PKTS_DFLT;
-			/* setup Tx and Rx ITR setting if aim is off */
-			ice_setup_chnl_itr(vsi, rx_q_vector, &rx_q_vector->rx);
+			/* setup Tx and Rx ITR setting if DIM is off */
+			rc = &rx_q_vector->rx;
+			if (!ITR_IS_DYNAMIC(rc))
+				ice_write_itr(rc, rc->itr_setting);
 		}
 	}
 
@@ -12266,6 +12815,7 @@ static const struct net_device_ops ice_netdev_ops = {
 #ifdef HAVE_NDO_FEATURES_CHECK
 	.ndo_features_check = ice_features_check,
 #endif /* HAVE_NDO_FEATURES_CHECK */
+	.ndo_fix_features = ice_fix_features,
 	.ndo_set_rx_mode = ice_set_rx_mode,
 	.ndo_set_mac_address = ice_set_mac_address,
 	.ndo_validate_addr = eth_validate_addr,
@@ -12357,8 +12907,10 @@ static const struct net_device_ops ice_netdev_ops = {
 	.extended.ndo_udp_tunnel_add = ice_udp_tunnel_add,
 	.extended.ndo_udp_tunnel_del = ice_udp_tunnel_del,
 #else
+#ifndef HAVE_UDP_TUNNEL_NIC_INFO
 	.ndo_udp_tunnel_add = ice_udp_tunnel_add,
 	.ndo_udp_tunnel_del = ice_udp_tunnel_del,
+#endif /* !HAVE_UDP_TUNNEL_NIC_INFO */
 #endif
 #else /* !HAVE_UDP_ENC_RX_OFFLOAD */
 #ifdef HAVE_VXLAN_RX_OFFLOAD

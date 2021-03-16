@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet Controller 800 Series
 ===============================================================================
 
-November 5, 2020
+February 9, 2021
 
 ===============================================================================
 
@@ -54,27 +54,6 @@ http://www.intel.com/support
 
 Important Notes
 ===============
-
-Packet drops may occur under receive stress
--------------------------------------------
-Devices based on the Intel(R) Ethernet Controller 800 Series are designed to
-tolerate a limited amount of system latency during PCIe and DMA transactions.
-If these transactions take longer than the tolerated latency, it can impact the
-length of time the packets are buffered in the device and associated memory,
-which may result in dropped packets. These packets drops typically do not have
-a noticeable impact on throughput and performance under standard workloads.
-
-If these packet drops appear to affect your workload, the following may improve
-the situation:
-1) Make sure that your system's physical memory is in a high-performance
-configuration, as recommended by the platform vendor. A common recommendation
-is for all channels to be populated with a single DIMM module.
-2) In your system's BIOS/UEFI settings, select the "Performance" profile.
-3) On RHEL 7.x/8.x, use the tuned power management tool to set the
-"latency-performance" profile.
-4) In other operating systems and environments, use the equivalent tool to set
-the equivalent profile.
-
 
 Configuring SR-IOV for improved network security
 ------------------------------------------------
@@ -1268,30 +1247,93 @@ IDs within a single Ethernet frame. VLAN IDs are sometimes referred to as
 allow L2 tunneling and the ability to segregate traffic within a particular
 VLAN ID, among other uses.
 
-NOTES:
-- 802.1ad (QinQ) is supported in 3.19 and later kernels.
-- 802.1ad (QinQ) and RDMA are not compatible.
-- Receive checksum offloads and VLAN acceleration are not supported for 802.1ad
-(QinQ) packets.
-- 0x88A8 traffic will not be received unless VLAN stripping is disabled with
-the following command:
-  # ethool -K <ethX> rxvlan off
-- 0x88A8/0x8100 double VLANs cannot be used with 0x8100 or 0x8100/0x8100 VLANS
-configured on the same port. 0x88a8/0x8100 traffic will not be received if
-0x8100 VLANs are configured.
-- The VF can only transmit 0x88A8/0x8100 (i.e., 802.1ad/802.1Q) traffic if:
-  1) The VF is not assigned a port VLAN.
-  2) spoofchk is disabled from the PF. If you enable spoofchk, the VF will not
-     transmit 0x88A8/0x8100 traffic.
-- The VF may not receive all network traffic based on the Inner VLAN header
-when VF true promiscuous mode (vf-true-promisc-support) and double VLANs are
-enabled in SR-IOV mode.
-
 The following are examples of how to configure 802.1ad (QinQ):
 
 # ip link add link eth0 eth0.24 type vlan proto 802.1ad id 24
 # ip link add link eth0.24 eth0.24.371 type vlan proto 802.1Q id 371
   Where "24" and "371" are example VLAN IDs.
+
+NOTES:
+- 802.1ad (QinQ) is supported in 3.19 and later kernels.
+- VLAN protocols use the following EtherTypes:
+    802.1Q = EtherType 0x8100
+    802.1ad = EtherType 0x88A8
+
+
+Double VLANs
+------------
+Devices based on the Intel(R) Ethernet Controller 800 Series can process up to
+two VLANs in a packet when all the following are installed:
+- ice driver version 1.4.0 or later
+- NVM version 2.4 or later
+- ice DDP package version 1.3.21 or later
+If you don't use the versions above, the only supported VLAN configuration is
+single 802.1Q VLAN traffic.
+
+When two VLAN tags are present in a packet, the outer VLAN tag can be either
+802.1Q or 802.1ad. The inner VLAN tag must always be 802.1Q.
+
+Note the following limitations:
+- For each VF, the PF can only allow VLAN hardware offloads (insertion and
+stripping) of one type, either 802.1Q or 802.1ad.
+- You can't enable or disable outer or single 802.1Q or 802.1ad filtering
+separately. They are either both on or both off.
+- In SR-IOV mode, the VF may not receive all network traffic based on the inner
+VLAN header when VF true promiscuous mode (vf-true-promisc-support) and double
+VLANs are enabled.
+
+To enable outer or single 802.1Q VLAN insertion and stripping and disable
+802.1ad VLAN insertion and stripping:
+# ethtool -K <ethX> rxvlan on txvlan on rx-vlan-stag-hw-parse off
+tx-vlan-stag-hw-insert off
+
+To enable outer or single 802.1ad VLAN insertion and stripping and disable
+802.1Q VLAN insertion and stripping:
+# ethtool -K <ethX> rxvlan off txvlan off rx-vlan-stag-hw-parse on
+tx-vlan-stag-hw-insert on
+
+To enable outer or single VLAN filtering:
+# ethtool -K <ethX> rx-vlan-filter on rx-vlan-stag-filter on
+
+To disable outer or single VLAN filtering:
+# ethtool -K <ethX> rx-vlan-filter off rx-vlan-stag-filter off
+
+
+Combining QinQ with SR-IOV VFs
+------------------------------
+We recommend you always configure a port VLAN for the VF from the PF. If a port
+VLAN is not configured, the VF driver may only offload VLANs via software. The
+PF allows all VLAN traffic to reach the VF, and the VF manages all VLAN traffic.
+
+When the device is configured for double VLANs and the PF has configured a port
+VLAN:
+- The VF can only offload guest VLANs for 802.1Q traffic.
+- The VF can only configure VLAN filtering rules for guest VLANs using 802.1Q
+traffic.
+
+However, when the device is configured for double VLANs and the PF has NOT
+configured a port VLAN:
+- You must use iavf driver version 4.1.0 or later to offload and filter VLANs.
+- The PF turns on VLAN pruning and antispoof in the VF's VSI by default. The VF
+will not transmit or receive any tagged traffic until the VF requests a VLAN
+filter.
+- The VF can offload (insert and strip) the outer VLAN tag of 802.1Q or 802.1ad
+traffic.
+- The VF can create filter rules for the outer VLAN tag of both 802.1Q and
+802.1ad traffic.
+
+If the PF does not support double VLANs, the VF can hardware offload single
+802.1Q VLANs without a port VLAN.
+
+When the PF is enabled for double VLANs, for iavf drivers before version 4.1.x:
+- VLAN hardware offloads and filtering are supported only when the PF has
+configured a port VLAN.
+- VLAN filtering, insertion, and stripping will be software offloaded when no
+port VLAN is configured.
+
+To see VLAN filtering and offload capabilities, use the following command:
+
+# ethtool -k <ethX> | grep vlan
 
 
 IEEE 1588 Precision Time Protocol (PTP) Hardware Clock (PHC)
@@ -1329,6 +1371,30 @@ To enable/disable UDP Segmentation Offload, issue the following command:
 # ethtool -K <ethX> tx-udp-segmentation [off|on]
 
 
+Using Devlink to update a device's NVM
+--------------------------------------
+When you update the NVM on some devices, the update may use the devlink
+interface, rather than the ethtool interface. This will happen if the following
+are true:
+- You are updating an Intel Ethernet Controller 800 Series device.
+- Your system is running a distro that supports the "devlink dev flash" command.
+- The firmware currently installed on the device supports it.
+- The new NVM conforms to the correct PLDM format.
+ Most of the functionality and commands are the same with the following
+exceptions:
+- You cannot update a device in Recovery Mode. (To update a device in recovery
+mode, you must download and install the Intel Ethernet driver set.)
+- You cannot update the OROM or Netlist as a separate update, only as part of a
+full NVM update.
+- If you specified a preservation level of PRESERVE_ALL, the system will
+immediately perform an EMPR reset after the NVM update.
+On devices that support it, you can also use the devlink command line directly
+to update the device NVM. However, we recommend that you use NVMUpdate.
+# devlink dev flash pci/0000:3b:00.0 file filename.bin
+ Where :
+- pci/0000:3b:00.0 – The device you wish to update. You can get a list of
+devices with the "devlink dev info" command.
+- filename.bin – The file that contains the new NVM image.
 Performance Optimization
 ========================
 Driver defaults are meant to fit a wide variety of workloads, but if further
@@ -1644,7 +1710,7 @@ St - Fifth Floor, Boston, MA 02110-1301 USA.
 The full GNU General Public License is included in this distribution in the
 file called "COPYING".
 
-Copyright(c) 2017 - 2020 Intel Corporation.
+Copyright(c) 2017 - 2021 Intel Corporation.
 
 
 Trademarks

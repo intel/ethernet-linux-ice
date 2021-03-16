@@ -40,7 +40,6 @@ struct ice_stats {
 #define ICE_RX_UNKNOWN_PROTO		PICK("rx_unknown_protocol", "rx-unknown-protocol_pkts")
 #define ICE_RX_ALLOC_FAIL		PICK("rx_alloc_fail", "rx-buf-alloc-fail_events")
 #define ICE_RX_PAGE_ALLOC_FAIL		PICK("rx_pg_alloc_fail", "rx-page-alloc-fail_events")
-#define ICE_RX_GRO_DROPPED		"rx_gro_dropped"
 #define ICE_TX_ERRORS			"tx_errors"
 #define ICE_TX_LINEARIZE		PICK("tx_linearized", "tx-linearized_pkts")
 #define ICE_TX_BUSY			PICK("tx_busy", "tx-busy_events")
@@ -109,8 +108,10 @@ struct ice_stats {
 #define ICE_PORT_RX_SCTP_CSO_ERROR	PICK("rx_sctp_cso_error.nic", "port-rx-sctp-csum_errors")
 #define ICE_PORT_TX_L3_CSO_ERROR	PICK("tx_l3_cso_err.nic", "port-tx-layer-3-csum_errors")
 #define ICE_PORT_TX_L4_CSO_ERROR	PICK("tx_l4_cso_err.nic", "port-tx-layer-4-csum_errors")
-#define ICE_PORT_RX_VLANO		PICK("rx_vlano.nic", "port-rx-vlan-offload_count")
-#define ICE_PORT_TX_VLANO		PICK("tx_vlano.nic", "port-tx-vlan-offload_count")
+#define ICE_PORT_RX_Q_VLANO		PICK("rx_vlano.nic", "port-rx-q-vlan-offload_pkts")
+#define ICE_PORT_TX_Q_VLANO		PICK("tx_vlano.nic", "port-tx-q-vlan-offload_pkts")
+#define ICE_PORT_RX_AD_VLANO		PICK("rx_ad_vlano.nic", "port-rx-ad-vlan-offload_pkts")
+#define ICE_PORT_TX_AD_VLANO		PICK("tx_ad_vlano.nic", "port-tx-ad-vlan-offload_pkts")
 #endif /* ICE_ADD_PROBES */
 	/* LPI stats */
 #define ICE_PORT_RX_LPI_STATUS		PICK("rx_lpi_status.nic", "port-rx-lpi_status")

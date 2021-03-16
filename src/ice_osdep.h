@@ -7,6 +7,7 @@
 #include <linux/types.h>
 #include <linux/io.h>
 #include <linux/bitops.h>
+#include <linux/if_ether.h>
 #include "kcompat.h"
 
 #define wr32(a, reg, value)	writel((value), ((a)->hw_addr + (reg)))
@@ -30,6 +31,7 @@ struct ice_dma_mem {
 #ifdef CONFIG_DYNAMIC_DEBUG
 #define ice_debug(hw, type, fmt, args...) \
 	dev_dbg(ice_hw_to_dev(hw), fmt, ##args)
+
 
 #define ice_debug_array(hw, type, rowsize, groupsize, buf, len) \
 	print_hex_dump_debug(KBUILD_MODNAME " ",		\

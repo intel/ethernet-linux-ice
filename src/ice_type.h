@@ -257,8 +257,26 @@ enum ice_fltr_ptype {
 	ICE_FLTR_PTYPE_NONF_IPV4_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV4_SCTP,
 	ICE_FLTR_PTYPE_NONF_IPV4_OTHER,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_DW,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_UP,
+	ICE_FLTR_PTYPE_NONF_IPV6_GTPU,
+	ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH,
+	ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_DW,
+	ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_UP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_UDP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_TCP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_TCP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_DW_IPV4,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_DW_IPV4_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_DW_IPV4_TCP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_UP_IPV4,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_UP_IPV4_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_UP_IPV4_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_ICMP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_OTHER,
 	ICE_FLTR_PTYPE_NONF_IPV6_GTPU_IPV6_OTHER,
@@ -277,11 +295,14 @@ enum ice_fltr_ptype {
 	ICE_FLTR_PTYPE_NONF_IPV6_PFCP_NODE,
 	ICE_FLTR_PTYPE_NONF_IPV6_PFCP_SESSION,
 	ICE_FLTR_PTYPE_NON_IP_L2,
+	ICE_FLTR_PTYPE_NONF_ECPRI_TP0,
+	ICE_FLTR_PTYPE_NONF_IPV4_UDP_ECPRI_TP0,
 	ICE_FLTR_PTYPE_FRAG_IPV4,
 	ICE_FLTR_PTYPE_NONF_IPV6_UDP,
 	ICE_FLTR_PTYPE_NONF_IPV6_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV6_SCTP,
 	ICE_FLTR_PTYPE_NONF_IPV6_OTHER,
+	ICE_FLTR_PTYPE_NONF_IPV4_UDP_VXLAN,
 	ICE_FLTR_PTYPE_MAX,
 };
 
@@ -398,7 +419,7 @@ struct ice_hw_common_caps {
 /* IEEE 1588 TIME_SYNC specific info */
 /* Function specific definitions */
 #define ICE_TS_FUNC_ENA_M		BIT(0)
-#define ICE_TS_MASTER_TMR_OWND_M	BIT(1)
+#define ICE_TS_SRC_TMR_OWND_M		BIT(1)
 #define ICE_TS_TMR_ENA_M		BIT(2)
 #define ICE_TS_TMR_IDX_OWND_S		4
 #define ICE_TS_TMR_IDX_OWND_M		BIT(4)
@@ -416,7 +437,7 @@ struct ice_ts_func_info {
 	u8 tmr_index_assoc;
 	u8 ena;
 	u8 tmr_index_owned;
-	u8 master_tmr_owned;
+	u8 src_tmr_owned;
 	u8 tmr_ena;
 };
 
@@ -727,6 +748,7 @@ enum ice_rl_type {
 #define ICE_TXSCHED_GET_RL_WAKEUP_MV(p) le16_to_cpu((p)->info.wake_up_calc)
 #define ICE_TXSCHED_GET_RL_ENCODE(p) le16_to_cpu((p)->info.rl_encode)
 
+#define ICE_MAX_PORT_PER_PCI_DEV	8
 
 /* The following tree example shows the naming conventions followed under
  * ice_port_info struct for default scheduler tree topology.
@@ -1040,7 +1062,9 @@ struct ice_hw {
 	struct ice_ctl_q_info adminq;
 	struct ice_ctl_q_info sbq;
 	struct ice_ctl_q_info mailboxq;
-	bool dcf_acl_enabled;   /* ACL used by DCF */
+#define DCF_ACL_CAP		0x01	/* DCF ACL capability */
+#define DCF_UDP_TUNNEL_CAP	0x02	/* DCF UDP Tunnel capability */
+	u8 dcf_caps;
 	u8 api_branch;		/* API branch version */
 	u8 api_maj_ver;		/* API major version */
 	u8 api_min_ver;		/* API minor version */
@@ -1112,6 +1136,9 @@ struct ice_hw {
 	struct mutex tnl_lock;
 	struct ice_tunnel_table tnl;
 
+	/* dvm boost update information */
+	struct ice_dvm_table dvm_upd;
+
 	struct ice_acl_tbl *acl_tbl;
 	struct ice_fd_hw_prof **acl_prof;
 	u16 acl_fltr_cnt[ICE_FLTR_PTYPE_MAX];
@@ -1136,7 +1163,8 @@ struct ice_hw {
 	struct mutex rss_locks;	/* protect RSS configuration */
 	struct list_head rss_list_head;
 	struct ice_mbx_snapshot mbx_snapshot;
-	struct ice_vlan_mode_ops vlan_mode_ops;
+	DECLARE_BITMAP(hw_ptype, ICE_FLOW_PTYPE_MAX);
+	u8 dvm_ena;
 };
 
 /* Statistics collected by each port, VSI, VEB, and S-channel */
@@ -1397,4 +1425,16 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_FW_API_LLDP_FLTR_MAJ	1
 #define ICE_FW_API_LLDP_FLTR_MIN	7
 #define ICE_FW_API_LLDP_FLTR_PATCH	1
+
+/* AQ API version for report default configuration */
+#define ICE_FW_API_REPORT_DFLT_CFG_MAJ		1
+#define ICE_FW_API_REPORT_DFLT_CFG_MIN		7
+#define ICE_FW_API_REPORT_DFLT_CFG_PATCH	3
+#ifdef HEALTH_STATUS_SUPPORT
+
+/* AQ API version for FW health reports */
+#define ICE_FW_API_HEALTH_REPORT_MAJ		1
+#define ICE_FW_API_HEALTH_REPORT_MIN		7
+#define ICE_FW_API_HEALTH_REPORT_PATCH		6
+#endif /* HEALTH_STATUS_SUPPORT */
 #endif /* _ICE_TYPE_H_ */

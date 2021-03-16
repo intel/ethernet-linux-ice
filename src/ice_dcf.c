@@ -11,6 +11,8 @@ static const enum ice_adminq_opc aqc_permitted_tbl[] = {
 	ice_aqc_opc_list_func_caps,
 	ice_aqc_opc_list_dev_caps,
 
+	ice_aqc_opc_get_vlan_mode_parameters,
+
 	/* Package Configuration Admin Commands */
 	ice_aqc_opc_update_pkg,
 	ice_aqc_opc_get_pkg_info_list,
@@ -80,6 +82,36 @@ bool ice_dcf_is_acl_aq_cmd(struct ice_aq_desc *desc)
 
 	if (opc >= ice_aqc_opc_alloc_acl_tbl &&
 	    opc <= ice_aqc_opc_query_acl_counter)
+		return true;
+
+	return false;
+}
+
+/**
+ * ice_dcf_is_udp_tunnel_aq_cmd - check if the AdminQ command is UDP tunnel
+ * command
+ * @desc: descriptor describing the command
+ * @aq_buf: AdminQ buffer
+ */
+bool ice_dcf_is_udp_tunnel_aq_cmd(struct ice_aq_desc *desc, u8 *aq_buf)
+{
+	struct ice_buf_hdr *pkg_buf;
+
+	if (!aq_buf)
+		return false;
+
+	if (le16_to_cpu(desc->opcode) != ice_aqc_opc_update_pkg)
+		return false;
+
+	pkg_buf = (struct ice_buf_hdr *)aq_buf;
+	/* section count for udp tunnel command is always 2 */
+	if (le16_to_cpu(pkg_buf->section_count) != 2)
+		return false;
+
+	if (le32_to_cpu(pkg_buf->section_entry[0].type) ==
+	    ICE_SID_RXPARSER_BOOST_TCAM ||
+	    le32_to_cpu(pkg_buf->section_entry[0].type) ==
+	    ICE_SID_TXPARSER_BOOST_TCAM)
 		return true;
 
 	return false;
@@ -441,16 +473,43 @@ void ice_rm_all_dcf_sw_rules(struct ice_pf *pf)
 }
 
 /**
- * ice_dis_dcf_acl_cap - disable DCF ACL capability for the PF
+ * ice_clear_dcf_acl_cfg - clear DCF ACL configuration for the PF
  * @pf: pointer to the PF info
  */
-void ice_dis_dcf_acl_cap(struct ice_pf *pf)
+void ice_clear_dcf_acl_cfg(struct ice_pf *pf)
 {
-	if (pf->hw.dcf_acl_enabled) {
-		pf->hw.dcf_acl_enabled = false;
+	if (pf->hw.dcf_caps & DCF_ACL_CAP) {
 		ice_acl_destroy_tbl(&pf->hw);
 		ice_init_acl(pf);
 	}
+}
+
+/**
+ * ice_dcf_is_acl_capable - check if DCF ACL capability enabled
+ * @hw: pointer to the hardware info
+ */
+bool ice_dcf_is_acl_capable(struct ice_hw *hw)
+{
+	return hw->dcf_caps & DCF_ACL_CAP;
+}
+
+/**
+ * ice_clear_dcf_udp_tunnel_cfg - clear DCF UDP tunnel configuration for the PF
+ * @pf: pointer to the PF info
+ */
+void ice_clear_dcf_udp_tunnel_cfg(struct ice_pf *pf)
+{
+	if (pf->hw.dcf_caps & DCF_UDP_TUNNEL_CAP)
+		ice_destroy_tunnel(&pf->hw, 0, true);
+}
+
+/**
+ * ice_dcf_is_udp_tunnel_capable - check if DCF UDP tunnel capability enabled
+ * @hw: pointer to the hardware info
+ */
+bool ice_dcf_is_udp_tunnel_capable(struct ice_hw *hw)
+{
+	return hw->dcf_caps & DCF_UDP_TUNNEL_CAP;
 }
 
 /**
@@ -834,6 +893,64 @@ ice_dcf_handle_free_res_rsp(struct ice_pf *pf, u8 *aq_buf)
 }
 
 /**
+ * ice_dcf_handle_udp_tunnel_rsp - handle the update package response
+ * @pf: pointer to the PF info
+ * @aq_desc: descriptor describing the command
+ * @aq_buf: pointer to the package update command buffer
+ */
+static enum virtchnl_status_code
+ice_dcf_handle_udp_tunnel_rsp(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
+			      u8 *aq_buf)
+{
+	struct ice_boost_tcam_section *sect;
+	struct ice_buf_hdr *pkg_buf;
+	struct ice_hw *hw = &pf->hw;
+	u16 port_key, inv_port_key;
+	u16 offset;
+	u16 addr;
+	u8 count;
+	u16 i, j;
+
+	mutex_lock(&hw->tnl_lock);
+	pkg_buf = (struct ice_buf_hdr *)aq_buf;
+	offset = le16_to_cpu(pkg_buf->section_entry[0].offset);
+	sect = (struct ice_boost_tcam_section *)(((u8 *)pkg_buf) + offset);
+	count = le16_to_cpu(sect->count);
+
+	for (i = 0; i < hw->tnl.count && i < ICE_TUNNEL_MAX_ENTRIES; i++)
+		for (j = 0; j < count; j++) {
+			addr = le16_to_cpu(sect->tcam[j].addr);
+			inv_port_key =
+			    le16_to_cpu(sect->tcam[j].key.key.hv_dst_port_key);
+			port_key =
+			    le16_to_cpu(sect->tcam[j].key.key2.hv_dst_port_key);
+			if (hw->tnl.tbl[i].valid &&
+			    hw->tnl.tbl[i].boost_addr == addr) {
+				/* It's tunnel destroy command if the key and
+				 * inverse key is the same.
+				 */
+				if (port_key == inv_port_key) {
+					hw->tnl.tbl[i].in_use = false;
+					hw->tnl.tbl[i].port = 0;
+					hw->tnl.tbl[i].ref = 0;
+				} else {
+					hw->tnl.tbl[i].port = port_key;
+					hw->tnl.tbl[i].in_use = true;
+					hw->tnl.tbl[i].ref = 1;
+				}
+			}
+		}
+
+	if (ice_is_tunnel_empty(&pf->hw))
+		hw->dcf_caps &= ~DCF_UDP_TUNNEL_CAP;
+	else
+		hw->dcf_caps |= DCF_UDP_TUNNEL_CAP;
+	mutex_unlock(&hw->tnl_lock);
+
+	return VIRTCHNL_STATUS_SUCCESS;
+}
+
+/**
  * ice_dcf_post_aq_send_cmd - get the data from firmware successful response
  * @pf: pointer to the PF info
  * @aq_desc: descriptor describing the command
@@ -849,16 +966,28 @@ ice_dcf_post_aq_send_cmd(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
 	if (!aq_buf)
 		return VIRTCHNL_STATUS_SUCCESS;
 
-	if (opc == ice_aqc_opc_add_sw_rules)
+	switch (opc) {
+	case ice_aqc_opc_add_sw_rules:
 		status = ice_dcf_handle_add_sw_rule_rsp(pf, aq_buf);
-	else if (opc == ice_aqc_opc_update_sw_rules)
+		break;
+	case ice_aqc_opc_update_sw_rules:
 		status = ice_dcf_handle_updt_sw_rule_rsp(pf, aq_buf);
-	else if (opc == ice_aqc_opc_remove_sw_rules)
+		break;
+	case ice_aqc_opc_remove_sw_rules:
 		status = ice_dcf_handle_rm_sw_rule_rsp(pf, aq_buf);
-	else if (opc == ice_aqc_opc_alloc_res)
+		break;
+	case ice_aqc_opc_alloc_res:
 		status = ice_dcf_handle_alloc_res_rsp(pf, aq_buf);
-	else if (opc == ice_aqc_opc_free_res)
+		break;
+	case ice_aqc_opc_free_res:
 		status = ice_dcf_handle_free_res_rsp(pf, aq_buf);
+		break;
+	case ice_aqc_opc_update_pkg:
+		if (ice_dcf_is_udp_tunnel_aq_cmd(aq_desc, aq_buf))
+			status = ice_dcf_handle_udp_tunnel_rsp(pf, aq_desc,
+							       aq_buf);
+		break;
+	}
 
 	return status;
 }

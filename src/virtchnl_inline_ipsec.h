@@ -434,7 +434,7 @@ struct virtchnl_ipsec_sa_read {
 	struct virtchnl_ipsec_sym_crypto_cfg crypto_cfg;
 } __packed;
 
-/* Add whitelist entry in IES */
+/* Add allowlist entry in IES */
 struct virtchnl_ipsec_sp_cfg {
 	u32 spi;
 	u32 dip[4];
@@ -452,14 +452,14 @@ struct virtchnl_ipsec_sp_cfg {
 	u8 set_tc;
 };
 
-/* Delete whitelist entry in IES */
+/* Delete allowlist entry in IES */
 struct virtchnl_ipsec_sp_destroy {
 	/* 0 for IPv4 table, 1 for IPv6 table. */
 	u8 table_id;
 	u32 rule_id;
 } __packed;
 
-/* Response from IES to whitelist operations */
+/* Response from IES to allowlist operations */
 struct virtchnl_ipsec_sp_cfg_resp {
 	u32 rule_id;
 };

@@ -33,10 +33,16 @@
 #define FDIR_INSET_FLAG_ESP_UDP BIT_ULL(FDIR_INSET_FLAG_ESP_S)
 #define FDIR_INSET_FLAG_ESP_IPSEC (0ULL << FDIR_INSET_FLAG_ESP_S)
 
+#define FDIR_INSET_FLAG_ECPRI_S 1
+#define FDIR_INSET_FLAG_ECPRI_M BIT_ULL(FDIR_INSET_FLAG_ECPRI_S)
+#define FDIR_INSET_FLAG_ECPRI_UDP BIT_ULL(FDIR_INSET_FLAG_ECPRI_S)
+#define FDIR_INSET_FLAG_ECPRI_MAC (0ULL << FDIR_INSET_FLAG_ECPRI_S)
+
 enum ice_fdir_tunnel_type {
 	ICE_FDIR_TUNNEL_TYPE_NONE = 0,
 	ICE_FDIR_TUNNEL_TYPE_GTPU,
 	ICE_FDIR_TUNNEL_TYPE_GTPU_EH,
+	ICE_FDIR_TUNNEL_TYPE_ECPRI,
 };
 
 struct virtchnl_fdir_fltr_conf {
@@ -122,6 +128,24 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
+static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh_dw[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_IPV4,
+	VIRTCHNL_PROTO_HDR_UDP,
+	VIRTCHNL_PROTO_HDR_GTPU_IP,
+	VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
+static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh_up[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_IPV4,
+	VIRTCHNL_PROTO_HDR_UDP,
+	VIRTCHNL_PROTO_HDR_GTPU_IP,
+	VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
 static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
@@ -136,6 +160,24 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh[] = {
 	VIRTCHNL_PROTO_HDR_UDP,
 	VIRTCHNL_PROTO_HDR_GTPU_IP,
 	VIRTCHNL_PROTO_HDR_GTPU_EH,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
+static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh_dw[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_IPV6,
+	VIRTCHNL_PROTO_HDR_UDP,
+	VIRTCHNL_PROTO_HDR_GTPU_IP,
+	VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
+static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh_up[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_IPV6,
+	VIRTCHNL_PROTO_HDR_UDP,
+	VIRTCHNL_PROTO_HDR_GTPU_IP,
+	VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
@@ -213,6 +255,20 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_pfcp[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
+static enum virtchnl_proto_hdr_type vc_pattern_ecpri[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_ECPRI,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
+static enum virtchnl_proto_hdr_type vc_pattern_ipv4_udp_ecpri[] = {
+	VIRTCHNL_PROTO_HDR_ETH,
+	VIRTCHNL_PROTO_HDR_IPV4,
+	VIRTCHNL_PROTO_HDR_UDP,
+	VIRTCHNL_PROTO_HDR_ECPRI,
+	VIRTCHNL_PROTO_HDR_NONE,
+};
+
 struct virtchnl_fdir_pattern_match_item {
 	enum virtchnl_proto_hdr_type *list;
 	u64 input_set;
@@ -242,8 +298,72 @@ static const struct virtchnl_fdir_pattern_match_item vc_fdir_pattern_comms[] = {
 	{vc_pattern_ether,                    0,         NULL},
 	{vc_pattern_ipv4_gtpu,                0,         NULL},
 	{vc_pattern_ipv4_gtpu_eh,             0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh_dw,          0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh_up,          0,         NULL},
 	{vc_pattern_ipv6_gtpu,                0,         NULL},
 	{vc_pattern_ipv6_gtpu_eh,             0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh_dw,          0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh_up,          0,         NULL},
+	{vc_pattern_ipv4_l2tpv3,              0,         NULL},
+	{vc_pattern_ipv6_l2tpv3,              0,         NULL},
+	{vc_pattern_ipv4_esp,                 0,         NULL},
+	{vc_pattern_ipv6_esp,                 0,         NULL},
+	{vc_pattern_ipv4_ah,                  0,         NULL},
+	{vc_pattern_ipv6_ah,                  0,         NULL},
+	{vc_pattern_ipv4_nat_t_esp,           0,         NULL},
+	{vc_pattern_ipv6_nat_t_esp,           0,         NULL},
+	{vc_pattern_ipv4_pfcp,                0,         NULL},
+	{vc_pattern_ipv6_pfcp,                0,         NULL},
+};
+
+static const
+struct virtchnl_fdir_pattern_match_item vc_fdir_pattern_wl_edge[] = {
+	{vc_pattern_ipv4,                     0,         NULL},
+	{vc_pattern_ipv4_tcp,                 0,         NULL},
+	{vc_pattern_ipv4_udp,                 0,         NULL},
+	{vc_pattern_ipv4_sctp,                0,         NULL},
+	{vc_pattern_ipv6,                     0,         NULL},
+	{vc_pattern_ipv6_tcp,                 0,         NULL},
+	{vc_pattern_ipv6_udp,                 0,         NULL},
+	{vc_pattern_ipv6_sctp,                0,         NULL},
+	{vc_pattern_ether,                    0,         NULL},
+	{vc_pattern_ipv4_gtpu,                0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh,             0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh_dw,          0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh_up,          0,         NULL},
+	{vc_pattern_ipv6_gtpu,                0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh,             0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh_dw,          0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh_up,          0,         NULL},
+	{vc_pattern_ipv4_esp,                 0,         NULL},
+	{vc_pattern_ipv6_esp,                 0,         NULL},
+	{vc_pattern_ipv4_ah,                  0,         NULL},
+	{vc_pattern_ipv6_ah,                  0,         NULL},
+	{vc_pattern_ipv4_nat_t_esp,           0,         NULL},
+	{vc_pattern_ipv6_nat_t_esp,           0,         NULL},
+	{vc_pattern_ecpri,                    0,         NULL},
+	{vc_pattern_ipv4_udp_ecpri,           0,         NULL},
+};
+
+static const
+struct virtchnl_fdir_pattern_match_item vc_fdir_pattern_gtpogre[] = {
+	{vc_pattern_ipv4,                     0,         NULL},
+	{vc_pattern_ipv4_tcp,                 0,         NULL},
+	{vc_pattern_ipv4_udp,                 0,         NULL},
+	{vc_pattern_ipv4_sctp,                0,         NULL},
+	{vc_pattern_ipv6,                     0,         NULL},
+	{vc_pattern_ipv6_tcp,                 0,         NULL},
+	{vc_pattern_ipv6_udp,                 0,         NULL},
+	{vc_pattern_ipv6_sctp,                0,         NULL},
+	{vc_pattern_ether,                    0,         NULL},
+	{vc_pattern_ipv4_gtpu,                0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh,             0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh_dw,          0,         NULL},
+	{vc_pattern_ipv4_gtpu_eh_up,          0,         NULL},
+	{vc_pattern_ipv6_gtpu,                0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh,             0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh_dw,          0,         NULL},
+	{vc_pattern_ipv6_gtpu_eh_up,          0,         NULL},
 	{vc_pattern_ipv4_l2tpv3,              0,         NULL},
 	{vc_pattern_ipv6_l2tpv3,              0,         NULL},
 	{vc_pattern_ipv4_esp,                 0,         NULL},
@@ -312,6 +432,18 @@ static const struct virtchnl_fdir_inset_map fdir_inset_map[] = {
 		0, 0},
 	{VIRTCHNL_PROTO_HDR_PFCP_S_FIELD, ICE_FLOW_FIELD_IDX_UDP_DST_PORT,
 		0, 0},
+	{
+		VIRTCHNL_PROTO_HDR_ECPRI_PC_RTC_ID,
+		ICE_FLOW_FIELD_IDX_ECPRI_TP0_PC_ID,
+		FDIR_INSET_FLAG_ECPRI_MAC,
+		FDIR_INSET_FLAG_ECPRI_M
+	},
+	{
+		VIRTCHNL_PROTO_HDR_ECPRI_PC_RTC_ID,
+		ICE_FLOW_FIELD_IDX_UDP_ECPRI_TP0_PC_ID,
+		FDIR_INSET_FLAG_ECPRI_UDP,
+		FDIR_INSET_FLAG_ECPRI_M
+	},
 };
 
 /**
@@ -577,6 +709,14 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 	case ICE_FLTR_PTYPE_NON_IP_L2:
 		ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_ETH_NON_IP);
 		break;
+	case ICE_FLTR_PTYPE_NONF_ECPRI_TP0:
+		ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_ECPRI_TP0);
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_UDP_ECPRI_TP0:
+		ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_UDP_ECPRI_TP0 |
+				  ICE_FLOW_SEG_HDR_IPV4 |
+				  ICE_FLOW_SEG_HDR_IPV_OTHER);
+		break;
 	case ICE_FLTR_PTYPE_NONF_IPV4_L2TPV3:
 		ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_L2TPV3 |
 				  ICE_FLOW_SEG_HDR_IPV4 |
@@ -621,6 +761,7 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 				  ICE_FLOW_SEG_HDR_IPV4 |
 				  ICE_FLOW_SEG_HDR_IPV_OTHER);
 		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU:
 	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_UDP:
 	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_TCP:
 	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_ICMP:
@@ -635,6 +776,7 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 			return -EINVAL;
 		}
 		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH:
 	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_OTHER:
 		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
 			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_EH |
@@ -647,6 +789,31 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 			return -EINVAL;
 		}
 		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_DW:
+		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
+			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_DWN |
+					  ICE_FLOW_SEG_HDR_GTPU_IP |
+					  ICE_FLOW_SEG_HDR_IPV4 |
+					  ICE_FLOW_SEG_HDR_IPV_OTHER);
+		} else {
+			dev_dbg(dev, "Invalid tunnel type 0x%x for VF %d\n",
+				flow, vf->vf_id);
+			return -EINVAL;
+		}
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_UP:
+		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
+			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_UP |
+					  ICE_FLOW_SEG_HDR_GTPU_IP |
+					  ICE_FLOW_SEG_HDR_IPV4 |
+					  ICE_FLOW_SEG_HDR_IPV_OTHER);
+		} else {
+			dev_dbg(dev, "Invalid tunnel type 0x%x for VF %d\n",
+				flow, vf->vf_id);
+			return -EINVAL;
+		}
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU:
 	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU_IPV6_OTHER:
 		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU) {
 			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_IP |
@@ -658,9 +825,34 @@ ice_vc_fdir_set_flow_hdr(struct ice_vf *vf,
 			return -EINVAL;
 		}
 		break;
+	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH:
 	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_IPV6_OTHER:
 		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
 			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_EH |
+					  ICE_FLOW_SEG_HDR_GTPU_IP |
+					  ICE_FLOW_SEG_HDR_IPV6 |
+					  ICE_FLOW_SEG_HDR_IPV_OTHER);
+		} else {
+			dev_dbg(dev, "Invalid tunnel type 0x%x for VF %d\n",
+				flow, vf->vf_id);
+			return -EINVAL;
+		}
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_DW:
+		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
+			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_DWN |
+					  ICE_FLOW_SEG_HDR_GTPU_IP |
+					  ICE_FLOW_SEG_HDR_IPV6 |
+					  ICE_FLOW_SEG_HDR_IPV_OTHER);
+		} else {
+			dev_dbg(dev, "Invalid tunnel type 0x%x for VF %d\n",
+				flow, vf->vf_id);
+			return -EINVAL;
+		}
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_UP:
+		if (ttype == ICE_FDIR_TUNNEL_TYPE_GTPU_EH) {
+			ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_GTPU_UP |
 					  ICE_FLOW_SEG_HDR_GTPU_IP |
 					  ICE_FLOW_SEG_HDR_IPV6 |
 					  ICE_FLOW_SEG_HDR_IPV_OTHER);
@@ -851,7 +1043,7 @@ ice_vc_fdir_write_flow_prof(struct ice_vf *vf,
 	vf_prof = fdir->fdir_prof[flow];
 	old_seg = vf_prof->fdir_seg[tun];
 	if (old_seg) {
-		if (!memcmp(old_seg, seg, sizeof(*seg))) {
+		if (!memcmp(old_seg, seg, sizeof(*seg) * ICE_FD_HW_SEG_MAX)) {
 			dev_dbg(dev, "Duplicated profile for VF %d!\n",
 				vf->vf_id);
 			return -EEXIST;
@@ -1028,17 +1220,17 @@ ice_vc_fdir_config_input_set(struct ice_vf *vf,
 		return ret;
 	}
 
-	seg = kzalloc(sizeof(*seg), GFP_KERNEL);
+	seg = kcalloc(ICE_FD_HW_SEG_MAX, sizeof(*seg), GFP_KERNEL);
 	if (!seg)
 		return -ENOMEM;
 
-	ret = ice_vc_fdir_set_flow_fld(vf, fltr, conf, seg);
+	ret = ice_vc_fdir_set_flow_fld(vf, fltr, conf, &seg[tun]);
 	if (ret) {
 		dev_dbg(dev, "Set flow field for VF %d failed\n", vf->vf_id);
 		goto err_exit;
 	}
 
-	ret = ice_vc_fdir_set_flow_hdr(vf, conf, seg);
+	ret = ice_vc_fdir_set_flow_hdr(vf, conf, &seg[tun]);
 	if (ret) {
 		dev_dbg(dev, "Set flow hdr for VF %d failed\n", vf->vf_id);
 		goto err_exit;
@@ -1102,14 +1294,23 @@ ice_vc_fdir_get_pattern(struct ice_vf *vf, int *len)
 	struct ice_hw *hw;
 
 	hw = &pf->hw;
-	if (!strncmp(hw->active_pkg_name, "ICE COMMS Package",
-		     min(sizeof(hw->active_pkg_name),
-			 sizeof("ICE COMMS Package")))) {
+	switch (ice_pkg_name_to_type(hw)) {
+	case ICE_PKG_TYPE_COMMS:
 		item = vc_fdir_pattern_comms;
 		*len = ARRAY_SIZE(vc_fdir_pattern_comms);
-	} else {
+		break;
+	case ICE_PKG_TYPE_WIRELESS_EDGE:
+		item = vc_fdir_pattern_wl_edge;
+		*len = ARRAY_SIZE(vc_fdir_pattern_wl_edge);
+		break;
+	case ICE_PKG_TYPE_GTP_OVER_GRE:
+		item = vc_fdir_pattern_gtpogre;
+		*len = ARRAY_SIZE(vc_fdir_pattern_gtpogre);
+	break;
+	default:
 		item = vc_fdir_pattern_os;
 		*len = ARRAY_SIZE(vc_fdir_pattern_os);
+		break;
 	}
 
 	return item;
@@ -1179,6 +1380,7 @@ ice_vc_fdir_parse_pattern(struct ice_vf *vf,
 		struct tcphdr *tcph;
 		struct ethhdr *eth;
 		struct iphdr *iph;
+		u8 msg_type;
 		u8 s_field;
 		u8 *rawh;
 
@@ -1359,10 +1561,10 @@ ice_vc_fdir_parse_pattern(struct ice_vf *vf,
 			rawh = (u8 *)hdr->buffer;
 			if (input->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_UDP)
 				input->flow_type =
-				    ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_OTHER;
+				    ICE_FLTR_PTYPE_NONF_IPV4_GTPU;
 			else
 				input->flow_type =
-				    ICE_FLTR_PTYPE_NONF_IPV6_GTPU_IPV6_OTHER;
+				    ICE_FLTR_PTYPE_NONF_IPV6_GTPU;
 			if (hdr->field_selector)
 				input->gtpu_data.teid =
 					*(__force __be32 *)(&rawh[GTPU_TEID_OFFSET]);
@@ -1370,18 +1572,72 @@ ice_vc_fdir_parse_pattern(struct ice_vf *vf,
 			break;
 		case VIRTCHNL_PROTO_HDR_GTPU_EH:
 			rawh = (u8 *)hdr->buffer;
-			if (input->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_OTHER)
+			if (input->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_GTPU)
 				input->flow_type =
-				    ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_OTHER;
+				    ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH;
 			else
 				input->flow_type =
-				    ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_IPV6_OTHER;
+				    ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH;
 
 			if (hdr->field_selector)
 				input->gtpu_data.qfi =
 					rawh[GTPU_EH_QFI_OFFSET] &
 					GTPU_EH_QFI_MASK;
 			conf->ttype = ICE_FDIR_TUNNEL_TYPE_GTPU_EH;
+			break;
+		case VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN:
+			rawh = (u8 *)hdr->buffer;
+			if (input->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_GTPU)
+				input->flow_type =
+					ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_DW;
+			else
+				input->flow_type =
+					ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_DW;
+
+			if (hdr->field_selector)
+				input->gtpu_data.qfi =
+					rawh[GTPU_EH_QFI_OFFSET] &
+					GTPU_EH_QFI_MASK;
+			conf->ttype = ICE_FDIR_TUNNEL_TYPE_GTPU_EH;
+			break;
+		case VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP:
+			rawh = (u8 *)hdr->buffer;
+			if (input->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_GTPU)
+				input->flow_type =
+					ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_UP;
+			else
+				input->flow_type =
+					ICE_FLTR_PTYPE_NONF_IPV6_GTPU_EH_UP;
+
+			if (hdr->field_selector)
+				input->gtpu_data.qfi =
+					rawh[GTPU_EH_QFI_OFFSET] &
+					GTPU_EH_QFI_MASK;
+			conf->ttype = ICE_FDIR_TUNNEL_TYPE_GTPU_EH;
+			break;
+		case VIRTCHNL_PROTO_HDR_ECPRI:
+			rawh = (u8 *)hdr->buffer;
+			msg_type = rawh[1];
+			if (l3 == VIRTCHNL_PROTO_HDR_NONE &&
+			    l4 == VIRTCHNL_PROTO_HDR_NONE &&
+			    msg_type == 0) {
+				input->flow_type =
+					ICE_FLTR_PTYPE_NONF_ECPRI_TP0;
+				conf->inset_flag |= FDIR_INSET_FLAG_ECPRI_MAC;
+			} else if ((l3 == VIRTCHNL_PROTO_HDR_IPV4) &&
+				   (l4 == VIRTCHNL_PROTO_HDR_UDP) &&
+				   (msg_type == 0)) {
+				input->flow_type =
+					ICE_FLTR_PTYPE_NONF_IPV4_UDP_ECPRI_TP0;
+				conf->inset_flag |= FDIR_INSET_FLAG_ECPRI_UDP;
+				conf->ttype = ICE_FDIR_TUNNEL_TYPE_ECPRI;
+			} else {
+				return -EINVAL;
+			}
+
+			if (hdr->field_selector)
+				input->ecpri_data.pc_id =
+					*(__force __be16 *)(&rawh[4]);
 			break;
 		default:
 			dev_dbg(dev, "Invalid header type 0x:%x for VF %d\n",
@@ -1538,6 +1794,10 @@ ice_vc_fdir_comp_rules(struct virtchnl_fdir_fltr_conf *conf_a,
 		return false;
 	if (memcmp(&a->ext_mask, &b->ext_mask, sizeof(a->ext_mask)))
 		return false;
+	if (memcmp(&a->ecpri_data, &b->ecpri_data, sizeof(a->ecpri_data)))
+		return false;
+	if (memcmp(&a->ecpri_mask, &b->ecpri_mask, sizeof(a->ecpri_mask)))
+		return false;
 
 	return true;
 }
@@ -1556,14 +1816,12 @@ ice_vc_fdir_is_dup_fltr(struct ice_vf *vf,
 			struct virtchnl_fdir_fltr_conf *conf)
 {
 	struct ice_fdir_fltr *desc;
-	bool ret;
 
 	list_for_each_entry(desc, &vf->fdir.fdir_rule_list, fltr_node) {
 		struct virtchnl_fdir_fltr_conf *node =
 				to_fltr_conf_from_desc(desc);
 
-		ret = ice_vc_fdir_comp_rules(node, conf);
-		if (ret)
+		if (ice_vc_fdir_comp_rules(node, conf))
 			return true;
 	}
 
@@ -1635,12 +1893,13 @@ ice_vc_fdir_lookup_entry(struct ice_vf *vf, u32 id)
  */
 static void ice_vc_fdir_flush_entry(struct ice_vf *vf)
 {
-	struct virtchnl_fdir_fltr_conf *conf;
 	struct ice_fdir_fltr *desc, *temp;
 
 	list_for_each_entry_safe(desc, temp,
 				 &vf->fdir.fdir_rule_list, fltr_node) {
-		conf = to_fltr_conf_from_desc(desc);
+		struct virtchnl_fdir_fltr_conf *conf =
+				to_fltr_conf_from_desc(desc);
+
 		list_del(&desc->fltr_node);
 		kfree(conf);
 	}
@@ -1905,6 +2164,11 @@ err_exit:
 	return ret;
 }
 
+static int ice_fdir_is_tunnel(enum ice_fdir_tunnel_type ttype)
+{
+	return ttype == ICE_FDIR_TUNNEL_TYPE_ECPRI;
+}
+
 /**
  * ice_vc_add_fdir_fltr_post
  * @vf: pointer to the VF structure
@@ -1943,7 +2207,7 @@ ice_vc_add_fdir_fltr_post(struct ice_vf *vf,
 	if (!success)
 		goto err_exit;
 
-	is_tun = 0;
+	is_tun = ice_fdir_is_tunnel(conf->ttype);
 	resp->status = status;
 	resp->flow_id = conf->flow_id;
 	vf->fdir.fdir_fltr_cnt[conf->input.flow_type][is_tun]++;
@@ -2008,7 +2272,7 @@ ice_vc_del_fdir_fltr_post(struct ice_vf *vf,
 	if (!success)
 		goto err_exit;
 
-	is_tun = 0;
+	is_tun = ice_fdir_is_tunnel(conf->ttype);
 	resp->status = status;
 	ice_vc_fdir_remove_entry(vf, conf, conf->flow_id);
 	vf->fdir.fdir_fltr_cnt[conf->input.flow_type][is_tun]--;
@@ -2233,6 +2497,7 @@ int ice_vc_add_fdir_fltr(struct ice_vf *vf, u8 *msg)
 		goto exit;
 	}
 
+	is_tun = ice_fdir_is_tunnel(conf->ttype);
 	ret = ice_vc_fdir_config_input_set(vf, fltr, conf, is_tun);
 	if (ret) {
 		v_ret = VIRTCHNL_STATUS_SUCCESS;
@@ -2358,6 +2623,7 @@ int ice_vc_del_fdir_fltr(struct ice_vf *vf, u8 *msg)
 		goto err_exit;
 	}
 
+	is_tun = ice_fdir_is_tunnel(conf->ttype);
 	ret = ice_vc_fdir_write_fltr(vf, conf, false, is_tun);
 	if (ret) {
 		v_ret = VIRTCHNL_STATUS_SUCCESS;
