@@ -106,7 +106,6 @@ ice_write_qrxflxp_cntxt(struct ice_hw *hw, u16 pf_q, u32 rxdid, u32 prio,
 irqreturn_t ice_msix_clean_rings(int __always_unused irq, void *data);
 #endif /* HAVE_NETPOLL_CONTROLLER */
 
-u32 ice_intrl_usec_to_reg(u8 intrl, u8 gran);
 void ice_write_intrl(struct ice_q_vector *q_vector, u8 intrl);
 void ice_write_itr(struct ice_ring_container *rc, u16 itr);
 
@@ -125,6 +124,14 @@ int ice_set_min_bw_limit(struct ice_vsi *vsi, u64 min_tx_rate);
 int ice_set_max_bw_limit(struct ice_vsi *vsi, u64 max_tx_rate);
 int ice_get_link_speed_kbps(struct ice_vsi *vsi);
 int ice_get_link_speed_mbps(struct ice_vsi *vsi);
+int ice_vsi_update_security(struct ice_vsi *vsi,
+			    void (*fill)(struct ice_vsi_ctx *));
+#ifdef HAVE_METADATA_PORT_INFO
+void ice_vsi_ctx_set_antispoof(struct ice_vsi_ctx *ctx);
+void ice_vsi_ctx_clear_antispoof(struct ice_vsi_ctx *ctx);
+#endif /* HAVE_METADATA_PORT_INFO */
+void ice_vsi_ctx_set_allow_override(struct ice_vsi_ctx *ctx);
+void ice_vsi_ctx_clear_allow_override(struct ice_vsi_ctx *ctx);
 int ice_vsi_add_vlan_zero(struct ice_vsi *vsi);
 int ice_vsi_del_vlan_zero(struct ice_vsi *vsi);
 bool ice_vsi_has_non_zero_vlans(struct ice_vsi *vsi);

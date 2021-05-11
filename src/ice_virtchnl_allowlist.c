@@ -148,7 +148,7 @@ static const struct allowlist_opcode_info allowlist_opcodes[] = {
 };
 
 /**
- * ice_vc_opcode_is_allowed - check if this opcode is allowed on this VF
+ * ice_vc_is_opcode_allowed - check if this opcode is allowed on this VF
  * @vf: pointer to VF structure
  * @opcode: virtchnl opcode
  *
@@ -214,7 +214,7 @@ void ice_vc_set_working_allowlist(struct ice_vf *vf)
 }
 
 /**
- * ice_vc_set_allowlist_based_on_caps - allowlist VF opcodes according caps
+ * ice_vc_set_caps_allowlist - allowlist VF opcodes according caps
  * @vf: pointer to VF structure
  */
 void ice_vc_set_caps_allowlist(struct ice_vf *vf)

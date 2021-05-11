@@ -223,6 +223,31 @@ static u16 ice_calc_q_handle(struct ice_vsi *vsi, struct ice_ring *ring, u8 tc)
 }
 
 /**
+ * ice_eswitch_calc_q_handle
+ * @ring: pointer to ring which unique index is needed
+ *
+ * To correctly work with many netdevs
+ * ring->q_index of Tx rings on switchdev VSI can repeat. Hardware ring setup
+ * requires unique q_index. Calculate it here by finding index in vsi->tx_rings
+ * of this ring.
+ *
+ * Return -1 when index wasn't found. Should never happen, because vsi is get
+ * from ring->vsi, so it has to be present in this vsi.
+ */
+static u16 ice_eswitch_calc_q_handle(struct ice_ring *ring)
+{
+	struct ice_vsi *vsi = ring->vsi;
+	int i;
+
+	ice_for_each_txq(vsi, i) {
+		if (vsi->tx_rings[i] == ring)
+			return i;
+	}
+
+	return -1;
+}
+
+/**
  * ice_cfg_xps_tx_ring - Configure XPS for a Tx ring
  * @ring: The Tx ring to configure
  *
@@ -231,22 +256,27 @@ static u16 ice_calc_q_handle(struct ice_vsi *vsi, struct ice_ring *ring, u8 tc)
  */
 static void ice_cfg_xps_tx_ring(struct ice_ring *ring)
 {
+#ifndef HAVE_XPS_QOS_SUPPORT
 	struct ice_vsi *vsi = ring->vsi;
 
+#endif /* !HAVE_XPS_QOS_SUPPORT */
 	if (!ring->q_vector || !ring->netdev)
 		return;
 
+#ifndef HAVE_XPS_QOS_SUPPORT
 	/* Single TC mode enable XPS
-	 * If there are more than 1 TC the netdev_set_num_tc() in newer kernels
-	 * resets XPS settings
+	 * If there is more than 1 TC, netdev_set_num_tc() resets XPS settings
 	 */
 	if (vsi->tc_cfg.numtc > 1)
 		return;
+#endif /* !HAVE_XPS_QOS_SUPPORT */
 
-	if (!test_and_set_bit(ICE_TX_XPS_INIT_DONE, ring->xps_state))
-		netif_set_xps_queue(ring->netdev,
-				    &ring->q_vector->affinity_mask,
-				    ring->q_index);
+	/* We only initialize XPS once, so as not to overwrite user settings */
+	if (test_and_set_bit(ICE_TX_XPS_INIT_DONE, ring->xps_state))
+		return;
+
+	netif_set_xps_queue(ring->netdev, &ring->q_vector->affinity_mask,
+			    ring->q_index);
 }
 
 /**
@@ -297,6 +327,7 @@ ice_setup_tx_ctx(struct ice_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 		break;
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 		tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
 		break;
 	default:
@@ -795,7 +826,10 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *ring,
 	/* Add unique software queue handle of the Tx queue per
 	 * TC into the VSI Tx ring
 	 */
-	ring->q_handle = ice_calc_q_handle(vsi, ring, tc);
+	if (vsi->type == ICE_VSI_SWITCHDEV_CTRL)
+		ring->q_handle = ice_eswitch_calc_q_handle(ring);
+	else
+		ring->q_handle = ice_calc_q_handle(vsi, ring, tc);
 
 	status = (ch ?
 		  ice_ena_vsi_txq(vsi->port_info, ch->ch_vsi->idx, 0,

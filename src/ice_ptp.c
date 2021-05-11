@@ -126,19 +126,29 @@ static inline void mul_u128_u64_fac(u64 a, u64 b, u64 *hi, u64 *lo)
 static void ice_ena_timestamp(struct ice_pf *pf, enum port_type prt_type, bool ena)
 {
 	struct ice_vsi *vsi = ice_get_main_vsi(pf);
+	u32 val;
+	u16 i;
 
 	if (!vsi)
 		return;
 	if (prt_type == TX) {
 		vsi->ptp_tx = ena;
 	} else {
-		u16 i;
-
 		ice_for_each_rxq(vsi, i) {
 			if (!vsi->rx_rings[i])
 				continue;
 			vsi->rx_rings[i]->ptp_rx = ena;
 		}
+	}
+
+	/* Enable/disable the TX timestamp interrupt  */
+	if (prt_type == TX) {
+		val = rd32(&pf->hw, PFINT_OICR_ENA);
+		if (ena)
+			val |= PFINT_OICR_TSYN_TX_M;
+		else
+			val &= ~PFINT_OICR_TSYN_TX_M;
+		wr32(&pf->hw, PFINT_OICR_ENA, val);
 	}
 }
 
@@ -617,8 +627,8 @@ static int ice_phy_port_reg_write_ext(struct ice_pf *pf, u32 addr, u32 val)
 {
 	struct ice_sbq_msg_input phy_msg;
 
-	phy_msg.msg_addr_low = ICE_LO_WORD(addr);
-	phy_msg.msg_addr_high = ICE_HI_WORD(addr);
+	phy_msg.msg_addr_low = low_16_bits(addr);
+	phy_msg.msg_addr_high = high_16_bits(addr);
 	phy_msg.opcode = ice_sbq_msg_wr;
 	phy_msg.data = val;
 
@@ -681,8 +691,8 @@ static int ice_phy_port_reg_read_ext(struct ice_pf *pf, u32 addr, u32 *val)
 	struct ice_sbq_msg_input phy_msg;
 	int err;
 
-	phy_msg.msg_addr_low = ICE_LO_WORD(addr);
-	phy_msg.msg_addr_high = ICE_HI_WORD(addr);
+	phy_msg.msg_addr_low = low_16_bits(addr);
+	phy_msg.msg_addr_high = high_16_bits(addr);
 	phy_msg.opcode = ice_sbq_msg_rd;
 
 	err = ice_ptp_send_msg_to_phy_ext(pf, &phy_msg);
@@ -765,11 +775,11 @@ static int ice_phy_quad_reg_write_lp(struct ice_pf *pf, int quad, u16 offset, u3
 	phy_msg.dest_dev = rmn_0;
 
 	if (!(quad % ICE_NUM_QUAD_TYPE)) {
-		phy_msg.msg_addr_low = ICE_LO_WORD(Q_0_BASE + offset);
-		phy_msg.msg_addr_high = ICE_HI_WORD(Q_0_BASE + offset);
+		phy_msg.msg_addr_low = low_16_bits(Q_0_BASE + offset);
+		phy_msg.msg_addr_high = high_16_bits(Q_0_BASE + offset);
 	} else {
-		phy_msg.msg_addr_low = ICE_LO_WORD(Q_1_BASE + offset);
-		phy_msg.msg_addr_high = ICE_HI_WORD(Q_1_BASE + offset);
+		phy_msg.msg_addr_low = low_16_bits(Q_1_BASE + offset);
+		phy_msg.msg_addr_high = high_16_bits(Q_1_BASE + offset);
 	}
 
 	status = ice_sbq_rw_reg_lp(&pf->hw, &phy_msg, lock_sbq);
@@ -804,8 +814,8 @@ static int ice_phy_quad_reg_read_ext(struct ice_pf *pf, u32 addr, u32 *val)
 	struct ice_sbq_msg_input phy_msg;
 	int err;
 
-	phy_msg.msg_addr_low = ICE_LO_WORD(addr);
-	phy_msg.msg_addr_high = ICE_HI_WORD(addr);
+	phy_msg.msg_addr_low = low_16_bits(addr);
+	phy_msg.msg_addr_high = high_16_bits(addr);
 	phy_msg.opcode = ice_sbq_msg_rd;
 
 	err = ice_ptp_send_msg_to_phy_ext(pf, &phy_msg);
@@ -836,11 +846,11 @@ static int ice_phy_quad_reg_read_lp(struct ice_pf *pf, int quad, u16 offset, u32
 	phy_msg.dest_dev = rmn_0;
 
 	if (!(quad % ICE_NUM_QUAD_TYPE)) {
-		phy_msg.msg_addr_low = ICE_LO_WORD(Q_0_BASE + offset);
-		phy_msg.msg_addr_high = ICE_HI_WORD(Q_0_BASE + offset);
+		phy_msg.msg_addr_low = low_16_bits(Q_0_BASE + offset);
+		phy_msg.msg_addr_high = high_16_bits(Q_0_BASE + offset);
 	} else {
-		phy_msg.msg_addr_low = ICE_LO_WORD(Q_1_BASE + offset);
-		phy_msg.msg_addr_high = ICE_HI_WORD(Q_1_BASE + offset);
+		phy_msg.msg_addr_low = low_16_bits(Q_1_BASE + offset);
+		phy_msg.msg_addr_high = high_16_bits(Q_1_BASE + offset);
 	}
 
 	status = ice_sbq_rw_reg_lp(&pf->hw, &phy_msg, lock_sbq);
@@ -1036,7 +1046,7 @@ static int ice_ptp_rd_port_capture(struct ice_pf *pf, int port, u64 *tx_ts, u64 
 }
 
 /**
- * ice_ptp_port_time_clk_cyc_write - Utility function to fill port time_clk_cyc
+ * ice_ptp_port_time_clk_cyc_write_ext - Util function to fill port time_clk_cyc
  * @pf: The PF private structure
  * @time_clk_cyc: number of clock cycles for one PHY timer tick
  *
@@ -1645,7 +1655,7 @@ static int ice_ptp_get_pmd_adj(struct ice_pf *pf, int port, u64 cur_freq,
 						calc_denominator);
 	}
 
-	return err;
+	return 0;
 }
 
 /**
@@ -2451,13 +2461,15 @@ static int
 ice_ptp_tmr_cmd_lp(struct ice_pf *pf, enum tmr_cmd cmd, bool lock_sbq)
 {
 	struct ice_hw *hw = &pf->hw;
-	int port, err = 0;
+	int err = 0;
 
 	/* First write to source timer */
 	ice_ptp_src_cmd(pf, cmd);
 
 	/* Next write to ports */
 	if (ice_is_generic_mac(hw)) {
+		int port;
+
 		for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
 			err = ice_ptp_port_cmd_lp(pf, port, cmd, lock_sbq);
 			if (err)
@@ -2734,6 +2746,7 @@ int ice_ptp_cfg_periodic_clkout(struct ice_pf *pf, bool ena, unsigned int chan, 
 	struct ice_hw *hw = &pf->hw;
 	u32 func, val, inc_h;
 	struct ice_vsi *vsi;
+	u64 current_time;
 	u8 tmr_idx;
 
 	vsi = ice_get_main_vsi(pf);
@@ -2787,6 +2800,13 @@ int ice_ptp_cfg_periodic_clkout(struct ice_pf *pf, bool ena, unsigned int chan, 
 	}
 
 	wr32(hw, GLTSYN_CLKO(chan, tmr_idx), lower_32_bits(period));
+
+	/* Allow time for programming before start_time is hit */
+	current_time = ice_ptp_read_src_clk_reg(pf) + (2 * NSEC_PER_SEC);
+
+	/* Round up to nearest second boundary */
+	start_time += roundup(current_time, NSEC_PER_SEC);
+	start_time -= pps_out_prop_delay_ns[vsi->time_ref_freq];
 
 	/* 2. Write TARGET time */
 	wr32(hw, GLTSYN_TGT_L(chan, tmr_idx), lower_32_bits(start_time));
@@ -2943,8 +2963,8 @@ static int ice_ptp_settime(struct ptp_clock_info *ptp, const struct timespec64 *
 	struct ice_vsi *vsi = container_of(ptp, struct ice_vsi, ptp_caps);
 	struct ice_pf *pf = vsi->back;
 	struct timespec64 ts64 = *ts;
+	u8 port, chan;
 	int err;
-	u8 port;
 
 	/* For Vernier mode, we need to recalibrate after new settime
 	 * Start with disabling timestamp block
@@ -2959,6 +2979,13 @@ static int ice_ptp_settime(struct ptp_clock_info *ptp, const struct timespec64 *
 		goto exit;
 	}
 
+	/* Disable periodic outputs */
+	for (chan = 0; chan < PPS_CLK_GEN_CHAN; chan++) {
+		if (!pf->perout_channels || !pf->perout_channels[chan].ena)
+			continue;
+		ice_ptp_cfg_periodic_clkout(pf, 0, chan, 0, 0, 0);
+	}
+
 	if (pf->ptp_one_pps_out_ena)
 		ice_ptp_stop_pps(pf);
 
@@ -2971,6 +2998,18 @@ static int ice_ptp_settime(struct ptp_clock_info *ptp, const struct timespec64 *
 
 	if (!err)
 		ice_ptp_update_cached_systime(pf);
+
+	/* Reenable periodic outputs */
+	for (chan = 0; chan < PPS_CLK_GEN_CHAN; chan++) {
+		if (!pf->perout_channels || !pf->perout_channels[chan].ena)
+			continue;
+		ice_ptp_cfg_periodic_clkout(pf,
+					    pf->perout_channels[chan].ena,
+					    chan,
+					    pf->perout_channels[chan].gpio_pin,
+					    pf->perout_channels[chan].period,
+					    pf->perout_channels[chan].start_time);
+	}
 
 	/* Recalibrate and re-enable timestamp block */
 	if (pf->ptp_link_up)
@@ -3049,12 +3088,19 @@ static int ice_ptp_adjtime(struct ptp_clock_info *ptp, s64 delta)
 	unsigned long flags = 0;
 	struct device *dev;
 	int err;
+	u8 chan;
 
 	dev = ice_pf_to_dev(pf);
 
 	if (vsi->src_tmr_mode == ICE_SRC_TMR_MODE_LOCKED) {
 		dev_err(dev, "Locked Mode adjtime not supported\n");
 		return -EIO;
+	}
+	/* Disable periodic outputs */
+	for (chan = 0; chan < PPS_CLK_GEN_CHAN; chan++) {
+		if (!pf->perout_channels || !pf->perout_channels[chan].ena)
+			continue;
+		ice_ptp_cfg_periodic_clkout(pf, 0, chan, 0, 0, 0);
 	}
 
 	if (delta > INT_MAX || delta < INT_MIN) {
@@ -3153,6 +3199,18 @@ static int ice_ptp_adjtime(struct ptp_clock_info *ptp, s64 delta)
 		}
 	}
 
+	/* Reenable the periodic outputs */
+	for (chan = 0; chan < PPS_CLK_GEN_CHAN; chan++) {
+		if (!pf->perout_channels || !pf->perout_channels[chan].ena)
+			continue;
+		ice_ptp_cfg_periodic_clkout(pf,
+					    pf->perout_channels[chan].ena,
+					    chan,
+					    pf->perout_channels[chan].gpio_pin,
+					    pf->perout_channels[chan].period,
+					    pf->perout_channels[chan].start_time);
+	}
+
 	ice_ptp_unlock(pf);
 
 	if (!err)
@@ -3205,6 +3263,14 @@ static int ice_ptp_feature_ena(struct ptp_clock_info *ptp, struct ptp_clock_requ
 		gpio_pin = chan;
 		period_ns = (((s64)rq->perout.period.sec * NSEC_PER_SEC) + rq->perout.period.nsec);
 		start_time = (((s64)rq->perout.start.sec * NSEC_PER_SEC) + rq->perout.start.nsec);
+
+		err = ice_ptp_cfg_periodic_clkout(pf, !!on, chan, gpio_pin, period_ns, start_time);
+		if (!err) {
+			pf->perout_channels[chan].ena = !!on;
+			pf->perout_channels[chan].gpio_pin = gpio_pin;
+			pf->perout_channels[chan].period = period_ns;
+			pf->perout_channels[chan].start_time = start_time;
+		}
 		break;
 	default:
 		return -EIO;
@@ -3749,7 +3815,7 @@ static void ice_ptp_set_caps(struct ice_vsi *vsi)
 	/* HW has a PPS out */
 	ptp_caps->pps = 1;
 	/* HW has 2 programmable periodic outs */
-	ptp_caps->n_per_out = 2;
+	ptp_caps->n_per_out = 3;
 	ptp_caps->adjfreq = ice_ptp_adjfreq;
 	ptp_caps->adjtime = ice_ptp_adjtime;
 #ifdef HAVE_PTP_CLOCK_INFO_GETTIME64
@@ -3811,8 +3877,8 @@ void ice_ptp_init(struct ice_pf *pf)
 	struct ice_hw *hw = &pf->hw;
 	struct timespec64 ts;
 	struct ice_vsi *vsi;
-	int err = 0;
 	u32 regval;
+	int err;
 	u8 port;
 
 	vsi = ice_get_main_vsi(pf);
@@ -3828,6 +3894,11 @@ void ice_ptp_init(struct ice_pf *pf)
 
 		/* 1 PPS output will have been disabled by device reset */
 		pf->ptp_one_pps_out_ena = false;
+		pf->perout_channels =
+			devm_kcalloc(dev, GLTSYN_TGT_H_IDX_MAX,
+				     sizeof(struct ice_perout_channel),
+				     GFP_KERNEL);
+		memset(pf->perout_channels, 0, GLTSYN_TGT_H_IDX_MAX * sizeof(pf->perout_channels));
 
 		if (!ice_is_generic_mac(hw))
 			wr32(hw, GLTSYN_SYNC_DLAY, 0);
@@ -3992,6 +4063,10 @@ void ice_ptp_release(struct ice_pf *pf)
 		ice_clear_ptp_clock_index(pf);
 		ptp_clock_unregister(vsi->ptp_clock);
 		vsi->ptp_clock = NULL;
+	if (pf->perout_channels) {
+		devm_kfree(ice_pf_to_dev(pf), pf->perout_channels);
+		pf->perout_channels = NULL;
+	}
 		dev_info(ice_pf_to_dev(pf), "removed Clock from %s\n", dev_name);
 	}
 }

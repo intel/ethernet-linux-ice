@@ -50,7 +50,8 @@ ice_vc_fdir_irq_handler(struct ice_vsi *ctrl_vsi,
 			union ice_32b_rx_flex_desc *rx_desc);
 void ice_flush_fdir_ctx(struct ice_pf *pf);
 #else
-#define ice_vc_fdir_irq_handler(ctrl_vsi, rx_desc) do {} while (0)
-#define ice_flush_fdir_ctx(pf) do {} while (0)
+static inline
+void ice_vc_fdir_irq_handler(struct ice_vsi *ctrl_vsi, union ice_32b_rx_flex_desc *rx_desc) { }
+static inline void ice_flush_fdir_ctx(struct ice_pf *pf) { }
 #endif /* CONFIG_PCI_IOV */
 #endif /* _ICE_VIRTCHNL_FDIR_H_ */

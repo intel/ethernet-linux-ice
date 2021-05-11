@@ -11,7 +11,7 @@
 
 static int
 noop_vlan_arg(struct ice_vsi __always_unused *vsi,
-	      struct ice_vlan __always_unused vlan)
+	      struct ice_vlan * __always_unused vlan)
 {
 	return 0;
 }
@@ -181,7 +181,7 @@ void ice_vf_vsi_cfg_dvm_legacy_vlan_mode(struct ice_vsi *vsi)
 }
 
 /**
- * ice_vf_vsi_cfg_svm_legacy_mode - Config VLAN mode for old VFs in SVM
+ * ice_vf_vsi_cfg_svm_legacy_vlan_mode - Config VLAN mode for old VFs in SVM
  * @vsi: VF's VSI being configured
  *
  * This should only be called when Single VLAN Mode (SVM) is enabled, there is
@@ -207,7 +207,7 @@ void ice_vf_vsi_cfg_svm_legacy_vlan_mode(struct ice_vsi *vsi)
  * @vsi: VF's VSI being configured
  * @vlan: ice_vlan structure used to set the port VLAN
  */
-int ice_vf_vsi_dcf_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+int ice_vf_vsi_dcf_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	struct ice_vf *vf = &vsi->back->vf[vsi->vf_id];
 	int err;

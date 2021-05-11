@@ -194,6 +194,7 @@ struct ice_rx_buf {
 #ifdef ADQ_PERF_COUNTERS
 struct ice_ch_tx_q_stats {
 	u64 num_atr_setup; /* How many times, ATR is setup */
+	u64 num_mark_atr_setup; /* How many times, ATR is setup via skb->mark */
 	u64 num_atr_evict; /* How many times, ATR is teardown */
 	u64 num_atr_bailouts; /* How many times, bailout from ATR setup */
 };

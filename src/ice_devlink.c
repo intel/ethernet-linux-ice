@@ -4,6 +4,7 @@
 #include "ice.h"
 #include "ice_lib.h"
 #include "ice_devlink.h"
+#include "ice_eswitch.h"
 #include "ice_fw_update.h"
 
 #ifdef HAVE_DEVLINK_INFO_GET
@@ -318,6 +319,9 @@ static int ice_devlink_info_get(struct devlink *devlink,
 	/* discover capabilities first */
 	status = ice_discover_dev_caps(hw, &ctx->dev_caps);
 	if (status) {
+		dev_dbg(dev, "Failed to discover device capabilities, status %s aq_err %s\n",
+			ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
+		NL_SET_ERR_MSG_MOD(extack, "Unable to discover device capabilities");
 		err = -EIO;
 		goto out_free_ctx;
 	}
@@ -720,6 +724,8 @@ static const struct devlink_ops ice_devlink_ops = {
 #ifdef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
 	.supported_flash_update_params = DEVLINK_SUPPORT_FLASH_UPDATE_OVERWRITE_MASK,
 #endif /* HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
+	.eswitch_mode_get = ice_eswitch_mode_get,
+	.eswitch_mode_set = ice_eswitch_mode_set,
 #ifdef HAVE_DEVLINK_INFO_GET
 	.info_get = ice_devlink_info_get,
 #endif /* HAVE_DEVLINK_INFO_GET */
@@ -836,72 +842,119 @@ void ice_devlink_params_unpublish(struct ice_pf __maybe_unused *pf)
 }
 
 /**
- * ice_devlink_create_port - Create a devlink port for this VSI
- * @vsi: the VSI to create a port for
+ * ice_devlink_create_pf_port - Create a devlink port for this PF
+ * @pf: the PF to create a devlink port for
  *
- * Create and register a devlink_port for this VSI.
+ * Create and register a devlink_port for this PF.
  *
  * Return: zero on success or an error code on failure.
  */
-int ice_devlink_create_port(struct ice_vsi *vsi)
+int ice_devlink_create_pf_port(struct ice_pf *pf)
 {
 	struct devlink_port_attrs attrs = {};
+	struct devlink_port *devlink_port;
 	struct devlink *devlink;
+	struct ice_vsi *vsi;
 	struct device *dev;
-	struct ice_pf *pf;
 	int err;
 
-	pf = vsi->back;
 	dev = ice_pf_to_dev(pf);
 
-	/* Currently we only create devlink_port instances for PF VSIs and
-	 * for VF port representors.
-	 */
-	switch (vsi->type) {
-	case ICE_VSI_PF:
-		attrs.flavour = DEVLINK_PORT_FLAVOUR_PHYSICAL;
-		attrs.phys.port_number = vsi->port_info->lport;
-		break;
-#ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
-	case ICE_VSI_VF:
-		attrs.flavour = DEVLINK_PORT_FLAVOUR_PCI_VF;
-		attrs.pci_vf.pf = pf->hw.bus.func;
-		attrs.pci_vf.vf = vsi->vf_id;
-		break;
-#endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
-	default:
-		return -EINVAL;
-	}
-	devlink_port_attrs_set(&vsi->devlink_port, &attrs);
+	devlink_port = &pf->devlink_port;
+
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi)
+		return -EIO;
+
+	attrs.flavour = DEVLINK_PORT_FLAVOUR_PHYSICAL;
+	attrs.phys.port_number = vsi->port_info->lport;
+
+	devlink_port_attrs_set(devlink_port, &attrs);
 	devlink = priv_to_devlink(pf);
 
-	err = devlink_port_register(devlink, &vsi->devlink_port, vsi->idx);
+	err = devlink_port_register(devlink, devlink_port, vsi->idx);
 	if (err) {
-		dev_err(dev, "devlink_port_register failed: %d\n", err);
+		dev_err(dev, "Failed to create devlink port for PF %d, error %d\n",
+			pf->hw.pf_id, err);
 		return err;
 	}
-
-	vsi->devlink_port_registered = true;
 
 	return 0;
 }
 
 /**
- * ice_devlink_destroy_port - Destroy the devlink_port for this VSI
- * @vsi: the VSI to cleanup
+ * ice_devlink_destroy_pf_port - Destroy the devlink_port for this PF
+ * @pf: the PF to cleanup
  *
- * Unregisters the devlink_port structure associated with this VSI.
+ * Unregisters the devlink_port structure associated with this PF.
  */
-void ice_devlink_destroy_port(struct ice_vsi *vsi)
+void ice_devlink_destroy_pf_port(struct ice_pf *pf)
 {
-	if (!vsi->devlink_port_registered)
-		return;
+	struct devlink_port *devlink_port;
 
-	devlink_port_type_clear(&vsi->devlink_port);
-	devlink_port_unregister(&vsi->devlink_port);
+	devlink_port = &pf->devlink_port;
 
-	vsi->devlink_port_registered = false;
+	devlink_port_type_clear(devlink_port);
+	devlink_port_unregister(devlink_port);
 }
+
+#ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
+/**
+ * ice_devlink_create_vf_port - Create a devlink port for this VF
+ * @vf: the VF to create a port for
+ *
+ * Create and register a devlink_port for this VF.
+ *
+ * Return: zero on success or an error code on failure.
+ */
+int ice_devlink_create_vf_port(struct ice_vf *vf)
+{
+	struct devlink_port_attrs attrs = {};
+	struct devlink_port *devlink_port;
+	struct devlink *devlink;
+	struct ice_vsi *vsi;
+	struct device *dev;
+	struct ice_pf *pf;
+	int err;
+
+	pf = vf->pf;
+	dev = ice_pf_to_dev(pf);
+	vsi = ice_get_vf_vsi(vf);
+	devlink_port = &vf->devlink_port;
+
+	attrs.flavour = DEVLINK_PORT_FLAVOUR_PCI_VF;
+	attrs.pci_vf.pf = pf->hw.bus.func;
+	attrs.pci_vf.vf = vf->vf_id;
+
+	devlink_port_attrs_set(devlink_port, &attrs);
+	devlink = priv_to_devlink(pf);
+
+	err = devlink_port_register(devlink, devlink_port, vsi->idx);
+	if (err) {
+		dev_err(dev, "Failed to create devlink port for VF %d, error %d\n",
+			vf->vf_id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_destroy_vf_port - Destroy the devlink_port for this VF
+ * @vf: the VF to cleanup
+ *
+ * Unregisters the devlink_port structure associated with this VF.
+ */
+void ice_devlink_destroy_vf_port(struct ice_vf *vf)
+{
+	struct devlink_port *devlink_port;
+
+	devlink_port = &vf->devlink_port;
+
+	devlink_port_type_clear(devlink_port);
+	devlink_port_unregister(devlink_port);
+}
+#endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 
 #ifdef HAVE_DEVLINK_REGIONS
 #ifdef HAVE_DEVLINK_REGION_OPS_SNAPSHOT

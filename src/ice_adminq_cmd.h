@@ -154,7 +154,12 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_SKU				0x0074
 #define ICE_AQC_CAPS_PORT_MAP				0x0075
 #define ICE_AQC_CAPS_PCIE_RESET_AVOIDANCE		0x0076
+#define ICE_AQC_CAPS_POST_UPDATE_RESET_RESTRICT		0x0077
 #define ICE_AQC_CAPS_NVM_MGMT				0x0080
+#define ICE_AQC_CAPS_EXT_PHY_1				0x0081
+#define ICE_AQC_CAPS_EXT_PHY_2				0x0082
+#define ICE_AQC_CAPS_EXT_PHY_3				0x0083
+#define ICE_AQC_CAPS_EXT_PHY_4				0x0084
 
 	u8 major_ver;
 	u8 minor_ver;
@@ -1616,11 +1621,13 @@ struct ice_aqc_get_link_status_data {
 #define ICE_AQ_LINK_TOPO_UNDRUTIL_MEDIA	BIT(6)
 #define ICE_AQ_LINK_TOPO_UNSUPP_MEDIA	BIT(7)
 	u8 link_cfg_err;
-#define ICE_AQ_LINK_CFG_ERR		BIT(0)
-#define ICE_AQ_LINK_ACT_PORT_OPT_INVAL	BIT(2)
+#define ICE_AQ_LINK_CFG_ERR			BIT(0)
+#define ICE_AQ_LINK_ACT_PORT_OPT_INVAL		BIT(2)
 #define ICE_AQ_LINK_FEAT_ID_OR_CONFIG_ID_INVAL	BIT(3)
 #define ICE_AQ_LINK_TOPO_CRITICAL_SDP_ERR	BIT(4)
 #define ICE_AQ_LINK_MODULE_POWER_UNSUPPORTED	BIT(5)
+#define ICE_AQ_LINK_EXTERNAL_PHY_LOAD_FAILURE	BIT(6)
+#define ICE_AQ_LINK_INVAL_MAX_POWER_LIMIT	BIT(7)
 	u8 link_info;
 #define ICE_AQ_LINK_UP			BIT(0)	/* Link Status */
 #define ICE_AQ_LINK_FAULT		BIT(1)
@@ -1711,6 +1718,7 @@ struct ice_aqc_set_event_mask {
 #define ICE_AQ_LINK_EVENT_PORT_TX_SUSPENDED	BIT(9)
 #define ICE_AQ_LINK_EVENT_TOPO_CONFLICT		BIT(10)
 #define ICE_AQ_LINK_EVENT_MEDIA_CONFLICT	BIT(11)
+#define ICE_AQ_LINK_EVENT_PHY_FW_LOAD_FAIL	BIT(12)
 	u8	reserved1[6];
 };
 
@@ -1740,6 +1748,7 @@ struct ice_aqc_set_mac_lb {
 #define ICE_AQ_MAC_LB_OSC_CLK		BIT(1)
 	u8 reserved[15];
 };
+
 
 
 
@@ -2225,6 +2234,27 @@ struct ice_aqc_sw_gpio {
 };
 
 
+/* Program topology device NVM (direct, 0x06F2) */
+struct ice_aqc_program_topology_device_nvm {
+	u8 lport_num;
+	u8 lport_num_valid;
+	u8 node_type_ctx;
+	u8 index;
+	u8 rsvd[12];
+};
+
+
+/* Read topology device NVM (indirect, 0x06F3) */
+struct ice_aqc_read_topology_device_nvm {
+	u8 lport_num;
+	u8 lport_num_valid;
+	u8 node_type_ctx;
+	u8 index;
+	__le32 start_address;
+	u8 data_read[8];
+};
+
+
 /* NVM Read command (indirect 0x0701)
  * NVM Erase commands (direct 0x0702)
  * NVM Write commands (indirect 0x0703)
@@ -2254,6 +2284,7 @@ struct ice_aqc_nvm {
 #define ICE_AQC_NVM_POR_FLAG	0	/* Used by NVM Write completion on ARQ */
 #define ICE_AQC_NVM_PERST_FLAG	1
 #define ICE_AQC_NVM_EMPR_FLAG	2
+#define ICE_AQC_NVM_EMPR_ENA		BIT(0)
 	__le16 module_typeid;
 	__le16 length;
 #define ICE_AQC_NVM_ERASE_LEN	0xFFFF
@@ -3559,6 +3590,52 @@ struct ice_aqc_clear_health_status {
 };
 
 
+/* Set FW Logging configuration (indirect 0xFF30)
+ * Register for FW Logging (indirect 0xFF31)
+ * Query FW Logging (indirect 0xFF32)
+ * FW Log Event (indirect 0xFF33)
+ * Get FW Log (indirect 0xFF34)
+ * Clear FW Log (indirect 0xFF35)
+ */
+
+struct ice_aqc_fw_log {
+	u8 cmd_flags;
+#define ICE_AQC_FW_LOG_CONF_UART_EN	BIT(0)
+#define ICE_AQC_FW_LOG_CONF_AQ_EN	BIT(1)
+#define ICE_AQC_FW_LOG_CONF_SET_VALID	BIT(3)
+#define ICE_AQC_FW_LOG_AQ_REGISTER	BIT(0)
+#define ICE_AQC_FW_LOG_AQ_QUERY		BIT(2)
+#define ICE_AQC_FW_LOG_PERSISTENT	BIT(0)
+	u8 rsp_flag;
+#define ICE_AQC_FW_LOG_MORE_DATA	BIT(1)
+	__le16 fw_rt_msb;
+	union {
+		struct {
+			__le32 fw_rt_lsb;
+		} sync;
+		struct {
+			__le16 log_resolution;
+#define ICE_AQC_FW_LOG_MIN_RESOLUTION		(1)
+#define ICE_AQC_FW_LOG_MAX_RESOLUTION		(128)
+			__le16 mdl_cnt;
+		} cfg;
+	} ops;
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+
+/* Response Buffer for:
+ *    Set Firmware Logging Configuration (0xFF30)
+ *    Query FW Logging (0xFF32)
+ */
+struct ice_aqc_fw_log_cfg_resp {
+	__le16 module_identifier;
+	u8 log_level;
+	u8 rsvd0;
+};
+
+
 /**
  * struct ice_aq_desc - Admin Queue (AQ) descriptor
  * @flags: ICE_AQ_FLAG_* flags
@@ -3890,6 +3967,8 @@ enum ice_adminq_opc {
 	ice_aqc_opc_sff_eeprom				= 0x06EE,
 	ice_aqc_opc_sw_set_gpio				= 0x06EF,
 	ice_aqc_opc_sw_get_gpio				= 0x06F0,
+	ice_aqc_opc_program_topology_device_nvm		= 0x06F2,
+	ice_aqc_opc_read_topology_device_nvm		= 0x06F3,
 
 	/* NVM commands */
 	ice_aqc_opc_nvm_read				= 0x0701,
@@ -3985,7 +4064,15 @@ enum ice_adminq_opc {
 	ice_aqc_opc_set_health_status_config		= 0xFF20,
 	ice_aqc_opc_get_supported_health_status_codes	= 0xFF21,
 	ice_aqc_opc_get_health_status			= 0xFF22,
-	ice_aqc_opc_clear_health_status			= 0xFF23
+	ice_aqc_opc_clear_health_status			= 0xFF23,
+
+	/* FW Logging Commands */
+	ice_aqc_opc_fw_logs_config			= 0xFF30,
+	ice_aqc_opc_fw_logs_register			= 0xFF31,
+	ice_aqc_opc_fw_logs_query			= 0xFF32,
+	ice_aqc_opc_fw_logs_event			= 0xFF33,
+	ice_aqc_opc_fw_logs_get				= 0xFF34,
+	ice_aqc_opc_fw_logs_clear			= 0xFF35
 };
 
 #endif /* _ICE_ADMINQ_CMD_H_ */

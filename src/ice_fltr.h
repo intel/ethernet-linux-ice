@@ -34,8 +34,8 @@ ice_fltr_remove_mac(struct ice_vsi *vsi, const u8 *mac,
 enum ice_status
 ice_fltr_remove_mac_list(struct ice_vsi *vsi, struct list_head *list);
 
-enum ice_status ice_fltr_add_vlan(struct ice_vsi *vsi, struct ice_vlan vlan);
-enum ice_status ice_fltr_remove_vlan(struct ice_vsi *vsi, struct ice_vlan vlan);
+enum ice_status ice_fltr_add_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan);
+enum ice_status ice_fltr_remove_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan);
 enum ice_status
 ice_fltr_add_mac_vlan(struct ice_vsi *vsi, const u8 *mac, u16 vlan_id,
 		      enum ice_sw_fwd_act_type action);
@@ -51,4 +51,10 @@ ice_fltr_remove_eth(struct ice_vsi *vsi, u16 ethertype, u16 flag,
 		    enum ice_sw_fwd_act_type action);
 void ice_fltr_remove_all(struct ice_vsi *vsi);
 
+enum ice_status
+ice_fltr_update_flags(struct ice_vsi *vsi, u16 rule_id, u16 recipe_id,
+		      u32 new_flags);
+enum ice_status
+ice_fltr_update_flags_dflt_rule(struct ice_vsi *vsi, u16 rule_id, u8 direction,
+				u32 new_flags);
 #endif

@@ -190,6 +190,7 @@ enum ice_vsi_type {
 	ICE_VSI_CHNL = 4,
 	ICE_VSI_OFFLOAD_MACVLAN = 5,
 	ICE_VSI_LB = 6,
+	ICE_VSI_SWITCHDEV_CTRL = 7,
 };
 
 struct ice_link_status {
@@ -200,6 +201,7 @@ struct ice_link_status {
 	u16 max_frame_size;
 	u16 link_speed;
 	u16 req_speeds;
+	u8 link_cfg_err;
 	u8 lse_ena;	/* Link Status Event notification */
 	u8 link_info;
 	u8 an_info;
@@ -268,6 +270,9 @@ enum ice_fltr_ptype {
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_UDP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_TCP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV6,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV6_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV6_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_UDP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_EH_IPV4_TCP,
@@ -1430,11 +1435,9 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_FW_API_REPORT_DFLT_CFG_MAJ		1
 #define ICE_FW_API_REPORT_DFLT_CFG_MIN		7
 #define ICE_FW_API_REPORT_DFLT_CFG_PATCH	3
-#ifdef HEALTH_STATUS_SUPPORT
 
 /* AQ API version for FW health reports */
 #define ICE_FW_API_HEALTH_REPORT_MAJ		1
 #define ICE_FW_API_HEALTH_REPORT_MIN		7
 #define ICE_FW_API_HEALTH_REPORT_PATCH		6
-#endif /* HEALTH_STATUS_SUPPORT */
 #endif /* _ICE_TYPE_H_ */

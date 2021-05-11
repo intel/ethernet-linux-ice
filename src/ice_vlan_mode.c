@@ -4,7 +4,7 @@
 #include "ice_common.h"
 
 /**
- * ice_pkg_supports_dvm - determine if DDP supports Double VLAN mode (DVM)
+ * ice_pkg_get_supported_vlan_mode - chk if DDP supports Double VLAN mode (DVM)
  * @hw: pointer to the HW struct
  * @dvm: output variable to determine if DDP supports DVM(true) or SVM(false)
  */
@@ -317,6 +317,8 @@ static enum ice_status ice_set_dvm(struct ice_hw *hw)
 		return status;
 	}
 
+	ice_change_proto_id_to_dvm();
+
 	return 0;
 }
 
@@ -359,7 +361,6 @@ static enum ice_status ice_set_svm(struct ice_hw *hw)
  */
 enum ice_status ice_set_vlan_mode(struct ice_hw *hw)
 {
-
 	if (!ice_is_dvm_supported(hw))
 		return 0;
 

@@ -283,12 +283,38 @@ release_lock:
 }
 
 /**
+ * ice_fdir_remap_entries - update the FDir entries in profile
+ * @prof: FDir structure pointer
+ * @tun: tunneled or non-tunneled packet
+ * @idx: FDir entry index
+ */
+static void
+ice_fdir_remap_entries(struct ice_fd_hw_prof *prof, int tun, int idx)
+{
+	int i;
+
+	if (idx != prof->cnt && tun < ICE_FD_HW_SEG_MAX) {
+		for (i = idx; i < (prof->cnt - 1); i++) {
+			u64 old_entry_h;
+
+			old_entry_h = prof->entry_h[i + 1][tun];
+			prof->entry_h[i][tun] = old_entry_h;
+			prof->vsi_h[i] = prof->vsi_h[i + 1];
+		}
+
+		prof->entry_h[i][tun] = 0;
+		prof->vsi_h[i] = 0;
+	}
+}
+
+/**
  * ice_fdir_rem_adq_chnl - remove a ADQ channel from HW filter rules
  * @hw: hardware structure containing filter list
- * @vsi_idx: VSI handel
+ * @vsi_idx: VSI handle
  */
 void ice_fdir_rem_adq_chnl(struct ice_hw *hw, u16 vsi_idx)
 {
+	enum ice_status status;
 	int flow;
 
 	if (!hw->fdir_prof)
@@ -301,38 +327,32 @@ void ice_fdir_rem_adq_chnl(struct ice_hw *hw, u16 vsi_idx)
 		if (!prof)
 			continue;
 
-		for (i = 0; i < prof->cnt; i++) {
-			if (prof->vsi_h[i] != vsi_idx)
-				continue;
-			for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
-				u64 prof_id;
-				u16 vsi_num;
+		for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
+			u64 prof_id;
 
-				prof_id = flow + tun * ICE_FLTR_PTYPE_MAX;
-				vsi_num = ice_get_hw_vsi_num(hw,
-							     prof->vsi_h[i]);
-				ice_rem_prof_id_flow(hw, ICE_BLK_FD, vsi_num,
-						     prof_id);
-				ice_flow_rem_entry(hw, ICE_BLK_FD,
-						   prof->entry_h[i][tun]);
-				prof->entry_h[i][tun] = 0;
-			}
-			prof->vsi_h[i] = 0;
-			break;
-		}
-		if (i != prof->cnt) {
-			for ( ; i < (prof->cnt - 1); i++) {
-				for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
-					u64 old_entry_h;
+			prof_id = flow + tun * ICE_FLTR_PTYPE_MAX;
 
-					old_entry_h = prof->entry_h[i + 1][tun];
-					prof->entry_h[i][tun] = old_entry_h;
-				}
-				prof->vsi_h[i] = prof->vsi_h[i + 1];
-			}
-			for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++)
+			for (i = 0; i < prof->cnt; i++) {
+				if (prof->vsi_h[i] != vsi_idx)
+					continue;
+
 				prof->entry_h[i][tun] = 0;
-			prof->vsi_h[i] = 0;
+				prof->vsi_h[i] = 0;
+				break;
+			}
+
+			/* after clearing FDir entries update the remaining */
+			ice_fdir_remap_entries(prof, tun, i);
+
+			/* find flow profile corresponding to prof_id and clear
+			 * vsi_idx from bitmap.
+			 */
+			status = ice_flow_rem_vsi_prof(hw, ICE_BLK_FD, vsi_idx, prof_id);
+			if (status) {
+				dev_err(ice_hw_to_dev(hw),
+					"ice_flow_rem_vsi_prof() failed status=%d\n",
+					status);
+			}
 		}
 		prof->cnt--;
 	}
@@ -376,16 +396,19 @@ ice_fdir_erase_flow_from_hw(struct ice_hw *hw, enum ice_block blk, int flow)
 		int j;
 
 		prof_id = flow + tun * ICE_FLTR_PTYPE_MAX;
+
 		for (j = 0; j < prof->cnt; j++) {
 			u16 vsi_num;
 
+			vsi_num = ice_get_hw_vsi_num(hw, prof->vsi_h[j]);
+
 			if (!prof->entry_h[j][tun] || !prof->vsi_h[j])
 				continue;
-			vsi_num = ice_get_hw_vsi_num(hw, prof->vsi_h[j]);
+
 			ice_rem_prof_id_flow(hw, blk, vsi_num, prof_id);
-			ice_flow_rem_entry(hw, blk, prof->entry_h[j][tun]);
 			prof->entry_h[j][tun] = 0;
 		}
+
 		ice_flow_rem_prof(hw, blk, prof_id);
 	}
 }

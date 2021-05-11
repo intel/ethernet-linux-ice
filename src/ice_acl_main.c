@@ -236,7 +236,7 @@ err_exit:
 }
 
 /**
- * ice_add_acl_rule_ethtool - Adds an ACL rule
+ * ice_acl_add_rule_ethtool - Adds an ACL rule
  * @vsi: pointer to target VSI
  * @cmd: command to add or delete ACL rule
  *

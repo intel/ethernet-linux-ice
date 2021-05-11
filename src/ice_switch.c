@@ -908,6 +908,185 @@ static const u8 dummy_ipv6_gtpu_ipv6_udp_packet[] = {
 	0x00, 0x00, /* 2 bytes for 4 byte alignment */
 };
 
+static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv4_packet_offsets[] = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_IPV4_OFOS,	14 },
+	{ ICE_UDP_OF,		34 },
+	{ ICE_GTP,		42 },
+	{ ICE_IPV4_IL,		62 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+static const u8 dummy_ipv4_gtpu_ipv4_packet[] = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x08, 0x00,
+
+	0x45, 0x00, 0x00, 0x44, /* ICE_IPV4_OFOS 14 */
+	0x00, 0x00, 0x40, 0x00,
+	0x40, 0x11, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x08, 0x68, 0x08, 0x68, /* ICE_UDP_OF 34 */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x34, 0xff, 0x00, 0x28,  /* ICE_GTP 42 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x85,
+
+	0x02, 0x00, 0x00, 0x00, /* PDU Session extension header */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x45, 0x00, 0x00, 0x14, /* ICE_IPV4_IL 62 */
+	0x00, 0x00, 0x40, 0x00,
+	0x40, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00,
+};
+
+static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv6_packet_offsets[] = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_IPV4_OFOS,	14 },
+	{ ICE_UDP_OF,		34 },
+	{ ICE_GTP,		42 },
+	{ ICE_IPV6_IL,		62 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+static const u8 dummy_ipv4_gtpu_ipv6_packet[] = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x08, 0x00,
+
+	0x45, 0x00, 0x00, 0x58, /* ICE_IPV4_OFOS 14 */
+	0x00, 0x00, 0x40, 0x00,
+	0x40, 0x11, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x08, 0x68, 0x08, 0x68, /* ICE_UDP_OF 34 */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x34, 0xff, 0x00, 0x28,  /* ICE_GTP 42 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x85,
+
+	0x02, 0x00, 0x00, 0x00, /* PDU Session extension header */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_IL 62 */
+	0x00, 0x00, 0x3b, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00,
+};
+
+static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv4_packet_offsets[] = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_IPV6_OFOS,	14 },
+	{ ICE_UDP_OF,		54 },
+	{ ICE_GTP,		62 },
+	{ ICE_IPV4_IL,		82 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+static const u8 dummy_ipv6_gtpu_ipv4_packet[] = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x86, 0xdd,
+
+	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_OFOS 14 */
+	0x00, 0x58, 0x11, 0x00, /* Next header UDP*/
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x08, 0x68, 0x08, 0x68, /* ICE_UDP_OF 54 */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x34, 0xff, 0x00, 0x28,  /* ICE_GTP 62 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x85,
+
+	0x02, 0x00, 0x00, 0x00, /* PDU Session extension header */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x45, 0x00, 0x00, 0x14, /* ICE_IPV4_IL 82 */
+	0x00, 0x00, 0x40, 0x00,
+	0x40, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00,
+};
+
+static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv6_packet_offsets[] = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_IPV6_OFOS,	14 },
+	{ ICE_UDP_OF,		54 },
+	{ ICE_GTP,		62 },
+	{ ICE_IPV6_IL,		82 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+static const u8 dummy_ipv6_gtpu_ipv6_packet[] = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x86, 0xdd,
+
+	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_OFOS 14 */
+	0x00, 0x6c, 0x11, 0x00, /* Next header UDP*/
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x08, 0x68, 0x08, 0x68, /* ICE_UDP_OF 54 */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x34, 0xff, 0x00, 0x28,  /* ICE_GTP 62 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x85,
+
+	0x02, 0x00, 0x00, 0x00, /* PDU Session extension header */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_OFIL 82 */
+	0x00, 0x00, 0x3b, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00,
+};
+
 
 /* this is a recipe to profile association bitmap */
 static DECLARE_BITMAP(recipe_to_profile[ICE_MAX_NUM_RECIPES],
@@ -1314,7 +1493,7 @@ ice_alloc_global_lut_exit:
 }
 
 /**
- * ice_free_global_lut - free a RSS global LUT
+ * ice_free_rss_global_lut - free a RSS global LUT
  * @hw: pointer to the HW struct
  * @global_lut_id: ID of the RSS global LUT to free
  */
@@ -2215,7 +2394,6 @@ ice_aq_get_recipe(struct ice_hw *hw,
 	buf_size = *num_recipes * sizeof(*s_recipe_list);
 
 	status = ice_aq_send_cmd(hw, &desc, s_recipe_list, buf_size, cd);
-	/* cppcheck-suppress constArgument */
 	*num_recipes = le16_to_cpu(cmd->num_sub_recipes);
 
 	return status;
@@ -2615,6 +2793,7 @@ ice_dump_all_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lkup,
 		break;
 	}
 }
+
 
 /**
  * ice_fill_sw_info - Helper function to populate lb_en and lan_en
@@ -4277,7 +4456,7 @@ enum ice_status ice_add_vlan(struct ice_hw *hw, struct list_head *v_list)
 }
 
 /**
- * ice_add_mac_vlan - Add MAC and VLAN pair based filter rule
+ * ice_add_mac_vlan_rule - Add MAC and VLAN pair based filter rule
  * @hw: pointer to the hardware structure
  * @mv_list: list of MAC and VLAN filters
  * @sw: pointer to switch info struct for which function add rule
@@ -4967,7 +5146,7 @@ ice_get_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 *promisc_mask,
 }
 
 /**
- * ice_get_vsi_vlan_promisc - get VLAN promiscuous mode of given VSI
+ * _ice_get_vsi_vlan_promisc - get VLAN promiscuous mode of given VSI
  * @hw: pointer to the hardware structure
  * @vsi_handle: VSI handle to retrieve info from
  * @promisc_mask: pointer to mask to be filled in
@@ -5816,7 +5995,7 @@ static const struct ice_prot_ext_tbl_entry ice_prot_ext[ICE_PROTOCOL_LAST] = {
  * following policy.
  */
 
-static const struct ice_protocol_entry ice_prot_id_tbl[ICE_PROTOCOL_LAST] = {
+static struct ice_protocol_entry ice_prot_id_tbl[ICE_PROTOCOL_LAST] = {
 	{ ICE_MAC_OFOS,		ICE_MAC_OFOS_HW },
 	{ ICE_MAC_IL,		ICE_MAC_IL_HW },
 	{ ICE_ETYPE_OL,		ICE_ETYPE_OL_HW },
@@ -5913,6 +6092,22 @@ static u16 ice_find_recp(struct ice_hw *hw, struct ice_prot_lkup_ext *lkup_exts)
 }
 
 /**
+ * ice_change_proto_id_to_dvm - change proto id in prot_id_tbl
+ *
+ * As protocol id for outer vlan is different in dvm and svm, if dvm is
+ * supported protocol array record for outer vlan has to be modified to
+ * reflect the value proper for DVM.
+ */
+void ice_change_proto_id_to_dvm(void)
+{
+	u8 i;
+
+	for (i = 0; i < ARRAY_SIZE(ice_prot_id_tbl); i++)
+		if (ice_prot_id_tbl[i].type == ICE_VLAN_OFOS)
+			ice_prot_id_tbl[i].protocol_id = ICE_VLAN_OF_HW;
+}
+
+/**
  * ice_prot_type_to_id - get protocol ID from protocol type
  * @type: protocol type
  * @id: pointer to variable that will receive the ID
@@ -5932,7 +6127,7 @@ static bool ice_prot_type_to_id(enum ice_protocol_type type, u8 *id)
 }
 
 /**
- * ice_find_valid_words - count valid words
+ * ice_fill_valid_words - count valid words
  * @rule: advanced rule with lookup information
  * @lkup_exts: byte offset extractions of the words that are valid
  *
@@ -6524,7 +6719,7 @@ free_mem:
 }
 
 /**
- * ice_tun_type_match_mask - determine if tun type needs a match mask
+ * ice_tun_type_match_word - determine if tun type needs a match mask
  * @tun_type: tunnel type
  * @mask: mask to be used for the tunnel
  */
@@ -6537,6 +6732,10 @@ static bool ice_tun_type_match_word(enum ice_sw_tunnel_type tun_type, u16 *mask)
 	case ICE_SW_TUN_NVGRE:
 	case ICE_SW_TUN_UDP:
 	case ICE_ALL_TUNNELS:
+	case ICE_SW_TUN_IPV4_GTPU_IPV4:
+	case ICE_SW_TUN_IPV4_GTPU_IPV6:
+	case ICE_SW_TUN_IPV6_GTPU_IPV4:
+	case ICE_SW_TUN_IPV6_GTPU_IPV6:
 	case ICE_SW_TUN_IPV4_GTP_IPV4_TCP:
 	case ICE_SW_TUN_IPV4_GTP_IPV4_UDP:
 	case ICE_SW_TUN_IPV4_GTP_IPV6_TCP:
@@ -6617,7 +6816,12 @@ ice_get_compat_fv_bitmap(struct ice_hw *hw, struct ice_adv_rule_info *rinfo,
 		prof_type = ICE_PROF_TUN_UDP;
 		break;
 
-	case ICE_SW_TUN_IPV4_GTP_IPV4_TCP:
+	/* Support for GTP tunnel + L3 */
+	case ICE_SW_TUN_IPV4_GTPU_IPV4:
+	case ICE_SW_TUN_IPV4_GTPU_IPV6:
+	case ICE_SW_TUN_IPV6_GTPU_IPV4:
+	case ICE_SW_TUN_IPV6_GTPU_IPV6:
+	/* Support for GTP tunnel + L3 + L4 */
 	case ICE_SW_TUN_IPV4_GTP_IPV4_UDP:
 	case ICE_SW_TUN_IPV4_GTP_IPV6_TCP:
 	case ICE_SW_TUN_IPV4_GTP_IPV6_UDP:
@@ -6915,6 +7119,32 @@ ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 		*pkt = dummy_ipv6_gtpu_ipv6_udp_packet;
 		*pkt_len = sizeof(dummy_ipv6_gtpu_ipv6_udp_packet);
 		*offsets = dummy_ipv6_gtpu_ipv6_udp_packet_offsets;
+		return;
+	}
+
+	/* Support GTP tunnel + L3 */
+	if (tun_type == ICE_SW_TUN_IPV4_GTPU_IPV4) {
+		*pkt = dummy_ipv4_gtpu_ipv4_packet;
+		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_packet);
+		*offsets = dummy_ipv4_gtpu_ipv4_packet_offsets;
+		return;
+	}
+	if (tun_type == ICE_SW_TUN_IPV4_GTPU_IPV6) {
+		*pkt = dummy_ipv4_gtpu_ipv6_packet;
+		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv6_packet);
+		*offsets = dummy_ipv4_gtpu_ipv6_packet_offsets;
+		return;
+	}
+	if (tun_type == ICE_SW_TUN_IPV6_GTPU_IPV4) {
+		*pkt = dummy_ipv6_gtpu_ipv4_packet;
+		*pkt_len = sizeof(dummy_ipv6_gtpu_ipv4_packet);
+		*offsets = dummy_ipv6_gtpu_ipv4_packet_offsets;
+		return;
+	}
+	if (tun_type == ICE_SW_TUN_IPV6_GTPU_IPV6) {
+		*pkt = dummy_ipv6_gtpu_ipv6_packet;
+		*pkt_len = sizeof(dummy_ipv6_gtpu_ipv6_packet);
+		*offsets = dummy_ipv6_gtpu_ipv6_packet_offsets;
 		return;
 	}
 
@@ -7776,7 +8006,7 @@ ice_rem_adv_rule_by_id(struct ice_hw *hw,
 }
 
 /**
- * ice_rem_adv_for_vsi - removes existing advanced switch rules for a
+ * ice_rem_adv_rule_for_vsi - removes existing advanced switch rules for a
  *                       given VSI handle
  * @hw: pointer to the hardware structure
  * @vsi_handle: VSI handle for which we are supposed to remove all the rules.
@@ -7962,7 +8192,7 @@ ice_replay_vsi_all_fltr(struct ice_hw *hw, struct ice_port_info *pi,
 }
 
 /**
- * ice_rm_all_sw_replay_rule - helper function to delete filter replay rules
+ * ice_rm_sw_replay_rule_info - helper function to delete filter replay rules
  * @hw: pointer to the HW struct
  * @sw: pointer to switch info struct for which function removes filters
  *

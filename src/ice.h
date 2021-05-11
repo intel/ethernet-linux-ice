@@ -110,6 +110,8 @@
 #include <linux/atomic.h>
 #include <linux/jiffies.h>
 #include "ice_arfs.h"
+#include "ice_repr.h"
+#include "ice_eswitch.h"
 #include "ice_vsi_vlan_ops.h"
 
 extern const char ice_drv_ver[];
@@ -145,6 +147,7 @@ extern const char ice_drv_ver[];
 #define ICE_MBXSQ_LEN		64
 #define ICE_SBQ_LEN		64
 #define ICE_FDIR_MSIX		2
+#define ICE_ESWITCH_MSIX	1
 #define ICE_MIN_LAN_MSIX	1
 #define ICE_OICR_MSIX		1
 #define ICE_RDMA_NUM_AEQ_MSIX	4
@@ -204,6 +207,10 @@ extern const char ice_drv_ver[];
  */
 #define ICE_BW_KBPS_DIVISOR		125
 
+#if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
+#define ICE_GTP_TNL_WELLKNOWN_PORT 2152
+#endif /* HAVE_TC_FLOWER_ENC && HAVE_TC_INDIR_BLOCK */
+
 /* Macro for each VSI in a PF */
 #define ice_for_each_vsi(pf, i) \
 	for ((i) = 0; (i) < (pf)->num_alloc_vsi; (i)++)
@@ -251,6 +258,12 @@ enum ice_channel_fltr_type {
 	ICE_CHNL_FLTR_TYPE_DEST_PORT,
 	ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT, /* for future use cases */
 	ICE_CHNL_FLTR_TYPE_TENANT_ID,
+	ICE_CHNL_FLTR_TYPE_SRC_IPV4,
+	ICE_CHNL_FLTR_TYPE_DEST_IPV4,
+	ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV4,
+	ICE_CHNL_FLTR_TYPE_SRC_IPV6,
+	ICE_CHNL_FLTR_TYPE_DEST_IPV6,
+	ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV6,
 	ICE_CHNL_FLTR_TYPE_LAST /* must be last */
 };
 
@@ -281,19 +294,6 @@ struct ice_channel {
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 /* To convert BPS BW parameter into Mbps*/
 #define ICE_BW_MBIT_PS_DIVISOR	125000 /* rate / (1000000 / 8) Mbps */
-#define ICE_MAX_MQPRIO_TCF		8 /*Max number of Traffic Classifiers*/
-
-struct ice_qreg_info {
-	u16 qoffset;
-	u16 qcount;
-	u8 netdev_tc;	/* Netdev TC index if netdev associated */
-};
-
-struct ice_tcf_qreg_cfg {
-	u8 num_qreg; /* number of Traffic classifier*/
-	u8 ena_tcf; /* Rx map */
-	struct ice_qreg_info qreg_info[ICE_MAX_MQPRIO_TCF];
-};
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 
 struct ice_txq_meta {
@@ -320,7 +320,7 @@ struct ice_tc_cfg {
 struct ice_res_tracker {
 	u16 num_entries;
 	u16 end;
-	u16 list[1];
+	u16 list[];
 };
 
 struct ice_qs_cfg {
@@ -411,6 +411,14 @@ enum ice_vsi_state {
 enum ice_chnl_feature {
 	ICE_CHNL_FEATURE_FD_ENA, /* for side-band flow-director */
 	ICE_CHNL_FEATURE_INLINE_FD_ENA, /* for inline flow-director */
+	/* using the SO_MARK socket option will trigger skb->mark to be set.
+	 * Driver should act on skb->mark of not (to align flow to HW queue
+	 * binding) is additionally controlled via ethtool private flag and
+	 * when that private flag is tunred ON/OFF, this feature flags is
+	 * set/reset. This feature flag is used to determine if driver should
+	 * act or not when skb->mark is set.
+	 */
+	ICE_CHNL_FEATURE_INLINE_FD_MARK_ENA,
 	/* for pkt based inspection optimization - related to SW triggered
 	 * interrupt from napi_poll for channel enabled vector
 	 */
@@ -423,23 +431,24 @@ enum ice_chnl_feature {
 };
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
-#define ICE_TC_FLWR_FIELD_DST_MAC		0x01
-#define ICE_TC_FLWR_FIELD_SRC_MAC		0x02
-#define ICE_TC_FLWR_FIELD_VLAN			0x04
-#define ICE_TC_FLWR_FIELD_DEST_IPV4		0x08
-#define ICE_TC_FLWR_FIELD_SRC_IPV4		0x10
-#define ICE_TC_FLWR_FIELD_DEST_IPV6		0x20
-#define ICE_TC_FLWR_FIELD_SRC_IPV6		0x40
-#define ICE_TC_FLWR_FIELD_DEST_L4_PORT		0x80
-#define ICE_TC_FLWR_FIELD_SRC_L4_PORT		0x100
-#define ICE_TC_FLWR_FIELD_TENANT_ID		0x200
-#define ICE_TC_FLWR_FIELD_ENC_DEST_IPV4		0x400
-#define ICE_TC_FLWR_FIELD_ENC_SRC_IPV4		0x800
-#define ICE_TC_FLWR_FIELD_ENC_DEST_IPV6		0x1000
-#define ICE_TC_FLWR_FIELD_ENC_SRC_IPV6		0x2000
-#define ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT	0x4000
-#define ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT	0x8000
-#define ICE_TC_FLWR_FIELD_ENC_DST_MAC		0x10000
+#define ICE_TC_FLWR_FIELD_DST_MAC		BIT(0)
+#define ICE_TC_FLWR_FIELD_SRC_MAC		BIT(1)
+#define ICE_TC_FLWR_FIELD_VLAN			BIT(2)
+#define ICE_TC_FLWR_FIELD_DEST_IPV4		BIT(3)
+#define ICE_TC_FLWR_FIELD_SRC_IPV4		BIT(4)
+#define ICE_TC_FLWR_FIELD_DEST_IPV6		BIT(5)
+#define ICE_TC_FLWR_FIELD_SRC_IPV6		BIT(6)
+#define ICE_TC_FLWR_FIELD_DEST_L4_PORT		BIT(7)
+#define ICE_TC_FLWR_FIELD_SRC_L4_PORT		BIT(8)
+#define ICE_TC_FLWR_FIELD_TENANT_ID		BIT(9)
+#define ICE_TC_FLWR_FIELD_ENC_DEST_IPV4		BIT(10)
+#define ICE_TC_FLWR_FIELD_ENC_SRC_IPV4		BIT(11)
+#define ICE_TC_FLWR_FIELD_ENC_DEST_IPV6		BIT(12)
+#define ICE_TC_FLWR_FIELD_ENC_SRC_IPV6		BIT(13)
+#define ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT	BIT(14)
+#define ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT	BIT(15)
+#define ICE_TC_FLWR_FIELD_ENC_DST_MAC		BIT(16)
+#define ICE_TC_FLWR_FIELD_ETH_TYPE_ID		BIT(17)
 
 /* TC flower supported filter match */
 #define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC		ICE_TC_FLWR_FIELD_DST_MAC
@@ -482,7 +491,7 @@ struct ice_tc_vlan_hdr {
 struct ice_tc_l2_hdr {
 	u8 dst_mac[ETH_ALEN];
 	u8 src_mac[ETH_ALEN];
-	u16 n_proto;    /* Ethernet Protocol */
+	__be16 n_proto;    /* Ethernet Protocol */
 };
 
 struct ice_tc_l3_hdr {
@@ -555,7 +564,7 @@ struct ice_tc_flower_fltr {
 	/* Parsed TC flower configuration params */
 	struct ice_tc_flower_lyr_2_4_hdrs outer_headers;
 	struct ice_tc_flower_lyr_2_4_hdrs inner_headers;
-	u16 vsi_num;
+	struct ice_vsi *src_vsi;
 	__be32 tenant_id;
 	u32 flags;
 #define ICE_TC_FLWR_TNL_TYPE_NONE        0xff
@@ -626,12 +635,6 @@ struct ice_vsi {
 	u8 *rss_lut_user;	/* User configured lookup table entries */
 	u8 rss_lut_type;	/* used to configure Get/Set RSS LUT AQ call */
 
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-	/* devlink port data */
-	struct devlink_port devlink_port;
-	bool devlink_port_registered;
-#endif /* CONFIG_NET_DEVLINK */
-
 	/* aRFS members only allocated for the PF VSI */
 #define ICE_MAX_RFS_FILTERS	0xFFFF
 #define ICE_MAX_ARFS_LIST	1024
@@ -693,7 +696,6 @@ struct ice_vsi {
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 	struct tc_mqprio_qopt_offload mqprio_qopt;/* queue parameters */
-	struct ice_tcf_qreg_cfg tcf_qreg_cfg;
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 	DECLARE_BITMAP(ptp_tx_idx, INDEX_PER_QUAD);
 	struct sk_buff *ptp_tx_skb[INDEX_PER_QUAD];
@@ -750,6 +752,7 @@ struct ice_vsi {
 	u16 old_ena_tc;
 
 	struct ice_channel *ch;
+	struct net_device **target_netdevs;
 
 	/* setup back reference, to which aggregator node this VSI
 	 * corresponds to
@@ -938,15 +941,19 @@ enum ice_pf_flags {
 #endif /* !ETHTOOL_GFECPARAM */
 	ICE_FLAG_FW_LLDP_AGENT,
 	ICE_FLAG_CHNL_INLINE_FD_ENA,
+	ICE_FLAG_CHNL_INLINE_FD_MARK_ENA,
 	ICE_FLAG_CHNL_PKT_INSPECT_OPT_ENA,
 	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA,
 	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG,
+	ICE_FLAG_CHNL_GTP_OUTER_IPV6,
+	ICE_FLAG_MOD_POWER_UNSUPPORTED,
 	ICE_FLAG_ETHTOOL_CTXT,		/* set when ethtool holds RTNL lock */
 	ICE_FLAG_LEGACY_RX,
 	ICE_FLAG_VF_TRUE_PROMISC_ENA,
 	ICE_FLAG_MDD_AUTO_RESET_VF,
 	ICE_FLAG_VF_VLAN_PRUNE_DIS,
 	ICE_FLAG_LINK_LENIENT_MODE_ENA,
+	ICE_FLAG_ESWITCH_CAPABLE,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
 
@@ -961,6 +968,11 @@ struct ice_macvlan {
 };
 #endif /* HAVE_NETDEV_SB_DEV */
 
+struct ice_switchdev_info {
+	struct ice_vsi *control_vsi;
+	struct ice_vsi *uplink_vsi;
+	bool is_running;
+};
 
 enum ice_tnl_state {
 	ICE_TNL_SET_TO_ADD,
@@ -1007,6 +1019,8 @@ struct ice_pf {
 	struct devlink_region *nvm_region;
 	struct devlink_region *devcaps_region;
 #endif /* HAVE_DEVLINK_REGIONS */
+	/* devlink port data */
+	struct devlink_port devlink_port;
 #endif /* CONFIG_NET_DEVLINK */
 
 	/* OS reserved IRQ details */
@@ -1022,6 +1036,7 @@ struct ice_pf {
 
 	struct ice_vsi **vsi;		/* VSIs created by the driver */
 	struct ice_sw *first_sw;	/* first switch created by firmware */
+	u16 eswitch_mode;		/* current mode of eswitch */
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *ice_debugfs_pf;
 #endif /* CONFIG_DEBUG_FS */
@@ -1060,6 +1075,7 @@ struct ice_pf {
 	u8 ptp_link_up;
 	u8 ptp_ts_ena;
 	u8 ptp_tx_fifo_busy_cnt;
+	struct ice_perout_channel *perout_channels;
 	struct ice_cgu_info cgu_info;
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
@@ -1152,6 +1168,7 @@ struct ice_pf {
 	 */
 	spinlock_t tnl_lock;
 	struct list_head tnl_list;
+	struct ice_switchdev_info switchdev;
 
 #define ICE_INVALID_AGG_NODE_ID		0
 #define ICE_PF_AGG_NODE_ID_START	1
@@ -1186,6 +1203,7 @@ struct ice_netdev_priv {
 	struct notifier_block netdevice_nb;
 #endif
 #endif /* HAVE_TC_INDIR_BLOCK */
+	struct ice_repr *repr;
 };
 
 extern struct ida ice_peer_index_ida;
@@ -1458,9 +1476,33 @@ static inline struct ice_vsi *ice_get_main_vsi(struct ice_pf *pf)
  */
 static inline struct ice_vsi *ice_get_netdev_priv_vsi(struct ice_netdev_priv *np)
 {
-	return np->vsi;
+	/* In case of port representor return source port VSI. */
+	if (np->repr)
+		return np->repr->src_vsi;
+	else
+		return np->vsi;
 }
 
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+/**
+ * ice_is_switchdev_running - check if switchdev is configured
+ * @pf: pointer to PF structure
+ *
+ * Returns true if eswitch mode is set to DEVLINK_ESWITCH_MODE_SWITCHDEV
+ * and switchdev is configured, false otherwise.
+ */
+static inline bool ice_is_switchdev_running(struct ice_pf *pf)
+{
+	return pf->switchdev.is_running;
+}
+
+#else
+static inline bool
+ice_is_switchdev_running(struct ice_pf __always_unused *pf)
+{
+	return false;
+}
+#endif /* IS_ENABLED(CONFIG_NET_DEVLINK) */
 
 /**
  * ice_get_ctrl_vsi - Get the control VSI
@@ -1548,6 +1590,11 @@ static inline bool ice_vsi_fd_ena(struct ice_vsi *vsi)
 static inline bool ice_vsi_inline_fd_ena(struct ice_vsi *vsi)
 {
 	return !!test_bit(ICE_CHNL_FEATURE_INLINE_FD_ENA, vsi->features);
+}
+
+static inline bool ice_vsi_inline_fd_mark_ena(struct ice_vsi *vsi)
+{
+	return !!test_bit(ICE_CHNL_FEATURE_INLINE_FD_MARK_ENA, vsi->features);
 }
 
 /**
@@ -1687,10 +1734,10 @@ void ice_debugfs_pf_exit(struct ice_pf *pf);
 void ice_debugfs_init(void);
 void ice_debugfs_exit(void);
 #else
-#define ice_debugfs_pf_init(pf) do {} while (0)
-#define ice_debugfs_pf_exit(pf) do {} while (0)
-#define ice_debugfs_init() do {} while (0)
-#define ice_debugfs_exit() do {} while (0)
+static inline void ice_debugfs_pf_init(struct ice_pf *pf) { }
+static inline void ice_debugfs_pf_exit(struct ice_pf *pf) { }
+static inline void ice_debugfs_init(void) { }
+static inline void ice_debugfs_exit(void) { }
 #endif /* CONFIG_DEBUG_FS */
 
 bool netif_is_ice(struct net_device *dev);
@@ -1698,6 +1745,7 @@ int ice_vsi_setup_tx_rings(struct ice_vsi *vsi);
 int ice_vsi_setup_rx_rings(struct ice_vsi *vsi);
 int ice_vsi_open_ctrl(struct ice_vsi *vsi);
 int ice_vsi_open(struct ice_vsi *vsi);
+void ice_set_ethtool_repr_ops(struct net_device *netdev);
 void ice_set_ethtool_ops(struct net_device *netdev);
 void ice_set_ethtool_recovery_ops(struct net_device *netdev);
 void ice_set_ethtool_safe_mode_ops(struct net_device *netdev);
@@ -1753,7 +1801,7 @@ ice_for_each_peer(struct ice_pf *pf, void *data,
 }
 
 #ifdef CONFIG_PM
-#define ice_peer_refresh_msix(pf) do { } while (0)
+static inline void ice_peer_refresh_msix(struct ice_pf *pf) { }
 #endif /* CONFIG_PM */
 #endif /* !CONFIG_MFD_CORE */
 #ifdef HAVE_NETDEV_UPPER_INFO
@@ -1844,4 +1892,19 @@ int
 ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			   struct ice_tc_flower_fltr *tc_fltr);
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
+#ifdef HAVE_TC_SETUP_CLSFLOWER
+void ice_replay_tc_fltrs(struct ice_pf *pf);
+#endif /* HAVE_TC_SETUP_CLSFLOWER */
+#ifdef NETIF_F_HW_TC
+int
+ice_del_cls_flower(struct ice_vsi *vsi, struct flow_cls_offload *cls_flower);
+#ifdef HAVE_TC_INDIR_BLOCK
+int ice_add_cls_flower(struct net_device *netdev, struct ice_vsi *vsi,
+		       struct flow_cls_offload *cls_flower);
+#else
+int ice_add_cls_flower(struct net_device __always_unused *netdev,
+		       struct ice_vsi *vsi,
+		       struct tc_cls_flower_offload *cls_flower);
+#endif /* HAVE_TC_INDIR_BLOCK */
+#endif /* NETIF_F_HW_TC */
 #endif /* _ICE_H_ */

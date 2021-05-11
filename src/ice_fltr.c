@@ -234,17 +234,17 @@ ice_fltr_add_mac_to_list(struct ice_vsi *vsi, struct list_head *list,
  */
 static int
 ice_fltr_add_vlan_to_list(struct ice_vsi *vsi, struct list_head *list,
-			  struct ice_vlan vlan)
+			  struct ice_vlan *vlan)
 {
 	struct ice_fltr_info info = { 0 };
 
 	info.flag = ICE_FLTR_TX;
 	info.src_id = ICE_SRC_ID_VSI;
 	info.lkup_type = ICE_SW_LKUP_VLAN;
-	info.fltr_act = vlan.fwd_act;
+	info.fltr_act = vlan->fwd_act;
 	info.vsi_handle = vsi->idx;
-	info.l_data.vlan.vlan_id = vlan.vid;
-	info.l_data.vlan.tpid = vlan.tpid;
+	info.l_data.vlan.vlan_id = vlan->vid;
+	info.l_data.vlan.tpid = vlan->tpid;
 	info.l_data.vlan.tpid_valid = true;
 
 	return ice_fltr_add_entry_to_list(ice_pf_to_dev(vsi->back), &info,
@@ -376,7 +376,7 @@ ice_fltr_prepare_mac_and_broadcast(struct ice_vsi *vsi, const u8 *mac,
  * @vlan_action: pointer to add or remove VLAN function
  */
 static enum ice_status
-ice_fltr_prepare_vlan(struct ice_vsi *vsi, struct ice_vlan vlan,
+ice_fltr_prepare_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan,
 		      enum ice_status (*vlan_action)(struct ice_vsi *,
 						     struct list_head *))
 {
@@ -485,7 +485,7 @@ enum ice_status ice_fltr_remove_mac(struct ice_vsi *vsi, const u8 *mac,
  * @vsi: pointer to VSI struct
  * @vlan: VLAN filter details
  */
-enum ice_status ice_fltr_add_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+enum ice_status ice_fltr_add_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	return ice_fltr_prepare_vlan(vsi, vlan, ice_fltr_add_vlan_list);
 }
@@ -495,7 +495,7 @@ enum ice_status ice_fltr_add_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
  * @vsi: pointer to VSI struct
  * @vlan: VLAN filter details
  */
-enum ice_status ice_fltr_remove_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+enum ice_status ice_fltr_remove_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	return ice_fltr_prepare_vlan(vsi, vlan, ice_fltr_remove_vlan_list);
 }
@@ -558,3 +558,210 @@ enum ice_status ice_fltr_remove_eth(struct ice_vsi *vsi, u16 ethertype,
 				    ice_fltr_remove_eth_list);
 }
 
+/**
+ * ice_fltr_update_rule_flags - update lan_en/lb_en flags
+ * @hw: pointer to hw
+ * @rule_id: id of rule being updated
+ * @recipe_id: recipe id of rule
+ * @act: current action field
+ * @type: Rx or Tx
+ * @src: source VSI
+ * @new_flags: combinations of lb_en and lan_en
+ */
+static enum ice_status
+ice_fltr_update_rule_flags(struct ice_hw *hw, u16 rule_id, u16 recipe_id,
+			   u32 act, u16 type, u16 src, u32 new_flags)
+{
+	struct ice_aqc_sw_rules_elem *s_rule;
+	enum ice_status err;
+	u32 flags_mask;
+
+	s_rule = kzalloc(ICE_SW_RULE_RX_TX_NO_HDR_SIZE, GFP_KERNEL);
+	if (!s_rule)
+		return ICE_ERR_NO_MEMORY;
+
+	flags_mask = ICE_SINGLE_ACT_LB_ENABLE | ICE_SINGLE_ACT_LAN_ENABLE;
+	act &= ~flags_mask;
+	act |= (flags_mask & new_flags);
+
+	s_rule->pdata.lkup_tx_rx.recipe_id = cpu_to_le16(recipe_id);
+	s_rule->pdata.lkup_tx_rx.index = cpu_to_le16(rule_id);
+	s_rule->pdata.lkup_tx_rx.act = cpu_to_le32(act);
+
+	if (type & ICE_FLTR_RX) {
+		s_rule->pdata.lkup_tx_rx.src =
+			cpu_to_le16(hw->port_info->lport);
+		s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
+
+	} else {
+		s_rule->pdata.lkup_tx_rx.src = cpu_to_le16(src);
+		s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_TX);
+	}
+
+	err = ice_aq_sw_rules(hw, s_rule, ICE_SW_RULE_RX_TX_NO_HDR_SIZE, 1,
+			      ice_aqc_opc_update_sw_rules, NULL);
+
+	kfree(s_rule);
+	return err;
+}
+
+/**
+ * ice_fltr_build_action - build action for rule
+ * @vsi_id: id of VSI which is use to build action
+ */
+static u32
+ice_fltr_build_action(u16 vsi_id)
+{
+	return ((vsi_id << ICE_SINGLE_ACT_VSI_ID_S) & ICE_SINGLE_ACT_VSI_ID_M) |
+		ICE_SINGLE_ACT_VSI_FORWARDING | ICE_SINGLE_ACT_VALID_BIT;
+}
+
+/**
+ * ice_fltr_find_adv_entry - find advanced rule
+ * @rules: list of rules
+ * @rule_id: id of wanted rule
+ */
+static struct ice_adv_fltr_mgmt_list_entry *
+ice_fltr_find_adv_entry(struct list_head *rules, u16 rule_id)
+{
+	struct ice_adv_fltr_mgmt_list_entry *entry;
+
+	list_for_each_entry(entry, rules, list_entry) {
+		if (entry->rule_info.fltr_rule_id == rule_id)
+			return entry;
+	}
+
+	return NULL;
+}
+
+/**
+ * ice_fltr_update_adv_rule_flags - update flags on advanced rule
+ * @vsi: pointer to VSI
+ * @recipe_id: id of recipe
+ * @entry: advanced rule entry
+ * @new_flags: flags to update
+ */
+static enum ice_status
+ice_fltr_update_adv_rule_flags(struct ice_vsi *vsi, u16 recipe_id,
+			       struct ice_adv_fltr_mgmt_list_entry *entry,
+			       u32 new_flags)
+{
+	struct ice_adv_rule_info *info = &entry->rule_info;
+	struct ice_sw_act_ctrl *act = &info->sw_act;
+	u32 action;
+
+	if (act->fltr_act != ICE_FWD_TO_VSI)
+		return ICE_ERR_NOT_SUPPORTED;
+
+	action = ice_fltr_build_action(act->fwd_id.hw_vsi_id);
+
+	return ice_fltr_update_rule_flags(&vsi->back->hw, info->fltr_rule_id,
+					  recipe_id, action, info->sw_act.flag,
+					  act->src, new_flags);
+}
+
+/**
+ * ice_fltr_find_regular_entry - find regular rule
+ * @rules: list of rules
+ * @rule_id: id of wanted rule
+ */
+static struct ice_fltr_mgmt_list_entry *
+ice_fltr_find_regular_entry(struct list_head *rules, u16 rule_id)
+{
+	struct ice_fltr_mgmt_list_entry *entry;
+
+	list_for_each_entry(entry, rules, list_entry) {
+		if (entry->fltr_info.fltr_rule_id == rule_id)
+			return entry;
+	}
+
+	return NULL;
+}
+
+/**
+ * ice_fltr_update_regular_rule - update flags on regular rule
+ * @vsi: pointer to VSI
+ * @recipe_id: id of recipe
+ * @entry: regular rule entry
+ * @new_flags: flags to update
+ */
+static enum ice_status
+ice_fltr_update_regular_rule(struct ice_vsi *vsi, u16 recipe_id,
+			     struct ice_fltr_mgmt_list_entry *entry,
+			     u32 new_flags)
+{
+	struct ice_fltr_info *info = &entry->fltr_info;
+	u32 action;
+
+	if (info->fltr_act != ICE_FWD_TO_VSI)
+		return ICE_ERR_NOT_SUPPORTED;
+
+	action = ice_fltr_build_action(info->fwd_id.hw_vsi_id);
+
+	return ice_fltr_update_rule_flags(&vsi->back->hw, info->fltr_rule_id,
+					  recipe_id, action, info->flag,
+					  info->src, new_flags);
+}
+
+/**
+ * ice_fltr_update_flags - update flags on rule
+ * @vsi: pointer to VSI
+ * @rule_id: id of rule
+ * @recipe_id: id of recipe
+ * @new_flags: flags to update
+ *
+ * Function updates flags on regular and advance rule.
+ *
+ * Flags should be a combination of ICE_SINGLE_ACT_LB_ENABLE and
+ * ICE_SINGLE_ACT_LAN_ENABLE.
+ */
+enum ice_status
+ice_fltr_update_flags(struct ice_vsi *vsi, u16 rule_id, u16 recipe_id,
+		      u32 new_flags)
+{
+	struct ice_adv_fltr_mgmt_list_entry *adv_entry;
+	struct ice_fltr_mgmt_list_entry *regular_entry;
+	struct ice_hw *hw = &vsi->back->hw;
+	struct ice_sw_recipe *recp_list;
+	struct list_head *fltr_rules;
+
+	recp_list = &hw->switch_info->recp_list[recipe_id];
+	if (!recp_list)
+		return ICE_ERR_DOES_NOT_EXIST;
+
+	fltr_rules = &recp_list->filt_rules;
+	regular_entry = ice_fltr_find_regular_entry(fltr_rules, rule_id);
+	if (regular_entry)
+		return ice_fltr_update_regular_rule(vsi, recipe_id,
+						    regular_entry, new_flags);
+
+	adv_entry = ice_fltr_find_adv_entry(fltr_rules, rule_id);
+	if (adv_entry)
+		return ice_fltr_update_adv_rule_flags(vsi, recipe_id,
+						      adv_entry, new_flags);
+
+	return ICE_ERR_DOES_NOT_EXIST;
+}
+
+/**
+ * ice_fltr_update_flags_dflt_rule - update flags on default rule
+ * @vsi: pointer to VSI
+ * @rule_id: id of rule
+ * @direction: Tx or Rx
+ * @new_flags: flags to update
+ *
+ * Function updates flags on default rule with ICE_SW_LKUP_DFLT.
+ *
+ * Flags should be a combination of ICE_SINGLE_ACT_LB_ENABLE and
+ * ICE_SINGLE_ACT_LAN_ENABLE.
+ */
+enum ice_status
+ice_fltr_update_flags_dflt_rule(struct ice_vsi *vsi, u16 rule_id, u8 direction,
+				u32 new_flags)
+{
+	u32 action = ice_fltr_build_action(vsi->vsi_num);
+	struct ice_hw *hw = &vsi->back->hw;
+
+	return ice_fltr_update_rule_flags(hw, rule_id, ICE_SW_LKUP_DFLT, action,
+					  direction, vsi->vsi_num, new_flags);
+}

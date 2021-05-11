@@ -160,6 +160,7 @@ struct ice_stats {
 #define ICE_TXQ_BUSY_POLL		PICK("tx_%u.pkt_busy_poll", "tx_q-%u_pkt_busy_poll")
 #define ICE_TXQ_NOT_BUSY_POLL		PICK("tx_%u.pkt_not_busy_poll", "tx_q-%u_pkt_not_busy_poll")
 #define ICE_TXQ_ATR_SETUP		PICK("tx_%u.atr_setup", "tx_q-%u_atr_setup")
+#define ICE_TXQ_MARK_ATR_SETUP		PICK("tx_%u.mark_atr_setup", "tx_q-%u_mark_atr_setup")
 #define ICE_TXQ_ATR_TEARDOWN		PICK("tx_%u.atr_teardown", "tx_q-%u_atr_teardown")
 #define ICE_TXQ_ATR_BAIL		PICK("tx_%u.atr_bailouts", "tx_q-%u_atr_bailouts")
 #define ICE_RXQ_BUSY_POLL		PICK("rx_%u.pkt_busy_poll", "rx_q-%u_pkt_busy_poll")

@@ -213,7 +213,13 @@ struct ice_vf {
 	struct hlist_head tc_flower_fltr_list;
 	struct ice_mdd_vf_events mdd_rx_events;
 	struct ice_mdd_vf_events mdd_tx_events;
+	struct ice_repr *repr;
 	DECLARE_BITMAP(opcodes_allowlist, VIRTCHNL_OP_MAX);
+
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	/* devlink port data */
+	struct devlink_port devlink_port;
+#endif /* CONFIG_NET_DEVLINK */
 };
 
 /**
@@ -255,6 +261,9 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event);
 /* VF configuration related iplink handlers */
 void ice_vc_notify_link_state(struct ice_pf *pf);
 void ice_vc_notify_reset(struct ice_pf *pf);
+void ice_vc_notify_vf_link_state(struct ice_vf *vf);
+void ice_vc_change_ops_to_repr(void);
+void ice_vc_change_ops_to_default(void);
 bool ice_reset_all_vfs(struct ice_pf *pf, bool is_vflr);
 bool ice_reset_vf(struct ice_vf *vf, bool is_vflr);
 void ice_restore_all_vfs_msi_state(struct pci_dev *pdev);
@@ -312,17 +321,28 @@ ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 bool ice_vf_is_port_vlan_ena(struct ice_vf *vf);
 #else /* CONFIG_PCI_IOV */
-#define ice_dump_all_vfs(pf) do {} while (0)
-#define ice_process_vflr_event(pf) do {} while (0)
-#define ice_free_vfs(pf) do {} while (0)
-#define ice_vc_process_vf_msg(pf, event) do {} while (0)
-#define ice_vc_notify_link_state(pf) do {} while (0)
-#define ice_vc_notify_reset(pf) do {} while (0)
-#define ice_set_vf_state_qs_dis(vf) do {} while (0)
-#define ice_vf_lan_overflow_event(pf, event) do {} while (0)
-#define ice_print_vfs_mdd_events(pf) do {} while (0)
-#define ice_print_vf_rx_mdd_event(vf) do {} while (0)
-#define ice_restore_all_vfs_msi_state(pdev) do {} while (0)
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+static inline struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf)
+{
+	return NULL;
+}
+#endif /* CONFIG_NET_DEVLINK */
+static inline void ice_dump_all_vfs(struct ice_pf *pf) { }
+static inline void ice_process_vflr_event(struct ice_pf *pf) { }
+static inline void ice_free_vfs(struct ice_pf *pf) { }
+static inline
+void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event) { }
+static inline void ice_vc_notify_link_state(struct ice_pf *pf) { }
+static inline void ice_vc_notify_reset(struct ice_pf *pf) { }
+static inline void ice_vc_notify_vf_link_state(struct ice_vf *vf) { }
+static inline void ice_vc_change_ops_to_repr(void) { }
+static inline void ice_vc_change_ops_to_default(void) { }
+static inline void ice_set_vf_state_qs_dis(struct ice_vf *vf) { }
+static inline
+void ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event) { }
+static inline void ice_print_vfs_mdd_events(struct ice_pf *pf) { }
+static inline void ice_print_vf_rx_mdd_event(struct ice_vf *vf) { }
+static inline void ice_restore_all_vfs_msi_state(struct pci_dev *pdev) { }
 static inline bool
 ice_is_malicious_vf(struct ice_pf __always_unused *pf,
 		    struct ice_rq_event_info __always_unused *event,

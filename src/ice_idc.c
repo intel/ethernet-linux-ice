@@ -1216,8 +1216,8 @@ ice_peer_update_vsi_filter(struct ice_peer_obj *peer_obj,
 static int
 ice_peer_vc_send(struct ice_peer_obj *peer_obj, u32 vf_id, u8 *msg, u16 len)
 {
+	enum ice_status status;
 	struct ice_pf *pf;
-	int err;
 
 	if (!ice_validate_peer_obj(peer_obj))
 		return -EINVAL;
@@ -1228,23 +1228,28 @@ ice_peer_vc_send(struct ice_peer_obj *peer_obj, u32 vf_id, u8 *msg, u16 len)
 	if (len > ICE_AQ_MAX_BUF_LEN)
 		return -EINVAL;
 
+	if (ice_is_reset_in_progress(pf->state))
+		return -EBUSY;
+
 	switch (peer_obj->peer_drv->driver_id) {
 	case ICE_PEER_RDMA_DRIVER:
 		if (vf_id >= pf->num_alloc_vfs)
 			return -ENODEV;
 
 		/* VIRTCHNL_OP_IWARP is being used for RoCEv2 msg also */
-		err = ice_aq_send_msg_to_vf(&pf->hw, vf_id, VIRTCHNL_OP_IWARP,
-					    0, msg, len, NULL);
+		status = ice_aq_send_msg_to_vf(&pf->hw, vf_id, VIRTCHNL_OP_IWARP,
+					       0, msg, len, NULL);
 		break;
 	default:
-		err = ICE_ERR_DEVICE_NOT_SUPPORTED;
+		dev_err(ice_pf_to_dev(pf),
+			"Peer driver (%u) not supported!", (u32)peer_obj->peer_drv->driver_id);
+		return -ENODEV;
 	}
 
-	if (err)
-		dev_err(ice_pf_to_dev(pf),
-			"Unable to send msg to VF, error %d\n", err);
-	return err;
+	if (status)
+		dev_err(ice_pf_to_dev(pf), "Unable to send msg to VF, error %s\n",
+			ice_stat_str(status));
+	return ice_status_to_errno(status);
 }
 
 /**

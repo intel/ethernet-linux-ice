@@ -1206,7 +1206,6 @@ bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring)
 	u16 frames_ready = 0, send_budget;
 	struct ice_tx_desc *next_rs_desc;
 	struct ice_tx_buf *tx_buf;
-	u32 total_bytes = 0;
 	u32 xsk_frames = 0;
 	u16 i;
 
@@ -1236,8 +1235,6 @@ bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring)
 		} else {
 			xsk_frames++;
 		}
-
-		total_bytes += tx_buf->bytecount;
 
 		++ntc;
 		if (ntc >= xdp_ring->count)

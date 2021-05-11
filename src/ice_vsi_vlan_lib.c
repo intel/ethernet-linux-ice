@@ -21,11 +21,11 @@ static void print_invalid_tpid(struct ice_vsi *vsi, u16 tpid)
  * VID is 0, which allows for non-zero VLAN filters with the specified VLAN TPID
  * and untagged VLAN 0 filtersto be added to the prune list respectively.
  */
-static bool validate_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+static bool validate_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
-	if (vlan.tpid != ETH_P_8021Q && vlan.tpid != ETH_P_8021AD &&
-	    vlan.tpid != ETH_P_QINQ1 && (vlan.tpid || vlan.vid)) {
-		print_invalid_tpid(vsi, vlan.tpid);
+	if (vlan->tpid != ETH_P_8021Q && vlan->tpid != ETH_P_8021AD &&
+	    vlan->tpid != ETH_P_QINQ1 && (vlan->tpid || vlan->vid)) {
+		print_invalid_tpid(vsi, vlan->tpid);
 		return false;
 	}
 
@@ -37,7 +37,7 @@ static bool validate_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
  * @vsi: VSI being configured
  * @vlan: VLAN filter to add
  */
-int ice_vsi_add_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+int ice_vsi_add_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	enum ice_status status;
 	int err = 0;
@@ -49,7 +49,7 @@ int ice_vsi_add_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
 	if (status && status != ICE_ERR_ALREADY_EXISTS) {
 		err = -ENODEV;
 		dev_err(ice_pf_to_dev(vsi->back), "Failure Adding VLAN %d on VSI %i, status %s\n",
-			vlan.vid, vsi->vsi_num, ice_stat_str(status));
+			vlan->vid, vsi->vsi_num, ice_stat_str(status));
 	} else {
 		vsi->num_vlan++;
 	}
@@ -62,7 +62,7 @@ int ice_vsi_add_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
  * @vsi: VSI being configured
  * @vlan: VLAN filter to delete
  */
-int ice_vsi_del_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+int ice_vsi_del_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	struct ice_pf *pf = vsi->back;
 	enum ice_status status;
@@ -80,7 +80,7 @@ int ice_vsi_del_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
 	} else if (status != ICE_ERR_DOES_NOT_EXIST &&
 		   status != ICE_ERR_RESET_ONGOING) {
 		dev_err(dev, "Error removing VLAN %d on VSI %i error: %s\n",
-			vlan.vid, vsi->vsi_num, ice_stat_str(status));
+			vlan->vid, vsi->vsi_num, ice_stat_str(status));
 		err = ice_status_to_errno(status);
 	}
 
@@ -257,17 +257,17 @@ out:
 	return ret;
 }
 
-int ice_vsi_set_inner_port_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+int ice_vsi_set_inner_port_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	u16 port_vlan_info;
 
-	if (vlan.tpid != ETH_P_8021Q)
+	if (vlan->tpid != ETH_P_8021Q)
 		return -EINVAL;
 
-	if (vlan.prio > 7)
+	if (vlan->prio > 7)
 		return -EINVAL;
 
-	port_vlan_info = vlan.vid | (vlan.prio << VLAN_PRIO_SHIFT);
+	port_vlan_info = vlan->vid | (vlan->prio << VLAN_PRIO_SHIFT);
 
 	return __ice_vsi_set_inner_port_vlan(vsi, port_vlan_info);
 }
@@ -731,14 +731,14 @@ __ice_vsi_set_outer_port_vlan(struct ice_vsi *vsi, u16 vlan_info, u16 tpid)
  *
  * Use the ice_vlan structure passed in to set this VSI in a port VLAN.
  */
-int ice_vsi_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan vlan)
+int ice_vsi_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	u16 port_vlan_info;
 
-	if (vlan.prio > (VLAN_PRIO_MASK >> VLAN_PRIO_SHIFT))
+	if (vlan->prio > (VLAN_PRIO_MASK >> VLAN_PRIO_SHIFT))
 		return -EINVAL;
 
-	port_vlan_info = vlan.vid | (vlan.prio << VLAN_PRIO_SHIFT);
+	port_vlan_info = vlan->vid | (vlan->prio << VLAN_PRIO_SHIFT);
 
-	return __ice_vsi_set_outer_port_vlan(vsi, port_vlan_info, vlan.tpid);
+	return __ice_vsi_set_outer_port_vlan(vsi, port_vlan_info, vlan->tpid);
 }

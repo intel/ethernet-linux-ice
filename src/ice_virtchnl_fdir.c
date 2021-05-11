@@ -52,66 +52,66 @@ struct virtchnl_fdir_fltr_conf {
 	u32 flow_id;
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ether[] = {
+static s32 vc_pattern_ether[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4[] = {
+static s32 vc_pattern_ipv4[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_tcp[] = {
+static s32 vc_pattern_ipv4_tcp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_TCP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_udp[] = {
+static s32 vc_pattern_ipv4_udp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_sctp[] = {
+static s32 vc_pattern_ipv4_sctp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_SCTP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6[] = {
+static s32 vc_pattern_ipv6[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_tcp[] = {
+static s32 vc_pattern_ipv6_tcp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_TCP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_udp[] = {
+static s32 vc_pattern_ipv6_udp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_UDP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_sctp[] = {
+static s32 vc_pattern_ipv6_sctp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_SCTP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu[] = {
+static s32 vc_pattern_ipv4_gtpu[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -119,7 +119,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh[] = {
+static s32 vc_pattern_ipv4_gtpu_eh[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -128,7 +128,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh_dw[] = {
+static s32 vc_pattern_ipv4_gtpu_eh_dw[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -137,7 +137,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh_dw[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh_up[] = {
+static s32 vc_pattern_ipv4_gtpu_eh_up[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -146,7 +146,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_gtpu_eh_up[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu[] = {
+static s32 vc_pattern_ipv6_gtpu[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -154,7 +154,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh[] = {
+static s32 vc_pattern_ipv6_gtpu_eh[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -163,7 +163,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh_dw[] = {
+static s32 vc_pattern_ipv6_gtpu_eh_dw[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -172,7 +172,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh_dw[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh_up[] = {
+static s32 vc_pattern_ipv6_gtpu_eh_up[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -181,49 +181,49 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_gtpu_eh_up[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_l2tpv3[] = {
+static s32 vc_pattern_ipv4_l2tpv3[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_L2TPV3,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_l2tpv3[] = {
+static s32 vc_pattern_ipv6_l2tpv3[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_L2TPV3,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_esp[] = {
+static s32 vc_pattern_ipv4_esp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_ESP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_esp[] = {
+static s32 vc_pattern_ipv6_esp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_ESP,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_ah[] = {
+static s32 vc_pattern_ipv4_ah[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_AH,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_ah[] = {
+static s32 vc_pattern_ipv6_ah[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_AH,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_nat_t_esp[] = {
+static s32 vc_pattern_ipv4_nat_t_esp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -231,7 +231,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_nat_t_esp[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_nat_t_esp[] = {
+static s32 vc_pattern_ipv6_nat_t_esp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -239,7 +239,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_nat_t_esp[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_pfcp[] = {
+static s32 vc_pattern_ipv4_pfcp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -247,7 +247,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_pfcp[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv6_pfcp[] = {
+static s32 vc_pattern_ipv6_pfcp[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV6,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -255,13 +255,13 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv6_pfcp[] = {
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ecpri[] = {
+static s32 vc_pattern_ecpri[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_ECPRI,
 	VIRTCHNL_PROTO_HDR_NONE,
 };
 
-static enum virtchnl_proto_hdr_type vc_pattern_ipv4_udp_ecpri[] = {
+static s32 vc_pattern_ipv4_udp_ecpri[] = {
 	VIRTCHNL_PROTO_HDR_ETH,
 	VIRTCHNL_PROTO_HDR_IPV4,
 	VIRTCHNL_PROTO_HDR_UDP,
@@ -270,7 +270,7 @@ static enum virtchnl_proto_hdr_type vc_pattern_ipv4_udp_ecpri[] = {
 };
 
 struct virtchnl_fdir_pattern_match_item {
-	enum virtchnl_proto_hdr_type *list;
+	s32 *virtchnl_proto_hdr_type_list;
 	u64 input_set;
 	u64 *meta;
 };
@@ -689,7 +689,7 @@ ice_vc_fdir_set_flow_fld(struct ice_vf *vf,
 }
 
 /**
- * ice_vc_fdir_set_flow_fld - config the flow's packet segment header
+ * ice_vc_fdir_set_flow_hdr - config the flow's packet segment header
  * @vf: pointer to the VF structure
  * @conf: FDIR configuration for each filter
  * @seg: array of one or more packet segments that describe the flow
@@ -1185,7 +1185,7 @@ ice_vc_fdir_has_prof_conflict(struct ice_vf *vf,
 }
 
 /**
- * ice_vc_fdir_set_flow_fld
+ * ice_vc_fdir_config_input_set
  * @vf: pointer to the VF structure
  * @fltr: virtual channel add cmd buffer
  * @conf: FDIR configuration for each filter
@@ -1255,28 +1255,29 @@ err_exit:
 /**
  * ice_vc_fdir_match_pattern
  * @fltr: virtual channel add cmd buffer
- * @type: virtual channel protocol filter header type
+ * @virtchnl_proto_hdr_type: virtual channel protocol filter header type
  *
- * Matching the header type by comparing @fltr and @type's value.
+ * Matching the header type by comparing @fltr and @virtchnl_proto_hdr_type's
+ * value.
  *
  * Return: true on success, and false on error.
  */
 static bool
 ice_vc_fdir_match_pattern(struct virtchnl_fdir_add *fltr,
-			  enum virtchnl_proto_hdr_type *type)
+			  s32 *virtchnl_proto_hdr_type)
 {
 	struct virtchnl_proto_hdrs *proto = &fltr->rule_cfg.proto_hdrs;
 	int i = 0;
 
 	while ((i < proto->count) &&
-	       (*type == proto->proto_hdr[i].type) &&
-	       (*type != VIRTCHNL_PROTO_HDR_NONE)) {
-		type++;
+	       (*virtchnl_proto_hdr_type == proto->proto_hdr[i].type) &&
+	       (*virtchnl_proto_hdr_type != VIRTCHNL_PROTO_HDR_NONE)) {
+		virtchnl_proto_hdr_type++;
 		i++;
 	}
 
 	return ((i == proto->count) &&
-		(*type == VIRTCHNL_PROTO_HDR_NONE));
+		(*virtchnl_proto_hdr_type == VIRTCHNL_PROTO_HDR_NONE));
 }
 
 /**
@@ -1335,7 +1336,9 @@ ice_vc_fdir_search_pattern(struct ice_vf *vf,
 	pattern = ice_vc_fdir_get_pattern(vf, &len);
 
 	for (i = 0; i < len; i++) {
-		if (ice_vc_fdir_match_pattern(fltr, pattern[i].list))
+		s32 *list = pattern[i].virtchnl_proto_hdr_type_list;
+
+		if (ice_vc_fdir_match_pattern(fltr, list))
 			return 0;
 	}
 

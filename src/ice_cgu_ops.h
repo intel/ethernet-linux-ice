@@ -106,7 +106,7 @@ ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq time_r
 		   enum ice_cgu_time_ref_sel time_ref_sel,
 		   enum ice_src_tmr_mode src_tmr_mode);
 #else /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
-#define ice_cgu_init_state(pf) do {} while (0)
+static inline void ice_cgu_init_state(struct ice_pf *pf) { }
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 static inline int
 ice_cgu_cfg_ts_pll(struct ice_pf __always_unused *pf, bool __always_unused enable,

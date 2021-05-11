@@ -60,7 +60,7 @@ static inline bool ice_is_dcb_active(struct ice_pf *pf)
 		test_bit(ICE_FLAG_DCB_ENA, pf->flags));
 }
 #else
-#define ice_dcb_rebuild(pf) do {} while (0)
+static inline void ice_dcb_rebuild(struct ice_pf *pf) { }
 static inline void ice_vsi_set_dcb_tc_cfg(struct ice_vsi *vsi)
 {
 	vsi->tc_cfg.ena_tc = ICE_DFLT_TRAFFIC_CLASS;
@@ -114,12 +114,14 @@ ice_is_pfc_causing_hung_q(struct ice_pf __always_unused *pf,
 {
 	return false;
 }
-#define ice_update_dcb_stats(pf) do {} while (0)
-#define ice_pf_dcb_recfg(pf) do {} while (0)
-#define ice_vsi_cfg_dcb_rings(vsi) do {} while (0)
-#define ice_setup_dcb_qos_info(pf, qos_info) do {} while (0)
-#define ice_dcb_process_lldp_set_mib_change(pf, event) do {} while (0)
-#define ice_set_cgd_num(tlan_ctx, ring) do {} while (0)
+
+static inline void ice_pf_dcb_recfg(struct ice_pf *pf) { }
+static inline void ice_vsi_cfg_dcb_rings(struct ice_vsi *vsi) { }
+static inline void ice_update_dcb_stats(struct ice_pf *pf) { }
+static inline void ice_setup_dcb_qos_info(struct ice_pf *pf, struct ice_qos_params *qos_info) { }
+static inline
+void ice_dcb_process_lldp_set_mib_change(struct ice_pf *pf, struct ice_rq_event_info *event) { }
+static inline void ice_set_cgd_num(struct ice_tlan_ctx *tlan_ctx, struct ice_ring *ring) { }
 #endif /* CONFIG_DCB */
 
 #endif /* _ICE_DCB_LIB_H_ */

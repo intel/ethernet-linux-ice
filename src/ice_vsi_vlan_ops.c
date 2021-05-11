@@ -8,7 +8,7 @@
 
 static int
 op_unsupported_vlan_arg(struct ice_vsi * __always_unused vsi,
-			struct ice_vlan __always_unused vlan)
+			struct ice_vlan * __always_unused vlan)
 {
 	return -EOPNOTSUPP;
 }
@@ -73,6 +73,7 @@ void ice_vsi_init_vlan_ops(struct ice_vsi *vsi)
 	switch (vsi->type) {
 	case ICE_VSI_PF:
 	case ICE_VSI_CHNL:
+	case ICE_VSI_SWITCHDEV_CTRL:
 		ice_pf_vsi_init_vlan_ops(vsi);
 		break;
 	case ICE_VSI_VF:

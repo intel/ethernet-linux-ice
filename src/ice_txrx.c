@@ -20,6 +20,8 @@
 #include <linux/filter.h>
 #endif /* HAVE_XDP_BUFF_IN_XDP_H */
 #endif /* HAVE_XDP_SUPPORT */
+#include "ice_eswitch.h"
+#include <net/busy_poll.h>
 
 #define ICE_RX_HDR_SIZE		256
 
@@ -1545,10 +1547,24 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 		}
 
 		xdp.data = page_address(rx_buf->page) + rx_buf->page_offset;
+#ifdef __CHECKER__
+		/* we have a cocci script that actually removes the cast
+		 * here, but cppcheck complains about it so suppress it
+		 * locally
+		 */
+		/* cppcheck-suppress arithOperationsOnVoidPointer */
+#endif /* _CHECKER__ */
 		xdp.data_hard_start = xdp.data - ice_rx_offset(rx_ring);
 #ifdef HAVE_XDP_BUFF_DATA_META
 		xdp.data_meta = xdp.data;
 #endif /* HAVE_XDP_BUFF_DATA_META */
+#ifdef __CHECKER__
+		/* we have a cocci script that actually removes the cast
+		 * here, but cppcheck complains about it so suppress it
+		 * locally
+		 */
+		/* cppcheck-suppress arithOperationsOnVoidPointer */
+#endif /* _CHECKER__ */
 		xdp.data_end = xdp.data + size;
 #ifdef HAVE_XDP_BUFF_FRAME_SZ
 #if (PAGE_SIZE > 4096)
@@ -2872,7 +2888,6 @@ int ice_tso(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 	if (err < 0)
 		return err;
 
-	/* cppcheck-suppress unreadVariable */
 	ip.hdr = skb_network_header(skb);
 	l4.hdr = skb_transport_header(skb);
 
@@ -2918,7 +2933,6 @@ int ice_tso(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 
 		/* reset pointers to inner headers */
 
-		/* cppcheck-suppress unreadVariable */
 		ip.hdr = skb_inner_network_header(skb);
 		l4.hdr = skb_inner_transport_header(skb);
 
@@ -3137,6 +3151,43 @@ static bool ice_chk_linearize(struct sk_buff *skb, unsigned int count)
 }
 
 /**
+ * ice_get_queue_based_on_mark - determine the Tx queue based on mark value
+ * @vsi: pointer to VSI
+ * @mark: mark value (skb->mark)
+ * @queue: return the Tx queue number
+ *
+ * Based on mark value (which comes form skb->mark as a result of SO_MARK
+ * socket option), determine the Tx queue, which gets used to align flow
+ * to HW queue.
+ */
+static bool ice_get_queue_based_on_mark(struct ice_vsi *vsi, u32 mark,
+					u16 *queue)
+{
+	int v_idx;
+
+	ice_for_each_q_vector(vsi, v_idx) {
+		struct ice_q_vector *q_vector = vsi->q_vectors[v_idx];
+		struct ice_ring *tx_ring;
+
+		if (!q_vector)
+			continue;
+		if (q_vector->napi.napi_id != mark)
+			continue;
+
+		/* Now we located matching "q_vector:napi_struct" based
+		 * on "mark (as napi_id)
+		 */
+
+		/* for now use first tx_ring:q_index */
+		ice_for_each_ring(tx_ring, q_vector->tx) {
+			*queue = tx_ring->q_index;
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
  * ice_chnl_inline_fd - Add a Flow director ATR filter
  * @tx_ring: ring to add programming descriptor
  * @skb: send buffer
@@ -3208,24 +3259,63 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 
 	th = (struct tcphdr *)(hdr.network + hlen);
 
-	/* proceed only for SYN, SYN+ACK, RST, FIN packets */
-	if (!th->fin && !th->syn && !th->rst)
-		return;
-
+	if (ice_vsi_inline_fd_mark_ena(ch->ch_vsi)) {
+		/* proceed only for MARK, SYN, SYN+ACK, RST, FIN packets */
+		if (!skb->mark && !th->syn && !th->rst && !th->fin)
+			return;
+	} else {
+		/* proceed only for SYN, SYN+ACK, RST, FIN packets */
+		if (!th->syn && !th->rst && !th->fin)
+			return;
+	}
 
 	/* update queue as needed using channel's base_q, this queue number
 	 * gets programmed in filter descriptor while adding inline-FD entry
 	 */
-	if (th->ack || th->fin || th->rst)  {
+	if (skb->mark && ice_vsi_inline_fd_mark_ena(ch->ch_vsi)) {
+#ifdef HAVE_MIN_NAPI_ID
+		if (skb->mark < MIN_NAPI_ID)
+			return;
+#endif /* HAVE_MIN_NAPI_ID */
+
+		if (!skb->sk)
+			return;
+
+		/* skb->mark is part of union {mark, reserved_tailroom}.
+		 * Hence explicit check (to avoid false positive) to make
+		 * sure it is (skb->mark) is same as sk->mark.
+		 */
+		if (skb->mark != skb->sk->sk_mark)
+			return;
+
+		/* if current vector/queue is already aligned (as indicated
+		 * by skb->mark (napi_id), no action needed.
+		 */
+		if (skb->mark == qv->napi.napi_id)
+			return;
+
+		/* Unsupported config for now */
+		if (qv->num_ring_tx > 1)
+			return;
+		/* now locate ring/queue using based on skb->mark as napi_id */
+		if (!ice_get_queue_based_on_mark(qv->vsi, skb->mark, &q_index))
+			return;
+
+		/* all checks are passed, proceed with inline-FD programming */
+		q_index -= ch->base_q;
+	} else if (th->ack || th->fin || th->rst)  {
 		/* server side connection setup || connection_termination */
 		q_index = tx_ring->q_index - ch->base_q;
-	} else {
+	} else if (th->syn) {
 		/* just SYN, client side connection establishment.
 		 * since channel's num_txq and num_rxq has to be same,
 		 * using either num_rxq or num_txq is OK, but for readability
 		 * perspective, using 'num_txq' since this is transmit flow
 		 */
 		q_index = (atomic_inc_return(&ch->fd_queue) - 1) % ch->num_txq;
+	} else {
+		/* dont proceed */
+		return;
 	}
 
 	/* use channel specific HW VSI number */
@@ -3276,6 +3366,25 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 	} else if (th->fin || th->rst) {
 #ifdef ADQ_PERF_COUNTERS
 		tx_ring->ch_q_stats.tx.num_atr_evict++;
+#endif /* ADQ_PERF_COUNTERS */
+	} else {
+		/* This case is due to skb-mark, no need to check again,
+		 * It is handled previously
+		 */
+
+		/* filter type must be valid, SO_MARK based FD programming
+		 * is agnostic to client/server type connection, hence
+		 * not checking specific type of filter
+		 */
+		if (ch->fltr_type == ICE_CHNL_FLTR_TYPE_INVALID ||
+		    ch->fltr_type == ICE_CHNL_FLTR_TYPE_LAST)
+			return;
+#ifdef ADQ_PERF_COUNTERS
+		struct ice_ring *ch_tx_ring;
+
+		ch_tx_ring = qv->vsi->tx_rings[q_index + ch->base_q];
+		if (ch_tx_ring)
+			ch_tx_ring->ch_q_stats.tx.num_mark_atr_setup++;
 #endif /* ADQ_PERF_COUNTERS */
 	}
 
@@ -3365,6 +3474,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	struct ice_tx_offload_params offload = { 0 };
 	struct ice_vsi *vsi = tx_ring->vsi;
 	struct ice_tx_buf *first;
+	struct ethhdr *eth;
 	unsigned int count;
 	bool tsyn = true;
 	int tso, csum;
@@ -3422,7 +3532,9 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 		goto out_drop;
 
 	/* allow CONTROL frames egress from main VSI if FW LLDP disabled */
-	if (unlikely(skb->priority == TC_PRIO_CONTROL &&
+	eth = (struct ethhdr *)skb_mac_header(skb);
+	if (unlikely((skb->priority == TC_PRIO_CONTROL ||
+		      eth->h_proto == htons(ETH_P_LLDP)) &&
 		     (!(tx_ring->ch && tx_ring->ch->ch_vsi)) &&
 		     vsi->type == ICE_VSI_PF &&
 		     vsi->port_info->qos_cfg.is_sw_lldp))
@@ -3444,6 +3556,10 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	if (tsyn &&
 	    ice_tsyn(tx_ring, skb, first, &offload, &idx) == NETDEV_TX_BUSY)
 		goto out_ptp_drop;
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	if (ice_is_switchdev_running(vsi->back))
+		ice_eswitch_set_target_vsi(skb, &offload);
+#endif /* CONFIG_NET_DEVLINK */
 	if (offload.cd_qw1 & ICE_TX_DESC_DTYPE_CTX) {
 		struct ice_tx_ctx_desc *cdesc;
 		u16 i = tx_ring->next_to_use;

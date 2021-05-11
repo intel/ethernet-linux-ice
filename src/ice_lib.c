@@ -30,6 +30,8 @@ const char *ice_vsi_type_str(enum ice_vsi_type vsi_type)
 		return "ICE_VSI_OFFLOAD_MACVLAN";
 	case ICE_VSI_LB:
 		return "ICE_VSI_LB";
+	case ICE_VSI_SWITCHDEV_CTRL:
+		return "ICE_VSI_SWITCHDEV_CTRL";
 	default:
 		return "unknown";
 	}
@@ -141,6 +143,7 @@ static void ice_vsi_set_num_desc(struct ice_vsi *vsi)
 	case ICE_VSI_PF:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 	case ICE_VSI_CTRL:
 	case ICE_VSI_LB:
 		/* a user could change the values of num_[tr]x_desc using
@@ -213,6 +216,14 @@ static void ice_vsi_set_num_qs(struct ice_vsi *vsi, u16 vf_id)
 		vsi->alloc_txq = ICE_DFLT_TXQ_VMDQ_VSI;
 		vsi->alloc_rxq = ICE_DFLT_RXQ_VMDQ_VSI;
 		vsi->num_q_vectors = ICE_DFLT_VEC_VMDQ_VSI;
+		break;
+	case ICE_VSI_SWITCHDEV_CTRL:
+		/* The number of queues for ctrl vsi is equal to number of VFs.
+		 * Each ring is associated to the corresponding VF_PR netdev.
+		 */
+		vsi->alloc_txq = pf->num_alloc_vfs;
+		vsi->alloc_rxq = pf->num_alloc_vfs;
+		vsi->num_q_vectors = 1;
 		break;
 	case ICE_VSI_VF:
 		vf = &pf->vf[vsi->vf_id];
@@ -503,6 +514,21 @@ static irqreturn_t ice_msix_clean_rings(int __always_unused irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static irqreturn_t ice_eswitch_msix_clean_rings(int __always_unused irq, void *data)
+{
+	struct ice_q_vector *q_vector = (struct ice_q_vector *)data;
+	struct ice_pf *pf = q_vector->vsi->back;
+	int i;
+
+	if (!q_vector->tx.ring && !q_vector->rx.ring)
+		return IRQ_HANDLED;
+
+	ice_for_each_vf(pf, i)
+		napi_schedule(&pf->vf[i].repr->q_vector->napi);
+
+	return IRQ_HANDLED;
+}
+
 /**
  * ice_vsi_alloc - Allocates the next available struct VSI in the PF
  * @pf: board private structure
@@ -550,6 +576,13 @@ ice_vsi_alloc(struct ice_pf *pf, enum ice_vsi_type vsi_type,
 	switch (vsi->type) {
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
+		if (ice_vsi_alloc_arrays(vsi))
+			goto err_rings;
+
+		/* Setup eswitch MSIX irq handler for VSI */
+		vsi->irq_handler = ice_eswitch_msix_clean_rings;
+		break;
 	case ICE_VSI_PF:
 		if (ice_vsi_alloc_arrays(vsi))
 			goto err_rings;
@@ -876,6 +909,7 @@ static void ice_vsi_set_rss_params(struct ice_vsi *vsi)
 		break;
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 		vsi->rss_table_size = ICE_VSIQF_HLUT_ARRAY_SIZE;
 		vsi->rss_size = min_t(u16, num_online_cpus(),
 				      BIT(cap->rss_table_entry_width));
@@ -1204,6 +1238,7 @@ static int ice_vsi_init(struct ice_vsi *vsi, bool init_vsi)
 	case ICE_VSI_CHNL:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 		ctxt->flags = ICE_AQ_VSI_TYPE_VMDQ2;
 		break;
 	case ICE_VSI_VF:
@@ -1736,8 +1771,7 @@ static void ice_vsi_set_vf_rss_flow_fld(struct ice_vsi *vsi)
 }
 
 
-static const struct ice_rss_hash_cfg default_rss_cfgs[] =
-{
+static const struct ice_rss_hash_cfg default_rss_cfgs[] = {
 	/* configure RSS for IPv4 with input set IP src/dst */
 	{ICE_FLOW_SEG_HDR_IPV4, ICE_FLOW_HASH_IPV4, ICE_RSS_ANY_HEADERS, false},
 	/* configure RSS for IPv6 with input set IPv6 src/dst */
@@ -1761,6 +1795,7 @@ static const struct ice_rss_hash_cfg default_rss_cfgs[] =
 	{ICE_FLOW_SEG_HDR_SCTP | ICE_FLOW_SEG_HDR_IPV6,
 				ICE_HASH_SCTP_IPV6, ICE_RSS_ANY_HEADERS, false},
 };
+
 /**
  * ice_vsi_set_rss_flow_fld - Sets RSS input set for different flows
  * @vsi: VSI to be configured
@@ -1793,10 +1828,9 @@ static void ice_vsi_set_rss_flow_fld(struct ice_vsi *vsi)
 
 		status = ice_add_rss_cfg(hw, vsi_handle, cfg);
 		if (status)
-			dev_dbg(dev, "ice_add_rss_cfg failed, addl_hdrs = %x, "
-				"hash_flds = %llx, hdr_type = %d, symm = %d\n",
-				cfg->addl_hdrs, cfg->hash_flds,
-				cfg->hdr_type, cfg->symm);
+			dev_dbg(dev, "ice_add_rss_cfg failed, addl_hdrs = %x, hash_flds = %llx, hdr_type = %d, symm = %d\n",
+				cfg->addl_hdrs, cfg->hash_flds, cfg->hdr_type,
+				cfg->symm);
 	}
 }
 
@@ -2061,7 +2095,7 @@ int ice_vsi_cfg_xdp_txqs(struct ice_vsi *vsi)
  * This function converts a decimal interrupt rate limit in usecs to the format
  * expected by firmware.
  */
-u32 ice_intrl_usec_to_reg(u8 intrl, u8 gran)
+static u32 ice_intrl_usec_to_reg(u8 intrl, u8 gran)
 {
 	u32 val = intrl / gran;
 
@@ -2346,7 +2380,7 @@ void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create)
 	}
 
 	if (status)
-		dev_err(dev, "Fail %s %s LLDP rule on VSI %i error: %s\n",
+		dev_dbg(dev, "Fail %s %s LLDP rule on VSI %i error: %s\n",
 			create ? "adding" : "removing", tx ? "TX" : "RX",
 			vsi->vsi_num, ice_stat_str(status));
 }
@@ -2386,6 +2420,7 @@ static void ice_set_agg_vsi(struct ice_vsi *vsi)
 	case ICE_VSI_LB:
 	case ICE_VSI_PF:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 		max_agg_nodes = ICE_MAX_PF_AGG_NODES;
 		agg_node_id_start = ICE_PF_AGG_NODE_ID_START;
 		agg_node_iter = &pf->pf_agg_node[0];
@@ -2561,6 +2596,7 @@ ice_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi,
 	case ICE_VSI_CTRL:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 	case ICE_VSI_PF:
 		ret = ice_vsi_alloc_q_vectors(vsi);
 		if (ret)
@@ -2684,7 +2720,6 @@ ice_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi,
 
 	if (!vsi->agg_node)
 		ice_set_agg_vsi(vsi);
-
 
 	return vsi;
 
@@ -2922,6 +2957,8 @@ void ice_dis_vsi(struct ice_vsi *vsi, bool locked)
 	} else if (vsi->type == ICE_VSI_OFFLOAD_MACVLAN) {
 		ice_vsi_close(vsi);
 #endif /* HAVE_NETDEV_SB_DEV */
+	} else if (vsi->type == ICE_VSI_SWITCHDEV_CTRL) {
+		ice_vsi_close(vsi);
 	}
 }
 
@@ -3021,10 +3058,10 @@ int ice_vsi_release(struct ice_vsi *vsi)
 	    (test_bit(ICE_VSI_NETDEV_REGISTERED, vsi->state))) {
 		unregister_netdev(vsi->netdev);
 		clear_bit(ICE_VSI_NETDEV_REGISTERED, vsi->state);
+
+		if (vsi->type == ICE_VSI_PF)
+			ice_devlink_destroy_pf_port(pf);
 	}
-
-	ice_devlink_destroy_port(vsi);
-
 
 	if (test_bit(ICE_FLAG_RSS_ENA, pf->flags))
 		ice_rss_clean(vsi);
@@ -3308,6 +3345,7 @@ int ice_vsi_rebuild(struct ice_vsi *vsi, bool init_vsi)
 	case ICE_VSI_CTRL:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
 	case ICE_VSI_PF:
 		ret = ice_vsi_alloc_q_vectors(vsi);
 		if (ret)
@@ -3565,7 +3603,7 @@ void ice_vsi_cfg_netdev_tc(struct ice_vsi *vsi, u8 ena_tc)
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 /**
- * ice_vsi_setup_queue_map_mqprio - Prepares mqprio based tc_config
+ * ice_vsi_setup_q_map_mqprio - Prepares mqprio based tc_config
  * @vsi: the VSI being configured,
  * @ctxt: VSI context structure
  * @ena_tc: number of traffic classes to enable
@@ -4228,6 +4266,68 @@ int ice_set_link(struct ice_vsi *vsi, bool ena)
 	return 0;
 }
 
+/**
+ * ice_vsi_update_security - update security block in VSI
+ * @vsi: pointer to VSI structure
+ * @fill: function pointer to fill ctx
+ */
+int ice_vsi_update_security(struct ice_vsi *vsi,
+			    void (*fill)(struct ice_vsi_ctx *))
+{
+	struct ice_vsi_ctx ctx = { 0 };
+
+	ctx.info = vsi->info;
+	ctx.info.valid_sections = cpu_to_le16(ICE_AQ_VSI_PROP_SECURITY_VALID);
+	fill(&ctx);
+
+	if (ice_update_vsi(&vsi->back->hw, vsi->idx, &ctx, NULL))
+		return -ENODEV;
+
+	vsi->info = ctx.info;
+	return 0;
+}
+
+#ifdef HAVE_METADATA_PORT_INFO
+/**
+ * ice_vsi_ctx_set_antispoof - set antispoof function in VSI ctx
+ * @ctx: pointer to VSI ctx structure
+ */
+void ice_vsi_ctx_set_antispoof(struct ice_vsi_ctx *ctx)
+{
+	ctx->info.sec_flags |= ICE_AQ_VSI_SEC_FLAG_ENA_MAC_ANTI_SPOOF |
+		(ICE_AQ_VSI_SEC_TX_VLAN_PRUNE_ENA <<
+		 ICE_AQ_VSI_SEC_TX_PRUNE_ENA_S);
+}
+
+/**
+ * ice_vsi_ctx_clear_antispoof - clear antispoof function in VSI ctx
+ * @ctx: pointer to VSI ctx structure
+ */
+void ice_vsi_ctx_clear_antispoof(struct ice_vsi_ctx *ctx)
+{
+	ctx->info.sec_flags &= ~ICE_AQ_VSI_SEC_FLAG_ENA_MAC_ANTI_SPOOF &
+		~(ICE_AQ_VSI_SEC_TX_VLAN_PRUNE_ENA <<
+		  ICE_AQ_VSI_SEC_TX_PRUNE_ENA_S);
+}
+#endif /* HAVE_METADATA_PORT_INFO */
+
+/**
+ * ice_vsi_ctx_set_allow_override - allow destination override on VSI
+ * @ctx: pointer to VSI ctx structure
+ */
+void ice_vsi_ctx_set_allow_override(struct ice_vsi_ctx *ctx)
+{
+	ctx->info.sec_flags |= ICE_AQ_VSI_SEC_FLAG_ALLOW_DEST_OVRD;
+}
+
+/**
+ * ice_vsi_ctx_clear_allow_override - turn off destination override on VSI
+ * @ctx: pointer to VSI ctx structure
+ */
+void ice_vsi_ctx_clear_allow_override(struct ice_vsi_ctx *ctx)
+{
+	ctx->info.sec_flags &= ~ICE_AQ_VSI_SEC_FLAG_ALLOW_DEST_OVRD;
+}
 
 /**
  * ice_vsi_add_vlan_zero - add VLAN 0 filter(s) for this VSI
@@ -4249,9 +4349,11 @@ int ice_set_link(struct ice_vsi *vsi, bool ena)
 int ice_vsi_add_vlan_zero(struct ice_vsi *vsi)
 {
 	struct ice_vsi_vlan_ops *vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
+	struct ice_vlan vlan;
 	int err;
 
-	err = vlan_ops->add_vlan(vsi, ICE_VLAN(0, 0, 0, ICE_FWD_TO_VSI));
+	vlan = ICE_VLAN(0, 0, 0, ICE_FWD_TO_VSI);
+	err = vlan_ops->add_vlan(vsi, &vlan);
 	if (err && err != -EEXIST)
 		return err;
 
@@ -4259,7 +4361,8 @@ int ice_vsi_add_vlan_zero(struct ice_vsi *vsi)
 	if (!ice_is_dvm_ena(&vsi->back->hw))
 		return 0;
 
-	err = vlan_ops->add_vlan(vsi, ICE_VLAN(ETH_P_8021Q, 0, 0, ICE_FWD_TO_VSI));
+	vlan = ICE_VLAN(ETH_P_8021Q, 0, 0, ICE_FWD_TO_VSI);
+	err = vlan_ops->add_vlan(vsi, &vlan);
 	if (err && err != -EEXIST)
 		return err;
 
@@ -4276,9 +4379,11 @@ int ice_vsi_add_vlan_zero(struct ice_vsi *vsi)
 int ice_vsi_del_vlan_zero(struct ice_vsi *vsi)
 {
 	struct ice_vsi_vlan_ops *vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
+	struct ice_vlan vlan;
 	int err;
 
-	err = vlan_ops->del_vlan(vsi, ICE_VLAN(0, 0, 0, ICE_FWD_TO_VSI));
+	vlan = ICE_VLAN(0, 0, 0, ICE_FWD_TO_VSI);
+	err = vlan_ops->del_vlan(vsi, &vlan);
 	if (err && err != -EEXIST)
 		return err;
 
@@ -4286,7 +4391,8 @@ int ice_vsi_del_vlan_zero(struct ice_vsi *vsi)
 	if (!ice_is_dvm_ena(&vsi->back->hw))
 		return 0;
 
-	err = vlan_ops->del_vlan(vsi, ICE_VLAN(ETH_P_8021Q, 0, 0, ICE_FWD_TO_VSI));
+	vlan = ICE_VLAN(ETH_P_8021Q, 0, 0, ICE_FWD_TO_VSI);
+	err = vlan_ops->del_vlan(vsi, &vlan);
 	if (err && err != -EEXIST)
 		return err;
 

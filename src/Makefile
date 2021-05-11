@@ -59,6 +59,7 @@ ice-y := ice_main.o	\
 	 ice_lag.o		\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
+ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
 ice-$(CONFIG_MFD_CORE:m=y) += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
 ice-$(CONFIG_PCI_IOV) += ice_virtchnl_allowlist.o

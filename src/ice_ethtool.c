@@ -244,12 +244,16 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 #ifdef NETIF_F_HW_TC
 	ICE_PRIV_FLAG("channel-inline-flow-director",
 		      ICE_FLAG_CHNL_INLINE_FD_ENA),
+	ICE_PRIV_FLAG("channel-inline-fd-mark",
+		      ICE_FLAG_CHNL_INLINE_FD_MARK_ENA),
 	ICE_PRIV_FLAG("channel-pkt-inspect-optimize",
 		      ICE_FLAG_CHNL_PKT_INSPECT_OPT_ENA),
 	ICE_PRIV_FLAG("channel-pkt-clean-bp-stop",
 		      ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA),
 	ICE_PRIV_FLAG("channel-pkt-clean-bp-stop-cfg",
 		      ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG),
+	ICE_PRIV_FLAG("channel-gtp-outer-ipv6",
+		      ICE_FLAG_CHNL_GTP_OUTER_IPV6),
 #endif /* NETIF_F_HW_TC */
 	ICE_PRIV_FLAG("vf-true-promisc-support",
 		      ICE_FLAG_VF_TRUE_PROMISC_ENA),
@@ -1104,7 +1108,7 @@ static void
 ice_get_xdp_tx_strings(struct ice_vsi *vsi, char **loc_in_buf)
 {
 	char *p;
-	int q;
+	u16 q;
 
 	if (!vsi || !loc_in_buf)
 		return;
@@ -1219,6 +1223,8 @@ ice_get_chnl_tx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
 	p += ETH_GSTRING_LEN;
 	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_SETUP, q);
 	p += ETH_GSTRING_LEN;
+	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_MARK_ATR_SETUP, q);
+	p += ETH_GSTRING_LEN;
 	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_TEARDOWN, q);
 	p += ETH_GSTRING_LEN;
 	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_BAIL, q);
@@ -1260,6 +1266,7 @@ ice_get_chnl_tx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
 	data[i++] = set ? ch_stats->poll.bp_packets : 0;
 	data[i++] = set ? ch_stats->poll.np_packets : 0;
 	data[i++] = set ? ch_stats->tx.num_atr_setup : 0;
+	data[i++] = set ? ch_stats->tx.num_mark_atr_setup : 0;
 	data[i++] = set ? ch_stats->tx.num_atr_evict : 0;
 	data[i++] = set ? ch_stats->tx.num_atr_bailouts : 0;
 
@@ -1706,6 +1713,8 @@ static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 				 ice_gstrings_vsi_stats[i].stat_string);
 			p += ETH_GSTRING_LEN;
 		}
+		if (ice_is_port_repr_netdev(netdev))
+			return;
 
 		ice_for_each_alloc_txq(vsi, i) {
 			snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_PACKETS, i);
@@ -2066,6 +2075,12 @@ static void ice_recfg_chnl_vsis(struct ice_pf *pf, struct ice_vsi *vsi)
 		else
 			clear_bit(ICE_CHNL_FEATURE_INLINE_FD_ENA,
 				  ch_vsi->features);
+		if (test_bit(ICE_FLAG_CHNL_INLINE_FD_MARK_ENA, pf->flags))
+			set_bit(ICE_CHNL_FEATURE_INLINE_FD_MARK_ENA,
+				ch_vsi->features);
+		else
+			clear_bit(ICE_CHNL_FEATURE_INLINE_FD_MARK_ENA,
+				  ch_vsi->features);
 	}
 }
 
@@ -2339,7 +2354,10 @@ static int ice_get_sset_count(struct net_device *netdev, int sset)
 		 * order of strings will suffer from race conditions and are
 		 * not safe.
 		 */
-		return ICE_ALL_STATS_LEN(netdev);
+		if (ice_is_port_repr_netdev(netdev))
+			return ICE_VSI_STATS_LEN;
+		else
+			return ICE_ALL_STATS_LEN(netdev);
 	case ETH_SS_TEST:
 		return ICE_TEST_LEN;
 	case ETH_SS_PRIV_FLAGS:
@@ -2369,6 +2387,8 @@ ice_get_ethtool_stats(struct net_device *netdev,
 		data[i++] = (ice_gstrings_vsi_stats[j].sizeof_stat ==
 			     sizeof(u64)) ? *(u64 *)p : *(u32 *)p;
 	}
+	if (ice_is_port_repr_netdev(netdev))
+		return;
 	/* populate per queue stats */
 	rcu_read_lock();
 
@@ -2933,49 +2953,6 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 						100000baseKR4_Full);
 	}
 #endif /* HAVE_ETHTOOL_100G_BITS */
-
-	/* Autoneg PHY types */
-	if (phy_types_low & ICE_PHY_TYPE_LOW_100BASE_TX ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_1000BASE_T ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_1000BASE_KX ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_2500BASE_T ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_2500BASE_KX ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_5GBASE_T ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_5GBASE_KR ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_10GBASE_T ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_10GBASE_KR_CR1 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_25GBASE_T ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_25GBASE_CR ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_25GBASE_CR_S ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_25GBASE_CR1 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_25GBASE_KR ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_25GBASE_KR_S ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_25GBASE_KR1 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_40GBASE_CR4 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_40GBASE_KR4) {
-		ethtool_link_ksettings_add_link_mode(ks, supported,
-						     Autoneg);
-		ethtool_link_ksettings_add_link_mode(ks, advertising,
-						     Autoneg);
-	}
-	if (phy_types_low & ICE_PHY_TYPE_LOW_50GBASE_CR2 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_50GBASE_KR2 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_50GBASE_CP ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_50GBASE_KR_PAM4) {
-		ethtool_link_ksettings_add_link_mode(ks, supported,
-						     Autoneg);
-		ethtool_link_ksettings_add_link_mode(ks, advertising,
-						     Autoneg);
-	}
-	if (phy_types_low & ICE_PHY_TYPE_LOW_100GBASE_CR4 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_100GBASE_KR4 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4 ||
-	    phy_types_low & ICE_PHY_TYPE_LOW_100GBASE_CP2) {
-		ethtool_link_ksettings_add_link_mode(ks, supported,
-						     Autoneg);
-		ethtool_link_ksettings_add_link_mode(ks, advertising,
-						     Autoneg);
-	}
 }
 
 #define TEST_SET_BITS_TIMEOUT	50
@@ -3142,9 +3119,7 @@ ice_get_link_ksettings(struct net_device *netdev,
 		ks->base.port = PORT_TP;
 		break;
 	case ICE_MEDIA_BACKPLANE:
-		ethtool_link_ksettings_add_link_mode(ks, supported, Autoneg);
 		ethtool_link_ksettings_add_link_mode(ks, supported, Backplane);
-		ethtool_link_ksettings_add_link_mode(ks, advertising, Autoneg);
 		ethtool_link_ksettings_add_link_mode(ks, advertising,
 						     Backplane);
 		ks->base.port = PORT_NONE;
@@ -3203,6 +3178,7 @@ ice_get_link_ksettings(struct net_device *netdev,
 	if (caps->link_fec_options & ICE_AQC_PHY_FEC_25G_RS_528_REQ ||
 	    caps->link_fec_options & ICE_AQC_PHY_FEC_25G_RS_544_REQ)
 		ethtool_link_ksettings_add_link_mode(ks, advertising, FEC_RS);
+#endif /* ETHTOOL_GFECPARAM */
 
 	status = ice_aq_get_phy_caps(vsi->port_info, false,
 				     ICE_AQC_REPORT_TOPO_CAP_MEDIA, caps, NULL);
@@ -3211,6 +3187,7 @@ ice_get_link_ksettings(struct net_device *netdev,
 		goto done;
 	}
 
+#ifdef ETHTOOL_GFECPARAM
 	/* Set supported FEC modes based on PHY capability */
 	ethtool_link_ksettings_add_link_mode(ks, supported, FEC_NONE);
 
@@ -3219,8 +3196,14 @@ ice_get_link_ksettings(struct net_device *netdev,
 		ethtool_link_ksettings_add_link_mode(ks, supported, FEC_BASER);
 	if (caps->link_fec_options & ICE_AQC_PHY_FEC_25G_RS_CLAUSE91_EN)
 		ethtool_link_ksettings_add_link_mode(ks, supported, FEC_RS);
-
 #endif /* ETHTOOL_GFECPARAM */
+
+	/* Set supported and advertised autoneg */
+	if (ice_is_phy_caps_an_enabled(caps)) {
+		ethtool_link_ksettings_add_link_mode(ks, supported, Autoneg);
+		ethtool_link_ksettings_add_link_mode(ks, advertising, Autoneg);
+	}
+
 done:
 	kfree(caps);
 	return err;
@@ -3613,39 +3596,28 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 	case ICE_PHY_TYPE_LOW_100BASE_TX:
 	case ICE_PHY_TYPE_LOW_100M_SGMII:
 		ecmd->supported = SUPPORTED_100baseT_Full;
-		if (phy_types_low == ICE_PHY_TYPE_LOW_100M_SGMII) {
-			ecmd->supported |= SUPPORTED_Autoneg;
-			ecmd->advertising = ADVERTISED_Autoneg |
-					    ADVERTISED_100baseT_Full;
-		}
+		if (phy_types_low == ICE_PHY_TYPE_LOW_100M_SGMII)
+			ecmd->advertising = ADVERTISED_100baseT_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_1000BASE_T:
 	case ICE_PHY_TYPE_LOW_1000BASE_SX:
 	case ICE_PHY_TYPE_LOW_1000BASE_LX:
 	case ICE_PHY_TYPE_LOW_1G_SGMII:
 		ecmd->supported = SUPPORTED_1000baseT_Full;
-		if (phy_types_low == ICE_PHY_TYPE_LOW_1000BASE_T) {
-			ecmd->supported |= SUPPORTED_Autoneg;
-			ecmd->advertising = ADVERTISED_Autoneg |
-				ADVERTISED_1000baseT_Full;
-		}
+		if (phy_types_low == ICE_PHY_TYPE_LOW_1000BASE_T)
+			ecmd->advertising = ADVERTISED_1000baseT_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_1000BASE_KX:
-		ecmd->supported = SUPPORTED_Autoneg |
-			SUPPORTED_1000baseKX_Full;
-		ecmd->advertising = ADVERTISED_Autoneg |
-			ADVERTISED_1000baseKX_Full;
+		ecmd->supported = SUPPORTED_1000baseKX_Full;
+		ecmd->advertising = ADVERTISED_1000baseKX_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_2500BASE_T:
 	case ICE_PHY_TYPE_LOW_2500BASE_X:
 	case ICE_PHY_TYPE_LOW_2500BASE_KX:
 		ecmd->supported = SUPPORTED_2500baseX_Full;
 		if (phy_types_low == ICE_PHY_TYPE_LOW_2500BASE_T ||
-		    phy_types_low == ICE_PHY_TYPE_LOW_2500BASE_KX) {
-			ecmd->supported |= SUPPORTED_Autoneg;
-			ecmd->advertising = ADVERTISED_Autoneg |
-				ADVERTISED_2500baseX_Full;
-		}
+		    phy_types_low == ICE_PHY_TYPE_LOW_2500BASE_KX)
+			ecmd->advertising = ADVERTISED_2500baseX_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_10GBASE_T:
 	case ICE_PHY_TYPE_LOW_10G_SFI_DA:
@@ -3654,27 +3626,19 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 	case ICE_PHY_TYPE_LOW_10GBASE_SR:
 	case ICE_PHY_TYPE_LOW_10GBASE_LR:
 		ecmd->supported = SUPPORTED_10000baseT_Full;
-		if (phy_types_low == ICE_PHY_TYPE_LOW_10GBASE_T) {
-			ecmd->supported |= SUPPORTED_Autoneg;
-			ecmd->advertising = ADVERTISED_Autoneg |
-				ADVERTISED_10000baseT_Full;
-		}
+		if (phy_types_low == ICE_PHY_TYPE_LOW_10GBASE_T)
+			ecmd->advertising = ADVERTISED_10000baseT_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_10GBASE_KR_CR1:
-		ecmd->supported = SUPPORTED_Autoneg |
-			SUPPORTED_10000baseKR_Full;
-		ecmd->advertising = ADVERTISED_Autoneg |
-			ADVERTISED_10000baseKR_Full;
+		ecmd->supported = SUPPORTED_10000baseKR_Full;
+		ecmd->advertising = ADVERTISED_10000baseKR_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_40GBASE_CR4:
 	case ICE_PHY_TYPE_LOW_40G_XLAUI_AOC_ACC:
 	case ICE_PHY_TYPE_LOW_40G_XLAUI:
 		ecmd->supported = SUPPORTED_40000baseCR4_Full;
-		if (phy_types_low == ICE_PHY_TYPE_LOW_40GBASE_CR4) {
-			ecmd->supported |= SUPPORTED_Autoneg;
-			ecmd->advertising = ADVERTISED_Autoneg |
-				ADVERTISED_40000baseCR4_Full;
-		}
+		if (phy_types_low == ICE_PHY_TYPE_LOW_40GBASE_CR4)
+			ecmd->advertising = ADVERTISED_40000baseCR4_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_40GBASE_SR4:
 		ecmd->supported = SUPPORTED_40000baseSR4_Full;
@@ -3683,10 +3647,8 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 		ecmd->supported = SUPPORTED_40000baseLR4_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_40GBASE_KR4:
-		ecmd->supported = SUPPORTED_Autoneg |
-			SUPPORTED_40000baseKR4_Full;
-		ecmd->advertising = ADVERTISED_Autoneg |
-			ADVERTISED_40000baseKR4_Full;
+		ecmd->supported = SUPPORTED_40000baseKR4_Full;
+		ecmd->advertising = ADVERTISED_40000baseKR4_Full;
 		break;
 	default:
 		/* if we got here and link is up something bad is afoot */
@@ -3769,8 +3731,10 @@ ice_get_legacy_settings_link_down(struct ethtool_cmd *ecmd,
 static int ice_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_aqc_get_phy_caps_data *caps;
 	struct ice_link_status *hw_link_info;
 	struct ice_vsi *vsi = np->vsi;
+	enum ice_status status;
 	bool link_up;
 
 	hw_link_info = &vsi->port_info->phy.link_info;
@@ -3799,8 +3763,8 @@ static int ice_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 		ecmd->port = PORT_TP;
 		break;
 	case ICE_MEDIA_BACKPLANE:
-		ecmd->supported |= SUPPORTED_Autoneg | SUPPORTED_Backplane;
-		ecmd->advertising |= ADVERTISED_Autoneg | ADVERTISED_Backplane;
+		ecmd->supported |= SUPPORTED_Backplane;
+		ecmd->advertising |= ADVERTISED_Backplane;
 		ecmd->port = PORT_NONE;
 		break;
 	case ICE_MEDIA_DA:
@@ -3811,6 +3775,25 @@ static int ice_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	default:
 		ecmd->port = PORT_OTHER;
 		break;
+	}
+
+	caps = kzalloc(sizeof(*caps), GFP_KERNEL);
+	if (!caps)
+		return -ENOMEM;
+
+	status = ice_aq_get_phy_caps(vsi->port_info, false,
+				     ICE_AQC_REPORT_TOPO_CAP_MEDIA, caps, NULL);
+	if (status) {
+		dev_dbg(ice_pf_to_dev(vsi->back), "get PHY caps failed, status %s\n",
+			ice_stat_str(status));
+		kfree(caps);
+		return -EIO;
+	}
+
+	/* Set supported and advertised autoneg */
+	if (ice_is_phy_caps_an_enabled(caps)) {
+		ecmd->supported |= SUPPORTED_Autoneg;
+		ecmd->advertising |= ADVERTISED_Autoneg;
 	}
 
 	ecmd->transceiver = XCVR_EXTERNAL;
@@ -3834,6 +3817,8 @@ static int ice_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 				       ADVERTISED_Asym_Pause);
 		break;
 	}
+
+	kfree(caps);
 	return 0;
 }
 
@@ -5869,8 +5854,7 @@ ice_get_module_eeprom(struct net_device *netdev,
 							   !is_sfp, value,
 							   SFF_READ_BLOCK_SIZE,
 							   0, NULL);
-				netdev_dbg(netdev,
-					   "SFF %02X %02X %02X %X = %02X%02X%02X%02X.%02X%02X%02X%02X (%X)\n",
+				netdev_dbg(netdev, "SFF %02X %02X %02X %X = %02X%02X%02X%02X.%02X%02X%02X%02X (%X)\n",
 					   addr, offset, page, is_sfp,
 					   value[0], value[1], value[2], value[3],
 					   value[4], value[5], value[6], value[7],
@@ -5999,6 +5983,23 @@ void ice_set_ethtool_safe_mode_ops(struct net_device *netdev)
 	netdev->ethtool_ops = &ice_ethtool_safe_mode_ops;
 }
 
+
+static const struct ethtool_ops ice_ethtool_repr_ops = {
+	.get_drvinfo		= ice_get_drvinfo,
+	.get_link		= ethtool_op_get_link,
+	.get_strings		= ice_get_strings,
+	.get_ethtool_stats      = ice_get_ethtool_stats,
+	.get_sset_count		= ice_get_sset_count,
+};
+
+/**
+ * ice_set_ethtool_repr_ops - setup VF's port representor ethtool ops
+ * @netdev: network interface device structure
+ */
+void ice_set_ethtool_repr_ops(struct net_device *netdev)
+{
+	netdev->ethtool_ops = &ice_ethtool_repr_ops;
+}
 
 /**
  * ice_set_ethtool_recovery_ops - setup FW recovery ethtool ops

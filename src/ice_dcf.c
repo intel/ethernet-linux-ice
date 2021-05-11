@@ -197,7 +197,7 @@ bool ice_is_dcf_enabled(struct ice_pf *pf)
 }
 
 /**
- * ice_vf_is_dcf - helper to check if the assigned VF is a DCF
+ * ice_is_vf_dcf - helper to check if the assigned VF is a DCF
  * @vf: the assigned VF to be checked
  */
 bool ice_is_vf_dcf(struct ice_vf *vf)

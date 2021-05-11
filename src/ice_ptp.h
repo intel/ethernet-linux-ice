@@ -8,6 +8,7 @@
 #include <linux/net_tstamp.h>
 #include <linux/ptp_clock_kernel.h>
 #include <linux/ptp_classify.h>
+#include <linux/highuid.h>
 
 enum tmr_cmd {
 	INIT_TIME,
@@ -50,6 +51,13 @@ enum ice_ptp_fec_algo {
 };
 
 
+struct ice_perout_channel {
+	bool ena;
+	u32 gpio_pin;
+	u64 period;
+	u64 start_time;
+};
+
 #define MAC_RX_LINK_COUNTER(_port)	(0x600090 + 0x1000 * (_port))
 #define PFTSYN_SEM_BYTES		4
 #define PTP_SHARED_CLK_IDX_VALID	BIT(31)
@@ -76,6 +84,7 @@ enum ice_ptp_fec_algo {
 #define GLTSYN_CLKO(_chan, _idx)	(GLTSYN_CLKO_0(_idx) + ((_chan) * 8))
 #define GLTSYN_TGT_L(_chan, _idx)	(GLTSYN_TGT_L_0(_idx) + ((_chan) * 16))
 #define GLTSYN_TGT_H(_chan, _idx)	(GLTSYN_TGT_H_0(_idx) + ((_chan) * 16))
+#define GLTSYN_TGT_H_IDX_MAX		4
 /* Pin definitions for PTP PPS out */
 #define PPS_CLK_GEN_CHAN		3
 #define PPS_PIN_INDEX			5
@@ -90,12 +99,10 @@ enum ice_ptp_fec_algo {
 #define TS_EXT(_a, _port, _idx) ((_a) + (0x1000 * (_port)) +                   \
 				 ((_idx) * BYTES_PER_IDX_ADDR_L_U))
 /* Macros to derive port low and high addresses on both quads */
-#define P_Q0_L(_a, _p) ICE_LO_WORD(((_a) + (0x2000 * (_p))))
-#define P_Q0_H(_a, _p) ICE_HI_WORD(((_a) + (0x2000 * (_p))))
-#define P_Q1_L(_a, _p) ICE_LO_WORD(((_a) - (0x2000 * ((_p) -                   \
-						      ICE_PORTS_PER_QUAD))))
-#define P_Q1_H(_a, _p) ICE_HI_WORD(((_a) - (0x2000 * ((_p) -                   \
-						      ICE_PORTS_PER_QUAD))))
+#define P_Q0_L(_a, _p) low_16_bits(((_a) + (0x2000 * (_p))))
+#define P_Q0_H(_a, _p) high_16_bits(((_a) + (0x2000 * (_p))))
+#define P_Q1_L(_a, _p) low_16_bits(((_a) - (0x2000 * ((_p) - ICE_PORTS_PER_QUAD))))
+#define P_Q1_H(_a, _p) high_16_bits(((_a) - (0x2000 * ((_p) - ICE_PORTS_PER_QUAD))))
 /* PHY QUAD register base addresses */
 #define Q_0_BASE			0x94000
 #define Q_1_BASE			0x114000
@@ -290,11 +297,14 @@ static inline int ice_get_ptp_clock_index(struct ice_pf __always_unused *pf)
 {
 	return 0;
 }
-#define ice_clean_ptp_subtask(pf)			do {} while (0)
-#define ice_ptp_set_timestamp_offsets(pf)		do {} while (0)
-#define ice_ptp_rx_hwtstamp(r, d, s)			do {} while (0)
-#define ice_ptp_init(pf)				do {} while (0)
-#define ice_ptp_release(pf)				do {} while (0)
-#define ice_ptp_link_change(pf, port, linkup)		do {} while (0)
+static inline void ice_clean_ptp_subtask(struct ice_pf *pf) { }
+static inline void ice_ptp_set_timestamp_offsets(struct ice_pf *pf) { }
+static inline void ice_ptp_rx_hwtstamp(struct ice_ring *rx_ring,
+				       union ice_32b_rx_flex_desc *rx_desc,
+				       struct sk_buff *skb) { }
+static inline void ice_ptp_init(struct ice_pf *pf) { }
+static inline void ice_ptp_release(struct ice_pf *pf) { }
+static inline int ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup)
+{ return 0; }
 #endif /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
 #endif /* _ICE_PTP_H_ */

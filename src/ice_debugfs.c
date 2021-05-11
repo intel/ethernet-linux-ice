@@ -145,31 +145,31 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 	dev_info(dev, "| Category - Switching |");
 	dev_info(dev, "========================\n");
 	dev_info(dev, "\tSwitch ID: %u\n", info->sw_id);
-	dev_info(dev, "\tAllow Loopback: %s\n", info->sw_flags &
-		 ICE_AQ_VSI_SW_FLAG_ALLOW_LB ? "enabled" : "disabled");
-	dev_info(dev, "\tAllow Local Loopback: %s\n", info->sw_flags &
-		 ICE_AQ_VSI_SW_FLAG_LOCAL_LB ? "enabled" : "disabled");
-	dev_info(dev, "\tApply source VSI pruning: %s\n", info->sw_flags &
-		 ICE_AQ_VSI_SW_FLAG_SRC_PRUNE ? "enabled" : "disabled");
+	dev_info(dev, "\tAllow Loopback: %s\n", (info->sw_flags &
+		 ICE_AQ_VSI_SW_FLAG_ALLOW_LB) ? "enabled" : "disabled");
+	dev_info(dev, "\tAllow Local Loopback: %s\n", (info->sw_flags &
+		 ICE_AQ_VSI_SW_FLAG_LOCAL_LB) ? "enabled" : "disabled");
+	dev_info(dev, "\tApply source VSI pruning: %s\n", (info->sw_flags &
+		 ICE_AQ_VSI_SW_FLAG_SRC_PRUNE) ? "enabled" : "disabled");
 	dev_info(dev, "\tEgress (Rx VLAN) pruning: %s\n",
-		 info->sw_flags2 & ICE_AQ_VSI_SW_FLAG_RX_PRUNE_EN_M ?
+		 (info->sw_flags2 & ICE_AQ_VSI_SW_FLAG_RX_PRUNE_EN_M) ?
 		 "enabled" : "disabled");
-	dev_info(dev, "\tLAN enable: %s\n", info->sw_flags2 &
-		 ICE_AQ_VSI_SW_FLAG_LAN_ENA ? "enabled" : "disabled");
+	dev_info(dev, "\tLAN enable: %s\n", (info->sw_flags2 &
+		 ICE_AQ_VSI_SW_FLAG_LAN_ENA) ? "enabled" : "disabled");
 	dev_info(dev, "\tVEB statistic block ID: %u\n", info->veb_stat_id &
 		 ICE_AQ_VSI_SW_VEB_STAT_ID_M);
 	dev_info(dev, "\tVEB statistic block ID valid: %d\n",
-		 info->veb_stat_id & ICE_AQ_VSI_SW_VEB_STAT_ID_VALID ? 1 : 0);
+		 (info->veb_stat_id & ICE_AQ_VSI_SW_VEB_STAT_ID_VALID) ? 1 : 0);
 
 	dev_info(dev, "=======================\n");
 	dev_info(dev, "| Category - Security |\n");
 	dev_info(dev, "=======================\n");
-	dev_info(dev, "\tAllow destination override: %s\n", info->sec_flags &
-		 ICE_AQ_VSI_SEC_FLAG_ALLOW_DEST_OVRD ? "enabled" : "disabled");
-	dev_info(dev, "\tEnable MAC anti-spoof: %s\n", info->sec_flags &
-		 ICE_AQ_VSI_SEC_FLAG_ENA_MAC_ANTI_SPOOF ? "enabled" : "disabled");
+	dev_info(dev, "\tAllow destination override: %s\n", (info->sec_flags &
+		 ICE_AQ_VSI_SEC_FLAG_ALLOW_DEST_OVRD) ? "enabled" : "disabled");
+	dev_info(dev, "\tEnable MAC anti-spoof: %s\n", (info->sec_flags &
+		 ICE_AQ_VSI_SEC_FLAG_ENA_MAC_ANTI_SPOOF) ? "enabled" : "disabled");
 	dev_info(dev, "\tIngress (Tx VLAN) pruning enables: %s\n",
-		 info->sec_flags & ICE_AQ_VSI_SEC_TX_PRUNE_ENA_M ?
+		 (info->sec_flags & ICE_AQ_VSI_SEC_TX_PRUNE_ENA_M) ?
 		 "enabled" : "disabled");
 
 	dev_info(dev, "=================================\n");
@@ -182,13 +182,13 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 	dev_info(dev, "\tInner VLAN TX Mode: 0x%02x\n",
 		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_TX_MODE_M) >>
 		 ICE_AQ_VSI_INNER_VLAN_TX_MODE_S);
-	dev_info(dev, "\tInsert PVID: %s\n", info->inner_vlan_flags &
-		 ICE_AQ_VSI_INNER_VLAN_INSERT_PVID ? "enabled" : "disabled");
+	dev_info(dev, "\tInsert PVID: %s\n", (info->inner_vlan_flags &
+		 ICE_AQ_VSI_INNER_VLAN_INSERT_PVID) ? "enabled" : "disabled");
 	dev_info(dev, "\tInner VLAN and UP expose mode (RX): 0x%02x\n",
 		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_EMODE_M) >>
 		 ICE_AQ_VSI_INNER_VLAN_EMODE_S);
 	dev_info(dev, "\tBlock Inner VLAN from TX Descriptor: %s\n",
-		 info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_BLOCK_TX_DESC ?
+		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_BLOCK_TX_DESC) ?
 		 "enabled" : "disabled");
 
 	dev_info(dev, "=================================\n");
@@ -205,14 +205,14 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_TAG_TYPE_M) >>
 		 ICE_AQ_VSI_OUTER_TAG_TYPE_S);
 	dev_info(dev, "\tPort Based Outer VLAN Insert Enable: %s\n",
-		 info->outer_vlan_flags &
-		 ICE_AQ_VSI_OUTER_VLAN_PORT_BASED_INSERT ?
+		 (info->outer_vlan_flags &
+		 ICE_AQ_VSI_OUTER_VLAN_PORT_BASED_INSERT) ?
 		 "enabled" : "disabled");
 	dev_info(dev, "\tOuter VLAN TX Mode: 0x%02x\n",
 		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M) >>
 		 ICE_AQ_VSI_OUTER_VLAN_TX_MODE_S);
 	dev_info(dev, "\tBlock Outer VLAN from TX Descriptor: %s\n",
-		 info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_BLOCK_TX_DESC ?
+		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_BLOCK_TX_DESC) ?
 		 "enabled" : "disabled");
 }
 
@@ -231,7 +231,7 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
 	char *cmd_buf, *cmd_buf_tmp;
-	ssize_t ret = 0;
+	ssize_t ret;
 	char **argv;
 	int argc;
 
@@ -374,8 +374,10 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 			goto command_help;
 
 		buff = devm_kzalloc(dev, ICE_LLDPDU_SIZE, GFP_KERNEL);
-		if (!buff)
+		if (!buff) {
+			ret = -ENOMEM;
 			goto command_write_done;
+		}
 
 		ret = ice_aq_get_lldp_mib(hw,
 					  ICE_AQ_LLDP_BRID_TYPE_NEAREST_BRID,
@@ -455,8 +457,7 @@ command_help:
 #ifdef ICE_ADD_PROBES
 		dev_info(dev, "\t dump arfs_stats\n");
 #endif /* ICE_ADD_PROBES */
-		if (ret >= 0)
-			ret = -EINVAL;
+		ret = -EINVAL;
 		goto command_write_done;
 	}
 
