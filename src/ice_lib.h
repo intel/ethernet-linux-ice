@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_LIB_H_
 #define _ICE_LIB_H_
@@ -111,9 +111,6 @@ void ice_write_itr(struct ice_ring_container *rc, u16 itr);
 
 enum ice_status
 ice_vsi_cfg_mac_fltr(struct ice_vsi *vsi, const u8 *macaddr, bool set);
-#ifdef FWLOG_SUPPORT
-void ice_setup_fw_log(struct ice_pf *pf, u8 level, u32 events);
-#endif /* FWLOG_SUPPORT */
 bool ice_is_safe_mode(struct ice_pf *pf);
 bool ice_is_peer_ena(struct ice_pf *pf);
 bool ice_is_dflt_vsi_in_use(struct ice_sw *sw);
@@ -136,4 +133,8 @@ int ice_vsi_add_vlan_zero(struct ice_vsi *vsi);
 int ice_vsi_del_vlan_zero(struct ice_vsi *vsi);
 bool ice_vsi_has_non_zero_vlans(struct ice_vsi *vsi);
 u16 ice_vsi_num_non_zero_vlans(struct ice_vsi *vsi);
+bool ice_is_feature_supported(struct ice_pf *pf, enum ice_feature f);
+void ice_set_feature_support(struct ice_pf *pf, enum ice_feature f);
+void ice_clear_feature_support(struct ice_pf *pf, enum ice_feature f);
+void ice_init_feature_support(struct ice_pf *pf);
 #endif /* !_ICE_LIB_H_ */

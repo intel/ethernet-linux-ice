@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2018-2019, Intel Corporation.
+# Copyright (C) 2018-2021, Intel Corporation.
 
 # updates for the system pci.ids file
 #
@@ -11,8 +11,9 @@
 8086  Intel Corporation
 	124c  Ethernet Connection E823-L for backplane
 	124d  Ethernet Connection E823-L for SFP
-		1028 0abb  Ethernet Connection 10G 4P E823-L-st LOM
-		1028 0abc  Ethernet Connection 10G 4P E823-L-st LOM
+		1028 0abd  Ethernet Connection 25G 4P E823-C-st LOM
+		1028 0abe  Ethernet Connection 25G 4P E823-C-st LOM
+		1028 0ac0  Ethernet Connection 25G 4P E823-C-st LOM
 	124e  Ethernet Connection E823-L/X557-AT 10GBASE-T
 	124f  Ethernet Connection E823-L 1GbE
 	151d  Ethernet Connection E823-L for QSFP
@@ -35,7 +36,7 @@
 		8086 0009  Ethernet Network Adapter E810-XXV-2 for OCP 2.0
 		8086 000a  Ethernet 25G 4P E810-XXV Adapter
 		8086 000c  Ethernet Network Adapter E810-XXV-4 for OCP 3.0
-		8086 000d  Ethernet 25G 4P E810-XXV-4T OCP
+		8086 000d  Ethernet 25G 4P E810-XXV OCP
 		8086 000e  Ethernet Network Adapter E810-XXV-4T
 	1599  Ethernet Controller E810-XXV for backplane
 	159a  Ethernet Controller E810-XXV for QSFP

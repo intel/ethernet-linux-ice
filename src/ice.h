@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_H_
 #define _ICE_H_
@@ -138,12 +138,7 @@ extern const char ice_drv_ver[];
 #endif
 #define ICE_DFLT_TRAFFIC_CLASS	BIT(0)
 #define ICE_INT_NAME_STR_LEN	(IFNAMSIZ + 16)
-#ifdef FWLOG_SUPPORT
-/* if FW logging is on, then bump the admin q size to avoid overflows */
-#define ICE_AQ_LEN		1023
-#else
 #define ICE_AQ_LEN		192
-#endif /* FWLOG_SUPPORT */
 #define ICE_MBXSQ_LEN		64
 #define ICE_SBQ_LEN		64
 #define ICE_FDIR_MSIX		2
@@ -251,6 +246,17 @@ extern const char ice_drv_ver[];
 
 #define ice_pf_to_dev(pf) (&((pf)->pdev->dev))
 
+struct ice_fwlog_user_input {
+	unsigned long events;
+	u8 log_level;
+};
+
+enum ice_feature {
+	ICE_F_DSCP,
+	ICE_F_PTP_EXTTS,
+	ICE_F_MAX
+};
+
 
 enum ice_channel_fltr_type {
 	ICE_CHNL_FLTR_TYPE_INVALID,
@@ -340,13 +346,6 @@ struct ice_sw {
 	u16 bridge_mode;	/* VEB/VEPA/Port Virtualizer */
 	struct ice_vsi *dflt_vsi;	/* default VSI for this switch */
 	u8 dflt_vsi_ena:1;	/* true if above dflt_vsi is enabled */
-	u16 stats_id;			/* stats counter for this switch */
-	u16 flags;
-	struct ice_eth_stats stats;
-	struct ice_eth_stats stats_prev;
-	struct ice_veb_up_stats veb_stats;
-	struct ice_veb_up_stats veb_stats_prev;
-	u8 stat_offsets_loaded:1;
 };
 
 enum ice_pf_state {
@@ -384,6 +383,7 @@ enum ice_pf_state {
 	ICE_CFG_BUSY,
 	ICE_SERVICE_SCHED,
 	ICE_PTP_TX_TS_READY,
+	ICE_PTP_EXT_TS_READY,
 	ICE_SERVICE_DIS,
 	ICE_FD_FLUSH_REQ,
 	ICE_OICR_INTR_DIS,		/* Global OICR interrupt disabled */
@@ -429,154 +429,6 @@ enum ice_chnl_feature {
 	ICE_CHNL_FEATURE_PKT_CLEAN_BP_STOP_ENA,
 	ICE_CHNL_FEATURE_NBITS		/* must be last */
 };
-
-#ifdef HAVE_TC_SETUP_CLSFLOWER
-#define ICE_TC_FLWR_FIELD_DST_MAC		BIT(0)
-#define ICE_TC_FLWR_FIELD_SRC_MAC		BIT(1)
-#define ICE_TC_FLWR_FIELD_VLAN			BIT(2)
-#define ICE_TC_FLWR_FIELD_DEST_IPV4		BIT(3)
-#define ICE_TC_FLWR_FIELD_SRC_IPV4		BIT(4)
-#define ICE_TC_FLWR_FIELD_DEST_IPV6		BIT(5)
-#define ICE_TC_FLWR_FIELD_SRC_IPV6		BIT(6)
-#define ICE_TC_FLWR_FIELD_DEST_L4_PORT		BIT(7)
-#define ICE_TC_FLWR_FIELD_SRC_L4_PORT		BIT(8)
-#define ICE_TC_FLWR_FIELD_TENANT_ID		BIT(9)
-#define ICE_TC_FLWR_FIELD_ENC_DEST_IPV4		BIT(10)
-#define ICE_TC_FLWR_FIELD_ENC_SRC_IPV4		BIT(11)
-#define ICE_TC_FLWR_FIELD_ENC_DEST_IPV6		BIT(12)
-#define ICE_TC_FLWR_FIELD_ENC_SRC_IPV6		BIT(13)
-#define ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT	BIT(14)
-#define ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT	BIT(15)
-#define ICE_TC_FLWR_FIELD_ENC_DST_MAC		BIT(16)
-#define ICE_TC_FLWR_FIELD_ETH_TYPE_ID		BIT(17)
-
-/* TC flower supported filter match */
-#define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC		ICE_TC_FLWR_FIELD_DST_MAC
-#define ICE_TC_FLWR_FLTR_FLAGS_VLAN		ICE_TC_FLWR_FIELD_VLAN
-#define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN	(ICE_TC_FLWR_FIELD_DST_MAC | \
-						 ICE_TC_FLWR_FIELD_VLAN)
-#define ICE_TC_FLWR_FLTR_FLAGS_IPV4_DST_PORT	(ICE_TC_FLWR_FIELD_DEST_IPV4 | \
-						 ICE_TC_FLWR_FIELD_DEST_L4_PORT)
-#define ICE_TC_FLWR_FLTR_FLAGS_IPV4_SRC_PORT	(ICE_TC_FLWR_FIELD_DEST_IPV4 | \
-						 ICE_TC_FLWR_FIELD_SRC_L4_PORT)
-#define ICE_TC_FLWR_FLTR_FLAGS_IPV6_DST_PORT	(ICE_TC_FLWR_FIELD_DEST_IPV6 | \
-						 ICE_TC_FLWR_FIELD_DEST_L4_PORT)
-#define ICE_TC_FLWR_FLTR_FLAGS_IPV6_SRC_PORT	(ICE_TC_FLWR_FIELD_DEST_IPV6 | \
-						 ICE_TC_FLWR_FIELD_SRC_L4_PORT)
-
-#define ICE_TC_FLOWER_MASK_32	0xFFFFFFFF
-#define ICE_TC_FLOWER_MASK_16	0xFFFF
-#define ICE_TC_FLOWER_VNI_MAX	0xFFFFFFU
-
-#ifdef HAVE_TC_INDIR_BLOCK
-struct ice_indr_block_priv {
-	struct net_device *netdev;
-	struct ice_netdev_priv *np;
-	struct list_head list;
-};
-#endif /* HAVE_TC_INDIR_BLOCK */
-
-struct ice_tc_flower_action {
-	u32 tc_class;
-	enum ice_sw_fwd_act_type fltr_act;
-};
-
-struct ice_tc_vlan_hdr {
-	__be16 vlan_id; /* Only last 12 bits valid */
-#ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
-	u16 vlan_prio; /* Only last 3 bits valid (valid values: 0..7) */
-#endif
-};
-
-struct ice_tc_l2_hdr {
-	u8 dst_mac[ETH_ALEN];
-	u8 src_mac[ETH_ALEN];
-	__be16 n_proto;    /* Ethernet Protocol */
-};
-
-struct ice_tc_l3_hdr {
-	u8 ip_proto;    /* IPPROTO value */
-	union {
-		struct {
-			struct in_addr dst_ip;
-			struct in_addr src_ip;
-		} v4;
-		struct {
-			struct in6_addr dst_ip6;
-			struct in6_addr src_ip6;
-		} v6;
-	} ip;
-#define dst_ipv6	ip.v6.dst_ip6.s6_addr32
-#define dst_ipv6_addr	ip.v6.dst_ip6.s6_addr
-#define src_ipv6	ip.v6.src_ip6.s6_addr32
-#define src_ipv6_addr	ip.v6.src_ip6.s6_addr
-#define dst_ipv4	ip.v4.dst_ip.s_addr
-#define src_ipv4	ip.v4.src_ip.s_addr
-
-	u8 tos;
-	u8 ttl;
-};
-
-struct ice_tc_l4_hdr {
-	__be16 dst_port;
-	__be16 src_port;
-};
-
-struct ice_tc_flower_lyr_2_4_hdrs {
-	/* L2 layer fields with their mask */
-	struct ice_tc_l2_hdr l2_key;
-	struct ice_tc_l2_hdr l2_mask;
-	struct ice_tc_vlan_hdr vlan_hdr;
-	/* L3 (IPv4[6]) layer fields with their mask */
-	struct ice_tc_l3_hdr l3_key;
-	struct ice_tc_l3_hdr l3_mask;
-
-	/* L4 layer fields with their mask */
-	struct ice_tc_l4_hdr l4_key;
-	struct ice_tc_l4_hdr l4_mask;
-};
-
-enum ice_eswitch_fltr_direction {
-	ICE_ESWITCH_FLTR_INGRESS,
-	ICE_ESWITCH_FLTR_EGRESS,
-};
-
-struct ice_tc_flower_fltr {
-	struct hlist_node tc_flower_node;
-
-	/* cookie becomes filter_rule_id if rule is added successfully */
-	unsigned long cookie;
-
-	/* add_adv_rule returns information like recipe ID, rule_id. Store
-	 * those values since they are needed to remove advanced rule
-	 */
-	u16 rid;
-	u16 rule_id;
-	/* this could be queue/vsi_idx (sw handle)/queue_group, depending upon
-	 * destination type
-	 */
-	u16 dest_id;
-	/* if dest_id is vsi_idx, then need to store destination VSI ptr */
-	struct ice_vsi *dest_vsi;
-	/* direction of fltr for eswitch use case */
-	enum ice_eswitch_fltr_direction direction;
-
-	/* Parsed TC flower configuration params */
-	struct ice_tc_flower_lyr_2_4_hdrs outer_headers;
-	struct ice_tc_flower_lyr_2_4_hdrs inner_headers;
-	struct ice_vsi *src_vsi;
-	__be32 tenant_id;
-	u32 flags;
-#define ICE_TC_FLWR_TNL_TYPE_NONE        0xff
-	u8 tunnel_type;
-	struct ice_tc_flower_action	action;
-
-	/* cache ptr which is used wherever needed to communicate netlink
-	 * messages
-	 */
-	struct netlink_ext_ack *extack;
-};
-#endif /* HAVE_TC_SETUP_CLSFLOWER */
 
 /* This is to be used only when channels are configured, to track state
  * at PF level, whether it should use RSS or inline flow-director and this
@@ -699,13 +551,8 @@ struct ice_vsi {
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 	DECLARE_BITMAP(ptp_tx_idx, INDEX_PER_QUAD);
 	struct sk_buff *ptp_tx_skb[INDEX_PER_QUAD];
-	struct hwtstamp_config tstamp_config;
-	struct ptp_clock_info ptp_caps;
-	struct ptp_clock *ptp_clock;
 	u32 tx_hwtstamp_skipped;
 	u8 ptp_tx:1;
-	enum ice_time_ref_freq time_ref_freq;
-	enum ice_src_tmr_mode src_tmr_mode;
 
 	/* Channel Specific Fields */
 	struct ice_vsi *tc_map_vsi[ICE_CHNL_MAX_TC];
@@ -945,7 +792,6 @@ enum ice_pf_flags {
 	ICE_FLAG_CHNL_PKT_INSPECT_OPT_ENA,
 	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA,
 	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG,
-	ICE_FLAG_CHNL_GTP_OUTER_IPV6,
 	ICE_FLAG_MOD_POWER_UNSUPPORTED,
 	ICE_FLAG_ETHTOOL_CTXT,		/* set when ethtool holds RTNL lock */
 	ICE_FLAG_LEGACY_RX,
@@ -991,7 +837,6 @@ struct ice_tnl_entry {
 	u8 ref_cnt;
 	struct list_head node;
 };
-
 
 struct ice_agg_node {
 	u32 agg_id;
@@ -1049,6 +894,7 @@ struct ice_pf {
 	/* used to ratelimit the MDD event logging */
 	unsigned long last_printed_mdd_jiffies;
 	DECLARE_BITMAP(malvfs, ICE_MAX_VF_COUNT);
+	DECLARE_BITMAP(features, ICE_F_MAX);
 	DECLARE_BITMAP(state, ICE_STATE_NBITS);
 	DECLARE_BITMAP(flags, ICE_PF_FLAGS_NBITS);
 	unsigned long *avail_txqs;	/* bitmap to track PF Tx queue usage */
@@ -1061,21 +907,7 @@ struct ice_pf {
 	struct mutex sw_mutex;		/* lock for protecting VSI alloc flow */
 	struct mutex tc_mutex;		/* lock to protect TC changes */
 	u32 msg_enable;
-	u64 cached_systime;
-	u8 ptp_tx_ts_ena;
-	u8 ptp_one_pps_out_ena;
-	atomic_t ptp_phy_reset_lock;
-	struct workqueue_struct *ov_wq;
-	/* bitmap of ports timestamp offset calculated */
-	atomic_t ptp_tx_offset_ready;
-	atomic_t ptp_rx_offset_ready;
-	atomic_t ptp_tx_offset_lock;
-	atomic_t ptp_rx_offset_lock;
-	struct mutex ptp_ps_lock; /* protects access to PTP PHY start */
-	u8 ptp_link_up;
-	u8 ptp_ts_ena;
-	u8 ptp_tx_fifo_busy_cnt;
-	struct ice_perout_channel *perout_channels;
+	struct ice_ptp ptp;
 	struct ice_cgu_info cgu_info;
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
@@ -1345,30 +1177,6 @@ ice_force_wb(struct ice_hw *hw, struct ice_q_vector *q_vector)
 	 */
 	q_vector->wb_on_itr = true;
 }
-
-#ifdef HAVE_TC_SETUP_CLSFLOWER
-/**
- * ice_is_chnl_fltr - is this a valid channel filter
- * @f: Pointer to tc-flower filter
- *
- * Criteria to determine of given filter is valid channel filter
- * or not is based on its "destination". If destination is hw_tc (aka tc_class)
- * and it is non-zero, then it is valid channel (aka ADQ) filter
- */
-static inline bool ice_is_chnl_fltr(struct ice_tc_flower_fltr *f)
-{
-	return !!f->action.tc_class;
-}
-
-/**
- * ice_chnl_dmac_fltr_cnt - DMAC based CHNL filter count
- * @pf: Pointer to PF
- */
-static inline int ice_chnl_dmac_fltr_cnt(struct ice_pf *pf)
-{
-	return pf->num_dmac_chnl_fltrs;
-}
-#endif /* HAVE_TC_SETUP_CLSFLOWER */
 
 /**
  * ice_irq_dynamic_ena - Enable default interrupt generation settings
@@ -1887,24 +1695,4 @@ void ice_service_task_schedule(struct ice_pf *pf);
 int
 ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_init_acl(struct ice_pf *pf);
-#ifdef HAVE_TC_SETUP_CLSFLOWER
-int
-ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
-			   struct ice_tc_flower_fltr *tc_fltr);
-#endif /* HAVE_TC_SETUP_CLSFLOWER */
-#ifdef HAVE_TC_SETUP_CLSFLOWER
-void ice_replay_tc_fltrs(struct ice_pf *pf);
-#endif /* HAVE_TC_SETUP_CLSFLOWER */
-#ifdef NETIF_F_HW_TC
-int
-ice_del_cls_flower(struct ice_vsi *vsi, struct flow_cls_offload *cls_flower);
-#ifdef HAVE_TC_INDIR_BLOCK
-int ice_add_cls_flower(struct net_device *netdev, struct ice_vsi *vsi,
-		       struct flow_cls_offload *cls_flower);
-#else
-int ice_add_cls_flower(struct net_device __always_unused *netdev,
-		       struct ice_vsi *vsi,
-		       struct tc_cls_flower_offload *cls_flower);
-#endif /* HAVE_TC_INDIR_BLOCK */
-#endif /* NETIF_F_HW_TC */
 #endif /* _ICE_H_ */

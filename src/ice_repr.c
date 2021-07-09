@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice.h"
 #include "ice_eswitch.h"
@@ -7,6 +7,7 @@
 #include "ice_devlink.h"
 #endif /* CONFIG_NET_DEVLINK */
 #include "ice_virtchnl_pf.h"
+#include "ice_tc_lib.h"
 
 #ifdef HAVE_NDO_GET_PHYS_PORT_NAME
 /**
@@ -58,8 +59,16 @@ static struct rtnl_link_stats64 *
 ice_repr_get_stats64(struct net_device *netdev, struct rtnl_link_stats64 *stats)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_vsi *vsi = np->repr->src_vsi;
 	struct ice_eth_stats *eth_stats;
+	struct ice_vsi *vsi;
+
+	if (ice_check_vf_ready_for_cfg(np->repr->vf))
+#ifdef HAVE_VOID_NDO_GET_STATS64
+		return;
+#else
+		return stats;
+#endif
+	vsi = np->repr->src_vsi;
 
 	ice_update_vsi_stats(vsi);
 	eth_stats = &vsi->eth_stats;
@@ -84,26 +93,11 @@ ice_repr_get_stats64(struct net_device *netdev, struct rtnl_link_stats64 *stats)
  * ice_netdev_to_repr - Get port representor for given netdevice
  * @netdev: pointer to port representor netdev
  */
-#ifdef HAVE_METADATA_PORT_INFO
 struct ice_repr *ice_netdev_to_repr(struct net_device *netdev)
-#else
-static struct ice_repr *ice_netdev_to_repr(struct net_device *netdev)
-#endif /* HAVE_METADATA_PORT_INFO */
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 
 	return np->repr;
-}
-
-/**
- * ice_is_port_repr_netdev - Check if a given netdevice is a port representor netdev
- * @netdev: pointer to netdev
- */
-bool ice_is_port_repr_netdev(struct net_device *netdev)
-{
-	struct ice_netdev_priv *np = netdev_priv(netdev);
-
-	return !!(np->repr);
 }
 
 /**
@@ -168,6 +162,7 @@ ice_repr_get_devlink_port(struct net_device *netdev)
 }
 #endif /* CONFIG_NET_DEVLINK && HAVE_DEVLINK_PORT_ATTR_PCI_VF*/
 
+#ifdef HAVE_TC_SETUP_CLSFLOWER
 static int
 ice_repr_setup_tc_cls_flower(struct ice_repr *repr,
 			     struct flow_cls_offload *flower)
@@ -181,7 +176,6 @@ ice_repr_setup_tc_cls_flower(struct ice_repr *repr,
 		return -EINVAL;
 	}
 }
-
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 static int
 ice_repr_setup_tc_block_cb(enum tc_setup_type type, void *type_data,
@@ -240,6 +234,7 @@ ice_repr_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 		return -EOPNOTSUPP;
 	}
 }
+#endif /* ESWITCH_SUPPORT */
 
 static const struct net_device_ops ice_repr_netdev_ops = {
 #ifdef HAVE_NDO_GET_PHYS_PORT_NAME
@@ -253,13 +248,25 @@ static const struct net_device_ops ice_repr_netdev_ops = {
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
 	.ndo_get_devlink_port = ice_repr_get_devlink_port,
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
+#ifdef HAVE_TC_SETUP_CLSFLOWER
 #ifdef HAVE_RHEL7_NETDEV_OPS_EXT_NDO_SETUP_TC
 	.extended.ndo_setup_tc_rh = ice_repr_setup_tc,
 #else
 	.ndo_setup_tc = ice_repr_setup_tc,
-#endif /* ADQ_SUPPORT */
+#endif /* HAVE_RHEL7_NETDEV_OPS_EXT_NDO_SETUP_TC */
+#endif /* HAVE_TC_SETUP_CLSFLOWER */
 #endif /* CONFIG_NET_DEVLINK */
 };
+
+/**
+ * ice_is_port_repr_netdev - Check if a given netdevice is a port representor
+ * netdev
+ * @netdev: pointer to netdev
+ */
+bool ice_is_port_repr_netdev(struct net_device *netdev)
+{
+	return netdev && (netdev->netdev_ops == &ice_repr_netdev_ops);
+}
 
 /**
  * ice_repr_reg_netdev - register port representor netdev
@@ -385,17 +392,25 @@ int ice_repr_add_for_all_vfs(struct ice_pf *pf)
 	int i;
 
 
-	ice_vc_change_ops_to_repr();
 	ice_for_each_vf(pf, i) {
-		err = ice_repr_add(&pf->vf[i]);
+		struct ice_vf *vf = &pf->vf[i];
+
+		err = ice_repr_add(vf);
 		if (err)
 			goto err;
+
+		ice_vc_change_ops_to_repr(&vf->vc_ops);
 	}
+
 	return 0;
 
 err:
-	for (i = i - 1; i >= 0; i--)
-		ice_repr_rem(&pf->vf[i]);
+	for (i = i - 1; i >= 0; i--) {
+		struct ice_vf *vf = &pf->vf[i];
+
+		ice_repr_rem(vf);
+		ice_vc_set_dflt_vf_ops(&vf->vc_ops);
+	}
 
 	return err;
 }
@@ -409,10 +424,12 @@ void ice_repr_rem_from_all_vfs(struct ice_pf *pf)
 	int i;
 
 
-	ice_for_each_vf(pf, i)
-		ice_repr_rem(&pf->vf[i]);
+	ice_for_each_vf(pf, i) {
+		struct ice_vf *vf = &pf->vf[i];
 
-	ice_vc_change_ops_to_default();
+		ice_repr_rem(vf);
+		ice_vc_set_dflt_vf_ops(&vf->vc_ops);
+	}
 }
 
 /**

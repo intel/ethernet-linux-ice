@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_IDC_INT_H_
 #define _ICE_IDC_INT_H_
 
 #include "ice.h"
 #include "ice_idc.h"
+
 
 enum ice_peer_obj_state {
 	ICE_PEER_OBJ_STATE_INIT,

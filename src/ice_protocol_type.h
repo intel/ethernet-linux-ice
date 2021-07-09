@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_PROTOCOL_TYPE_H_
 #define _ICE_PROTOCOL_TYPE_H_
@@ -52,6 +52,7 @@ enum ice_protocol_type {
 	ICE_NAT_T,
 	ICE_GTP_NO_PAY,
 	ICE_VLAN_EX,
+	ICE_VLAN_IN,
 	ICE_PROTOCOL_LAST
 };
 
@@ -75,10 +76,20 @@ enum ice_sw_tunnel_type {
 	ICE_SW_TUN_IPV6_GTP_IPV4_UDP,
 	ICE_SW_TUN_IPV6_GTP_IPV6_TCP,
 	ICE_SW_TUN_IPV6_GTP_IPV6_UDP,
+
+	/* following adds support for GTP, just using inner protocols,
+	 * outer L3 and L4 protocols can be anything
+	 */
+	ICE_SW_TUN_GTP_IPV4_TCP,
+	ICE_SW_TUN_GTP_IPV4_UDP,
+	ICE_SW_TUN_GTP_IPV6_TCP,
+	ICE_SW_TUN_GTP_IPV6_UDP,
 	ICE_SW_TUN_IPV4_GTPU_IPV4,
 	ICE_SW_TUN_IPV4_GTPU_IPV6,
 	ICE_SW_TUN_IPV6_GTPU_IPV4,
 	ICE_SW_TUN_IPV6_GTPU_IPV6,
+	ICE_SW_TUN_GTP_IPV4,
+	ICE_SW_TUN_GTP_IPV6,
 	ICE_ALL_TUNNELS /* All tunnel types including NVGRE */
 };
 
@@ -124,6 +135,7 @@ enum ice_prot_id {
 	ICE_PROT_PPPOE		= 103,
 	ICE_PROT_L2TPV3		= 104,
 	ICE_PROT_ECPRI		= 105,
+	ICE_PROT_PPP		= 106,
 	ICE_PROT_ATAOE_OF	= 114,
 	ICE_PROT_CTRL_OF	= 116,
 	ICE_PROT_LLDP_OF	= 117,

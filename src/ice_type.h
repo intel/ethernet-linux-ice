@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_TYPE_H_
 #define _ICE_TYPE_H_
@@ -28,6 +28,7 @@
 #include "ice_protocol_type.h"
 #include "ice_sbq_cmd.h"
 #include "ice_vlan_mode.h"
+#include "ice_fwlog.h"
 
 
 
@@ -78,6 +79,7 @@ static inline u32 ice_round_to_num(u32 N, u32 R)
 #define ICE_DBG_PKG		BIT_ULL(16)
 #define ICE_DBG_RES		BIT_ULL(17)
 #define ICE_DBG_ACL		BIT_ULL(18)
+#define ICE_DBG_PTP		BIT_ULL(19)
 #define ICE_DBG_AQ_MSG		BIT_ULL(24)
 #define ICE_DBG_AQ_DESC		BIT_ULL(25)
 #define ICE_DBG_AQ_DESC_BUF	BIT_ULL(26)
@@ -303,6 +305,7 @@ enum ice_fltr_ptype {
 	ICE_FLTR_PTYPE_NONF_ECPRI_TP0,
 	ICE_FLTR_PTYPE_NONF_IPV4_UDP_ECPRI_TP0,
 	ICE_FLTR_PTYPE_FRAG_IPV4,
+	ICE_FLTR_PTYPE_FRAG_IPV6,
 	ICE_FLTR_PTYPE_NONF_IPV6_UDP,
 	ICE_FLTR_PTYPE_NONF_IPV6_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV6_SCTP,
@@ -419,6 +422,19 @@ struct ice_hw_common_caps {
 #define ICE_NVM_MGMT_SEC_REV_DISABLED		BIT(0)
 #define ICE_NVM_MGMT_UPDATE_DISABLED		BIT(1)
 #define ICE_NVM_MGMT_UNIFIED_UPD_SUPPORT	BIT(3)
+
+	/* External topology device images within the NVM */
+#define ICE_EXT_TOPO_DEV_IMG_COUNT	4
+	u32 ext_topo_dev_img_ver_high[ICE_EXT_TOPO_DEV_IMG_COUNT];
+	u32 ext_topo_dev_img_ver_low[ICE_EXT_TOPO_DEV_IMG_COUNT];
+	u8 ext_topo_dev_img_part_num[ICE_EXT_TOPO_DEV_IMG_COUNT];
+#define ICE_EXT_TOPO_DEV_IMG_PART_NUM_S	8
+#define ICE_EXT_TOPO_DEV_IMG_PART_NUM_M	\
+		ICE_M(0xFF, ICE_EXT_TOPO_DEV_IMG_PART_NUM_S)
+	bool ext_topo_dev_img_load_en[ICE_EXT_TOPO_DEV_IMG_COUNT];
+#define ICE_EXT_TOPO_DEV_IMG_LOAD_EN	BIT(0)
+	bool ext_topo_dev_img_prog_en[ICE_EXT_TOPO_DEV_IMG_COUNT];
+#define ICE_EXT_TOPO_DEV_IMG_PROG_EN	BIT(1)
 };
 
 /* IEEE 1588 TIME_SYNC specific info */
@@ -435,9 +451,22 @@ struct ice_hw_common_caps {
 #define ICE_TS_TMR_IDX_ASSOC_S		24
 #define ICE_TS_TMR_IDX_ASSOC_M		BIT(24)
 
+/* TIME_REF clock rate specification */
+enum ice_time_ref_freq {
+	ICE_TIME_REF_FREQ_25_000	= 0,
+	ICE_TIME_REF_FREQ_122_880	= 1,
+	ICE_TIME_REF_FREQ_125_000	= 2,
+	ICE_TIME_REF_FREQ_153_600	= 3,
+	ICE_TIME_REF_FREQ_156_250	= 4,
+	ICE_TIME_REF_FREQ_245_760	= 5,
+
+	NUM_ICE_TIME_REF_FREQ
+};
+
 struct ice_ts_func_info {
 	/* Function specific info */
-	u32 clk_freq;
+	enum ice_time_ref_freq time_ref;
+	u8 clk_freq;
 	u8 clk_src;
 	u8 tmr_index_assoc;
 	u8 ena;
@@ -468,14 +497,6 @@ struct ice_ts_dev_info {
 	u8 tmr0_ena;
 	u8 tmr1_ena;
 };
-
-/* Time Sync Command Definitions */
-#define GLTSYN_CMD_INIT_TIME		BIT(0)
-#define GLTSYN_CMD_INIT_INCVAL		BIT(1)
-#define GLTSYN_CMD_INIT_TIME_INCVAL	(BIT(0) | BIT(1))
-#define GLTSYN_CMD_ADJ_TIME		BIT(2)
-#define GLTSYN_CMD_ADJ_INIT_TIME	(BIT(2) | BIT(3))
-#define GLTSYN_CMD_READ_TIME		BIT(7)
 
 /* Function specific capabilities */
 struct ice_hw_func_caps {
@@ -851,7 +872,8 @@ struct ice_dcb_app_priority_table {
 };
 
 #define ICE_MAX_USER_PRIORITY		8
-#define ICE_DCBX_MAX_APPS		32
+#define ICE_DCBX_MAX_APPS		64
+#define ICE_DSCP_NUM_VAL		64
 #define ICE_LLDPDU_SIZE			1500
 #define ICE_TLV_STATUS_OPER		0x1
 #define ICE_TLV_STATUS_SYNC		0x2
@@ -868,7 +890,14 @@ struct ice_dcbx_cfg {
 	struct ice_dcb_ets_cfg etscfg;
 	struct ice_dcb_ets_cfg etsrec;
 	struct ice_dcb_pfc_cfg pfc;
+#define ICE_QOS_MODE_VLAN	0x0
+#define ICE_QOS_MODE_DSCP	0x1
+	u8 pfc_mode;
 	struct ice_dcb_app_priority_table app[ICE_DCBX_MAX_APPS];
+	/* when DSCP mapping defined by user set its bit to 1 */
+	DECLARE_BITMAP(dscp_mapped, ICE_DSCP_NUM_VAL);
+	/* array holding DSCP -> UP/TC values for DSCP L3 QoS mode */
+	u8 dscp_map[ICE_DSCP_NUM_VAL];
 	u8 dcbx_mode;
 #define ICE_DCBX_MODE_CEE	0x1
 #define ICE_DCBX_MODE_IEEE	0x2
@@ -920,27 +949,6 @@ struct ice_switch_info {
 	DECLARE_BITMAP(prof_res_bm[ICE_MAX_NUM_PROFILES], ICE_MAX_FV_WORDS);
 };
 
-#ifdef FWLOG_SUPPORT
-/* FW logging configuration */
-struct ice_fw_log_evnt {
-	u8 cfg : 4;	/* New event enables to configure */
-	u8 cur : 4;	/* Current/active event enables */
-};
-
-struct ice_fw_log_cfg {
-	u8 cq_en : 1;    /* FW logging is enabled via the control queue */
-	u8 uart_en : 1;  /* FW logging is enabled via UART for all PFs */
-	u8 actv_evnts;   /* Cumulation of currently enabled log events */
-
-#define ICE_FW_LOG_EVNT_INFO	(ICE_AQC_FW_LOG_INFO_EN >> ICE_AQC_FW_LOG_EN_S)
-#define ICE_FW_LOG_EVNT_INIT	(ICE_AQC_FW_LOG_INIT_EN >> ICE_AQC_FW_LOG_EN_S)
-#define ICE_FW_LOG_EVNT_FLOW	(ICE_AQC_FW_LOG_FLOW_EN >> ICE_AQC_FW_LOG_EN_S)
-#define ICE_FW_LOG_EVNT_ERR	(ICE_AQC_FW_LOG_ERR_EN >> ICE_AQC_FW_LOG_EN_S)
-#define ICE_FW_LOG_EVNT_ALL	(ICE_FW_LOG_EVNT_INFO | ICE_FW_LOG_EVNT_INIT | \
-				 ICE_FW_LOG_EVNT_FLOW | ICE_FW_LOG_EVNT_ERR)
-	struct ice_fw_log_evnt evnts[ICE_AQC_FW_LOG_ID_MAX];
-};
-#endif /* FWLOG_SUPPORT */
 
 /* Enum defining the different states of the mailbox snapshot in the
  * PF-VF mailbox overflow detection algorithm. The snapshot can be in
@@ -1080,9 +1088,8 @@ struct ice_hw {
 	u8 fw_patch;		/* firmware patch version */
 	u32 fw_build;		/* firmware build number */
 
-#ifdef FWLOG_SUPPORT
-	struct ice_fw_log_cfg fw_log;
-#endif /* FWLOG_SUPPORT */
+	struct ice_fwlog_cfg fwlog_cfg;
+	bool fwlog_support_ena; /* does hardware support FW logging? */
 
 /* Device max aggregate bandwidths corresponding to the GL_PWR_MODE_CTL
  * register. Used for determining the ITR/INTRL granularity during
@@ -1170,6 +1177,7 @@ struct ice_hw {
 	struct ice_mbx_snapshot mbx_snapshot;
 	DECLARE_BITMAP(hw_ptype, ICE_FLOW_PTYPE_MAX);
 	u8 dvm_ena;
+	__le16 io_expander_handle;
 };
 
 /* Statistics collected by each port, VSI, VEB, and S-channel */

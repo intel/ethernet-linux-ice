@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_IDC_H_
 #define _ICE_IDC_H_
@@ -118,19 +118,8 @@ struct ice_peer_obj;
 struct ice_peer_obj_int;
 
 #define ICE_IDC_MAX_USER_PRIORITY        8
-#define ICE_IDC_MAX_APPS        8
-
-/* TIME_REF clock rate specification */
-enum ice_time_ref_freq {
-	ICE_TIME_REF_FREQ_25_000,
-	ICE_TIME_REF_FREQ_122_880,
-	ICE_TIME_REF_FREQ_125_000,
-	ICE_TIME_REF_FREQ_153_600,
-	ICE_TIME_REF_FREQ_156_250,
-	ICE_TIME_REF_FREQ_245_760,
-
-	NUM_ICE_TIME_REF_FREQ
-};
+#define ICE_IDC_MAX_APPS		64
+#define ICE_IDC_DSCP_NUM_VAL		64
 
 /* Source timer mode */
 enum ice_src_tmr_mode {
@@ -192,6 +181,9 @@ struct ice_qos_info {
 	u8 ingress_virt_up;
 };
 
+#define IDC_QOS_MODE_VLAN       0x0
+#define IDC_QOS_MODE_DSCP       0x1
+
 /* Struct to hold QoS info */
 struct ice_qos_params {
 	struct ice_qos_info tc_info[IEEE_8021QAZ_MAX_TCS];
@@ -199,6 +191,8 @@ struct ice_qos_params {
 	u8 vsi_relative_bw;
 	u8 vsi_priority_type;
 	u32 num_apps;
+	u8 pfc_mode;
+	u8 dscp_map[ICE_IDC_DSCP_NUM_VAL];
 	struct ice_dcb_app_info apps[ICE_IDC_MAX_APPS];
 	u8 num_tc;
 };

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include <linux/fs.h>
 #include <linux/debugfs.h>
@@ -216,6 +216,142 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 		 "enabled" : "disabled");
 }
 
+static const char *module_id_to_name(u16 module_id)
+{
+	switch (module_id) {
+	case ICE_AQC_FW_LOG_ID_GENERAL:
+		return "General";
+	case ICE_AQC_FW_LOG_ID_CTRL:
+		return "Control (Resets + Autoload)";
+	case ICE_AQC_FW_LOG_ID_LINK:
+		return "Link Management";
+	case ICE_AQC_FW_LOG_ID_LINK_TOPO:
+		return "Link Topology Detection";
+	case ICE_AQC_FW_LOG_ID_DNL:
+		return "DNL";
+	case ICE_AQC_FW_LOG_ID_I2C:
+		return "I2C";
+	case ICE_AQC_FW_LOG_ID_SDP:
+		return "SDP";
+	case ICE_AQC_FW_LOG_ID_MDIO:
+		return "MDIO";
+	case ICE_AQC_FW_LOG_ID_ADMINQ:
+		return "Admin Queue";
+	case ICE_AQC_FW_LOG_ID_HDMA:
+		return "HDMA";
+	case ICE_AQC_FW_LOG_ID_LLDP:
+		return "LLDP";
+	case ICE_AQC_FW_LOG_ID_DCBX:
+		return "DCBX";
+	case ICE_AQC_FW_LOG_ID_DCB:
+		return "DCB";
+	case ICE_AQC_FW_LOG_ID_XLR:
+		return "XLR";
+	case ICE_AQC_FW_LOG_ID_NVM:
+		return "NVM";
+	case ICE_AQC_FW_LOG_ID_AUTH:
+		return "Authentication";
+	case ICE_AQC_FW_LOG_ID_VPD:
+		return "VPD";
+	case ICE_AQC_FW_LOG_ID_IOSF:
+		return "IOSF";
+	case ICE_AQC_FW_LOG_ID_PARSER:
+		return "Parser";
+	case ICE_AQC_FW_LOG_ID_SW:
+		return "Switch";
+	case ICE_AQC_FW_LOG_ID_SCHEDULER:
+		return "Scheduler";
+	case ICE_AQC_FW_LOG_ID_TXQ:
+		return "Tx Queue Management";
+	case ICE_AQC_FW_LOG_ID_ACL:
+		return "ACL";
+	case ICE_AQC_FW_LOG_ID_POST:
+		return "Post";
+	case ICE_AQC_FW_LOG_ID_WATCHDOG:
+		return "Watchdog";
+	case ICE_AQC_FW_LOG_ID_TASK_DISPATCH:
+		return "Task Dispatcher";
+	case ICE_AQC_FW_LOG_ID_MNG:
+		return "Manageability";
+	case ICE_AQC_FW_LOG_ID_SYNCE:
+		return "Synce";
+	case ICE_AQC_FW_LOG_ID_HEALTH:
+		return "Health";
+	case ICE_AQC_FW_LOG_ID_TSDRV:
+		return "Time Sync";
+	case ICE_AQC_FW_LOG_ID_PFREG:
+		return "PF Registration";
+	case ICE_AQC_FW_LOG_ID_MDLVER:
+		return "Module Version";
+	default:
+		return "Unsupported";
+	}
+}
+
+static const char *log_level_to_name(u8 log_level)
+{
+	switch (log_level) {
+	case ICE_FWLOG_LEVEL_NONE:
+		return "None";
+	case ICE_FWLOG_LEVEL_ERROR:
+		return "Error";
+	case ICE_FWLOG_LEVEL_WARNING:
+		return "Warning";
+	case ICE_FWLOG_LEVEL_NORMAL:
+		return "Normal";
+	case ICE_FWLOG_LEVEL_VERBOSE:
+		return "Verbose";
+	default:
+		return "Unsupported";
+	}
+}
+
+/**
+ * ice_fwlog_dump_cfg - Dump current FW logging configuration
+ * @hw: pointer to the HW structure
+ */
+static void ice_fwlog_dump_cfg(struct ice_hw *hw)
+{
+	struct device *dev = ice_pf_to_dev((struct ice_pf *)(hw->back));
+	struct ice_fwlog_cfg *cfg;
+	enum ice_status status;
+	u16 i;
+
+	cfg = kzalloc(sizeof(*cfg), GFP_KERNEL);
+	if (!cfg)
+		return;
+
+	status = ice_fwlog_get(hw, cfg);
+	if (status) {
+		kfree(cfg);
+		return;
+	}
+
+	dev_info(dev, "FWLOG Configuration:\n");
+	dev_info(dev, "Options: 0x%04x\n", cfg->options);
+	dev_info(dev, "\tarq_ena: %s\n",
+		 (cfg->options &
+		  ICE_FWLOG_OPTION_ARQ_ENA) ? "true" : "false");
+	dev_info(dev, "\tuart_ena: %s\n",
+		 (cfg->options &
+		  ICE_FWLOG_OPTION_UART_ENA) ? "true" : "false");
+	dev_info(dev, "\tPF registered: %s\n",
+		 (cfg->options &
+		  ICE_FWLOG_OPTION_IS_REGISTERED) ? "true" : "false");
+
+	dev_info(dev, "Module Entries:\n");
+	for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
+		struct ice_fwlog_module_entry *entry =
+			&cfg->module_entries[i];
+
+		dev_info(dev, "\tModule ID %d (%s) Log Level %d (%s)\n",
+			 entry->module_id, module_id_to_name(entry->module_id),
+			 entry->log_level, log_level_to_name(entry->log_level));
+	}
+
+	kfree(cfg);
+}
+
 /**
  * ice_debugfs_command_write - write into command datum
  * @filp: the opened file
@@ -294,6 +430,9 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 	} else if (argc == 2 && !strncmp(argv[0], "dump", 4) &&
 		   !strncmp(argv[1], "capabilities", 11)) {
 		ice_dump_caps(hw);
+	} else if (argc == 2 && !strncmp(argv[0], "dump", 4) &&
+		   !strncmp(argv[1], "fwlog_cfg", 9)) {
+		ice_fwlog_dump_cfg(&pf->hw);
 	} else if (argc == 4 && !strncmp(argv[0], "dump", 4) &&
 		   !strncmp(argv[1], "ptp", 3) &&
 		   !strncmp(argv[2], "func", 4) &&
@@ -437,6 +576,7 @@ command_help:
 		dev_info(dev, "\t dump switch\n");
 		dev_info(dev, "\t dump ports\n");
 		dev_info(dev, "\t dump capabilities\n");
+		dev_info(dev, "\t dump fwlog_cfg\n");
 		dev_info(dev, "\t dump ptp func capabilities\n");
 		dev_info(dev, "\t dump ptp dev capabilities\n");
 		dev_info(dev, "\t dump mmcast\n");

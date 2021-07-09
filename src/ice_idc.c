@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 /* Inter-Driver Communication */
 #include "ice.h"
@@ -1236,8 +1236,8 @@ ice_peer_vc_send(struct ice_peer_obj *peer_obj, u32 vf_id, u8 *msg, u16 len)
 		if (vf_id >= pf->num_alloc_vfs)
 			return -ENODEV;
 
-		/* VIRTCHNL_OP_IWARP is being used for RoCEv2 msg also */
-		status = ice_aq_send_msg_to_vf(&pf->hw, vf_id, VIRTCHNL_OP_IWARP,
+		/* VIRTCHNL_OP_RDMA is being used for RoCEv2 msg also */
+		status = ice_aq_send_msg_to_vf(&pf->hw, vf_id, VIRTCHNL_OP_RDMA,
 					       0, msg, len, NULL);
 		break;
 	default:

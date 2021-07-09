@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice_common.h"
 #include "ice_flex_pipe.h"
@@ -358,7 +358,6 @@ ice_marker_ptype_tcam_handler(u32 sect_type, void *section, u32 index,
 	if (sect_type != ICE_SID_RXPARSER_MARKER_PTYPE)
 		return NULL;
 
-	/* cppcheck-suppress nullPointer */
 	if (index > ICE_MAX_MARKER_PTYPE_TCAMS_IN_BUF)
 		return NULL;
 
@@ -423,7 +422,6 @@ ice_boost_tcam_handler(u32 sect_type, void *section, u32 index, u32 *offset)
 	if (sect_type != ICE_SID_RXPARSER_BOOST_TCAM)
 		return NULL;
 
-	/* cppcheck-suppress nullPointer */
 	if (index > ICE_MAX_BST_TCAMS_IN_BUF)
 		return NULL;
 
@@ -494,7 +492,6 @@ ice_label_enum_handler(u32 __always_unused sect_type, void *section, u32 index,
 	if (!section)
 		return NULL;
 
-	/* cppcheck-suppress nullPointer */
 	if (index > ICE_MAX_LABELS_IN_BUF)
 		return NULL;
 
@@ -1237,7 +1234,7 @@ ice_download_pkg(struct ice_hw *hw, struct ice_seg *ice_seg)
 	status = ice_dwnld_cfg_bufs(hw, ice_buf_tbl->buf_array,
 				    le32_to_cpu(ice_buf_tbl->buf_count));
 
-	ice_cache_vlan_mode(hw);
+	ice_post_pkg_dwnld_vlan_mode_cfg(hw);
 
 	return status;
 }

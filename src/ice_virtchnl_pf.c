@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice.h"
 #include "ice_base.h"
@@ -10,6 +10,8 @@
 #include "ice_virtchnl_allowlist.h"
 #include "ice_vf_vsi_vlan_ops.h"
 #include "ice_vlan.h"
+#include "ice_flex_pipe.h"
+#include "ice_tc_lib.h"
 
 #define FIELD_SELECTOR(proto_hdr_field) \
 		BIT((proto_hdr_field) & PROTO_HDR_FIELD_MASK)
@@ -19,21 +21,7 @@ struct ice_vc_hdr_match_type {
 	u32 ice_hdr;	/* ice headers (ICE_FLOW_SEG_HDR_XXX) */
 };
 
-static const struct ice_vc_hdr_match_type ice_vc_hdr_list_os[] = {
-	{VIRTCHNL_PROTO_HDR_NONE,	ICE_FLOW_SEG_HDR_NONE},
-	{VIRTCHNL_PROTO_HDR_ETH,        ICE_FLOW_SEG_HDR_ETH},
-	{VIRTCHNL_PROTO_HDR_S_VLAN,     ICE_FLOW_SEG_HDR_VLAN},
-	{VIRTCHNL_PROTO_HDR_C_VLAN,     ICE_FLOW_SEG_HDR_VLAN},
-	{VIRTCHNL_PROTO_HDR_IPV4,	ICE_FLOW_SEG_HDR_IPV4 |
-					ICE_FLOW_SEG_HDR_IPV_OTHER},
-	{VIRTCHNL_PROTO_HDR_IPV6,	ICE_FLOW_SEG_HDR_IPV6 |
-					ICE_FLOW_SEG_HDR_IPV_OTHER},
-	{VIRTCHNL_PROTO_HDR_TCP,	ICE_FLOW_SEG_HDR_TCP},
-	{VIRTCHNL_PROTO_HDR_UDP,	ICE_FLOW_SEG_HDR_UDP},
-	{VIRTCHNL_PROTO_HDR_SCTP,	ICE_FLOW_SEG_HDR_SCTP},
-};
-
-static const struct ice_vc_hdr_match_type ice_vc_hdr_list_comms[] = {
+static const struct ice_vc_hdr_match_type ice_vc_hdr_list[] = {
 	{VIRTCHNL_PROTO_HDR_NONE,	ICE_FLOW_SEG_HDR_NONE},
 	{VIRTCHNL_PROTO_HDR_ETH,	ICE_FLOW_SEG_HDR_ETH},
 	{VIRTCHNL_PROTO_HDR_S_VLAN,	ICE_FLOW_SEG_HDR_VLAN},
@@ -57,59 +45,10 @@ static const struct ice_vc_hdr_match_type ice_vc_hdr_list_comms[] = {
 	{VIRTCHNL_PROTO_HDR_AH,		ICE_FLOW_SEG_HDR_AH},
 	{VIRTCHNL_PROTO_HDR_PFCP,	ICE_FLOW_SEG_HDR_PFCP_SESSION},
 	{VIRTCHNL_PROTO_HDR_GTPC,	ICE_FLOW_SEG_HDR_GTPC},
-};
-
-/* Header list for wireless edge */
-static const struct ice_vc_hdr_match_type ice_vc_hdr_list_we[] = {
-	{VIRTCHNL_PROTO_HDR_NONE,	ICE_FLOW_SEG_HDR_NONE},
-	{VIRTCHNL_PROTO_HDR_ETH,	ICE_FLOW_SEG_HDR_ETH},
-	{VIRTCHNL_PROTO_HDR_S_VLAN,	ICE_FLOW_SEG_HDR_VLAN},
-	{VIRTCHNL_PROTO_HDR_C_VLAN,	ICE_FLOW_SEG_HDR_VLAN},
-	{VIRTCHNL_PROTO_HDR_IPV4,	ICE_FLOW_SEG_HDR_IPV4 |
-					ICE_FLOW_SEG_HDR_IPV_OTHER},
-	{VIRTCHNL_PROTO_HDR_IPV6,	ICE_FLOW_SEG_HDR_IPV6 |
-					ICE_FLOW_SEG_HDR_IPV_OTHER},
-	{VIRTCHNL_PROTO_HDR_TCP,	ICE_FLOW_SEG_HDR_TCP},
-	{VIRTCHNL_PROTO_HDR_UDP,	ICE_FLOW_SEG_HDR_UDP},
-	{VIRTCHNL_PROTO_HDR_SCTP,	ICE_FLOW_SEG_HDR_SCTP},
-	{VIRTCHNL_PROTO_HDR_GTPU_IP,	ICE_FLOW_SEG_HDR_GTPU_IP},
-	{VIRTCHNL_PROTO_HDR_GTPU_EH,	ICE_FLOW_SEG_HDR_GTPU_EH},
-	{VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN,
-					ICE_FLOW_SEG_HDR_GTPU_DWN},
-	{VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP,
-					ICE_FLOW_SEG_HDR_GTPU_UP},
-	{VIRTCHNL_PROTO_HDR_ESP,	ICE_FLOW_SEG_HDR_ESP},
-	{VIRTCHNL_PROTO_HDR_AH,		ICE_FLOW_SEG_HDR_AH},
-	{VIRTCHNL_PROTO_HDR_GTPC,	ICE_FLOW_SEG_HDR_GTPC},
 	{VIRTCHNL_PROTO_HDR_ECPRI,	ICE_FLOW_SEG_HDR_ECPRI_TP0 |
 					ICE_FLOW_SEG_HDR_UDP_ECPRI_TP0},
-};
-
-/* Header list for GTPoGRE */
-static const struct ice_vc_hdr_match_type ice_vc_hdr_list_gtpogre[] = {
-	{VIRTCHNL_PROTO_HDR_NONE,       ICE_FLOW_SEG_HDR_NONE},
-	{VIRTCHNL_PROTO_HDR_ETH,        ICE_FLOW_SEG_HDR_ETH},
-	{VIRTCHNL_PROTO_HDR_S_VLAN,	ICE_FLOW_SEG_HDR_VLAN},
-	{VIRTCHNL_PROTO_HDR_C_VLAN,	ICE_FLOW_SEG_HDR_VLAN},
-	{VIRTCHNL_PROTO_HDR_IPV4,       ICE_FLOW_SEG_HDR_IPV4 |
-					ICE_FLOW_SEG_HDR_IPV_OTHER},
-	{VIRTCHNL_PROTO_HDR_IPV6,       ICE_FLOW_SEG_HDR_IPV6 |
-					ICE_FLOW_SEG_HDR_IPV_OTHER},
-	{VIRTCHNL_PROTO_HDR_TCP,        ICE_FLOW_SEG_HDR_TCP},
-	{VIRTCHNL_PROTO_HDR_UDP,        ICE_FLOW_SEG_HDR_UDP},
-	{VIRTCHNL_PROTO_HDR_SCTP,       ICE_FLOW_SEG_HDR_SCTP},
-	{VIRTCHNL_PROTO_HDR_PPPOE,      ICE_FLOW_SEG_HDR_PPPOE},
-	{VIRTCHNL_PROTO_HDR_GTPU_IP,    ICE_FLOW_SEG_HDR_GTPU_IP},
-	{VIRTCHNL_PROTO_HDR_GTPU_EH,    ICE_FLOW_SEG_HDR_GTPU_EH},
-	{VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN,
-					ICE_FLOW_SEG_HDR_GTPU_DWN},
-	{VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP,
-					ICE_FLOW_SEG_HDR_GTPU_UP},
-	{VIRTCHNL_PROTO_HDR_L2TPV3,     ICE_FLOW_SEG_HDR_L2TPV3},
-	{VIRTCHNL_PROTO_HDR_ESP,        ICE_FLOW_SEG_HDR_ESP},
-	{VIRTCHNL_PROTO_HDR_AH,         ICE_FLOW_SEG_HDR_AH},
-	{VIRTCHNL_PROTO_HDR_PFCP,       ICE_FLOW_SEG_HDR_PFCP_SESSION},
-	{VIRTCHNL_PROTO_HDR_GTPC,       ICE_FLOW_SEG_HDR_GTPC},
+	{VIRTCHNL_PROTO_HDR_L2TPV2,	ICE_FLOW_SEG_HDR_L2TPV2},
+	{VIRTCHNL_PROTO_HDR_PPP,	ICE_FLOW_SEG_HDR_PPP},
 };
 
 struct ice_vc_hash_field_match_type {
@@ -125,99 +64,7 @@ struct ice_vc_hash_field_match_type {
 };
 
 static const struct
-ice_vc_hash_field_match_type ice_vc_hash_field_list_os[] = {
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_SA)},
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_DA)},
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
-		ICE_FLOW_HASH_ETH},
-	{VIRTCHNL_PROTO_HDR_ETH,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_ETHERTYPE),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_TYPE)},
-	{VIRTCHNL_PROTO_HDR_S_VLAN,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_S_VLAN_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_S_VLAN)},
-	{VIRTCHNL_PROTO_HDR_C_VLAN,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_C_VLAN_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_C_VLAN)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
-		ICE_FLOW_HASH_IPV4},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		ICE_FLOW_HASH_IPV4 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
-		ICE_FLOW_HASH_IPV6},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		ICE_FLOW_HASH_IPV6 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
-		ICE_FLOW_HASH_TCP_PORT},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
-		ICE_FLOW_HASH_UDP_PORT},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
-		ICE_FLOW_HASH_SCTP_PORT},
-};
-
-static const struct
-ice_vc_hash_field_match_type ice_vc_hash_field_list_comms[] = {
+ice_vc_hash_field_match_type ice_vc_hash_field_list[] = {
 	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC),
 		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_SA)},
 	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
@@ -347,135 +194,6 @@ ice_vc_hash_field_match_type ice_vc_hash_field_list_comms[] = {
 		BIT_ULL(ICE_FLOW_FIELD_IDX_AH_SPI)},
 	{VIRTCHNL_PROTO_HDR_PFCP, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_PFCP_SEID),
 		BIT_ULL(ICE_FLOW_FIELD_IDX_PFCP_SEID)},
-	{VIRTCHNL_PROTO_HDR_GTPC,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_GTPC_TEID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_GTPC_TEID)},
-};
-
-/* Field list for wireless edge */
-static const struct
-ice_vc_hash_field_match_type ice_vc_hash_field_list_we[] = {
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_SA)},
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_DA)},
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
-		ICE_FLOW_HASH_ETH},
-	{VIRTCHNL_PROTO_HDR_ETH,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_ETHERTYPE),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_TYPE)},
-	{VIRTCHNL_PROTO_HDR_S_VLAN,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_S_VLAN_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_S_VLAN)},
-	{VIRTCHNL_PROTO_HDR_C_VLAN,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_C_VLAN_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_C_VLAN)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
-		ICE_FLOW_HASH_IPV4},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		ICE_FLOW_HASH_IPV4 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
-		ICE_FLOW_HASH_IPV6},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		ICE_FLOW_HASH_IPV6 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST),
-		ICE_FLOW_HASH_IPV6_PRE64},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		ICE_FLOW_HASH_IPV6_PRE64 |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
-		ICE_FLOW_HASH_TCP_PORT},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
-		ICE_FLOW_HASH_UDP_PORT},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
-		ICE_FLOW_HASH_SCTP_PORT},
-	{VIRTCHNL_PROTO_HDR_GTPU_IP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_GTPU_IP_TEID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_GTPU_IP_TEID)},
-	{VIRTCHNL_PROTO_HDR_ESP, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ESP_SPI),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ESP_SPI)},
-	{VIRTCHNL_PROTO_HDR_AH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_AH_SPI),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_AH_SPI)},
 	{VIRTCHNL_PROTO_HDR_GTPC,
 		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_GTPC_TEID),
 		BIT_ULL(ICE_FLOW_FIELD_IDX_GTPC_TEID)},
@@ -483,143 +201,6 @@ ice_vc_hash_field_match_type ice_vc_hash_field_list_we[] = {
 		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ECPRI_PC_RTC_ID),
 		BIT_ULL(ICE_FLOW_FIELD_IDX_ECPRI_TP0_PC_ID) |
 		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_ECPRI_TP0_PC_ID)},
-};
-
-/* Field list for GTPoGRE */
-static const struct
-ice_vc_hash_field_match_type ice_vc_hash_field_list_gtpogre[] = {
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_SA)},
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_DA)},
-	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
-		ICE_FLOW_HASH_ETH},
-	{VIRTCHNL_PROTO_HDR_ETH,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_ETHERTYPE),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_TYPE)},
-	{VIRTCHNL_PROTO_HDR_S_VLAN,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_S_VLAN_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_S_VLAN)},
-	{VIRTCHNL_PROTO_HDR_C_VLAN,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_C_VLAN_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_C_VLAN)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
-		ICE_FLOW_HASH_IPV4},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		ICE_FLOW_HASH_IPV4 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
-		ICE_FLOW_HASH_IPV6},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		ICE_FLOW_HASH_IPV6 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST),
-		ICE_FLOW_HASH_IPV6_PRE64},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_SA)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_DA)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		ICE_FLOW_HASH_IPV6_PRE64 |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_SRC) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_SA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_IPV6,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PREFIX64_DST) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PRE64_DA) |
-		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_TCP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
-		ICE_FLOW_HASH_TCP_PORT},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_UDP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
-		ICE_FLOW_HASH_UDP_PORT},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT)},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_DST_PORT)},
-	{VIRTCHNL_PROTO_HDR_SCTP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT) |
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
-		ICE_FLOW_HASH_SCTP_PORT},
-	{VIRTCHNL_PROTO_HDR_PPPOE,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_PPPOE_SESS_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_PPPOE_SESS_ID)},
-	{VIRTCHNL_PROTO_HDR_GTPU_IP,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_GTPU_IP_TEID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_GTPU_IP_TEID)},
-	{VIRTCHNL_PROTO_HDR_L2TPV3,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_L2TPV3_SESS_ID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_L2TPV3_SESS_ID)},
-	{VIRTCHNL_PROTO_HDR_ESP, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ESP_SPI),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_ESP_SPI)},
-	{VIRTCHNL_PROTO_HDR_AH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_AH_SPI),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_AH_SPI)},
-	{VIRTCHNL_PROTO_HDR_PFCP, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_PFCP_SEID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_PFCP_SEID)},
-	{VIRTCHNL_PROTO_HDR_GTPC,
-		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_GTPC_TEID),
-		BIT_ULL(ICE_FLOW_FIELD_IDX_GTPC_TEID)},
 };
 
 /**
@@ -2377,9 +1958,6 @@ static void ice_vf_rebuild_adq_tx_rate_cfg(struct ice_vf *vf)
 		if (!ice_vf_adq_vsi_valid(vf, tc))
 			continue;
 
-		/* TODO: Determine if it's correct for the host/admin
-		 * configuration to have priority over VF ADQ Tx rate limiting.
-		 */
 		max_tx_rate = vf->ch[tc].max_tx_rate;
 		if (!max_tx_rate)
 			continue;
@@ -2725,6 +2303,62 @@ static bool ice_is_vf_disabled(struct ice_vf *vf)
 }
 
 /**
+ * ice_vf_get_glint_ceqctl_idx - get the GLINT_CEQCTL index relative to the PF
+ * @vf: VF used to get the index
+ * @ceq_idx: 0-based index from the VF
+ *
+ * Use the VF relative (0-based) CEQ index plus the first PF MSI-X index
+ * assigned to this VF (relative to the PF's MSIX space) to determine the index
+ * of the GLINT_CEQCTL register
+ */
+static u16 ice_vf_get_glint_ceqctl_idx(struct ice_vf *vf, u16 ceq_idx)
+{
+	return vf->first_vector_idx + ceq_idx;
+}
+
+/**
+ * ice_vf_clear_ceq_irq_map - clear the CEQ IRQ mapping
+ * @vf: VF used to clear the mapping
+ * @ceq_idx: VF relative (0-based) CEQ index
+ */
+static void ice_vf_clear_ceq_irq_map(struct ice_vf *vf, u16 ceq_idx)
+{
+	u16 glint_ceqctl_idx = ice_vf_get_glint_ceqctl_idx(vf, ceq_idx);
+
+	wr32(&vf->pf->hw, GLINT_CEQCTL(glint_ceqctl_idx), 0);
+}
+
+/**
+ * ice_vf_clear_aeq_irq_map - clear the AEQ IRQ mapping
+ * @vf: VF used to clear the mapping
+ */
+static void ice_vf_clear_aeq_irq_map(struct ice_vf *vf)
+{
+	wr32(&vf->pf->hw, VPINT_AEQCTL(vf->vf_id), 0);
+}
+
+/**
+ * ice_vf_clear_rdma_irq_map - clear the RDMA IRQ mapping
+ * @vf: VF used to clear the mapping
+ *
+ * Clear any RDMA IRQ mapping that a VF might have requested. Since the number
+ * of CEQ indices are never greater than the num_msix_per_vf just clear all CEQ
+ * indices that are possibly associated to this VF. Also clear the AEQ for this
+ * VF. Doing it this way prevents the need to cache the configuration received
+ * on VIRTCHNL_OP_CONFIG_RMDA_IRQ_MAP since VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP is
+ * designed to clear the entire RDMA IRQ mapping configuration.
+ */
+static void ice_vf_clear_rdma_irq_map(struct ice_vf *vf)
+{
+	u16 i;
+
+	for (i = 0; i < vf->pf->num_msix_per_vf; i++)
+		ice_vf_clear_ceq_irq_map(vf, i);
+
+	ice_vf_clear_aeq_irq_map(vf);
+}
+
+/**
  * ice_reset_vf - Reset a particular VF
  * @vf: pointer to the VF structure
  * @is_vflr: true if VFLR was issued, false if not
@@ -2787,6 +2421,9 @@ bool ice_reset_vf(struct ice_vf *vf, bool is_vflr)
 		}
 	}
 
+	if (vf->driver_caps & VIRTCHNL_VF_CAP_RDMA)
+		ice_vf_clear_rdma_irq_map(vf);
+
 	hw = &pf->hw;
 	/* poll VPGEN_VFRSTAT reg to make sure
 	 * that reset is complete
@@ -2825,7 +2462,6 @@ bool ice_reset_vf(struct ice_vf *vf, bool is_vflr)
 		else
 			promisc_m = ICE_UCAST_PROMISC_BITS;
 
-		vsi = ice_get_vf_vsi(vf);
 		if (ice_vf_clear_vsi_promisc(vf, vsi, promisc_m))
 			dev_err(dev, "disabling promiscuous mode failed\n");
 	}
@@ -3083,6 +2719,8 @@ static void ice_set_dflt_settings_vfs(struct ice_pf *pf)
 		ice_vf_fdir_init(vf);
 
 		ice_vf_hash_ctx_init(vf);
+
+		ice_vc_set_dflt_vf_ops(&vf->vc_ops);
 	}
 }
 
@@ -3154,6 +2792,11 @@ static int ice_ena_vfs(struct ice_pf *pf, u16 num_vfs)
 
 	if (ice_eswitch_configure(pf))
 		goto err_unroll_sriov;
+
+	/* rearm global interrupts */
+	if (test_and_clear_bit(ICE_OICR_INTR_DIS, pf->state))
+		ice_irq_dynamic_ena(hw, NULL, NULL);
+
 	return 0;
 
 err_unroll_sriov:
@@ -3848,6 +3491,122 @@ enum ice_pkg_type ice_pkg_name_to_type(struct ice_hw *hw)
 };
 
 /**
+ * ice_vc_validate_pattern
+ * @vf: pointer to the VF info
+ * @proto: virtchnl protocol headers
+ *
+ * validate the pattern is supported or not.
+ *
+ * Return: true on success, false on error.
+ */
+bool
+ice_vc_validate_pattern(struct ice_vf *vf, struct virtchnl_proto_hdrs *proto)
+{
+	bool is_l2tpv2 = false;
+	bool is_ipv4 = false;
+	bool is_ipv6 = false;
+	bool is_udp = false;
+	u16 ptype = -1;
+	int i = 0;
+
+	while (i < proto->count &&
+	       proto->proto_hdr[i].type != VIRTCHNL_PROTO_HDR_NONE) {
+		switch (proto->proto_hdr[i].type) {
+		case VIRTCHNL_PROTO_HDR_ETH:
+			ptype = ICE_PTYPE_MAC_PAY;
+			break;
+		case VIRTCHNL_PROTO_HDR_IPV4:
+			ptype = ICE_PTYPE_IPV4_PAY;
+			is_ipv4 = true;
+			break;
+		case VIRTCHNL_PROTO_HDR_IPV6:
+			ptype = ICE_PTYPE_IPV6_PAY;
+			is_ipv6 = true;
+			break;
+		case VIRTCHNL_PROTO_HDR_UDP:
+			if (is_ipv4)
+				ptype = ICE_PTYPE_IPV4_UDP_PAY;
+			else if (is_ipv6)
+				ptype = ICE_PTYPE_IPV6_UDP_PAY;
+			is_udp = true;
+			break;
+		case VIRTCHNL_PROTO_HDR_TCP:
+			if (is_ipv4)
+				ptype = ICE_PTYPE_IPV4_TCP_PAY;
+			else if (is_ipv6)
+				ptype = ICE_PTYPE_IPV6_TCP_PAY;
+			break;
+		case VIRTCHNL_PROTO_HDR_SCTP:
+			if (is_ipv4)
+				ptype = ICE_PTYPE_IPV4_SCTP_PAY;
+			else if (is_ipv6)
+				ptype = ICE_PTYPE_IPV6_SCTP_PAY;
+			break;
+		case VIRTCHNL_PROTO_HDR_L2TPV2:
+			if (is_ipv4)
+				ptype = ICE_MAC_IPV4_L2TPV2;
+			else if (is_ipv6)
+				ptype = ICE_MAC_IPV6_L2TPV2;
+			is_l2tpv2 = true;
+			break;
+		case VIRTCHNL_PROTO_HDR_GTPU_IP:
+		case VIRTCHNL_PROTO_HDR_GTPU_EH:
+		case VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN:
+		case VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP:
+			if (is_ipv4)
+				ptype = ICE_MAC_IPV4_GTPU;
+			else if (is_ipv6)
+				ptype = ICE_MAC_IPV6_GTPU;
+			goto out;
+		case VIRTCHNL_PROTO_HDR_L2TPV3:
+			if (is_ipv4)
+				ptype = ICE_MAC_IPV4_L2TPV3;
+			else if (is_ipv6)
+				ptype = ICE_MAC_IPV6_L2TPV3;
+			goto out;
+		case VIRTCHNL_PROTO_HDR_ESP:
+			if (is_ipv4)
+				ptype = is_udp ? ICE_MAC_IPV4_NAT_T_ESP :
+						ICE_MAC_IPV4_ESP;
+			else if (is_ipv6)
+				ptype = is_udp ? ICE_MAC_IPV6_NAT_T_ESP :
+						ICE_MAC_IPV6_ESP;
+			goto out;
+		case VIRTCHNL_PROTO_HDR_AH:
+			if (is_ipv4)
+				ptype = ICE_MAC_IPV4_AH;
+			else if (is_ipv6)
+				ptype = ICE_MAC_IPV6_AH;
+			goto out;
+		case VIRTCHNL_PROTO_HDR_PFCP:
+			if (is_ipv4)
+				ptype = ICE_MAC_IPV4_PFCP_SESSION;
+			else if (is_ipv6)
+				ptype = ICE_MAC_IPV6_PFCP_SESSION;
+			goto out;
+		case VIRTCHNL_PROTO_HDR_ECPRI:
+			if (is_ipv4)
+				ptype = ICE_PTYPE_IPV4_UDP_PAY;
+			else if (is_ipv6)
+				ptype = ICE_PTYPE_IPV6_UDP_PAY;
+			goto out;
+		case VIRTCHNL_PROTO_HDR_PPP:
+			if (is_ipv4 && is_l2tpv2)
+				ptype = ICE_MAC_IPV4_PPPOL2TPV2;
+			else if (is_ipv6 && is_l2tpv2)
+				ptype = ICE_MAC_IPV6_PPPOL2TPV2;
+			goto out;
+		default:
+			break;
+		}
+		i++;
+	}
+
+out:
+	return ice_hw_ptype_ena(&vf->pf->hw, ptype);
+}
+
+/**
  * ice_vc_parse_rss_cfg - parses hash fields and headers from
  * a specific virtchnl RSS cfg
  * @hw: pointer to the hardware
@@ -3869,43 +3628,17 @@ static bool ice_vc_parse_rss_cfg(struct ice_hw *hw,
 	int i, hf_list_len, hdr_list_len;
 	bool outer_ipv4 = false;
 	bool outer_ipv6 = false;
-	bool gtpu = false;
+	bool inner_hdr = false;
 
 	u32 *addl_hdrs = &hash_cfg->addl_hdrs;
 	u64 *hash_flds = &hash_cfg->hash_flds;
 	/* set outer layer RSS as default */
 	hash_cfg->hdr_type = ICE_RSS_OUTER_HEADERS;
 
-	/* select the corresponding hash list */
-	switch (ice_pkg_name_to_type(hw)) {
-	case ICE_PKG_TYPE_OS_DEFAULT:
-		hf_list = ice_vc_hash_field_list_os;
-		hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list_os);
-		hdr_list = ice_vc_hdr_list_os;
-		hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list_os);
-		break;
-	case ICE_PKG_TYPE_COMMS:
-		hf_list = ice_vc_hash_field_list_comms;
-		hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list_comms);
-		hdr_list = ice_vc_hdr_list_comms;
-		hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list_comms);
-		break;
-	case ICE_PKG_TYPE_WIRELESS_EDGE:
-		hf_list = ice_vc_hash_field_list_we;
-		hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list_we);
-		hdr_list = ice_vc_hdr_list_we;
-		hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list_we);
-		break;
-	case ICE_PKG_TYPE_GTP_OVER_GRE:
-		hf_list = ice_vc_hash_field_list_gtpogre;
-		hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list_gtpogre);
-		hdr_list = ice_vc_hdr_list_gtpogre;
-		hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list_gtpogre);
-		break;
-	default:
-		dev_err(ice_hw_to_dev(hw), "Unknown DDP package type\n");
-		return false;
-	}
+	hf_list = ice_vc_hash_field_list;
+	hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list);
+	hdr_list = ice_vc_hdr_list;
+	hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list);
 
 	for (i = 0; i < rss_cfg->proto_hdrs.count; i++) {
 		struct virtchnl_proto_hdr *proto_hdr =
@@ -3927,20 +3660,22 @@ static bool ice_vc_parse_rss_cfg(struct ice_hw *hw,
 		if (!hdr_found)
 			return false;
 
-		if (proto_hdr->type == VIRTCHNL_PROTO_HDR_IPV4 && !gtpu)
+		if (proto_hdr->type == VIRTCHNL_PROTO_HDR_IPV4 && !inner_hdr)
 			outer_ipv4 = true;
-		else if (proto_hdr->type == VIRTCHNL_PROTO_HDR_IPV6 && !gtpu)
+		else if (proto_hdr->type == VIRTCHNL_PROTO_HDR_IPV6 &&
+			 !inner_hdr)
 			outer_ipv6 = true;
-		/* for GTPU, take inner header as input set if no any field
-		 * is selected from outer headers.
+		/* for GTPU and L2TPv2, take inner header as input set if no
+		 * any field is selected from outer headers.
 		 */
-		else if ((proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_IP ||
+		else if ((proto_hdr->type == VIRTCHNL_PROTO_HDR_L2TPV2 ||
+			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_IP ||
 			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_EH ||
 			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN ||
 			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP) &&
-			 *hash_flds == 0) {
-			/* set gtpu flag, and clean up outer header */
-			gtpu = true;
+			  *hash_flds == 0) {
+			/* set inner_hdr flag, and clean up outer header */
+			inner_hdr = true;
 
 			/* clear outer headers */
 			*addl_hdrs = 0;
@@ -4829,6 +4564,11 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 		goto error_param;
 	}
 
+	if (!ice_vc_validate_pattern(vf, &rss_cfg->proto_hdrs)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto error_param;
+	}
+
 	if (rss_cfg->rss_algorithm == VIRTCHNL_RSS_ALG_R_ASYMMETRIC) {
 		u8 hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_XOR : ICE_AQ_VSI_Q_OPT_RSS_TPLZ;
 
@@ -4991,7 +4731,7 @@ static void ice_wait_on_vf_reset(struct ice_vf *vf)
  * disabled, and initialized so it can be configured and/or queried by a host
  * administrator.
  */
-static int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
+int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
 {
 	struct ice_pf *pf;
 
@@ -5386,16 +5126,17 @@ static void ice_vf_ena_rxq_interrupt(struct ice_vsi *vsi, u32 q_idx)
  * ice_vf_vsi_ena_single_rxq - enable single Rx queue based on relative q_id
  * @vf: VF to enable queue for
  * @vsi: VSI for the VF
- * @q_id: VF/VSI relative (0-based) queue ID
+ * @q_id: VSI relative (0-based) queue ID
+ * @vf_q_id: VF relative (0-based) queue ID
  *
  * Attempt to enable the Rx queue passed in. If the Rx queue was successfully enabled then set
  * q_id bit in the enabled queues bitmap and return success. Otherwise return error.
  */
-static int ice_vf_vsi_ena_single_rxq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id)
+static int ice_vf_vsi_ena_single_rxq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id, u16 vf_q_id)
 {
 	int err;
 
-	if (test_bit(q_id, vf->rxq_ena))
+	if (test_bit(vf_q_id, vf->rxq_ena))
 		return 0;
 
 	err = ice_vsi_ctrl_one_rx_ring(vsi, true, q_id, true);
@@ -5406,7 +5147,7 @@ static int ice_vf_vsi_ena_single_rxq(struct ice_vf *vf, struct ice_vsi *vsi, u16
 	}
 
 	ice_vf_ena_rxq_interrupt(vsi, q_id);
-	set_bit(q_id, vf->rxq_ena);
+	set_bit(vf_q_id, vf->rxq_ena);
 
 	return 0;
 }
@@ -5415,19 +5156,20 @@ static int ice_vf_vsi_ena_single_rxq(struct ice_vf *vf, struct ice_vsi *vsi, u16
  * ice_vf_vsi_ena_single_txq - enable single Tx queue based on relative q_id
  * @vf: VF to enable queue for
  * @vsi: VSI for the VF
- * @q_id: VF/VSI relative (0-based) queue ID
+ * @q_id: VSI relative (0-based) queue ID
+ * @vf_q_id: VF relative (0-based) queue ID
  *
  * Enable the Tx queue's interrupt then set the q_id bit in the enabled queues bitmap. Note that the
  * Tx queue(s) should have already been configurated/enabled in VIRTCHNL_OP_CONFIG_QUEUES so this
  * function only enables the interrupt associated with the q_id.
  */
-static void ice_vf_vsi_ena_single_txq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id)
+static void ice_vf_vsi_ena_single_txq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id, u16 vf_q_id)
 {
-	if (test_bit(q_id, vf->txq_ena))
+	if (test_bit(vf_q_id, vf->txq_ena))
 		return;
 
 	ice_vf_ena_txq_interrupt(vsi, q_id);
-	set_bit(q_id, vf->txq_ena);
+	set_bit(vf_q_id, vf->txq_ena);
 }
 
 /**
@@ -5490,7 +5232,7 @@ static int ice_vc_ena_qs_msg(struct ice_vf *vf, u8 *msg)
 			goto error_param;
 		}
 
-		if (ice_vf_vsi_ena_single_rxq(vf, vsi, q_id)) {
+		if (ice_vf_vsi_ena_single_rxq(vf, vsi, q_id, vf_q_id)) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto error_param;
 		}
@@ -5516,7 +5258,7 @@ static int ice_vc_ena_qs_msg(struct ice_vf *vf, u8 *msg)
 			goto error_param;
 		}
 
-		ice_vf_vsi_ena_single_txq(vf, vsi, q_id);
+		ice_vf_vsi_ena_single_txq(vf, vsi, q_id, vf_q_id);
 	}
 
 	/* Set flag to indicate that queues are enabled */
@@ -5536,19 +5278,20 @@ error_param:
  * ice_vf_vsi_dis_single_txq - disable a single Tx queue for the VF based on relative queue ID
  * @vf: VF to disable queue for
  * @vsi: VSI for the VF
- * @q_id: VF/VSI relative (0-based) queue ID
+ * @q_id: VSI relative (0-based) queue ID
+ * @vf_q_id: VF relative (0-based) queue ID
  *
  * Attempt to disable the Tx queue passed in. If the Tx queue was successfully disabled then clear
  * q_id bit in the enabled queues bitmap and return success. Otherwise return error.
  */
-static int ice_vf_vsi_dis_single_txq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id)
+static int ice_vf_vsi_dis_single_txq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id, u16 vf_q_id)
 {
 	struct ice_txq_meta txq_meta = { 0 };
 	struct ice_ring *ring;
 	int err;
 
 	/* Skip queue if not enabled */
-	if (!test_bit(q_id, vf->txq_ena))
+	if (!test_bit(vf_q_id, vf->txq_ena))
 		return 0;
 
 	ring = vsi->tx_rings[q_id];
@@ -5565,7 +5308,7 @@ static int ice_vf_vsi_dis_single_txq(struct ice_vf *vf, struct ice_vsi *vsi, u16
 	}
 
 	/* Clear enabled queues flag */
-	clear_bit(q_id, vf->txq_ena);
+	clear_bit(vf_q_id, vf->txq_ena);
 
 	return 0;
 }
@@ -5574,18 +5317,19 @@ static int ice_vf_vsi_dis_single_txq(struct ice_vf *vf, struct ice_vsi *vsi, u16
  * ice_vf_vsi_dis_single_rxq - disable a Rx queue for VF on relative queue ID
  * @vf: VF to disable queue for
  * @vsi: VSI for the VF
- * @q_id: VF/VSI relative (0-based) queue ID
+ * @q_id: VSI relative (0-based) queue ID
+ * @vf_q_id: VF relative (0-based) queue ID
  *
  * Attempt to disable the Rx queue passed in. If the Rx queue was successfully
  * disabled then clear q_id bit in the enabled queues bitmap and return success.
  * Otherwise return error.
  */
 
-static int ice_vf_vsi_dis_single_rxq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id)
+static int ice_vf_vsi_dis_single_rxq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_id, u16 vf_q_id)
 {
 	int err;
 
-	if (!test_bit(q_id, vf->rxq_ena))
+	if (!test_bit(vf_q_id, vf->rxq_ena))
 		return 0;
 
 	err = ice_vsi_ctrl_one_rx_ring(vsi, false, q_id, true);
@@ -5596,7 +5340,7 @@ static int ice_vf_vsi_dis_single_rxq(struct ice_vf *vf, struct ice_vsi *vsi, u16
 	}
 
 	/* Clear enabled queues flag */
-	clear_bit(q_id, vf->rxq_ena);
+	clear_bit(vf_q_id, vf->rxq_ena);
 
 	return 0;
 }
@@ -5662,7 +5406,7 @@ static int ice_vc_dis_qs_msg(struct ice_vf *vf, u8 *msg)
 				goto error_param;
 			}
 
-			if (ice_vf_vsi_dis_single_txq(vf, vsi, q_id)) {
+			if (ice_vf_vsi_dis_single_txq(vf, vsi, q_id, vf_q_id)) {
 				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 				goto error_param;
 			}
@@ -5713,7 +5457,7 @@ static int ice_vc_dis_qs_msg(struct ice_vf *vf, u8 *msg)
 				goto error_param;
 			}
 
-			if (ice_vf_vsi_dis_single_rxq(vf, vsi, q_id)) {
+			if (ice_vf_vsi_dis_single_rxq(vf, vsi, q_id, vf_q_id)) {
 				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 				goto error_param;
 			}
@@ -8005,6 +7749,142 @@ static int ice_vc_rdma_msg(struct ice_vf *vf, u8 *msg, u16 len)
 }
 
 /**
+ * ice_vf_cfg_rdma_ceq_irq_map - configure the CEQ IRQ mapping
+ * @vf: VF structure associated to the VF that requested the mapping
+ * @qv_info: RDMA queue vector mapping information
+ *
+ * Configure the CEQ index for the passed in VF. This will result in the CEQ
+ * being able to generate interrupts
+ */
+static void
+ice_vf_cfg_rdma_ceq_irq_map(struct ice_vf *vf,
+			    struct virtchnl_rdma_qv_info *qv_info)
+{
+	u16 glint_ceqctl_idx = ice_vf_get_glint_ceqctl_idx(vf,
+							   qv_info->ceq_idx);
+
+	u32 regval = (qv_info->v_idx & GLINT_CEQCTL_MSIX_INDX_M) |
+		     ((qv_info->itr_idx << GLINT_CEQCTL_ITR_INDX_S) &
+		      GLINT_CEQCTL_ITR_INDX_M) | GLINT_CEQCTL_CAUSE_ENA_M;
+
+	wr32(&vf->pf->hw, GLINT_CEQCTL(glint_ceqctl_idx), regval);
+}
+
+/**
+ * ice_vf_cfg_rdma_aeq_irq_map - configure the AEQ IRQ mapping
+ * @vf: VF structure associated to the VF that requested the mapping
+ * @qv_info: RDMA queue vector mapping information
+ *
+ * Configure the AEQ for the passed in VF. This will result in the AEQ being
+ * able to generate interrupts
+ */
+static void
+ice_vf_cfg_rdma_aeq_irq_map(struct ice_vf *vf,
+			    struct virtchnl_rdma_qv_info *qv_info)
+{
+	u32 regval = (qv_info->v_idx & PFINT_AEQCTL_MSIX_INDX_M) |
+		     ((qv_info->itr_idx << VPINT_AEQCTL_ITR_INDX_S) &
+		      VPINT_AEQCTL_ITR_INDX_M) | VPINT_AEQCTL_CAUSE_ENA_M;
+
+	wr32(&vf->pf->hw, VPINT_AEQCTL(vf->vf_id), regval);
+}
+
+/**
+ * ice_vc_cfg_rdma_irq_map_msg - MSIX mapping of RDMA control queue interrupts
+ * @vf: VF structure associated to the VF that requested the mapping
+ * @msg: Message from the VF used to configure the RDMA mapping
+ *
+ * Handler for the VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP opcode in virtchnl. This
+ * causes the specified control queues to be mapped to the specified MSIX
+ * indices and ITR indices. Also, the control queue's interrupt will be
+ * enabled.
+ */
+static int ice_vc_cfg_rdma_irq_map_msg(struct ice_vf *vf, u8 *msg)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct virtchnl_rdma_qvlist_info *qvlist =
+		(struct virtchnl_rdma_qvlist_info *)msg;
+	u16 num_msix_per_vf;
+	u32 i;
+
+	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	num_msix_per_vf = vf->pf->num_msix_per_vf;
+	if (qvlist->num_vectors > num_msix_per_vf) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	for (i = 0; i < qvlist->num_vectors; i++) {
+		struct virtchnl_rdma_qv_info *qv_info = &qvlist->qv_info[i];
+
+		if (qv_info->v_idx >= num_msix_per_vf) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+
+		if (qv_info->ceq_idx == VIRTCHNL_RDMA_INVALID_QUEUE_IDX &&
+		    qv_info->aeq_idx == VIRTCHNL_RDMA_INVALID_QUEUE_IDX) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+
+		if (qv_info->ceq_idx != VIRTCHNL_RDMA_INVALID_QUEUE_IDX &&
+		    qv_info->ceq_idx >= num_msix_per_vf) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+
+		if (qv_info->aeq_idx != VIRTCHNL_RDMA_INVALID_QUEUE_IDX &&
+		    qv_info->aeq_idx >= num_msix_per_vf) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+	}
+
+	for (i = 0; i < qvlist->num_vectors; i++) {
+		struct virtchnl_rdma_qv_info *qv_info = &qvlist->qv_info[i];
+
+		if (qv_info->ceq_idx != VIRTCHNL_RDMA_INVALID_QUEUE_IDX)
+			ice_vf_cfg_rdma_ceq_irq_map(vf, qv_info);
+
+		if (qv_info->aeq_idx != VIRTCHNL_RDMA_INVALID_QUEUE_IDX)
+			ice_vf_cfg_rdma_aeq_irq_map(vf, qv_info);
+	}
+
+err:
+	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP,
+				     v_ret, NULL, 0);
+}
+
+/**
+ * ice_vc_clear_rdma_irq_map - clear mapped RDMA control queue interrupts
+ * @vf: VF structure associated to the VF that requested to release the mapping
+ *
+ * Handler for the VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP opcode in virtchnl. This
+ * causes all of the MSIX mapping of all the RDMA control queues to be cleared
+ * and disabled.
+ */
+static int ice_vc_clear_rdma_irq_map(struct ice_vf *vf)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+
+	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	ice_vf_clear_rdma_irq_map(vf);
+
+err:
+	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP,
+				     v_ret, NULL, 0);
+}
+
+/**
  * ice_vc_query_rxdid - query RXDID supported by DDP package
  * @vf: pointer to VF info
  *
@@ -8619,7 +8499,7 @@ static int ice_vc_ena_rxq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *
 		return -EINVAL;
 
 	ice_for_each_q_in_chunk(chunk, q_id) {
-		int err = ice_vf_vsi_ena_single_rxq(vf, vsi, q_id);
+		int err = ice_vf_vsi_ena_single_rxq(vf, vsi, q_id, q_id);
 
 		if (err)
 			return err;
@@ -8637,7 +8517,7 @@ static int ice_vc_ena_txq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *
 		return -EINVAL;
 
 	ice_for_each_q_in_chunk(chunk, q_id)
-		ice_vf_vsi_ena_single_txq(vf, vsi, q_id);
+		ice_vf_vsi_ena_single_txq(vf, vsi, q_id, q_id);
 
 	return 0;
 }
@@ -8698,7 +8578,7 @@ static int ice_vc_dis_rxq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *
 	ice_for_each_q_in_chunk(chunk, q_id) {
 		int err;
 
-		err = ice_vf_vsi_dis_single_rxq(vf, vsi, q_id);
+		err = ice_vf_vsi_dis_single_rxq(vf, vsi, q_id, q_id);
 		if (err)
 			return err;
 	}
@@ -8717,7 +8597,7 @@ static int ice_vc_dis_txq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *
 	ice_for_each_q_in_chunk(chunk, q_id) {
 		int err;
 
-		err = ice_vf_vsi_dis_single_txq(vf, vsi, q_id);
+		err = ice_vf_vsi_dis_single_txq(vf, vsi, q_id, q_id);
 		if (err)
 			return err;
 	}
@@ -9823,56 +9703,7 @@ out:
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2, v_ret, NULL, 0);
 }
 
-static struct {
-	int (*get_ver_msg)(struct ice_vf *vf, u8 *msg);
-	int (*get_vf_res_msg)(struct ice_vf *vf, u8 *msg);
-	void (*reset_vf)(struct ice_vf *vf);
-	int (*add_mac_addr_msg)(struct ice_vf *vf, u8 *msg);
-	int (*del_mac_addr_msg)(struct ice_vf *vf, u8 *msg);
-	int (*cfg_qs_msg)(struct ice_vf *vf, u8 *msg);
-	int (*ena_qs_msg)(struct ice_vf *vf, u8 *msg);
-	int (*dis_qs_msg)(struct ice_vf *vf, u8 *msg);
-	int (*request_qs_msg)(struct ice_vf *vf, u8 *msg);
-	int (*cfg_irq_map_msg)(struct ice_vf *vf, u8 *msg);
-	int (*config_rss_key)(struct ice_vf *vf, u8 *msg);
-	int (*config_rss_lut)(struct ice_vf *vf, u8 *msg);
-	int (*get_stats_msg)(struct ice_vf *vf, u8 *msg);
-	int (*cfg_promiscuous_mode_msg)(struct ice_vf *vf, u8 *msg);
-	int (*add_vlan_msg)(struct ice_vf *vf, u8 *msg);
-	int (*remove_vlan_msg)(struct ice_vf *vf, u8 *msg);
-	int (*query_rxdid)(struct ice_vf *vf);
-	int (*get_rss_hena)(struct ice_vf *vf);
-	int (*set_rss_hena_msg)(struct ice_vf *vf, u8 *msg);
-	int (*ena_vlan_stripping)(struct ice_vf *vf);
-	int (*dis_vlan_stripping)(struct ice_vf *vf);
-#ifdef HAVE_TC_SETUP_CLSFLOWER
-	int (*add_qch_msg)(struct ice_vf *vf, u8 *msg);
-	int (*add_switch_filter_msg)(struct ice_vf *vf, u8 *msg);
-	int (*del_switch_filter_msg)(struct ice_vf *vf, u8 *msg);
-	int (*del_qch_msg)(struct ice_vf *vf, u8 *msg);
-#endif /* HAVE_TC_SETUP_CLSFLOWER */
-	int (*rdma_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
-	int (*dcf_vlan_offload_msg)(struct ice_vf *vf, u8 *msg);
-	int (*dcf_cmd_desc_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
-	int (*dcf_cmd_buff_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
-	int (*dis_dcf_cap)(struct ice_vf *vf);
-	int (*dcf_get_vsi_map)(struct ice_vf *vf);
-	int (*dcf_query_pkg_info)(struct ice_vf *vf);
-	int (*handle_rss_cfg_msg)(struct ice_vf *vf, u8 *msg, bool add);
-	int (*add_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
-	int (*del_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
-	int (*get_max_rss_qregion)(struct ice_vf *vf);
-	int (*ena_qs_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*dis_qs_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*map_q_vector_msg)(struct ice_vf *vf, u8 *msg);
-	int (*get_offload_vlan_v2_caps)(struct ice_vf *vf);
-	int (*add_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*remove_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*ena_vlan_stripping_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*dis_vlan_stripping_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*ena_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*dis_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
-} ice_vc_ops = {
+static struct ice_vc_vf_ops ice_vc_vf_dflt_ops = {
 	.get_ver_msg = ice_vc_get_ver_msg,
 	.get_vf_res_msg = ice_vc_get_vf_res_msg,
 	.reset_vf = ice_vc_reset_vf_msg,
@@ -9901,6 +9732,8 @@ static struct {
 	.del_qch_msg = ice_vc_del_qch_msg,
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
 	.rdma_msg = ice_vc_rdma_msg,
+	.cfg_rdma_irq_map_msg = ice_vc_cfg_rdma_irq_map_msg,
+	.clear_rdma_irq_map = ice_vc_clear_rdma_irq_map,
 	.dcf_vlan_offload_msg = ice_vc_dcf_vlan_offload_msg,
 	.dcf_cmd_desc_msg = ice_vc_dcf_cmd_desc_msg,
 	.dcf_cmd_buff_msg = ice_vc_dcf_cmd_buff_msg,
@@ -9923,15 +9756,9 @@ static struct {
 	.dis_vlan_insertion_v2_msg = ice_vc_dis_vlan_insertion_v2_msg,
 };
 
-void ice_vc_change_ops_to_default(void)
+void ice_vc_set_dflt_vf_ops(struct ice_vc_vf_ops *ops)
 {
-	ice_vc_ops.add_mac_addr_msg = ice_vc_add_mac_addr_msg;
-	ice_vc_ops.del_mac_addr_msg = ice_vc_del_mac_addr_msg;
-	ice_vc_ops.add_vlan_msg = ice_vc_add_vlan_msg;
-	ice_vc_ops.remove_vlan_msg = ice_vc_remove_vlan_msg;
-	ice_vc_ops.ena_vlan_stripping = ice_vc_ena_vlan_stripping;
-	ice_vc_ops.dis_vlan_stripping = ice_vc_dis_vlan_stripping;
-	ice_vc_ops.cfg_promiscuous_mode_msg = ice_vc_cfg_promiscuous_mode_msg;
+	*ops = ice_vc_vf_dflt_ops;
 }
 
 static int ice_vc_repr_no_action_msg(struct ice_vf __always_unused *vf,
@@ -9941,20 +9768,60 @@ static int ice_vc_repr_no_action_msg(struct ice_vf __always_unused *vf,
 }
 
 /**
- * ice_vc_repr_add_mac - response with success for adding MAC
+ * ice_vc_repr_add_mac
  * @vf: pointer to VF
  * @msg: virtchannel message
  *
- * When port representors are created driver allows only changing MAC
- * from host side. No action for add or delete MAC command from VF is
- * needed. Without response VF netdev doesn't work correctly. Send success
- * to inform VF that everything is fine.
+ * When port representors are created, we do not add MAC rule
+ * to firmware, we store it so that PF could report same
+ * MAC as VF.
  */
-static int ice_vc_repr_add_mac(struct ice_vf __always_unused *vf,
-			       u8 __always_unused *msg)
+static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg)
 {
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct virtchnl_ether_addr_list *al =
+	    (struct virtchnl_ether_addr_list *)msg;
+	struct ice_vsi *vsi;
+	struct ice_pf *pf;
+	int i;
+
+	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states) ||
+	    !ice_vc_isvalid_vsi_id(vf, al->vsi_id)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto handle_mac_exit;
+	}
+
+	pf = vf->pf;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto handle_mac_exit;
+	}
+
+	for (i = 0; i < al->num_elements; i++) {
+		u8 *mac_addr = al->list[i].addr;
+
+		if (!is_unicast_ether_addr(mac_addr) ||
+		    ether_addr_equal(mac_addr, vf->hw_lan_addr.addr))
+			continue;
+
+		if (vf->pf_set_mac) {
+			dev_err(ice_pf_to_dev(pf),
+				"VF attempting to override administratively set MAC address\n");
+			v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+			goto handle_mac_exit;
+		}
+
+
+		ice_vfhw_mac_add(vf, &al->list[i]);
+		vf->num_mac++;
+		break;
+	}
+
+handle_mac_exit:
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_ETH_ADDR,
-				     VIRTCHNL_STATUS_SUCCESS, NULL, 0);
+				     v_ret, NULL, 0);
 }
 
 /**
@@ -9976,15 +9843,15 @@ static int ice_vc_repr_no_action(struct ice_vf __always_unused *vf)
 	return 0;
 }
 
-void ice_vc_change_ops_to_repr(void)
+void ice_vc_change_ops_to_repr(struct ice_vc_vf_ops *ops)
 {
-	ice_vc_ops.add_mac_addr_msg = ice_vc_repr_add_mac;
-	ice_vc_ops.del_mac_addr_msg = ice_vc_repr_del_mac;
-	ice_vc_ops.add_vlan_msg = ice_vc_repr_no_action_msg;
-	ice_vc_ops.remove_vlan_msg = ice_vc_repr_no_action_msg;
-	ice_vc_ops.ena_vlan_stripping = ice_vc_repr_no_action;
-	ice_vc_ops.dis_vlan_stripping = ice_vc_repr_no_action;
-	ice_vc_ops.cfg_promiscuous_mode_msg = ice_vc_repr_no_action_msg;
+	ops->add_mac_addr_msg = ice_vc_repr_add_mac;
+	ops->del_mac_addr_msg = ice_vc_repr_del_mac;
+	ops->add_vlan_msg = ice_vc_repr_no_action_msg;
+	ops->remove_vlan_msg = ice_vc_repr_no_action_msg;
+	ops->ena_vlan_stripping = ice_vc_repr_no_action;
+	ops->dis_vlan_stripping = ice_vc_repr_no_action;
+	ops->cfg_promiscuous_mode_msg = ice_vc_repr_no_action_msg;
 }
 
 /**
@@ -10000,6 +9867,7 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 	u32 v_opcode = le32_to_cpu(event->desc.cookie_high);
 	s16 vf_id = le16_to_cpu(event->desc.retval);
 	u16 msglen = event->msg_len;
+	struct ice_vc_vf_ops *ops;
 	u8 *msg = event->msg_buf;
 	struct ice_vf *vf = NULL;
 	struct device *dev;
@@ -10017,6 +9885,8 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 		err = -EPERM;
 		goto error_handler;
 	}
+
+	ops = &vf->vc_ops;
 
 	/* Perform basic checks on the msg */
 	err = virtchnl_vc_validate_vf_msg(&vf->vf_ver, v_opcode, msg, msglen);
@@ -10045,153 +9915,159 @@ error_handler:
 
 	switch (v_opcode) {
 	case VIRTCHNL_OP_VERSION:
-		err = ice_vc_ops.get_ver_msg(vf, msg);
+		err = ops->get_ver_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_VF_RESOURCES:
-		err = ice_vc_ops.get_vf_res_msg(vf, msg);
+		err = ops->get_vf_res_msg(vf, msg);
 		if (ice_vf_init_vlan_stripping(vf))
 			dev_dbg(dev, "Failed to initialize VLAN stripping for VF %d\n",
 				vf->vf_id);
 		ice_vc_notify_vf_link_state(vf);
 		break;
 	case VIRTCHNL_OP_RESET_VF:
-		ice_vc_ops.reset_vf(vf);
+		ops->reset_vf(vf);
 		break;
 	case VIRTCHNL_OP_ADD_ETH_ADDR:
-		err = ice_vc_ops.add_mac_addr_msg(vf, msg);
+		err = ops->add_mac_addr_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_ETH_ADDR:
-		err = ice_vc_ops.del_mac_addr_msg(vf, msg);
+		err = ops->del_mac_addr_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_VSI_QUEUES:
-		err = ice_vc_ops.cfg_qs_msg(vf, msg);
+		err = ops->cfg_qs_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES:
-		err = ice_vc_ops.ena_qs_msg(vf, msg);
+		err = ops->ena_qs_msg(vf, msg);
 		ice_vc_notify_vf_link_state(vf);
 		break;
 	case VIRTCHNL_OP_DISABLE_QUEUES:
-		err = ice_vc_ops.dis_qs_msg(vf, msg);
+		err = ops->dis_qs_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_REQUEST_QUEUES:
-		err = ice_vc_ops.request_qs_msg(vf, msg);
+		err = ops->request_qs_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_IRQ_MAP:
-		err = ice_vc_ops.cfg_irq_map_msg(vf, msg);
+		err = ops->cfg_irq_map_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_KEY:
-		err = ice_vc_ops.config_rss_key(vf, msg);
+		err = ops->config_rss_key(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_LUT:
-		err = ice_vc_ops.config_rss_lut(vf, msg);
+		err = ops->config_rss_lut(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_STATS:
-		err = ice_vc_ops.get_stats_msg(vf, msg);
+		err = ops->get_stats_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE:
-		err = ice_vc_cfg_promiscuous_mode_msg(vf, msg);
+		err = ops->cfg_promiscuous_mode_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ADD_VLAN:
-		err = ice_vc_ops.add_vlan_msg(vf, msg);
+		err = ops->add_vlan_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_VLAN:
-		err = ice_vc_ops.remove_vlan_msg(vf, msg);
+		err = ops->remove_vlan_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_SUPPORTED_RXDIDS:
-		err = ice_vc_ops.query_rxdid(vf);
+		err = ops->query_rxdid(vf);
 		break;
 	case VIRTCHNL_OP_GET_RSS_HENA_CAPS:
-		err = ice_vc_ops.get_rss_hena(vf);
+		err = ops->get_rss_hena(vf);
 		break;
 	case VIRTCHNL_OP_SET_RSS_HENA:
-		err = ice_vc_ops.set_rss_hena_msg(vf, msg);
+		err = ops->set_rss_hena_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING:
-		err = ice_vc_ops.ena_vlan_stripping(vf);
+		err = ops->ena_vlan_stripping(vf);
 		break;
 	case VIRTCHNL_OP_DISABLE_VLAN_STRIPPING:
-		err = ice_vc_ops.dis_vlan_stripping(vf);
+		err = ops->dis_vlan_stripping(vf);
 		break;
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 	case VIRTCHNL_OP_ENABLE_CHANNELS:
-		err = ice_vc_ops.add_qch_msg(vf, msg);
+		err = ops->add_qch_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ADD_CLOUD_FILTER:
-		err = ice_vc_ops.add_switch_filter_msg(vf, msg);
+		err = ops->add_switch_filter_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_CLOUD_FILTER:
-		err = ice_vc_ops.del_switch_filter_msg(vf, msg);
+		err = ops->del_switch_filter_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DISABLE_CHANNELS:
-		err = ice_vc_ops.del_qch_msg(vf, msg);
+		err = ops->del_qch_msg(vf, msg);
 		break;
 #endif /* HAVE_TC_SETUP_FLOWER */
-	case VIRTCHNL_OP_IWARP:
-		err = ice_vc_ops.rdma_msg(vf, msg, msglen);
+	case VIRTCHNL_OP_RDMA:
+		err = ops->rdma_msg(vf, msg, msglen);
+		break;
+	case VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP:
+		err = ops->cfg_rdma_irq_map_msg(vf, msg);
+		break;
+	case VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP:
+		err = ops->clear_rdma_irq_map(vf);
 		break;
 	case VIRTCHNL_OP_DCF_VLAN_OFFLOAD:
-		err = ice_vc_ops.dcf_vlan_offload_msg(vf, msg);
+		err = ops->dcf_vlan_offload_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DCF_CMD_DESC:
-		err = ice_vc_ops.dcf_cmd_desc_msg(vf, msg, msglen);
+		err = ops->dcf_cmd_desc_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_DCF_CMD_BUFF:
-		err = ice_vc_ops.dcf_cmd_buff_msg(vf, msg, msglen);
+		err = ops->dcf_cmd_buff_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_DCF_DISABLE:
-		err = ice_vc_ops.dis_dcf_cap(vf);
+		err = ops->dis_dcf_cap(vf);
 		break;
 	case VIRTCHNL_OP_DCF_GET_VSI_MAP:
-		err = ice_vc_ops.dcf_get_vsi_map(vf);
+		err = ops->dcf_get_vsi_map(vf);
 		break;
 	case VIRTCHNL_OP_DCF_GET_PKG_INFO:
-		err = ice_vc_ops.dcf_query_pkg_info(vf);
+		err = ops->dcf_query_pkg_info(vf);
 		break;
 	case VIRTCHNL_OP_ADD_RSS_CFG:
-		err = ice_vc_ops.handle_rss_cfg_msg(vf, msg, true);
+		err = ops->handle_rss_cfg_msg(vf, msg, true);
 		break;
 	case VIRTCHNL_OP_DEL_RSS_CFG:
-		err = ice_vc_ops.handle_rss_cfg_msg(vf, msg, false);
+		err = ops->handle_rss_cfg_msg(vf, msg, false);
 		break;
 	case VIRTCHNL_OP_ADD_FDIR_FILTER:
-		err = ice_vc_ops.add_fdir_fltr_msg(vf, msg);
+		err = ops->add_fdir_fltr_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_FDIR_FILTER:
-		err = ice_vc_ops.del_fdir_fltr_msg(vf, msg);
+		err = ops->del_fdir_fltr_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_MAX_RSS_QREGION:
-		err = ice_vc_ops.get_max_rss_qregion(vf);
+		err = ops->get_max_rss_qregion(vf);
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES_V2:
-		err = ice_vc_ops.ena_qs_v2_msg(vf, msg);
+		err = ops->ena_qs_v2_msg(vf, msg);
 		ice_vc_notify_vf_link_state(vf);
 		break;
 	case VIRTCHNL_OP_DISABLE_QUEUES_V2:
-		err = ice_vc_ops.dis_qs_v2_msg(vf, msg);
+		err = ops->dis_qs_v2_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_MAP_QUEUE_VECTOR:
-		err = ice_vc_ops.map_q_vector_msg(vf, msg);
+		err = ops->map_q_vector_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS:
-		err = ice_vc_ops.get_offload_vlan_v2_caps(vf);
+		err = ops->get_offload_vlan_v2_caps(vf);
 		break;
 	case VIRTCHNL_OP_ADD_VLAN_V2:
-		err = ice_vc_ops.add_vlan_v2_msg(vf, msg);
+		err = ops->add_vlan_v2_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_VLAN_V2:
-		err = ice_vc_ops.remove_vlan_v2_msg(vf, msg);
+		err = ops->remove_vlan_v2_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING_V2:
-		err = ice_vc_ops.ena_vlan_stripping_v2_msg(vf, msg);
+		err = ops->ena_vlan_stripping_v2_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DISABLE_VLAN_STRIPPING_V2:
-		err = ice_vc_ops.dis_vlan_stripping_v2_msg(vf, msg);
+		err = ops->dis_vlan_stripping_v2_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_INSERTION_V2:
-		err = ice_vc_ops.ena_vlan_insertion_v2_msg(vf, msg);
+		err = ops->ena_vlan_insertion_v2_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2:
-		err = ice_vc_ops.dis_vlan_insertion_v2_msg(vf, msg);
+		err = ops->dis_vlan_insertion_v2_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_UNKNOWN:
 	default:

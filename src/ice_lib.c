@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice.h"
 #include "ice_base.h"
@@ -212,7 +212,6 @@ static void ice_vsi_set_num_qs(struct ice_vsi *vsi, u16 vf_id)
 		break;
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
-		/* FIXME: temporarily hard coding queues and MSIX numbers */
 		vsi->alloc_txq = ICE_DFLT_TXQ_VMDQ_VSI;
 		vsi->alloc_rxq = ICE_DFLT_RXQ_VMDQ_VSI;
 		vsi->num_q_vectors = ICE_DFLT_VEC_VMDQ_VSI;
@@ -3901,40 +3900,6 @@ int ice_status_to_errno(enum ice_status err)
 	}
 }
 
-#ifdef FWLOG_SUPPORT
-/**
- * ice_setup_fw_log - configure logging in FW
- * @pf: pointer to the PF struct
- * @level: level
- * @events: events to log
- */
-void ice_setup_fw_log(struct ice_pf *pf, u8 level, u32 events)
-{
-	struct ice_hw *hw = &pf->hw;
-	u8 i;
-
-	/* Only one PF needs to enable FW logging */
-	if (hw->pf_id != 0)
-		return;
-
-	if (level > 0xf) {
-		dev_dbg(ice_pf_to_dev(pf), "invalid value for level: 0x%x\n",
-			level);
-		return;
-	}
-
-	hw->fw_log.cq_en = 1;
-
-	for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
-		if (events & BIT(i))
-			hw->fw_log.evnts[i].cfg = level;
-		else
-			hw->fw_log.evnts[i].cfg = 0;
-		dev_dbg(ice_pf_to_dev(pf), "%s level: %X event: %X\n",
-			__func__, hw->fw_log.evnts[i].cfg, (1 << i));
-	}
-}
-#endif /* FWLOG_SUPPORT */
 
 /**
  * ice_is_dflt_vsi_in_use - check if the default forwarding VSI is being used
@@ -4436,4 +4401,68 @@ bool ice_vsi_has_non_zero_vlans(struct ice_vsi *vsi)
 u16 ice_vsi_num_non_zero_vlans(struct ice_vsi *vsi)
 {
 	return (vsi->num_vlan - ice_vsi_num_zero_vlans(vsi));
+}
+
+/**
+ * ice_is_feature_supported
+ * @pf: pointer to the struct ice_pf instance
+ * @f: feature enum to be checked
+ *
+ * returns true if feature is supported, false otherwise
+ */
+bool ice_is_feature_supported(struct ice_pf *pf, enum ice_feature f)
+{
+	if (f < 0 || f >= ICE_F_MAX)
+		return false;
+
+	return test_bit(f, pf->features);
+}
+
+/**
+ * ice_set_feature_support
+ * @pf: pointer to the struct ice_pf instance
+ * @f: feature enum to set
+ */
+void ice_set_feature_support(struct ice_pf *pf, enum ice_feature f)
+{
+	if (f < 0 || f >= ICE_F_MAX)
+		return;
+
+	set_bit(f, pf->features);
+}
+
+/**
+ * ice_clear_feature_support
+ * @pf: pointer to the struct ice_pf instance
+ * @f: feature enum to clear
+ */
+void ice_clear_feature_support(struct ice_pf *pf, enum ice_feature f)
+{
+	if (f < 0 || f >= ICE_F_MAX)
+		return;
+
+	clear_bit(f, pf->features);
+}
+
+/**
+ * ice_init_feature_support
+ * @pf: pointer to the struct ice_pf instance
+ *
+ * called during init to setup supported feature
+ */
+void ice_init_feature_support(struct ice_pf *pf)
+{
+	switch (pf->hw.device_id) {
+	case ICE_DEV_ID_E810C_BACKPLANE:
+	case ICE_DEV_ID_E810C_QSFP:
+	case ICE_DEV_ID_E810C_SFP:
+	case ICE_DEV_ID_E810_XXV_BACKPLANE:
+	case ICE_DEV_ID_E810_XXV_QSFP:
+	case ICE_DEV_ID_E810_XXV_SFP:
+		ice_set_feature_support(pf, ICE_F_DSCP);
+		ice_set_feature_support(pf, ICE_F_PTP_EXTTS);
+		break;
+	default:
+		break;
+	}
 }

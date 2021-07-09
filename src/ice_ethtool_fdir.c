@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 /* flow director ethtool support for ice */
 
@@ -291,9 +291,9 @@ release_lock:
 static void
 ice_fdir_remap_entries(struct ice_fd_hw_prof *prof, int tun, int idx)
 {
-	int i;
-
 	if (idx != prof->cnt && tun < ICE_FD_HW_SEG_MAX) {
+		int i;
+
 		for (i = idx; i < (prof->cnt - 1); i++) {
 			u64 old_entry_h;
 

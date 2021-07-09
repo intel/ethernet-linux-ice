@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_SWITCH_H_
 #define _ICE_SWITCH_H_
@@ -167,6 +167,7 @@ struct ice_adv_lkup_elem {
 	union ice_prot_hdr h_u;	/* Header values */
 	union ice_prot_hdr m_u;	/* Mask of header values to match */
 };
+
 
 struct ice_sw_act_ctrl {
 	/* Source VSI for LOOKUP_TX or source port for LOOKUP_RX */

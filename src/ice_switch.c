@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice_switch.h"
 #include "ice_flex_type.h"
@@ -803,7 +803,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv6_tcp_packet_offset
 	{ ICE_UDP_OF,		54 },
 	{ ICE_GTP,		62 },
 	{ ICE_IPV6_IL,		82 },
-	{ ICE_TCP_IL,		102 },
+	{ ICE_TCP_IL,		122 },
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
@@ -860,7 +860,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv6_udp_packet_offset
 	{ ICE_UDP_OF,		54 },
 	{ ICE_GTP,		62 },
 	{ ICE_IPV6_IL,		82 },
-	{ ICE_UDP_ILOS,		102 },
+	{ ICE_UDP_ILOS,		122 },
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
@@ -5986,7 +5986,7 @@ static const struct ice_prot_ext_tbl_entry ice_prot_ext[ICE_PROTOCOL_LAST] = {
 	{ ICE_GENEVE,		{ 8, 10, 12, 14 } },
 	{ ICE_VXLAN_GPE,	{ 8, 10, 12, 14 } },
 	{ ICE_NVGRE,		{ 0, 2, 4, 6 } },
-	{ ICE_GTP,		{ 8, 10, 12, 14, 16, 18, 20 } },
+	{ ICE_GTP,		{ 8, 10, 12, 14, 16, 18, 20, 22 } },
 };
 
 /* The following table describes preferred grouping of recipes.
@@ -6103,7 +6103,8 @@ void ice_change_proto_id_to_dvm(void)
 	u8 i;
 
 	for (i = 0; i < ARRAY_SIZE(ice_prot_id_tbl); i++)
-		if (ice_prot_id_tbl[i].type == ICE_VLAN_OFOS)
+		if (ice_prot_id_tbl[i].type == ICE_VLAN_OFOS &&
+		    ice_prot_id_tbl[i].protocol_id != ICE_VLAN_OF_HW)
 			ice_prot_id_tbl[i].protocol_id = ICE_VLAN_OF_HW;
 }
 
@@ -6744,6 +6745,15 @@ static bool ice_tun_type_match_word(enum ice_sw_tunnel_type tun_type, u16 *mask)
 	case ICE_SW_TUN_IPV6_GTP_IPV4_UDP:
 	case ICE_SW_TUN_IPV6_GTP_IPV6_TCP:
 	case ICE_SW_TUN_IPV6_GTP_IPV6_UDP:
+	/* support for GTP, using only inner protocols,
+	 * outer protocols can be anything
+	 */
+	case ICE_SW_TUN_GTP_IPV4:
+	case ICE_SW_TUN_GTP_IPV6:
+	case ICE_SW_TUN_GTP_IPV4_TCP:
+	case ICE_SW_TUN_GTP_IPV4_UDP:
+	case ICE_SW_TUN_GTP_IPV6_TCP:
+	case ICE_SW_TUN_GTP_IPV6_UDP:
 		*mask = ICE_TUN_FLAG_MASK;
 		return true;
 
@@ -6829,6 +6839,12 @@ ice_get_compat_fv_bitmap(struct ice_hw *hw, struct ice_adv_rule_info *rinfo,
 	case ICE_SW_TUN_IPV6_GTP_IPV4_UDP:
 	case ICE_SW_TUN_IPV6_GTP_IPV6_TCP:
 	case ICE_SW_TUN_IPV6_GTP_IPV6_UDP:
+	case ICE_SW_TUN_GTP_IPV4:
+	case ICE_SW_TUN_GTP_IPV6:
+	case ICE_SW_TUN_GTP_IPV4_TCP:
+	case ICE_SW_TUN_GTP_IPV4_UDP:
+	case ICE_SW_TUN_GTP_IPV6_TCP:
+	case ICE_SW_TUN_GTP_IPV6_UDP:
 		prof_type = ICE_PROF_TUN_UDP;
 		break;
 
@@ -7066,28 +7082,32 @@ ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 	 * GTP is fixed, 2152) tunnel where inner/outer L3 could be IPv4[6] and
 	 * likewise inner L4 could be TCP/UDP
 	 */
-	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV4_TCP) {
+	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV4_TCP ||
+	    tun_type == ICE_SW_TUN_GTP_IPV4_TCP) {
 		*pkt = dummy_ipv4_gtpu_ipv4_tcp_packet;
 		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_tcp_packet);
 		*offsets = dummy_ipv4_gtpu_ipv4_tcp_packet_offsets;
 		return;
 	}
 
-	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV4_UDP) {
+	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV4_UDP ||
+	    tun_type == ICE_SW_TUN_GTP_IPV4_UDP) {
 		*pkt = dummy_ipv4_gtpu_ipv4_udp_packet;
 		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_udp_packet);
 		*offsets = dummy_ipv4_gtpu_ipv4_udp_packet_offsets;
 		return;
 	}
 
-	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV6_TCP) {
+	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV6_TCP ||
+	    tun_type == ICE_SW_TUN_GTP_IPV6_TCP) {
 		*pkt = dummy_ipv4_gtpu_ipv6_tcp_packet;
 		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv6_tcp_packet);
 		*offsets = dummy_ipv4_gtpu_ipv6_tcp_packet_offsets;
 		return;
 	}
 
-	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV6_UDP) {
+	if (tun_type == ICE_SW_TUN_IPV4_GTP_IPV6_UDP ||
+	    tun_type == ICE_SW_TUN_GTP_IPV6_UDP) {
 		*pkt = dummy_ipv4_gtpu_ipv6_udp_packet;
 		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv6_udp_packet);
 		*offsets = dummy_ipv4_gtpu_ipv6_udp_packet_offsets;
@@ -7123,13 +7143,15 @@ ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 	}
 
 	/* Support GTP tunnel + L3 */
-	if (tun_type == ICE_SW_TUN_IPV4_GTPU_IPV4) {
+	if (tun_type == ICE_SW_TUN_IPV4_GTPU_IPV4 ||
+	    tun_type == ICE_SW_TUN_GTP_IPV4) {
 		*pkt = dummy_ipv4_gtpu_ipv4_packet;
 		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_packet);
 		*offsets = dummy_ipv4_gtpu_ipv4_packet_offsets;
 		return;
 	}
-	if (tun_type == ICE_SW_TUN_IPV4_GTPU_IPV6) {
+	if (tun_type == ICE_SW_TUN_IPV4_GTPU_IPV6 ||
+	    tun_type == ICE_SW_TUN_GTP_IPV6) {
 		*pkt = dummy_ipv4_gtpu_ipv6_packet;
 		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv6_packet);
 		*offsets = dummy_ipv4_gtpu_ipv6_packet_offsets;

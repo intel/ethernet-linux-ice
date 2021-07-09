@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "kcompat.h"
 
@@ -652,9 +652,6 @@ u32 __kc_eth_get_headlen(const struct net_device __always_unused *dev,
 		struct vlan_hdr *vlan;
 		/* l3 headers */
 		struct iphdr *ipv4;
-#ifdef __CHECKER__
-		/* cppcheck-suppress unusedStructMember */
-#endif /* __CHECKER__ */
 		struct ipv6hdr *ipv6;
 	} hdr;
 	__be16 proto;
@@ -800,9 +797,6 @@ unsigned int _kc_cpumask_local_spread(unsigned int i, int node)
 	 * cpumask_of_node, so just use for_each_online_cpu()
 	 */
 	for_each_online_cpu(cpu)
-#ifdef __CHECKER__
-		/* cppcheck-suppress unreadVariable */
-#endif /* __CHECKER__ */
 		if (i-- == 0)
 			return cpu;
 
@@ -856,11 +850,11 @@ unsigned int _kc_cpumask_local_spread(unsigned int i, int node)
  * and this function is in no way similar to skb_flow_dissect_flow_keys(). An
  * example use can be found in the ice driver, specifically ice_arfs.c.
  *
- * This function is treated as a whitelist of supported fields the SKB can
+ * This function is treated as a allowlist of supported fields the SKB can
  * parse. If new functionality is added make sure to keep this format (i.e. only
  * check for fields that are explicity wanted).
  *
- * Current whitelist:
+ * Current allowlist:
  *
  * TCPv4, TCPv6, UDPv4, UDPv6
  *

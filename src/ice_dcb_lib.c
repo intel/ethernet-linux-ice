@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice_dcb_lib.h"
 #include "ice_dcb_nl.h"
@@ -654,7 +654,7 @@ static int ice_dcb_init_cfg(struct ice_pf *pf, bool locked)
  * @ets_willing: configure ETS willing
  * @locked: was this function called with RTNL held
  */
-static int ice_dcb_sw_dflt_cfg(struct ice_pf *pf, bool ets_willing, bool locked)
+int ice_dcb_sw_dflt_cfg(struct ice_pf *pf, bool ets_willing, bool locked)
 {
 	struct ice_aqc_port_ets_elem buf = { 0 };
 	struct ice_dcbx_cfg *dcbcfg;
@@ -824,24 +824,32 @@ int ice_init_pf_dcb(struct ice_pf *pf, bool locked)
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_port_info *port_info;
 	struct ice_hw *hw = &pf->hw;
+	enum ice_status status;
 	int err;
 
 	port_info = hw->port_info;
 
-	err = ice_init_dcb(hw, false);
-	if (err && !port_info->qos_cfg.is_sw_lldp) {
-		dev_err(dev, "Error initializing DCB %d\n", err);
+	status = ice_init_dcb(hw, false);
+	if (status && !port_info->qos_cfg.is_sw_lldp) {
+		dev_err(dev, "Error initializing DCB %s\n",
+			ice_stat_str(status));
+		err = ice_status_to_errno(status);
 		goto dcb_init_err;
 	}
 
 	dev_info(dev, "DCB is enabled in the hardware, max number of TCs supported on this port are %d\n",
 		 pf->hw.func_caps.common_cap.maxtc);
-	if (err) {
+	if (port_info->qos_cfg.is_sw_lldp) {
 		struct ice_vsi *pf_vsi;
 
 		/* FW LLDP is disabled, activate SW DCBX/LLDP mode */
 		dev_info(dev, "FW LLDP is disabled, DCBx/LLDP in SW mode.\n");
 		clear_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags);
+		err = ice_aq_set_pfc_mode(&pf->hw, ICE_AQC_PFC_VLAN_BASED_PFC,
+					  NULL);
+		if (err)
+			dev_info(dev, "Fail to set VLAN PFC mode\n");
+
 		err = ice_dcb_sw_dflt_cfg(pf, true, locked);
 		if (err) {
 			dev_err(dev, "Failed to set local DCB config %d\n",
@@ -985,6 +993,10 @@ void ice_setup_dcb_qos_info(struct ice_pf *pf, struct ice_qos_params *qos_info)
 		qos_info->apps[i].prot_id = dcbx_cfg->app[i].prot_id;
 		qos_info->apps[i].selector = dcbx_cfg->app[i].selector;
 	}
+
+	qos_info->pfc_mode = dcbx_cfg->pfc_mode;
+	for (i = 0; i < ICE_IDC_DSCP_NUM_VAL; i++)
+		qos_info->dscp_map[i] = dcbx_cfg->dscp_map[i];
 }
 
 /**

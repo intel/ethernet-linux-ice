@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice_virtchnl_allowlist.h"
 
@@ -44,10 +44,10 @@ static const u32 l2_allowlist_opcodes[] = {
 	VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE,
 };
 
-/* VIRTCHNL_VF_OFFLOAD_IWARP */
-static const u32 iwarp_allowlist_opcodes[] = {
-	VIRTCHNL_OP_IWARP, VIRTCHNL_OP_CONFIG_IWARP_IRQ_MAP,
-	VIRTCHNL_OP_RELEASE_IWARP_IRQ_MAP,
+/* VIRTCHNL_VF_CAP_RDMA */
+static const u32 rdma_allowlist_opcodes[] = {
+	VIRTCHNL_OP_RDMA, VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP,
+	VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP,
 };
 
 /* VIRTCHNL_VF_OFFLOAD_REQ_QUEUES */
@@ -109,7 +109,6 @@ static const u32 adv_rss_pf_allowlist_opcodes[] = {
 /* VIRTCHNL_VF_OFFLOAD_FDIR_PF */
 static const u32 fdir_pf_allowlist_opcodes[] = {
 	VIRTCHNL_OP_ADD_FDIR_FILTER, VIRTCHNL_OP_DEL_FDIR_FILTER,
-	VIRTCHNL_OP_QUERY_FDIR_FILTER,
 };
 
 
@@ -133,7 +132,7 @@ struct allowlist_opcode_info {
 	}
 static const struct allowlist_opcode_info allowlist_opcodes[] = {
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_L2, l2_allowlist_opcodes),
-	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_IWARP, iwarp_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_CAP_RDMA, rdma_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_REQ_QUEUES, req_queues_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_VLAN, vlan_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_RSS_PF, rss_pf_allowlist_opcodes),
@@ -179,7 +178,6 @@ ice_vc_allowlist_opcodes(struct ice_vf *vf, const u32 *opcodes, size_t size)
 		set_bit(opcodes[i], vf->opcodes_allowlist);
 }
 
-
 /**
  * ice_vc_clear_allowlist - clear all allowlist opcodes
  * @vf: pointer to VF structure
@@ -204,7 +202,7 @@ void ice_vc_set_default_allowlist(struct ice_vf *vf)
  * ice_vc_set_working_allowlist - allowlist opcodes needed to by VF to work
  * @vf: pointer to VF structure
  *
- * Whitelist opcodes that aren't associated with specific caps, but
+ * Allowlist opcodes that aren't associated with specific caps, but
  * are needed by VF to work.
  */
 void ice_vc_set_working_allowlist(struct ice_vf *vf)

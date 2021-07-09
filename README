@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ===============================================================================
 
-May 5, 2021
+June 2, 2021
 
 ===============================================================================
 
@@ -358,6 +358,22 @@ for this mutual exclusion. On kernels older than 4.5, the driver cannot check
 for this exclusion and is unaware of bonding events.
 
 
+NVM Express* (NVMe) over TCP and Fabrics
+----------------------------------------
+RDMA provides a high throughput, low latency means to directly access NVM
+Express* (NVMe*) drives on a remote server.
+
+Refer to the following for details on supported operating systems and how to
+set up and configure your server and client systems:
+- NVM Express over TCP for Intel(R) Ethernet Products Configuration Guide
+- NVM Express over Fabrics for Intel(R) Ethernet Products with RDMA
+Configuration Guide
+
+Both guides are available on the Intel Technical Library at:
+https://www.intel.com/content/www/us/en/design/products-and-solutions/networking
+-and-io/ethernet-controller-e810/technical-library.html
+
+
 Application Device Queues (ADQ)
 -------------------------------
 Application Device Queues (ADQ) allow you to dedicate one or more queues to a
@@ -365,8 +381,8 @@ specific application. This can reduce latency for the specified application,
 and allow Tx traffic to be rate limited per application.
 
 The ADQ information contained here is specific to the ice driver. For more
-details, contact your Intel Corp. representative to obtain the E810 ADQ
-Configuration Guide.
+details, refer to the E810 ADQ Configuration Guide at:
+https://cdrdv2.intel.com/v1/dl/getContent/609008
 
 Requirements:
 - Kernel version 4.19.58 or later
@@ -918,10 +934,11 @@ For example:
 
 This setting lasts until the PF is reloaded.
 
-NOTE: Assigning a MAC address for a VF from the host will disable any
-subsequent requests to change the MAC address from within the VM. This is a
-security feature. The VM is not aware of this restriction, so if this is
-attempted in the VM, it will trigger MDD events.
+NOTE: For untrusted VFs, assigning a MAC address for a VF from the host will
+disable any subsequent requests to change the MAC address from within the VM.
+This is a security feature. The VM is not aware of this restriction, so if this
+is attempted in the VM, it will trigger MDD events. Trusted VFs are allowed to
+change the MAC address from within the VM.
 
 
 Trusted VFs and VF Promiscuous Mode
@@ -1137,7 +1154,11 @@ To see the speed configurations your device supports, run the following:
 To have your device advertise supported speeds, use the following:
 
 # ethtool -s <ethX> advertise N
-  Where N is a combination of the desired speeds.
+  Where N is a bitmask of the desired speeds.
+
+For example, to have your device advertise 10000baseSR Full, use:
+
+# ethtool -s <ethX> advertise 0x80000000000
 
 For more details, please refer to the ethtool man page.
 
@@ -1187,6 +1208,44 @@ https://github.com/intel/openlldp.
 - The driver implements the DCB netlink interface layer to allow the user space
 to communicate with the driver and query DCB configuration for the port.
 - iSCSI with DCB is not supported.
+
+
+L3 QoS mode
+-----------
+The ice driver supports setting DSCP-based Layer 3 Quality of Service (L3 QoS)
+in the PF driver. The driver initializes in L2 QoS mode. L3 QoS mode is:
+- Automatically enabled when the first DSCP/ToS to TC mapping is defined
+- Automatically disabled when the last DSCP/ToS to TC mapping is removed
+
+The following is an example of how to map a DSCP/ToS to a TC:
+
+# lldptool -T -i <ethX> -V APP app=<prio>,<sel>,<pid>
+  where:
+    <prio>: The TC assigned to the DSCP/ToS code point
+    <sel>: 5 for DSCP to TC mapping
+    <pid>: The DSCP/ToS code point
+
+For example, to map packets containing DSCP value 63 to traffic class 0 on
+interface eth0:
+
+# lldptool -T -i eth0 -V APP app=63,5,0
+
+To remove a mapping, use the following:
+
+# lldptool -T -I <ethX> -V APP -d app=<prio>,<sel>,<pid>
+
+To view the currently configured mappings, use the following:
+
+# lldptool -t -i <ethX> -V APP -c
+
+NOTE:
+- You cannot enable L3 QoS mode if RDMA is active.
+- L3 QoS mode is not available when FW-LLDP is enabled. You also cannot enable
+FW-LLDP if L3 QoS mode is active. Disable FW-LLDP before switching to L3 QoS
+mode. Refer to the "FW-LLDP (Firmware Link Layer Discovery Protocol)" section
+in this README for more information on disabling FW-LLDP.
+- Once a mapping has been submitted for a DSCP value, another mapping for that
+value will not be accepted until the first one has been deleted.
 
 
 FW-LLDP (Firmware Link Layer Discovery Protocol)
@@ -1445,6 +1504,79 @@ devices with the "devlink dev info" command.
 - filename.bin – The file that contains the new NVM image.
 
 
+Firmware Logs
+-------------
+The ice driver allows you to generate firmware logs for supported categories of
+events, to help debug issues with Intel Customer Support. Firmware logs are
+enabled by default.
+
+Firmware logs are printed to dmesg. The driver groups these events into
+categories, called "modules." Supported modules include:
+* 00000001 - General (Bit 0)
+* 00000002 - Control (Bit 1)
+* 00000004 - Link Management (Bit 2)
+* 00000008 - Link Topology Detection (Bit 3)
+* 00000010 - Link Control Technology (Bit 4)
+* 00000020 - I2C (Bit 5)
+* 00000040 - SDP (Bit 6)
+* 00000080 - MDIO (Bit 7)
+* 00000100 - Admin Queue (Bit 8)
+* 00000200 - Host DMA (Bit 9)
+* 00000400 - LLDP (Bit 10)
+* 00000800 - DCBx (Bit 11)
+* 00001000 - DCB (Bit 12)
+* 00002000 - XLR (function-level resets; Bit 13)
+* 00004000 - NVM (Bit 14)
+* 00008000 - Authentication (Bit 15)
+* 00010000 - VPD (Vital Product Data; Bit 16)
+* 00020000 - IOSF (Intel On-Chip System Fabric, Bit 17)
+* 00040000 - Parser (Bit 18)
+* 00080000 - Switch (Bit 19)
+* 00100000 - Scheduler (Bit 20)
+* 00200000 - TX Queue Management (Bit 21)
+* 00400000 - ACL (Access Control List; Bit 22)
+* 00800000 - Post (Bit 23)
+* 01000000 - Watchdog (Bit 24)
+* 02000000 - Task Dispatcher (Bit 25)
+* 04000000 - Manageability (Bit 26)
+* 08000000 - SyncE (Bit 27)
+* 10000000 - Health (Bit 28)
+* 20000000 - Time Sync (Bit 29)
+* 40000000 - PF Registration (Bit 30)
+* 80000000 - Module Version (Bit 31)
+
+You can change the verbosity level of the firmware logs. You can set only one
+log level per module, and each level includes the verbosity levels lower than
+it. For instance, setting the level to "normal" will also log warning and error
+messages. Available verbosity levels are:
+ 0 = none
+ 1 = error
+ 2 = warning
+ 3 = normal
+ 4 = verbose
+
+Firmware logs can overrun the dmesg buffer. Before loading the driver, use the
+following command to redirect dmesg to a file:
+
+# dmesg -w > filename.log
+
+Use a bitmap to set the desired verbosity level for the module(s). (NOTE: You
+must have dynamic debug enabled in the kernel.) For example, to set all events
+to log warning messages, use the following command:
+
+# sudo insmod ice.ko dyndbg="+p" fwlog_events=0x0FFFFFFF fwlog_level=2
+
+To log verbose, normal, warning, and error messages for the ACL (Bit 22),
+Switch (Bit 19), and Parser (Bit 18) modules, for example, use the following:
+
+# sudo insmod ice.ko dyndbg="+p" fwlog_events=0x4C0000 fwlog_level=4
+
+To dump the firmware logging configuration to dmesg, use the following commands:
+
+# echo dump fwlog > command
+# dmesg
+
+
 Performance Optimization
 ========================
 Driver defaults are meant to fit a wide variety of workloads, but if further
@@ -1573,6 +1705,12 @@ helpful to optimize performance in VMs.
 Known Issues/Troubleshooting
 ============================
 
+Receive Error counts may be higher than the actual packet error count
+---------------------------------------------------------------------
+When a packet is received with more than one error, two bad packets may be
+reported. This affects all devices based on 10G, or faster, controllers.
+
+
 Dynamic Debug
 -------------
 If you encounter unexpected issues during driver load, some of the most useful
@@ -1659,6 +1797,19 @@ device, even when tx-checksum-sctp is on. This is due to a limitation in the
 Linux kernel. However, for Rx traffic, the SCTP checksum is verified if
 rx-checksumming is on. For both Tx and Rx traffic, you can offload the outer
 UDP checksum to the device.
+
+
+CentOS 7.2 Issues
+-----------------
+The following issues are specific to CentOS 7.2. Upgrading to the latest
+version of the operating system will resolve these issues.
+- base-r-fec mode is supposed to be on by default. On CentOS 7.2, Ethtool
+--show-priv-flags shows that it is off, instead of on.
+- ethtool -m <ethX> does not display optical module information as expected.
+- You cannot create an ipv6 Intel(R) Ethernet Flow Director rule. For example:
+# ethtool -U p1p1 flow-type tcp6 src-ip 3001:1::2:1:1 dst-ip 3001:1::1:1:1
+src-port 22 dst-port 23 action 10
+Returns a bad syntax error.
 
 
 Incorrect link speed reported on older VF drivers

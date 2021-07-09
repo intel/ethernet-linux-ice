@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice.h"
 
@@ -7,9 +7,9 @@
  * ice_cgu_cfg_ts_pll - Configure the TS PLL
  * @pf: Board private structure
  * @enable: True to enable TS PLL
- * @time_ref_freq: Master timer frequency
+ * @time_ref_freq: primary timer frequency
  * @time_ref_sel: Time source
- * @src_tmr_mode: Master timer mode
+ * @src_tmr_mode: primary timer mode
  */
 int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq time_ref_freq,
 		       enum ice_cgu_time_ref_sel time_ref_sel, enum ice_src_tmr_mode src_tmr_mode)
@@ -22,10 +22,11 @@ int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq ti
 	union nac_cgu_dword9 dw9;
 	int err;
 
-	dev_info(ice_pf_to_dev(pf),
-		 "Requested %s, time_ref_freq %s, time_ref_sel %s, src_tmr_mode %s\n",
-		 enable ? "enable" : "disable", ICE_TIME_REF_FREQ_TO_STR(time_ref_freq),
-		 ICE_TIME_REF_SEL_TO_STR(time_ref_sel), ICE_SRC_TMR_MODE_TO_STR(src_tmr_mode));
+	dev_dbg(ice_pf_to_dev(pf), "Requested %s, time_ref_freq %s, time_ref_sel %s, src_tmr_mode %s\n",
+		enable ? "enable" : "disable",
+		ICE_TIME_REF_FREQ_TO_STR(time_ref_freq),
+		ICE_TIME_REF_SEL_TO_STR(time_ref_sel),
+		ICE_SRC_TMR_MODE_TO_STR(src_tmr_mode));
 
 	if (time_ref_freq >= NUM_ICE_TIME_REF_FREQ) {
 		dev_err(ice_pf_to_dev(pf), "Invalid TIME_REF freq %u\n", time_ref_freq);
@@ -57,12 +58,12 @@ int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq ti
 	if (err)
 		return err;
 
-	dev_info(ice_pf_to_dev(pf),
-		 "Before change, %s, time_ref_freq %s, time_ref_sel %s, PLL %s\n",
-		 dw24.field.ts_pll_enable ? "enabled" : "disabled",
-		 ICE_TIME_REF_FREQ_TO_STR(dw9.field.time_ref_freq_sel),
-		 ICE_TIME_REF_SEL_TO_STR(dw24.field.time_ref_sel),
-		 bwm_lf.field.plllock_true_lock_cri ? "locked" : "unlocked");
+	dev_dbg(ice_pf_to_dev(pf),
+		"Before change, %s, time_ref_freq %s, time_ref_sel %s, PLL %s\n",
+		dw24.field.ts_pll_enable ? "enabled" : "disabled",
+		ICE_TIME_REF_FREQ_TO_STR(dw9.field.time_ref_freq_sel),
+		ICE_TIME_REF_SEL_TO_STR(dw24.field.time_ref_sel),
+		bwm_lf.field.plllock_true_lock_cri ? "locked" : "unlocked");
 
 	if (!enable) {
 		if (dw24.field.ts_pll_enable) {
@@ -131,10 +132,10 @@ int ice_cgu_cfg_ts_pll(struct ice_pf *pf, bool enable, enum ice_time_ref_freq ti
 		err = ice_cgu_reg_read(pf, TSPLL_RO_BWM_LF, &bwm_lf.val);
 	}
 	if (!err && bwm_lf.field.plllock_true_lock_cri) {
-		dev_info(ice_pf_to_dev(pf),
-			 "TS PLL successfully locked, time_ref_freq %s, time_ref_sel %s\n",
-			 ICE_TIME_REF_FREQ_TO_STR(time_ref_freq),
-			 ICE_TIME_REF_SEL_TO_STR(time_ref_sel));
+		dev_dbg(ice_pf_to_dev(pf),
+			"TS PLL successfully locked, time_ref_freq %s, time_ref_sel %s\n",
+			ICE_TIME_REF_FREQ_TO_STR(time_ref_freq),
+			ICE_TIME_REF_SEL_TO_STR(time_ref_sel));
 
 		/* update state to indicate no unlock event since last lock */
 		cgu_info->unlock_event = false;

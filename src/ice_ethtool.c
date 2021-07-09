@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 /* ethtool support for ice */
 
@@ -198,11 +198,6 @@ static const struct ice_stats ice_gstrings_pf_stats[] = {
 	ICE_PF_STAT(ICE_PORT_RX_AD_VLANO, rx_ad_vlano),
 	ICE_PF_STAT(ICE_PORT_TX_AD_VLANO, tx_ad_vlano),
 #endif
-	/* LPI stats */
-	ICE_PF_STAT(ICE_PORT_RX_LPI_STATUS, stats.rx_lpi_status),
-	ICE_PF_STAT(ICE_PORT_TX_LPI_STATUS, stats.tx_lpi_status),
-	ICE_PF_STAT(ICE_PORT_RX_LPI_COUNT, stats.rx_lpi_count),
-	ICE_PF_STAT(ICE_PORT_TX_LPI_COUNT, stats.tx_lpi_count),
 	ICE_PF_STAT(ICE_PORT_FDIR_SB_MATCH, stats.fd_sb_match),
 	ICE_PF_STAT(ICE_PORT_FDIR_SB_STATUS, stats.fd_sb_status),
 	ICE_PF_STAT("chnl_inline_fd_match", stats.ch_atr_match),
@@ -252,8 +247,6 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 		      ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA),
 	ICE_PRIV_FLAG("channel-pkt-clean-bp-stop-cfg",
 		      ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG),
-	ICE_PRIV_FLAG("channel-gtp-outer-ipv6",
-		      ICE_FLAG_CHNL_GTP_OUTER_IPV6),
 #endif /* NETIF_F_HW_TC */
 	ICE_PRIV_FLAG("vf-true-promisc-support",
 		      ICE_FLAG_VF_TRUE_PROMISC_ENA),
@@ -265,10 +258,9 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 #define ICE_PRIV_FLAG_ARRAY_SIZE	ARRAY_SIZE(ice_gstrings_priv_flags)
 
 static void
-ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
+__ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo,
+		  struct ice_vsi *vsi)
 {
-	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_vsi *vsi = ice_get_netdev_priv_vsi(np);
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	struct ice_orom_info *orom;
@@ -310,6 +302,25 @@ ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 		return;
 
 	drvinfo->n_priv_flags = ICE_PRIV_FLAG_ARRAY_SIZE;
+}
+
+static void
+ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
+{
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+
+	__ice_get_drvinfo(netdev, drvinfo, np->vsi);
+}
+
+static void
+ice_repr_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
+{
+	struct ice_repr *repr = ice_netdev_to_repr(netdev);
+
+	if (ice_check_vf_ready_for_cfg(repr->vf))
+		return;
+
+	__ice_get_drvinfo(netdev, drvinfo, repr->src_vsi);
 }
 
 static int ice_get_regs_len(struct net_device __always_unused *netdev)
@@ -2259,6 +2270,12 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 				goto ethtool_exit;
 			}
 #endif /* NETIF_F_HW_TC */
+			if (ice_get_pfc_mode(pf) == ICE_QOS_MODE_DSCP) {
+				clear_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags);
+				dev_err(dev, "QoS in L3 DSCP mode, FW Agent not allowed to start\n");
+				ret = -EOPNOTSUPP;
+				goto ethtool_exit;
+			}
 
 			/* Remove rule to direct LLDP packets to default VSI.
 			 * The FW LLDP engine will now be consuming them.
@@ -5701,6 +5718,97 @@ ice_set_per_q_coalesce(struct net_device *netdev, u32 q_num,
 }
 #endif /* ETHTOOL_PERQUEUE */
 
+#ifndef ETHTOOL_COALESCE_USECS
+/**
+ * ice_repr_is_coalesce_param_invalid - check for unsupported coalesce params
+ * @ec: ethtool structure to fill with driver's coalesce settings
+ *
+ * Returns true if anything but ec->rx_coalesce_usecs_high is set,
+ * returns false otherwise.
+ *
+ */
+static bool
+ice_repr_is_coalesce_param_invalid(struct ethtool_coalesce *ec)
+{
+	if (ec->rx_coalesce_usecs || ec->rx_max_coalesced_frames ||
+	    ec->rx_coalesce_usecs_irq || ec->rx_max_coalesced_frames_irq ||
+	    ec->tx_coalesce_usecs || ec->tx_max_coalesced_frames ||
+	    ec->tx_coalesce_usecs_irq || ec->tx_max_coalesced_frames_irq ||
+	    ec->stats_block_coalesce_usecs || ec->use_adaptive_rx_coalesce ||
+	    ec->use_adaptive_tx_coalesce || ec->pkt_rate_low ||
+	    ec->rx_coalesce_usecs_low || ec->rx_max_coalesced_frames_low ||
+	    ec->tx_coalesce_usecs_low || ec->tx_max_coalesced_frames_low ||
+	    ec->pkt_rate_high || ec->rx_max_coalesced_frames_high ||
+	    ec->tx_coalesce_usecs_high || ec->tx_max_coalesced_frames_high ||
+	    ec->rate_sample_interval)
+		return true;
+
+	return false;
+}
+#endif /* !ETHTOOL_COALESCE_USECS */
+
+/**
+ * ice_repr_set_coalesce - set coalesce settings for all queues
+ * @netdev: pointer to the netdev associated with this query
+ * @ec: ethtool structure to read the requested coalesce settings
+ *
+ * Return 0 on success, negative otherwise.
+ */
+static int
+ice_repr_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
+{
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_vsi *vsi = np->vsi;
+	struct ice_pf *pf = vsi->back;
+	struct ice_ring *rx_ring;
+	int v_idx;
+
+#ifndef ETHTOOL_COALESCE_USECS
+	if (ice_repr_is_coalesce_param_invalid(ec))
+		return -EOPNOTSUPP;
+#endif
+
+	if (ec->rx_coalesce_usecs_high > ICE_MAX_INTRL ||
+	    (ec->rx_coalesce_usecs_high &&
+	     ec->rx_coalesce_usecs_high < pf->hw.intrl_gran)) {
+		netdev_info(vsi->netdev, "Invalid value,  rx-usecs-high valid values are 0 (disabled), %d-%d\n",
+			    pf->hw.intrl_gran, ICE_MAX_INTRL);
+		return -EINVAL;
+	}
+
+	ice_for_each_q_vector(vsi, v_idx) {
+		rx_ring = vsi->rx_rings[v_idx];
+		ice_write_intrl(rx_ring->q_vector, ec->rx_coalesce_usecs_high);
+		rx_ring->q_vector->intrl = ec->rx_coalesce_usecs_high;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_repr_get_coalesce - get coalesce settings
+ * @netdev: pointer to the netdev associated with this query
+ * @ec: ethtool structure to read the requested coalesce settings
+ *
+ * Since all queues have the same Rx coalesce high settings,
+ * read the value from te first queue.
+ *
+ * Return 0 on success, negative otherwise.
+ */
+static int
+ice_repr_get_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
+{
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_vsi *vsi = np->vsi;
+
+	if (!vsi->rx_rings || !vsi->rx_rings[0]->q_vector->rx.ring)
+		return -EINVAL;
+
+	ec->rx_coalesce_usecs_high = vsi->rx_rings[0]->q_vector->intrl;
+
+	return 0;
+}
+
 #ifdef ETHTOOL_GMODULEINFO
 #define ICE_I2C_EEPROM_DEV_ADDR		0xA0
 #define ICE_I2C_EEPROM_DEV_ADDR2	0xA2
@@ -5985,7 +6093,12 @@ void ice_set_ethtool_safe_mode_ops(struct net_device *netdev)
 
 
 static const struct ethtool_ops ice_ethtool_repr_ops = {
-	.get_drvinfo		= ice_get_drvinfo,
+#ifdef ETHTOOL_COALESCE_USECS
+	.supported_coalesce_params = ETHTOOL_COALESCE_RX_USECS_HIGH,
+#endif
+	.get_coalesce		= ice_repr_get_coalesce,
+	.set_coalesce		= ice_repr_set_coalesce,
+	.get_drvinfo		= ice_repr_get_drvinfo,
 	.get_link		= ethtool_op_get_link,
 	.get_strings		= ice_get_strings,
 	.get_ethtool_stats      = ice_get_ethtool_stats,

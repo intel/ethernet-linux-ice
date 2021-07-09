@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2018-2019, Intel Corporation.
+# Copyright (C) 2018-2021, Intel Corporation.
 
 # When the make command line has the goal 'all' or no goal specified (i.e.
 # when compiling the driver) a sub-make of the kernel's Makefile includes
@@ -48,6 +48,7 @@ ice-y := ice_main.o	\
 	 ice_pf_vsi_vlan_ops.o \
 	 ice_vsi_vlan_ops.o \
 	 ice_vsi_vlan_lib.o \
+	 ice_tc_lib.o	\
 	 ice_fdir.o	\
 	 ice_ethtool_fdir.o	\
 	 ice_acl_main.o		\
@@ -57,6 +58,7 @@ ice-y := ice_main.o	\
 	 ice_flex_pipe.o	\
 	 ice_flow.o		\
 	 ice_lag.o		\
+	 ice_fwlog.o		\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
@@ -66,7 +68,7 @@ ice-$(CONFIG_PCI_IOV) += ice_virtchnl_allowlist.o
 ice-$(CONFIG_PCI_IOV) += ice_dcf.o
 ice-$(CONFIG_PCI_IOV) += ice_virtchnl_fdir.o
 ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_sriov.o ice_vf_vsi_vlan_ops.o
-ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o
+ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_cgu_ops.o ice_cgu_util.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o

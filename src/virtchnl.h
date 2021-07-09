@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 
 #ifndef _VIRTCHNL_H_
@@ -146,7 +146,6 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_DEL_RSS_CFG = 46,
 	VIRTCHNL_OP_ADD_FDIR_FILTER = 47,
 	VIRTCHNL_OP_DEL_FDIR_FILTER = 48,
-	VIRTCHNL_OP_QUERY_FDIR_FILTER = 49,
 	VIRTCHNL_OP_GET_MAX_RSS_QREGION = 50,
 	VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS = 51,
 	VIRTCHNL_OP_ADD_VLAN_V2 = 52,
@@ -249,8 +248,6 @@ static inline const char *virtchnl_op_str(enum virtchnl_ops v_opcode)
 		return "VIRTCHNL_OP_ADD_FDIR_FILTER";
 	case VIRTCHNL_OP_DEL_FDIR_FILTER:
 		return "VIRTCHNL_OP_DEL_FDIR_FILTER";
-	case VIRTCHNL_OP_QUERY_FDIR_FILTER:
-		return "VIRTCHNL_OP_QUERY_FDIR_FILTER";
 	case VIRTCHNL_OP_GET_MAX_RSS_QREGION:
 		return "VIRTCHNL_OP_GET_MAX_RSS_QREGION";
 	case VIRTCHNL_OP_ENABLE_QUEUES_V2:
@@ -321,8 +318,9 @@ struct virtchnl_version_info {
 
 VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_version_info);
 
-#define VF_IS_V10(_v) (((_v)->major == 1) && ((_v)->minor == 0))
+#define VF_IS_V10(_ver) (((_ver)->major == 1) && ((_ver)->minor == 0))
 #define VF_IS_V11(_ver) (((_ver)->major == 1) && ((_ver)->minor == 1))
+#define VF_IS_V20(_ver) (((_ver)->major == 2) && ((_ver)->minor == 0))
 
 /* VIRTCHNL_OP_RESET_VF
  * VF sends this request to PF with no parameters
@@ -369,37 +367,35 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
  * VIRTCHNL_VF_OFFLOAD_L2 flag is inclusive of base mode L2 offloads including
  * TX/RX Checksum offloading and TSO for non-tunnelled packets.
  */
-#define VIRTCHNL_VF_OFFLOAD_L2			0x00000001
-#define VIRTCHNL_VF_OFFLOAD_IWARP		0x00000002
+#define VIRTCHNL_VF_OFFLOAD_L2			BIT(0)
+#define VIRTCHNL_VF_OFFLOAD_IWARP		BIT(1)
 #define VIRTCHNL_VF_CAP_RDMA			VIRTCHNL_VF_OFFLOAD_IWARP
-#define VIRTCHNL_VF_OFFLOAD_RSVD		0x00000004
-#define VIRTCHNL_VF_OFFLOAD_RSS_AQ		0x00000008
-#define VIRTCHNL_VF_OFFLOAD_RSS_REG		0x00000010
-#define VIRTCHNL_VF_OFFLOAD_WB_ON_ITR		0x00000020
-#define VIRTCHNL_VF_OFFLOAD_REQ_QUEUES		0x00000040
-#define VIRTCHNL_VF_OFFLOAD_CRC			0x00000080
-	/* 0X00000100 is reserved */
-#define VIRTCHNL_VF_LARGE_NUM_QPAIRS		0x00000200
-#define VIRTCHNL_VF_OFFLOAD_VLAN_V2		0x00008000
-#define VIRTCHNL_VF_OFFLOAD_VLAN		0x00010000
-#define VIRTCHNL_VF_OFFLOAD_RX_POLLING		0x00020000
-#define VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2	0x00040000
-#define VIRTCHNL_VF_OFFLOAD_RSS_PF		0X00080000
-#define VIRTCHNL_VF_OFFLOAD_ENCAP		0X00100000
-#define VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM		0X00200000
-#define VIRTCHNL_VF_OFFLOAD_RX_ENCAP_CSUM	0X00400000
-#define VIRTCHNL_VF_OFFLOAD_ADQ			0X00800000
-#define VIRTCHNL_VF_OFFLOAD_ADQ_V2		0X01000000
-#define VIRTCHNL_VF_OFFLOAD_USO			0X02000000
-#define VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC	0X04000000
-#define VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF		0X08000000
-#define VIRTCHNL_VF_OFFLOAD_FDIR_PF		0X10000000
-	/* 0X20000000 is reserved */
-#define VIRTCHNL_VF_CAP_DCF			0X40000000
-	/* 0X80000000 is reserved */
+#define VIRTCHNL_VF_OFFLOAD_RSS_AQ		BIT(3)
+#define VIRTCHNL_VF_OFFLOAD_RSS_REG		BIT(4)
+#define VIRTCHNL_VF_OFFLOAD_WB_ON_ITR		BIT(5)
+#define VIRTCHNL_VF_OFFLOAD_REQ_QUEUES		BIT(6)
+/* used to negotiate communicating link speeds in Mbps */
+#define VIRTCHNL_VF_CAP_ADV_LINK_SPEED		BIT(7)
+	/* BIT(8) is reserved */
+#define VIRTCHNL_VF_LARGE_NUM_QPAIRS		BIT(9)
+#define VIRTCHNL_VF_OFFLOAD_CRC			BIT(10)
+#define VIRTCHNL_VF_OFFLOAD_VLAN_V2		BIT(15)
+#define VIRTCHNL_VF_OFFLOAD_VLAN		BIT(16)
+#define VIRTCHNL_VF_OFFLOAD_RX_POLLING		BIT(17)
+#define VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2	BIT(18)
+#define VIRTCHNL_VF_OFFLOAD_RSS_PF		BIT(19)
+#define VIRTCHNL_VF_OFFLOAD_ENCAP		BIT(20)
+#define VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM		BIT(21)
+#define VIRTCHNL_VF_OFFLOAD_RX_ENCAP_CSUM	BIT(22)
+#define VIRTCHNL_VF_OFFLOAD_ADQ			BIT(23)
+#define VIRTCHNL_VF_OFFLOAD_ADQ_V2		BIT(24)
+#define VIRTCHNL_VF_OFFLOAD_USO			BIT(25)
+#define VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC	BIT(26)
+#define VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF		BIT(27)
+#define VIRTCHNL_VF_OFFLOAD_FDIR_PF		BIT(28)
+#define VIRTCHNL_VF_CAP_DCF			BIT(30)
+	/* BIT(31) is reserved */
 
-/* Define below the capability flags that are not offloads */
-#define VIRTCHNL_VF_CAP_ADV_LINK_SPEED		0x00000080
 #define VF_BASE_MODE_OFFLOADS (VIRTCHNL_VF_OFFLOAD_L2 | \
 			       VIRTCHNL_VF_OFFLOAD_VLAN | \
 			       VIRTCHNL_VF_OFFLOAD_RSS_PF)
@@ -440,14 +436,21 @@ VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_txq_info);
 /* RX descriptor IDs (range from 0 to 63) */
 enum virtchnl_rx_desc_ids {
 	VIRTCHNL_RXDID_0_16B_BASE		= 0,
+	/* 32B_BASE and FLEX_SPLITQ share desc ids as default descriptors
+	 * because they can be differentiated based on queue model; e.g. single
+	 * queue model can only use 32B_BASE and split queue model can only use
+	 * FLEX_SPLITQ.  Having these as 1 allows them to be used as default
+	 * descriptors without negotiation.
+	 */
 	VIRTCHNL_RXDID_1_32B_BASE		= 1,
+	VIRTCHNL_RXDID_1_FLEX_SPLITQ		= 1,
 	VIRTCHNL_RXDID_2_FLEX_SQ_NIC		= 2,
 	VIRTCHNL_RXDID_3_FLEX_SQ_SW		= 3,
 	VIRTCHNL_RXDID_4_FLEX_SQ_NIC_VEB	= 4,
 	VIRTCHNL_RXDID_5_FLEX_SQ_NIC_ACL	= 5,
 	VIRTCHNL_RXDID_6_FLEX_SQ_NIC_2		= 6,
 	VIRTCHNL_RXDID_7_HW_RSVD		= 7,
-	/* 8 through 15 are reserved */
+	/* 9 through 15 are reserved */
 	VIRTCHNL_RXDID_16_COMMS_GENERIC 	= 16,
 	VIRTCHNL_RXDID_17_COMMS_AUX_VLAN 	= 17,
 	VIRTCHNL_RXDID_18_COMMS_AUX_IPV4 	= 18,
@@ -461,13 +464,14 @@ enum virtchnl_rx_desc_ids {
 enum virtchnl_rx_desc_id_bitmasks {
 	VIRTCHNL_RXDID_0_16B_BASE_M		= BIT(VIRTCHNL_RXDID_0_16B_BASE),
 	VIRTCHNL_RXDID_1_32B_BASE_M		= BIT(VIRTCHNL_RXDID_1_32B_BASE),
+	VIRTCHNL_RXDID_1_FLEX_SPLITQ_M		= BIT(VIRTCHNL_RXDID_1_FLEX_SPLITQ),
 	VIRTCHNL_RXDID_2_FLEX_SQ_NIC_M		= BIT(VIRTCHNL_RXDID_2_FLEX_SQ_NIC),
 	VIRTCHNL_RXDID_3_FLEX_SQ_SW_M		= BIT(VIRTCHNL_RXDID_3_FLEX_SQ_SW),
 	VIRTCHNL_RXDID_4_FLEX_SQ_NIC_VEB_M	= BIT(VIRTCHNL_RXDID_4_FLEX_SQ_NIC_VEB),
 	VIRTCHNL_RXDID_5_FLEX_SQ_NIC_ACL_M	= BIT(VIRTCHNL_RXDID_5_FLEX_SQ_NIC_ACL),
 	VIRTCHNL_RXDID_6_FLEX_SQ_NIC_2_M	= BIT(VIRTCHNL_RXDID_6_FLEX_SQ_NIC_2),
 	VIRTCHNL_RXDID_7_HW_RSVD_M		= BIT(VIRTCHNL_RXDID_7_HW_RSVD),
-	/* 8 through 15 are reserved */
+	/* 9 through 15 are reserved */
 	VIRTCHNL_RXDID_16_COMMS_GENERIC_M	= BIT(VIRTCHNL_RXDID_16_COMMS_GENERIC),
 	VIRTCHNL_RXDID_17_COMMS_AUX_VLAN_M	= BIT(VIRTCHNL_RXDID_17_COMMS_AUX_VLAN),
 	VIRTCHNL_RXDID_18_COMMS_AUX_IPV4_M	= BIT(VIRTCHNL_RXDID_18_COMMS_AUX_IPV4),
@@ -1413,13 +1417,15 @@ struct virtchnl_pf_event {
 
 VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_pf_event);
 
+/* used to specify if a ceq_idx or aeq_idx is invalid */
+#define VIRTCHNL_RDMA_INVALID_QUEUE_IDX	0xFFFF
 /* VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP
  * VF uses this message to request PF to map RDMA vectors to RDMA queues.
  * The request for this originates from the VF RDMA driver through
  * a client interface between VF LAN and VF RDMA driver.
  * A vector could have an AEQ and CEQ attached to it although
  * there is a single AEQ per VF RDMA instance in which case
- * most vectors will have an INVALID_IDX for aeq and valid
+ * most vectors will have an VIRTCHNL_RDMA_INVALID_QUEUE_IDX for aeq and valid
  * idx for ceqs There will never be a case where there will be multiple CEQs
  * attached to a single vector.
  * PF configures interrupt mapping and returns status.
@@ -1427,8 +1433,8 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_pf_event);
 #define virtchnl_iwarp_qv_info virtchnl_rdma_qv_info
 struct virtchnl_rdma_qv_info {
 	u32 v_idx; /* msix_vector */
-	u16 ceq_idx;
-	u16 aeq_idx;
+	u16 ceq_idx; /* set to VIRTCHNL_RDMA_INVALID_QUEUE_IDX if invalid */
+	u16 aeq_idx; /* set to VIRTCHNL_RDMA_INVALID_QUEUE_IDX if invalid */
 	u8 itr_idx;
 };
 
@@ -1524,6 +1530,14 @@ enum virtchnl_proto_hdr_type {
 	VIRTCHNL_PROTO_HDR_PFCP,
 	VIRTCHNL_PROTO_HDR_GTPC,
 	VIRTCHNL_PROTO_HDR_ECPRI,
+	VIRTCHNL_PROTO_HDR_L2TPV2,
+	VIRTCHNL_PROTO_HDR_PPP,
+	/* IPv4 and IPv6 Fragment header types are only associated to
+	 * VIRTCHNL_PROTO_HDR_IPV4 and VIRTCHNL_PROTO_HDR_IPV6 respectively,
+	 * cannot be used independently.
+	 */
+	VIRTCHNL_PROTO_HDR_IPV4_FRAG,
+	VIRTCHNL_PROTO_HDR_IPV6_EH_FRAG,
 };
 
 /* Protocol header field within a protocol header. */
@@ -1608,6 +1622,12 @@ enum virtchnl_proto_hdr_field {
 	VIRTCHNL_PROTO_HDR_ECPRI_MSG_TYPE =
 		PROTO_HDR_FIELD_START(VIRTCHNL_PROTO_HDR_ECPRI),
 	VIRTCHNL_PROTO_HDR_ECPRI_PC_RTC_ID,
+	/* IPv4 Dummy Fragment */
+	VIRTCHNL_PROTO_HDR_IPV4_FRAG_PKID =
+		PROTO_HDR_FIELD_START(VIRTCHNL_PROTO_HDR_IPV4_FRAG),
+	/* IPv6 Extension Fragment */
+	VIRTCHNL_PROTO_HDR_IPV6_EH_FRAG_PKID =
+		PROTO_HDR_FIELD_START(VIRTCHNL_PROTO_HDR_IPV6_EH_FRAG),
 };
 
 struct virtchnl_proto_hdr {
@@ -1691,20 +1711,6 @@ struct virtchnl_fdir_rule {
 
 VIRTCHNL_CHECK_STRUCT_LEN(2604, virtchnl_fdir_rule);
 
-/* query information to retrieve fdir rule counters.
- * PF will fill out this structure to reset counter.
- */
-struct virtchnl_fdir_query_info {
-	u32 match_packets_valid:1;
-	u32 match_bytes_valid:1;
-	u32 reserved:30;  /* Reserved, must be zero. */
-	u32 pad;
-	u64 matched_packets; /* Number of packets for this rule. */
-	u64 matched_bytes;   /* Number of bytes through this rule. */
-};
-
-VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_fdir_query_info);
-
 /* Status returned to VF after VF requests FDIR commands
  * VIRTCHNL_FDIR_SUCCESS
  * VF FDIR related request is successfully done by PF
@@ -1780,25 +1786,6 @@ struct virtchnl_fdir_del {
 };
 
 VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_fdir_del);
-
-/* VIRTCHNL_OP_QUERY_FDIR_FILTER
- * VF sends this request to PF by filling out vsi_id,
- * flow_id and reset_counter. PF will return query_info
- * and query_status to VF.
- */
-struct virtchnl_fdir_query {
-	u16 vsi_id;   /* INPUT */
-	u16 pad1[3];
-	u32 flow_id;  /* INPUT */
-	u32 reset_counter:1; /* INPUT */
-	struct virtchnl_fdir_query_info query_info; /* OUTPUT */
-
-	/* see enum virtchnl_fdir_prgm_status; OUTPUT */
-	s32 status;
-	u32 pad2;
-};
-
-VIRTCHNL_CHECK_STRUCT_LEN(48, virtchnl_fdir_query);
 
 /* TX and RX queue types are valid in legacy as well as split queue models.
  * With Split Queue model, 2 additional types are introduced - TX_COMPLETION
@@ -2170,9 +2157,6 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		break;
 	case VIRTCHNL_OP_DEL_FDIR_FILTER:
 		valid_len = sizeof(struct virtchnl_fdir_del);
-		break;
-	case VIRTCHNL_OP_QUERY_FDIR_FILTER:
-		valid_len = sizeof(struct virtchnl_fdir_query);
 		break;
 	case VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS:
 		break;

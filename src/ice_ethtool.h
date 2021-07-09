@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_ETHTOOL_H_
 #define _ICE_ETHTOOL_H_
@@ -113,11 +113,6 @@ struct ice_stats {
 #define ICE_PORT_RX_AD_VLANO		PICK("rx_ad_vlano.nic", "port-rx-ad-vlan-offload_pkts")
 #define ICE_PORT_TX_AD_VLANO		PICK("tx_ad_vlano.nic", "port-tx-ad-vlan-offload_pkts")
 #endif /* ICE_ADD_PROBES */
-	/* LPI stats */
-#define ICE_PORT_RX_LPI_STATUS		PICK("rx_lpi_status.nic", "port-rx-lpi_status")
-#define ICE_PORT_TX_LPI_STATUS		PICK("tx_lpi_status.nic", "port-tx-lpi_status")
-#define ICE_PORT_RX_LPI_COUNT		PICK("rx_lpi_count.nic", "port-rx-lpi_count")
-#define ICE_PORT_TX_LPI_COUNT		PICK("tx_lpi_count.nic", "port-tx-lpi_count")
 #define ICE_PORT_FDIR_SB_MATCH		PICK("fdir_sb_match.nic", "port-rx-fdir-sideband")
 #define ICE_PORT_FDIR_SB_STATUS		PICK("fdir_sb_status.nic", "port-rx-fdir-sideband-status")
 #ifdef ICE_ADD_PROBES

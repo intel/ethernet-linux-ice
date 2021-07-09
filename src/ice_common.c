@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice_common.h"
 #include "ice_sched.h"
@@ -72,6 +72,17 @@ static enum ice_status ice_set_mac_type(struct ice_hw *hw)
 bool ice_is_generic_mac(struct ice_hw *hw)
 {
 	return hw->mac_type == ICE_MAC_GENERIC;
+}
+
+/**
+ * ice_is_e810
+ * @hw: pointer to the hardware structure
+ *
+ * returns true if the device is E810 based, false if not.
+ */
+bool ice_is_e810(struct ice_hw *hw)
+{
+	return hw->mac_type == ICE_MAC_E810;
 }
 
 
@@ -245,11 +256,13 @@ ice_aq_get_link_topo_handle(struct ice_port_info *pi, u8 node_type,
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_link_topo);
 
-	cmd->addr.node_type_ctx = (ICE_AQC_LINK_TOPO_NODE_CTX_PORT <<
-				   ICE_AQC_LINK_TOPO_NODE_CTX_S);
+	cmd->addr.topo_params.node_type_ctx =
+		(ICE_AQC_LINK_TOPO_NODE_CTX_PORT <<
+		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
 
 	/* set node type */
-	cmd->addr.node_type_ctx |= (ICE_AQC_LINK_TOPO_NODE_TYPE_M & node_type);
+	cmd->addr.topo_params.node_type_ctx |=
+		(ICE_AQC_LINK_TOPO_NODE_TYPE_M & node_type);
 
 	return ice_aq_send_cmd(pi->hw, &desc, NULL, 0, cd);
 }
@@ -660,217 +673,6 @@ static void ice_cleanup_fltr_mgmt_struct(struct ice_hw *hw)
 	ice_cleanup_fltr_mgmt_single(hw, hw->switch_info);
 }
 
-#ifdef FWLOG_SUPPORT
-/**
- * ice_get_fw_log_cfg - get FW logging configuration
- * @hw: pointer to the HW struct
- */
-static enum ice_status ice_get_fw_log_cfg(struct ice_hw *hw)
-{
-	struct ice_aq_desc desc;
-	enum ice_status status;
-	__le16 *config;
-	u16 size;
-
-	size = sizeof(*config) * ICE_AQC_FW_LOG_ID_MAX;
-
-	if (size < ICE_AQC_FW_LOG_MIN_DATALEN)
-		size = ICE_AQC_FW_LOG_MIN_DATALEN;
-
-	config = devm_kzalloc(ice_hw_to_dev(hw), size, GFP_KERNEL);
-
-	if (!config)
-		return ICE_ERR_NO_MEMORY;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_fw_logging_info);
-	status = ice_aq_send_cmd(hw, &desc, config, size, NULL);
-	if (!status) {
-		u16 i;
-
-		/* Save fw logging information into the HW structure */
-		for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
-			u16 v, m, flgs;
-
-			v = le16_to_cpu(config[i]);
-			m = (v & ICE_AQC_FW_LOG_ID_M) >> ICE_AQC_FW_LOG_ID_S;
-			flgs = (v & ICE_AQC_FW_LOG_EN_M) >> ICE_AQC_FW_LOG_EN_S;
-
-			if (m < ICE_AQC_FW_LOG_ID_MAX)
-				hw->fw_log.evnts[m].cur = flgs;
-		}
-	}
-
-	devm_kfree(ice_hw_to_dev(hw), config);
-
-	return status;
-}
-
-/**
- * ice_cfg_fw_log - configure FW logging
- * @hw: pointer to the HW struct
- * @enable: enable certain FW logging events if true, disable all if false
- *
- * This function enables/disables the FW logging via Rx CQ events and a UART
- * port based on predetermined configurations. FW logging via the Rx CQ can be
- * enabled/disabled for individual PF's. However, FW logging via the UART can
- * only be enabled/disabled for all PFs on the same device.
- *
- * To enable overall FW logging, the "cq_en" and "uart_en" enable bits in
- * hw->fw_log need to be set accordingly, e.g. based on user-provided input,
- * before initializing the device.
- *
- * When re/configuring FW logging, callers need to update the "cfg" elements of
- * the hw->fw_log.evnts array with the desired logging event configurations for
- * modules of interest. When disabling FW logging completely, the callers can
- * just pass false in the "enable" parameter. On completion, the function will
- * update the "cur" element of the hw->fw_log.evnts array with the resulting
- * logging event configurations of the modules that are being re/configured. FW
- * logging modules that are not part of a reconfiguration operation retain their
- * previous states.
- *
- * Before resetting the device, it is recommended that the driver disables FW
- * logging before shutting down the control queue. When disabling FW logging
- * ("enable" = false), the latest configurations of FW logging events stored in
- * hw->fw_log.evnts[] are not overridden to allow them to be reconfigured after
- * a device reset.
- *
- * When enabling FW logging to emit log messages via the Rx CQ during the
- * device's initialization phase, a mechanism alternative to interrupt handlers
- * needs to be used to extract FW log messages from the Rx CQ periodically and
- * to prevent the Rx CQ from being full and stalling other types of control
- * messages from FW to SW. Interrupts are typically disabled during the device's
- * initialization phase.
- */
-enum ice_status ice_cfg_fw_log(struct ice_hw *hw, bool enable)
-{
-	struct ice_aqc_fw_logging *cmd;
-	enum ice_status status = 0;
-	u16 i, chgs = 0, len = 0;
-	struct ice_aq_desc desc;
-	__le16 *data = NULL;
-	u8 actv_evnts = 0;
-	void *buf = NULL;
-
-	if (!hw->fw_log.cq_en && !hw->fw_log.uart_en)
-		return 0;
-
-	/* Disable FW logging only when the control queue is still responsive */
-	if (!enable &&
-	    (!hw->fw_log.actv_evnts || !ice_check_sq_alive(hw, &hw->adminq)))
-		return 0;
-
-	/* Get current FW log settings */
-	status = ice_get_fw_log_cfg(hw);
-	if (status)
-		return status;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_fw_logging);
-	cmd = &desc.params.fw_logging;
-
-	/* Indicate which controls are valid, we always update control */
-	cmd->log_ctrl_valid |= ICE_AQC_FW_LOG_AQ_VALID;
-	cmd->log_ctrl_valid |= ICE_AQC_FW_LOG_UART_VALID;
-
-	/* assume we are disabling unless we find otherwise */
-	cmd->log_ctrl &= ~(ICE_AQC_FW_LOG_AQ_EN | ICE_AQC_FW_LOG_UART_EN);
-
-	if (enable) {
-		/* Fill in an array of entries with FW logging modules and
-		 * logging events being reconfigured.
-		 */
-		for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
-			u16 val;
-
-			/* Keep track of enabled event types */
-			actv_evnts |= hw->fw_log.evnts[i].cfg;
-
-			if (hw->fw_log.evnts[i].cfg == hw->fw_log.evnts[i].cur)
-				continue;
-
-			if (!data) {
-				data = devm_kcalloc(ice_hw_to_dev(hw),
-						    ICE_AQC_FW_LOG_ID_MAX,
-						    sizeof(*data), GFP_KERNEL);
-				if (!data)
-					return ICE_ERR_NO_MEMORY;
-			}
-
-			val = i << ICE_AQC_FW_LOG_ID_S;
-			val |= hw->fw_log.evnts[i].cfg << ICE_AQC_FW_LOG_EN_S;
-			data[chgs++] = cpu_to_le16(val);
-		}
-
-		/* Only enable FW logging if at least one module is specified.
-		 * If FW logging is currently enabled but all modules are not
-		 * enabled to emit log messages, disable FW logging altogether.
-		 */
-		if (actv_evnts) {
-			if (hw->fw_log.cq_en)
-				cmd->log_ctrl |= ICE_AQC_FW_LOG_AQ_EN;
-
-			/* Disable UART if CQ logging is active */
-			if (hw->fw_log.uart_en && !hw->fw_log.cq_en)
-				cmd->log_ctrl |= ICE_AQC_FW_LOG_UART_EN;
-
-			if (chgs > 0) {
-				buf = data;
-				len = sizeof(*data) * chgs;
-				desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
-			}
-		}
-	}
-
-	status = ice_aq_send_cmd(hw, &desc, buf, len, NULL);
-	if (!status) {
-		/* Update the current configuration to reflect events enabled.
-		 * hw->fw_log.cq_en and hw->fw_log.uart_en indicate if the FW
-		 * logging mode is enabled for the device. They do not reflect
-		 * actual modules being enabled to emit log messages. So, their
-		 * values remain unchanged even when all modules are disabled.
-		 */
-		u16 cnt = enable ? chgs : (u16)ICE_AQC_FW_LOG_ID_MAX;
-
-		hw->fw_log.actv_evnts = actv_evnts;
-		for (i = 0; i < cnt; i++) {
-			u16 v, m;
-
-			if (!enable) {
-				/* When disabling all FW logging events as part
-				 * of device's de-initialization, the original
-				 * configurations are retained, and can be used
-				 * to reconfigure FW logging later if the device
-				 * is re-initialized.
-				 */
-				hw->fw_log.evnts[i].cur = 0;
-				continue;
-			}
-
-			v = le16_to_cpu(data[i]);
-			m = (v & ICE_AQC_FW_LOG_ID_M) >> ICE_AQC_FW_LOG_ID_S;
-			hw->fw_log.evnts[m].cur = hw->fw_log.evnts[m].cfg;
-		}
-	}
-
-	if (data)
-		devm_kfree(ice_hw_to_dev(hw), data);
-
-	return status;
-}
-
-/**
- * ice_output_fw_log
- * @hw: pointer to the HW struct
- * @desc: pointer to the AQ message descriptor
- * @buf: pointer to the buffer accompanying the AQ message
- *
- * Formats a FW Log message and outputs it via the standard driver logs.
- */
-void ice_output_fw_log(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf)
-{
-	ice_debug_fw_log(hw, ICE_DBG_FW_LOG, 32, 1, buf,
-			 le16_to_cpu(desc->datalen));
-}
-#endif /* FWLOG_SUPPORT */
 
 /**
  * ice_get_itr_intrl_gran
@@ -952,14 +754,25 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_cqinit;
 
-#ifdef FWLOG_SUPPORT
-	/* Enable FW logging on PF0 only. Not fatal if this fails. */
-	if (hw->bus.func == 0) {
-		status = ice_cfg_fw_log(hw, true);
-		if (status)
-			ice_debug(hw, ICE_DBG_INIT, "Failed to enable FW logging.\n");
+	ice_fwlog_set_support_ena(hw);
+	status = ice_fwlog_set(hw, &hw->fwlog_cfg);
+	if (status) {
+		ice_debug(hw, ICE_DBG_INIT, "Failed to enable FW logging, status %d.\n",
+			  status);
+	} else {
+		if (hw->fwlog_cfg.options & ICE_FWLOG_OPTION_REGISTER_ON_INIT) {
+			status = ice_fwlog_register(hw);
+			if (status)
+				ice_debug(hw, ICE_DBG_INIT, "Failed to register for FW logging events, status %d.\n",
+					  status);
+		} else {
+			status = ice_fwlog_unregister(hw);
+			if (status)
+				ice_debug(hw, ICE_DBG_INIT, "Failed to unregister for FW logging events, status %d.\n",
+					  status);
+		}
 	}
-#endif /* FWLOG_SUPPORT */
+
 	status = ice_init_nvm(hw);
 	if (status)
 		goto err_unroll_cqinit;
@@ -1005,7 +818,6 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 	}
 	ice_sched_get_psm_clk_freq(hw);
 
-
 	/* Initialize port_info struct with scheduler data */
 	status = ice_sched_init_port(hw->port_info);
 	if (status)
@@ -1045,6 +857,7 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 
 
 	/* Get MAC information */
+
 	/* A single port can report up to two (LAN and WoL) addresses */
 	mac_buf = devm_kcalloc(ice_hw_to_dev(hw), 2,
 			       sizeof(struct ice_aqc_manage_mac_read_resp),
@@ -1059,10 +872,6 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 	status = ice_aq_manage_mac_read(hw, mac_buf, mac_buf_len, NULL);
 	devm_kfree(ice_hw_to_dev(hw), mac_buf);
 
-	if (status)
-		goto err_unroll_fltr_mgmt_struct;
-	/* enable jumbo frame support at MAC level */
-	status = ice_aq_set_mac_cfg(hw, ICE_AQ_SET_MAC_FRAME_SIZE_MAX, NULL);
 	if (status)
 		goto err_unroll_fltr_mgmt_struct;
 	/* Obtain counter base index which would be used by flow director */
@@ -1112,10 +921,6 @@ void ice_deinit_hw(struct ice_hw *hw)
 		hw->port_info = NULL;
 	}
 
-#ifdef FWLOG_SUPPORT
-	/* Attempt to disable FW logging before shutting down control queues */
-	ice_cfg_fw_log(hw, false);
-#endif /* FWLOG_SUPPORT */
 	ice_destroy_all_ctrlq(hw);
 
 	/* Clear VSI contexts if not already cleared */
@@ -2536,6 +2341,47 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		ice_debug(hw, ICE_DBG_INIT, "%s: max_mtu = %d\n",
 			  prefix, caps->max_mtu);
 		break;
+	case ICE_AQC_CAPS_EXT_TOPO_DEV_IMG0:
+	case ICE_AQC_CAPS_EXT_TOPO_DEV_IMG1:
+	case ICE_AQC_CAPS_EXT_TOPO_DEV_IMG2:
+	case ICE_AQC_CAPS_EXT_TOPO_DEV_IMG3:
+	{
+		u8 index = cap - ICE_AQC_CAPS_EXT_TOPO_DEV_IMG0;
+
+		if (index >= ICE_EXT_TOPO_DEV_IMG_COUNT)
+			break;
+
+		caps->ext_topo_dev_img_ver_high[index] = number;
+		caps->ext_topo_dev_img_ver_low[index] = logical_id;
+		caps->ext_topo_dev_img_part_num[index] =
+			(phys_id & ICE_EXT_TOPO_DEV_IMG_PART_NUM_M) >>
+			ICE_EXT_TOPO_DEV_IMG_PART_NUM_S;
+		caps->ext_topo_dev_img_load_en[index] =
+			(phys_id & ICE_EXT_TOPO_DEV_IMG_LOAD_EN) != 0;
+		caps->ext_topo_dev_img_prog_en[index] =
+			(phys_id & ICE_EXT_TOPO_DEV_IMG_PROG_EN) != 0;
+		ice_debug(hw, ICE_DBG_INIT,
+			  "%s: ext_topo_dev_img_ver_high[%d] = %d\n",
+			  prefix, index,
+			  caps->ext_topo_dev_img_ver_high[index]);
+		ice_debug(hw, ICE_DBG_INIT,
+			  "%s: ext_topo_dev_img_ver_low[%d] = %d\n",
+			  prefix, index,
+			  caps->ext_topo_dev_img_ver_low[index]);
+		ice_debug(hw, ICE_DBG_INIT,
+			  "%s: ext_topo_dev_img_part_num[%d] = %d\n",
+			  prefix, index,
+			  caps->ext_topo_dev_img_part_num[index]);
+		ice_debug(hw, ICE_DBG_INIT,
+			  "%s: ext_topo_dev_img_load_en[%d] = %d\n",
+			  prefix, index,
+			  caps->ext_topo_dev_img_load_en[index]);
+		ice_debug(hw, ICE_DBG_INIT,
+			  "%s: ext_topo_dev_img_prog_en[%d] = %d\n",
+			  prefix, index,
+			  caps->ext_topo_dev_img_prog_en[index]);
+		break;
+	}
 	default:
 		/* Not one of the recognized common capabilities */
 		found = false;
@@ -2632,35 +2478,46 @@ static void
 ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 			 struct ice_aqc_list_caps_elem *cap)
 {
+	struct ice_ts_func_info *info = &func_p->ts_func_info;
 	u32 number = le32_to_cpu(cap->number);
 
-	func_p->ts_func_info.ena = ((number & ICE_TS_FUNC_ENA_M) != 0);
-	func_p->ts_func_info.src_tmr_owned =
-		((number & ICE_TS_SRC_TMR_OWND_M) != 0);
-	func_p->ts_func_info.tmr_ena = ((number & ICE_TS_TMR_ENA_M) != 0);
-	func_p->ts_func_info.tmr_index_owned =
-		((number & ICE_TS_TMR_IDX_OWND_M) != 0);
-	func_p->ts_func_info.clk_freq =
-		(number & ICE_TS_CLK_FREQ_M) >> ICE_TS_CLK_FREQ_S;
-	func_p->ts_func_info.clk_src = ((number & ICE_TS_CLK_SRC_M) != 0);
-	func_p->ts_func_info.tmr_index_assoc =
-		((number & ICE_TS_TMR_IDX_ASSOC_M) != 0);
-	func_p->common_cap.ieee_1588 = func_p->ts_func_info.ena;
+	info->ena = ((number & ICE_TS_FUNC_ENA_M) != 0);
+	func_p->common_cap.ieee_1588 = info->ena;
 
-	ice_debug(hw, ICE_DBG_INIT, "func caps: ieee_1588 = %d\n",
+	info->src_tmr_owned = ((number & ICE_TS_SRC_TMR_OWND_M) != 0);
+	info->tmr_ena = ((number & ICE_TS_TMR_ENA_M) != 0);
+	info->tmr_index_owned = ((number & ICE_TS_TMR_IDX_OWND_M) != 0);
+	info->tmr_index_assoc = ((number & ICE_TS_TMR_IDX_ASSOC_M) != 0);
+
+	info->clk_freq = (number & ICE_TS_CLK_FREQ_M) >> ICE_TS_CLK_FREQ_S;
+	info->clk_src = ((number & ICE_TS_CLK_SRC_M) != 0);
+
+	if (info->clk_freq < NUM_ICE_TIME_REF_FREQ) {
+		info->time_ref = (enum ice_time_ref_freq)info->clk_freq;
+	} else {
+		/* Unknown clock frequency, so assume a (probably incorrect)
+		 * default to avoid out-of-bounds look ups of frequency
+		 * related information.
+		 */
+		ice_debug(hw, ICE_DBG_INIT, "1588 func caps: unknown clock frequency %u\n",
+			  info->clk_freq);
+		info->time_ref = ICE_TIME_REF_FREQ_25_000;
+	}
+
+	ice_debug(hw, ICE_DBG_INIT, "func caps: ieee_1588 = %u\n",
 		  func_p->common_cap.ieee_1588);
-	ice_debug(hw, ICE_DBG_INIT, "func caps: src_tmr_owned = %d\n",
-		  func_p->ts_func_info.src_tmr_owned);
-	ice_debug(hw, ICE_DBG_INIT, "func caps: tmr_ena = %d\n",
-		  func_p->ts_func_info.tmr_ena);
-	ice_debug(hw, ICE_DBG_INIT, "func caps: tmr_index_owned = %d\n",
-		  func_p->ts_func_info.tmr_index_owned);
-	ice_debug(hw, ICE_DBG_INIT, "func caps: clk_freq = %d\n",
-		  func_p->ts_func_info.clk_freq);
-	ice_debug(hw, ICE_DBG_INIT, "func caps: clk_src = %d\n",
-		  func_p->ts_func_info.clk_src);
-	ice_debug(hw, ICE_DBG_INIT, "func caps: tmr_index_assoc = %d\n",
-		  func_p->ts_func_info.tmr_index_assoc);
+	ice_debug(hw, ICE_DBG_INIT, "func caps: src_tmr_owned = %u\n",
+		  info->src_tmr_owned);
+	ice_debug(hw, ICE_DBG_INIT, "func caps: tmr_ena = %u\n",
+		  info->tmr_ena);
+	ice_debug(hw, ICE_DBG_INIT, "func caps: tmr_index_owned = %u\n",
+		  info->tmr_index_owned);
+	ice_debug(hw, ICE_DBG_INIT, "func caps: tmr_index_assoc = %u\n",
+		  info->tmr_index_assoc);
+	ice_debug(hw, ICE_DBG_INIT, "func caps: clk_freq = %u\n",
+		  info->clk_freq);
+	ice_debug(hw, ICE_DBG_INIT, "func caps: clk_src = %u\n",
+		  info->clk_src);
 }
 
 /**
@@ -2820,40 +2677,43 @@ static void
 ice_parse_1588_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_p,
 			struct ice_aqc_list_caps_elem *cap)
 {
+	struct ice_ts_dev_info *info = &dev_p->ts_dev_info;
 	u32 logical_id = le32_to_cpu(cap->logical_id);
 	u32 phys_id = le32_to_cpu(cap->phys_id);
 	u32 number = le32_to_cpu(cap->number);
 
-	dev_p->ts_dev_info.tmr0_owner = number & ICE_TS_TMR0_OWNR_M;
-	dev_p->ts_dev_info.tmr0_owned = ((number & ICE_TS_TMR0_OWND_M) != 0);
-	dev_p->ts_dev_info.tmr1_owner =
-		(number & ICE_TS_TMR1_OWNR_M) >> ICE_TS_TMR1_OWNR_S;
-	dev_p->ts_dev_info.tmr1_owned = ((number & ICE_TS_TMR1_OWND_M) != 0);
-	dev_p->ts_dev_info.ena = ((number & ICE_TS_DEV_ENA_M) != 0);
-	dev_p->ts_dev_info.tmr0_ena = ((number & ICE_TS_TMR0_ENA_M) != 0);
-	dev_p->ts_dev_info.tmr1_ena = ((number & ICE_TS_TMR1_ENA_M) != 0);
-	dev_p->ts_dev_info.ena_ports = logical_id;
-	dev_p->ts_dev_info.tmr_own_map = phys_id;
-	dev_p->common_cap.ieee_1588 = dev_p->ts_dev_info.ena;
+	info->ena = ((number & ICE_TS_DEV_ENA_M) != 0);
+	dev_p->common_cap.ieee_1588 = info->ena;
 
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: ieee_1588 = %d\n",
+	info->tmr0_owner = number & ICE_TS_TMR0_OWNR_M;
+	info->tmr0_owned = ((number & ICE_TS_TMR0_OWND_M) != 0);
+	info->tmr0_ena = ((number & ICE_TS_TMR0_ENA_M) != 0);
+
+	info->tmr1_owner = (number & ICE_TS_TMR1_OWNR_M) >> ICE_TS_TMR1_OWNR_S;
+	info->tmr1_owned = ((number & ICE_TS_TMR1_OWND_M) != 0);
+	info->tmr1_ena = ((number & ICE_TS_TMR1_ENA_M) != 0);
+
+	info->ena_ports = logical_id;
+	info->tmr_own_map = phys_id;
+
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: ieee_1588 = %u\n",
 		  dev_p->common_cap.ieee_1588);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr0_owner = %d\n",
-		  dev_p->ts_dev_info.tmr0_owner);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr0_owned = %d\n",
-		  dev_p->ts_dev_info.tmr0_owned);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr0_ena = %d\n",
-		  dev_p->ts_dev_info.tmr0_ena);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr1_owner = %d\n",
-		  dev_p->ts_dev_info.tmr1_owner);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr1_owned = %d\n",
-		  dev_p->ts_dev_info.tmr1_owned);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr1_ena = %d\n",
-		  dev_p->ts_dev_info.tmr1_ena);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: ieee_1588 ena_ports = %d\n",
-		  dev_p->ts_dev_info.ena_ports);
-	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr_own_map = %d\n",
-		  dev_p->ts_dev_info.tmr_own_map);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr0_owner = %u\n",
+		  info->tmr0_owner);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr0_owned = %u\n",
+		  info->tmr0_owned);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr0_ena = %u\n",
+		  info->tmr0_ena);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr1_owner = %u\n",
+		  info->tmr1_owner);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr1_owned = %u\n",
+		  info->tmr1_owned);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr1_ena = %u\n",
+		  info->tmr1_ena);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: ieee_1588 ena_ports = %u\n",
+		  info->ena_ports);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr_own_map = %u\n",
+		  info->tmr_own_map);
 }
 
 /**
@@ -4034,6 +3894,74 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 
 	status = ice_aq_send_cmd(hw, &desc, data, length, cd);
 	return status;
+}
+
+/**
+ * ice_aq_prog_topo_dev_nvm
+ * @hw: pointer to the hardware structure
+ * @topo_params: pointer to structure storing topology parameters for a device
+ * @cd: pointer to command details structure or NULL
+ *
+ * Program Topology Device NVM (0x06F2)
+ *
+ */
+enum ice_status
+ice_aq_prog_topo_dev_nvm(struct ice_hw *hw,
+			 struct ice_aqc_link_topo_params *topo_params,
+			 struct ice_sq_cd *cd)
+{
+	struct ice_aqc_prog_topo_dev_nvm *cmd;
+	struct ice_aq_desc desc;
+
+	cmd = &desc.params.prog_topo_dev_nvm;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_prog_topo_dev_nvm);
+
+	memcpy(&cmd->topo_params, topo_params, sizeof(*topo_params));
+
+	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+}
+
+/**
+ * ice_aq_read_topo_dev_nvm
+ * @hw: pointer to the hardware structure
+ * @topo_params: pointer to structure storing topology parameters for a device
+ * @start_address: byte offset in the topology device NVM
+ * @data: pointer to data buffer
+ * @data_size: number of bytes to be read from the topology device NVM
+ * @cd: pointer to command details structure or NULL
+ * Read Topology Device NVM (0x06F3)
+ *
+ */
+enum ice_status
+ice_aq_read_topo_dev_nvm(struct ice_hw *hw,
+			 struct ice_aqc_link_topo_params *topo_params,
+			 u32 start_address, u8 *data, u8 data_size,
+			 struct ice_sq_cd *cd)
+{
+	struct ice_aqc_read_topo_dev_nvm *cmd;
+	struct ice_aq_desc desc;
+	enum ice_status status;
+
+	if (!data || data_size == 0 ||
+	    data_size > ICE_AQC_READ_TOPO_DEV_NVM_DATA_READ_SIZE)
+		return ICE_ERR_PARAM;
+
+	cmd = &desc.params.read_topo_dev_nvm;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_read_topo_dev_nvm);
+
+	desc.datalen = data_size;
+	memcpy(&cmd->topo_params, topo_params, sizeof(*topo_params));
+	cmd->start_address = cpu_to_le32(start_address);
+
+	status = ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+	if (status)
+		return status;
+
+	memcpy(data, cmd->data_read, data_size);
+
+	return 0;
 }
 
 /**
@@ -5770,6 +5698,99 @@ enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw)
 }
 
 
+/**
+ * ice_aq_read_i2c
+ * @hw: pointer to the hw struct
+ * @topo_addr: topology address for a device to communicate with
+ * @bus_addr: 7-bit I2C bus address
+ * @addr: I2C memory address (I2C offset) with up to 16 bits
+ * @params: I2C parameters: bit [7] - Repeated start, bits [6:5] data offset size,
+ *			    bit [4] - I2C address type, bits [3:0] - data size to read (0-16 bytes)
+ * @data: pointer to data (0 to 16 bytes) to be read from the I2C device
+ * @cd: pointer to command details structure or NULL
+ *
+ * Read I2C (0x06E2)
+ */
+enum ice_status
+ice_aq_read_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
+		u16 bus_addr, __le16 addr, u8 params, u8 *data,
+		struct ice_sq_cd *cd)
+{
+	struct ice_aq_desc desc = { 0 };
+	struct ice_aqc_i2c *cmd;
+	enum ice_status status;
+	u8 data_size;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_read_i2c);
+	cmd = &desc.params.read_write_i2c;
+
+	if (!data)
+		return ICE_ERR_PARAM;
+
+	data_size = (params & ICE_AQC_I2C_DATA_SIZE_M) >> ICE_AQC_I2C_DATA_SIZE_S;
+
+	cmd->i2c_bus_addr = cpu_to_le16(bus_addr);
+	cmd->topo_addr = topo_addr;
+	cmd->i2c_params = params;
+	cmd->i2c_addr = addr;
+
+	status = ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+	if (!status) {
+		struct ice_aqc_read_i2c_resp *resp;
+		u8 i;
+
+		resp = &desc.params.read_i2c_resp;
+		for (i = 0; i < data_size; i++) {
+			*data = resp->i2c_data[i];
+			data++;
+		}
+	}
+
+	return status;
+}
+
+/**
+ * ice_aq_write_i2c
+ * @hw: pointer to the hw struct
+ * @topo_addr: topology address for a device to communicate with
+ * @bus_addr: 7-bit I2C bus address
+ * @addr: I2C memory address (I2C offset) with up to 16 bits
+ * @params: I2C parameters: bit [4] - I2C address type, bits [3:0] - data size to write (0-7 bytes)
+ * @data: pointer to data (0 to 4 bytes) to be written to the I2C device
+ * @cd: pointer to command details structure or NULL
+ *
+ * Write I2C (0x06E3)
+ */
+enum ice_status
+ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
+		 u16 bus_addr, __le16 addr, u8 params, u8 *data,
+		 struct ice_sq_cd *cd)
+{
+	struct ice_aq_desc desc = { 0 };
+	struct ice_aqc_i2c *cmd;
+	u8 i, data_size;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_write_i2c);
+	cmd = &desc.params.read_write_i2c;
+
+	data_size = (params & ICE_AQC_I2C_DATA_SIZE_M) >> ICE_AQC_I2C_DATA_SIZE_S;
+
+	/* data_size limited to 4 */
+	if (data_size > 4)
+		return ICE_ERR_PARAM;
+
+	cmd->i2c_bus_addr = cpu_to_le16(bus_addr);
+	cmd->topo_addr = topo_addr;
+	cmd->i2c_params = params;
+	cmd->i2c_addr = addr;
+
+	for (i = 0; i < data_size; i++) {
+		cmd->i2c_data[i] = *data;
+		data++;
+	}
+
+	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+}
 
 /**
  * ice_aq_set_driver_param - Set driver parameter to share via firmware
@@ -5843,6 +5864,64 @@ ice_aq_get_driver_param(struct ice_hw *hw, enum ice_aqc_driver_params idx,
 
 	*value = le32_to_cpu(cmd->param_val);
 
+	return 0;
+}
+
+/**
+ * ice_aq_set_gpio
+ * @hw: pointer to the hw struct
+ * @gpio_ctrl_handle: GPIO controller node handle
+ * @pin_idx: IO Number of the GPIO that needs to be set
+ * @value: SW provide IO value to set in the LSB
+ * @cd: pointer to command details structure or NULL
+ *
+ * Sends 0x06EC AQ command to set the GPIO pin state that's part of the topology
+ */
+enum ice_status
+ice_aq_set_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx, bool value,
+		struct ice_sq_cd *cd)
+{
+	struct ice_aqc_gpio *cmd;
+	struct ice_aq_desc desc;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_gpio);
+	cmd = &desc.params.read_write_gpio;
+	cmd->gpio_ctrl_handle = gpio_ctrl_handle;
+	cmd->gpio_num = pin_idx;
+	cmd->gpio_val = value ? 1 : 0;
+
+	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+}
+
+/**
+ * ice_aq_get_gpio
+ * @hw: pointer to the hw struct
+ * @gpio_ctrl_handle: GPIO controller node handle
+ * @pin_idx: IO Number of the GPIO that needs to be set
+ * @value: IO value read
+ * @cd: pointer to command details structure or NULL
+ *
+ * Sends 0x06ED AQ command to get the value of a GPIO signal which is part of
+ * the topology
+ */
+enum ice_status
+ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
+		bool *value, struct ice_sq_cd *cd)
+{
+	struct ice_aqc_gpio *cmd;
+	struct ice_aq_desc desc;
+	enum ice_status status;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_gpio);
+	cmd = &desc.params.read_write_gpio;
+	cmd->gpio_ctrl_handle = gpio_ctrl_handle;
+	cmd->gpio_num = pin_idx;
+
+	status = ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+	if (status)
+		return status;
+
+	*value = !!cmd->gpio_val;
 	return 0;
 }
 
@@ -6187,4 +6266,192 @@ bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw)
 		return true;
 	}
 	return false;
+}
+
+/**
+ * ice_is_pca9575_sw_handle
+ * @hw: pointer to the hw struct
+ * @handle: GPIO controller's handle
+ *
+ * This command will check if the reset pin is present in the netlist for
+ * a given netlist handle. The SW controlled IO expander does not have this pin
+ * populated in the netlist.
+ */
+static bool
+ice_is_pca9575_sw_handle(struct ice_hw *hw, u16 handle)
+{
+	struct ice_aqc_get_link_topo_pin *cmd;
+	struct ice_aq_desc desc;
+
+	cmd = &desc.params.get_link_topo_pin;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_link_topo_pin);
+
+	/* set node comtext to the given GPIO controller */
+	cmd->addr.topo_params.node_type_ctx =
+		(ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED <<
+		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
+	cmd->addr.handle = handle;
+
+	/* Try finding the reset pin in the GPIO context */
+	cmd->input_io_params = (ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_GPIO <<
+				ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_S) |
+			       ICE_AQC_LINK_TOPO_IO_FUNC_RESET_N;
+
+	/* If the expander is controlled by software the following command
+	 * should return error ICE_AQ_RC_ENXIO
+	 */
+	if (ice_aq_send_cmd(hw, &desc, NULL, 0, NULL) &&
+	    hw->adminq.sq_last_status == ICE_AQ_RC_ENXIO)
+		return true;
+
+	return false;
+}
+
+/**
+ * ice_get_pca9575_handle
+ * @hw: pointer to the hw struct
+ * @pca9575_handle: GPIO controller's handle
+ *
+ * Find and return the GPIO controller's handle in the netlist.
+ * When found - the value will be cached in the hw structure and following calls
+ * will return cached value
+ */
+static enum ice_status
+ice_get_pca9575_handle(struct ice_hw *hw, __le16 *pca9575_handle)
+{
+	struct ice_aqc_get_link_topo *cmd;
+	struct ice_aq_desc desc;
+	enum ice_status status;
+	__le16 handle;
+	u8 idx;
+
+	if (!hw || !pca9575_handle)
+		return ICE_ERR_PARAM;
+
+	/* If handle was read previously return cached value */
+	if (hw->io_expander_handle) {
+		*pca9575_handle = hw->io_expander_handle;
+		return 0;
+	}
+
+	/* If handle was not detected read it from the netlist */
+	cmd = &desc.params.get_link_topo;
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_link_topo);
+
+	/* Set node type to GPIO controller */
+	cmd->addr.topo_params.node_type_ctx =
+		(ICE_AQC_LINK_TOPO_NODE_TYPE_M &
+		 ICE_AQC_LINK_TOPO_NODE_TYPE_GPIO_CTRL);
+
+#define SW_PCA9575_MAX_TOPO_IDX	2
+
+	/* SW IO expander is usually the last one in the netlist. Scan the
+	 * netlist backward and see if we find it. Index 0 is assigned to
+	 * the IO widget so we skip it.
+	 */
+	for (idx = SW_PCA9575_MAX_TOPO_IDX; idx > 0; idx--) {
+		cmd->addr.topo_params.index = idx;
+
+		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+		if (status)
+			continue;
+
+		handle = desc.params.get_link_topo.addr.handle;
+
+		/* Verify if we found the right IO expander type */
+		if (desc.params.get_link_topo.node_part_num ==
+		    ICE_ACQ_GET_LINK_TOPO_NODE_NR_PCA9575 &&
+		    ice_is_pca9575_sw_handle(hw, handle))
+			break;
+	}
+
+	/* Expander not found */
+	if (!cmd->addr.topo_params.index)
+		return ICE_ERR_NOT_SUPPORTED;
+
+	/* If present save the handle and return it */
+	hw->io_expander_handle = desc.params.get_link_topo.addr.handle;
+	*pca9575_handle = hw->io_expander_handle;
+
+	return 0;
+}
+
+/**
+ * ice_read_e810t_pca9575_reg
+ * @hw: pointer to the hw struct
+ * @offset: GPIO controller register offset
+ * @data: pointer to data to be read from the GPIO controller
+ *
+ * Read the register from the GPIO controller
+ */
+enum ice_status
+ice_read_e810t_pca9575_reg(struct ice_hw *hw, u8 offset, u8 *data)
+{
+	struct ice_aqc_link_topo_addr link_topo;
+	enum ice_status status;
+	__le16 addr;
+
+	memset(&link_topo, 0, sizeof(link_topo));
+
+	status = ice_get_pca9575_handle(hw, &link_topo.handle);
+	if (status)
+		return status;
+
+	link_topo.topo_params.node_type_ctx =
+		(ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED <<
+		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
+
+	addr = cpu_to_le16((u16)offset);
+
+	return ice_aq_read_i2c(hw, link_topo, 0, addr, 1, data, NULL);
+}
+
+/**
+ * ice_write_e810t_pca9575_reg
+ * @hw: pointer to the hw struct
+ * @offset: GPIO controller register offset
+ * @data: data to be written to the GPIO controller
+ *
+ * Write the data to the GPIO controller register
+ */
+enum ice_status
+ice_write_e810t_pca9575_reg(struct ice_hw *hw, u8 offset, u8 data)
+{
+	struct ice_aqc_link_topo_addr link_topo;
+	enum ice_status status;
+	__le16 addr;
+
+	memset(&link_topo, 0, sizeof(link_topo));
+
+	status = ice_get_pca9575_handle(hw, &link_topo.handle);
+	if (status)
+		return status;
+
+	link_topo.topo_params.node_type_ctx =
+		(ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED <<
+		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
+
+	addr = cpu_to_le16((u16)offset);
+
+	return ice_aq_write_i2c(hw, link_topo, 0, addr, 1, &data, NULL);
+}
+
+/**
+ * ice_e810t_is_pca9575_present
+ * @hw: pointer to the hw struct
+ *
+ * Check if the SW IO expander is present on the board
+ */
+bool ice_e810t_is_pca9575_present(struct ice_hw *hw)
+{
+	enum ice_status status;
+	u8 data;
+
+	status = ice_read_e810t_pca9575_reg(hw, ICE_PCA9575_P0_IN, &data);
+
+	if (status)
+		return false;
+
+	return true;
 }

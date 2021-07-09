@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 /* The driver transmit and receive code */
 
@@ -1547,24 +1547,10 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 		}
 
 		xdp.data = page_address(rx_buf->page) + rx_buf->page_offset;
-#ifdef __CHECKER__
-		/* we have a cocci script that actually removes the cast
-		 * here, but cppcheck complains about it so suppress it
-		 * locally
-		 */
-		/* cppcheck-suppress arithOperationsOnVoidPointer */
-#endif /* _CHECKER__ */
 		xdp.data_hard_start = xdp.data - ice_rx_offset(rx_ring);
 #ifdef HAVE_XDP_BUFF_DATA_META
 		xdp.data_meta = xdp.data;
 #endif /* HAVE_XDP_BUFF_DATA_META */
-#ifdef __CHECKER__
-		/* we have a cocci script that actually removes the cast
-		 * here, but cppcheck complains about it so suppress it
-		 * locally
-		 */
-		/* cppcheck-suppress arithOperationsOnVoidPointer */
-#endif /* _CHECKER__ */
 		xdp.data_end = xdp.data + size;
 #ifdef HAVE_XDP_BUFF_FRAME_SZ
 #if (PAGE_SIZE > 4096)
@@ -1781,15 +1767,15 @@ static void ice_update_ena_itr(struct ice_q_vector *q_vector)
 	if (test_bit(ICE_DOWN, vsi->state))
 		return;
 
-	/* Channel enabled vectors do not perform DIM. */
-	if (ice_vector_ch_enabled(q_vector))
-		goto skip_net_dim;
-
 	/* When exiting WB_ON_ITR, let ITR resume its normal
 	 * interrupts-enabled path.
 	 */
 	if (wb_en)
 		q_vector->wb_on_itr = false;
+
+	/* Channel enabled vectors do not perform DIM. */
+	if (ice_vector_ch_enabled(q_vector))
+		goto skip_net_dim;
 
 	/* This will do nothing if dynamic updates are not enabled. */
 	ice_net_dim(q_vector);
@@ -2670,8 +2656,7 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 
 #ifdef ICE_ADD_PROBES
 		if (protocol == htons(ETH_P_IP))
-			if (first->tx_flags & ICE_TX_FLAGS_TSO)
-				tx_ring->vsi->back->tx_ip4_cso++;
+			tx_ring->vsi->back->tx_ip4_cso++;
 #endif
 		/* compute outer L3 header size */
 		tunnel |= ((l4.hdr - ip.hdr) / 4) <<
@@ -2720,8 +2705,7 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 		 */
 
 #ifdef ICE_ADD_PROBES
-		if (first->tx_flags & ICE_TX_FLAGS_TSO)
-			tx_ring->vsi->back->tx_ip4_cso++;
+		tx_ring->vsi->back->tx_ip4_cso++;
 #endif
 		if (first->tx_flags & ICE_TX_FLAGS_TSO)
 			cmd |= ICE_TX_DESC_CMD_IIPT_IPV4_CSUM;
@@ -3550,9 +3534,6 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 #endif /* SKB_SHARED_TX_IS_UNION */
 		tsyn = false;
 
-	/* Timestamp all packets in debugfs set bit by user */
-	if (!tsyn && vsi->back->ptp_tx_ts_ena)
-		tsyn = true;
 	if (tsyn &&
 	    ice_tsyn(tx_ring, skb, first, &offload, &idx) == NETDEV_TX_BUSY)
 		goto out_ptp_drop;

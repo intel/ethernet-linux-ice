@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_DCB_LIB_H_
 #define _ICE_DCB_LIB_H_
@@ -15,6 +15,7 @@
 #define ICE_DCB_HW_CHG		2 /* DCB configuration changed, no reset */
 
 void ice_dcb_rebuild(struct ice_pf *pf);
+int ice_dcb_sw_dflt_cfg(struct ice_pf *pf, bool ets_willing, bool locked);
 void ice_vsi_set_dcb_tc_cfg(struct ice_vsi *vsi);
 bool ice_is_pfc_causing_hung_q(struct ice_pf *pf, unsigned int txqueue);
 #ifdef HAVE_NDO_SET_TX_MAXRATE
@@ -59,6 +60,12 @@ static inline bool ice_is_dcb_active(struct ice_pf *pf)
 	return (test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags) ||
 		test_bit(ICE_FLAG_DCB_ENA, pf->flags));
 }
+
+static inline u8 ice_get_pfc_mode(struct ice_pf *pf)
+{
+	return pf->hw.port_info->qos_cfg.local_dcbx_cfg.pfc_mode;
+}
+
 #else
 static inline void ice_dcb_rebuild(struct ice_pf *pf) { }
 static inline void ice_vsi_set_dcb_tc_cfg(struct ice_vsi *vsi)
@@ -113,6 +120,11 @@ ice_is_pfc_causing_hung_q(struct ice_pf __always_unused *pf,
 			  unsigned int __always_unused txqueue)
 {
 	return false;
+}
+
+static inline u8 ice_get_pfc_mode(struct ice_pf *pf)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline void ice_pf_dcb_recfg(struct ice_pf *pf) { }

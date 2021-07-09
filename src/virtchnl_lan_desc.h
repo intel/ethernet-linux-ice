@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 /*
  * Copyright (C) 2019 Intel Corporation
@@ -11,6 +11,9 @@
 
 /* Rx */
 /* For virtchnl_splitq_base_rx_flex desc members */
+#define VIRTCHNL_RXD_FLEX_RXDID_S		0
+#define VIRTCHNL_RXD_FLEX_RXDID_M		\
+	ICE_M(0xFUL, VIRTCHNL_RXD_FLEX_RXDID_S)
 #define VIRTCHNL_RXD_FLEX_PTYPE_S		0
 #define VIRTCHNL_RXD_FLEX_PTYPE_M		\
 	ICE_M(0x3FFUL, VIRTCHNL_RXD_FLEX_PTYPE_S)

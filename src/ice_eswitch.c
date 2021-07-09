@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #include "ice.h"
@@ -9,6 +9,7 @@
 #include "ice_repr.h"
 #include "ice_devlink.h"
 #include "ice_pf_vsi_vlan_ops.h"
+#include "ice_tc_lib.h"
 
 /**
  * ice_eswitch_setup_env - configure switchdev HW filters
@@ -701,7 +702,9 @@ int ice_eswitch_rebuild(struct ice_pf *pf)
 
 	ice_eswitch_remap_rings_to_vectors(pf);
 
+#ifdef HAVE_TC_SETUP_CLSFLOWER
 	ice_replay_tc_fltrs(pf);
+#endif /* HAVE_TC_SETUP_CLSFLOWER */
 
 	status = ice_vsi_open(ctrl_vsi);
 	if (status)

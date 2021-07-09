@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_COMMON_H_
 #define _ICE_COMMON_H_
@@ -191,6 +191,17 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 		  u16 mem_addr, u8 page, u8 set_page, u8 *data, u8 length,
 		  bool write, struct ice_sq_cd *cd);
 
+enum ice_status
+ice_aq_prog_topo_dev_nvm(struct ice_hw *hw,
+			 struct ice_aqc_link_topo_params *topo_params,
+			 struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_read_topo_dev_nvm(struct ice_hw *hw,
+			 struct ice_aqc_link_topo_params *topo_params,
+			 u32 start_address, u8 *buf, u8 buf_size,
+			 struct ice_sq_cd *cd);
+
+
 void ice_dump_port_info(struct ice_port_info *pi);
 void ice_dump_caps(struct ice_hw *hw);
 void ice_dump_ptp_dev_caps(struct ice_hw *hw);
@@ -233,10 +244,6 @@ enum ice_status ice_sbq_rw_reg_lp(struct ice_hw *hw,
 void ice_sbq_lock(struct ice_hw *hw);
 void ice_sbq_unlock(struct ice_hw *hw);
 enum ice_status ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in);
-#ifdef FWLOG_SUPPORT
-enum ice_status ice_cfg_fw_log(struct ice_hw *hw, bool enable);
-void ice_output_fw_log(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf);
-#endif /* FWLOG_SUPPORT */
 void
 ice_stat_update40(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 		  u64 *prev_stat, u64 *cur_stat);
@@ -246,6 +253,7 @@ ice_stat_update32(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw);
 void ice_print_rollback_msg(struct ice_hw *hw);
 bool ice_is_generic_mac(struct ice_hw *hw);
+bool ice_is_e810(struct ice_hw *hw);
 enum ice_status
 ice_sched_query_elem(struct ice_hw *hw, u32 node_teid,
 		     struct ice_aqc_txsched_elem_data *buf);
@@ -256,14 +264,50 @@ enum ice_status
 ice_aq_get_driver_param(struct ice_hw *hw, enum ice_aqc_driver_params idx,
 			u32 *value, struct ice_sq_cd *cd);
 enum ice_status
+ice_aq_set_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx, bool value,
+		struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
+		bool *value, struct ice_sq_cd *cd);
+enum ice_status
 ice_aq_set_lldp_mib(struct ice_hw *hw, u8 mib_type, void *buf, u16 buf_size,
 		    struct ice_sq_cd *cd);
 bool ice_fw_supports_lldp_fltr_ctrl(struct ice_hw *hw);
 enum ice_status
 ice_lldp_fltr_add_remove(struct ice_hw *hw, u16 vsi_num, bool add);
 enum ice_status
+ice_aq_read_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
+		u16 bus_addr, __le16 addr, u8 params, u8 *data,
+		struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
+		 u16 bus_addr, __le16 addr, u8 params, u8 *data,
+		 struct ice_sq_cd *cd);
+enum ice_status
 ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,
 				struct ice_sq_cd *cd);
 bool ice_is_fw_health_report_supported(struct ice_hw *hw);
 bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
+
+/* E810T PCA9575 IO controller registers */
+#define ICE_PCA9575_P0_IN	0x0
+#define ICE_PCA9575_P1_IN	0x1
+#define ICE_PCA9575_P0_CFG	0x8
+#define ICE_PCA9575_P1_CFG	0x9
+#define ICE_PCA9575_P0_OUT	0xA
+#define ICE_PCA9575_P1_OUT	0xB
+
+/* E810T PCA9575 IO controller pin control */
+#define ICE_E810T_P0_GNSS_PRSNT_N	BIT(4)
+#define ICE_E810T_P1_SMA1_DIR_EN	BIT(4)
+#define ICE_E810T_P1_SMA1_TX_EN		BIT(5)
+#define ICE_E810T_P1_SMA2_UFL2_RX_DIS	BIT(3)
+#define ICE_E810T_P1_SMA2_DIR_EN	BIT(6)
+#define ICE_E810T_P1_SMA2_TX_EN		BIT(7)
+
+enum ice_status
+ice_read_e810t_pca9575_reg(struct ice_hw *hw, u8 offset, u8 *data);
+enum ice_status
+ice_write_e810t_pca9575_reg(struct ice_hw *hw, u8 offset, u8 data);
+bool ice_e810t_is_pca9575_present(struct ice_hw *hw);
 #endif /* _ICE_COMMON_H_ */

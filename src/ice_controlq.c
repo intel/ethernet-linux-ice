@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice_common.h"
 
@@ -722,7 +722,7 @@ void ice_shutdown_all_ctrlq(struct ice_hw *hw)
 {
 	/* Shutdown FW admin queue */
 	ice_shutdown_ctrlq(hw, ICE_CTL_Q_ADMIN);
-	/* Shutdown Phy Sideband */
+	/* Shutdown PHY Sideband */
 	if (ice_is_sbq_supported(hw))
 		ice_shutdown_ctrlq(hw, ICE_CTL_Q_SB);
 	/* Shutdown PF-VF Mailbox */
@@ -1048,19 +1048,9 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	}
 
 	/* Debug desc and buffer */
-#ifdef FWLOG_SUPPORT
-	/* Strip redundant printing of FWLOG messages. */
-	if (((le16_to_cpu(desc_on_ring->opcode) & 0xff00) != 0xff00) &&
-	    (le16_to_cpu(desc_on_ring->opcode) != 0)) {
-		ice_debug(hw, ICE_DBG_AQ_DESC, "ATQ: Control Send queue desc and buffer:\n");
-
-		ice_debug_cq(hw, (void *)desc_on_ring, buf, buf_size);
-	}
-#else
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ATQ: Control Send queue desc and buffer:\n");
 
 	ice_debug_cq(hw, (void *)desc_on_ring, buf, buf_size);
-#endif /* !FWLOG_SUPPORT */
 
 	(cq->sq.next_to_use)++;
 	if (cq->sq.next_to_use == cq->sq.count)
@@ -1105,19 +1095,9 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 		cq->sq_last_status = (enum ice_aq_err)retval;
 	}
 
-#ifdef FWLOG_SUPPORT
-	/* Strip redundant printing of FWLOG messages. */
-	if (((le16_to_cpu(desc->opcode) & 0xff00) != 0xff00) &&
-	    (le16_to_cpu(desc->opcode) != 0)) {
-		ice_debug(hw, ICE_DBG_AQ_MSG, "ATQ: desc and buffer writeback:\n");
-
-		ice_debug_cq(hw, (void *)desc, buf, buf_size);
-	}
-#else
 	ice_debug(hw, ICE_DBG_AQ_MSG, "ATQ: desc and buffer writeback:\n");
 
 	ice_debug_cq(hw, (void *)desc, buf, buf_size);
-#endif /* !FWLOG_SUPPORT */
 
 	/* save writeback AQ if requested */
 	if (details->wb_desc)
@@ -1248,20 +1228,10 @@ ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	if (e->msg_buf && e->msg_len)
 		memcpy(e->msg_buf, cq->rq.r.rq_bi[desc_idx].va, e->msg_len);
 
-#ifdef FWLOG_SUPPORT
-	/* Strip redundant printing of FWLOG messages. */
-	if (((le16_to_cpu(desc->opcode) & 0xff00) != 0xff00) &&
-	    (le16_to_cpu(desc->opcode) != 0)) {
-		ice_debug(hw, ICE_DBG_AQ_DESC, "ARQ: desc and buffer:\n");
-
-		ice_debug_cq(hw, (void *)desc, e->msg_buf, cq->rq_buf_size);
-	}
-#else
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ARQ: desc and buffer:\n");
 
 	ice_debug_cq(hw, (void *)desc, e->msg_buf, cq->rq_buf_size);
 
-#endif /* !FWLOG_SUPPORT */
 
 	/* Restore the original datalen and buffer address in the desc,
 	 * FW updates datalen to indicate the event message size

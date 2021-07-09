@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_VIRTCHNL_PF_H_
 #define _ICE_VIRTCHNL_PF_H_
@@ -155,6 +155,62 @@ struct ice_vf_hash_ctx {
 	struct ice_vf_hash_gtpu_ctx ipv4;
 	struct ice_vf_hash_gtpu_ctx ipv6;
 };
+
+struct ice_vf;
+
+struct ice_vc_vf_ops {
+	int (*get_ver_msg)(struct ice_vf *vf, u8 *msg);
+	int (*get_vf_res_msg)(struct ice_vf *vf, u8 *msg);
+	void (*reset_vf)(struct ice_vf *vf);
+	int (*add_mac_addr_msg)(struct ice_vf *vf, u8 *msg);
+	int (*del_mac_addr_msg)(struct ice_vf *vf, u8 *msg);
+	int (*cfg_qs_msg)(struct ice_vf *vf, u8 *msg);
+	int (*ena_qs_msg)(struct ice_vf *vf, u8 *msg);
+	int (*dis_qs_msg)(struct ice_vf *vf, u8 *msg);
+	int (*request_qs_msg)(struct ice_vf *vf, u8 *msg);
+	int (*cfg_irq_map_msg)(struct ice_vf *vf, u8 *msg);
+	int (*config_rss_key)(struct ice_vf *vf, u8 *msg);
+	int (*config_rss_lut)(struct ice_vf *vf, u8 *msg);
+	int (*get_stats_msg)(struct ice_vf *vf, u8 *msg);
+	int (*cfg_promiscuous_mode_msg)(struct ice_vf *vf, u8 *msg);
+	int (*add_vlan_msg)(struct ice_vf *vf, u8 *msg);
+	int (*remove_vlan_msg)(struct ice_vf *vf, u8 *msg);
+	int (*query_rxdid)(struct ice_vf *vf);
+	int (*get_rss_hena)(struct ice_vf *vf);
+	int (*set_rss_hena_msg)(struct ice_vf *vf, u8 *msg);
+	int (*ena_vlan_stripping)(struct ice_vf *vf);
+	int (*dis_vlan_stripping)(struct ice_vf *vf);
+#ifdef HAVE_TC_SETUP_CLSFLOWER
+	int (*add_qch_msg)(struct ice_vf *vf, u8 *msg);
+	int (*add_switch_filter_msg)(struct ice_vf *vf, u8 *msg);
+	int (*del_switch_filter_msg)(struct ice_vf *vf, u8 *msg);
+	int (*del_qch_msg)(struct ice_vf *vf, u8 *msg);
+#endif /* HAVE_TC_SETUP_CLSFLOWER */
+	int (*rdma_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
+	int (*cfg_rdma_irq_map_msg)(struct ice_vf *vf, u8 *msg);
+	int (*clear_rdma_irq_map)(struct ice_vf *vf);
+	int (*dcf_vlan_offload_msg)(struct ice_vf *vf, u8 *msg);
+	int (*dcf_cmd_desc_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
+	int (*dcf_cmd_buff_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
+	int (*dis_dcf_cap)(struct ice_vf *vf);
+	int (*dcf_get_vsi_map)(struct ice_vf *vf);
+	int (*dcf_query_pkg_info)(struct ice_vf *vf);
+	int (*handle_rss_cfg_msg)(struct ice_vf *vf, u8 *msg, bool add);
+	int (*add_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
+	int (*del_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
+	int (*get_max_rss_qregion)(struct ice_vf *vf);
+	int (*ena_qs_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*dis_qs_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*map_q_vector_msg)(struct ice_vf *vf, u8 *msg);
+	int (*get_offload_vlan_v2_caps)(struct ice_vf *vf);
+	int (*add_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*remove_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*ena_vlan_stripping_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*dis_vlan_stripping_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*ena_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*dis_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
+};
+
 /* VF information structure */
 struct ice_vf {
 	struct ice_pf *pf;
@@ -215,6 +271,7 @@ struct ice_vf {
 	struct ice_mdd_vf_events mdd_tx_events;
 	struct ice_repr *repr;
 	DECLARE_BITMAP(opcodes_allowlist, VIRTCHNL_OP_MAX);
+	struct ice_vc_vf_ops vc_ops;
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 	/* devlink port data */
@@ -262,8 +319,8 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event);
 void ice_vc_notify_link_state(struct ice_pf *pf);
 void ice_vc_notify_reset(struct ice_pf *pf);
 void ice_vc_notify_vf_link_state(struct ice_vf *vf);
-void ice_vc_change_ops_to_repr(void);
-void ice_vc_change_ops_to_default(void);
+void ice_vc_change_ops_to_repr(struct ice_vc_vf_ops *ops);
+void ice_vc_set_dflt_vf_ops(struct ice_vc_vf_ops *ops);
 bool ice_reset_all_vfs(struct ice_pf *pf, bool is_vflr);
 bool ice_reset_vf(struct ice_vf *vf, bool is_vflr);
 void ice_restore_all_vfs_msi_state(struct pci_dev *pdev);
@@ -297,6 +354,8 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted);
 int ice_set_vf_link_state(struct net_device *netdev, int vf_id, int link_state);
 #endif
 
+int ice_check_vf_ready_for_cfg(struct ice_vf *vf);
+
 int ice_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool ena);
 
 int ice_calc_vf_reg_idx(struct ice_vf *vf, struct ice_q_vector *q_vector,
@@ -314,6 +373,8 @@ ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event);
 void ice_print_vfs_mdd_events(struct ice_pf *pf);
 void ice_print_vf_rx_mdd_event(struct ice_vf *vf);
 enum ice_pkg_type ice_pkg_name_to_type(struct ice_hw *hw);
+bool ice_vc_validate_pattern(struct ice_vf *vf,
+			     struct virtchnl_proto_hdrs *proto);
 struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf);
 int
 ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
@@ -335,8 +396,12 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event) {
 static inline void ice_vc_notify_link_state(struct ice_pf *pf) { }
 static inline void ice_vc_notify_reset(struct ice_pf *pf) { }
 static inline void ice_vc_notify_vf_link_state(struct ice_vf *vf) { }
-static inline void ice_vc_change_ops_to_repr(void) { }
-static inline void ice_vc_change_ops_to_default(void) { }
+static inline void ice_vc_change_ops_to_repr(struct ice_vc_vf_ops *ops) { }
+static inline int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
+{
+	return -EOPNOTSUPP;
+}
+static inline void ice_vc_set_dflt_vf_ops(struct ice_vc_vf_ops *ops) { }
 static inline void ice_set_vf_state_qs_dis(struct ice_vf *vf) { }
 static inline
 void ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event) { }
