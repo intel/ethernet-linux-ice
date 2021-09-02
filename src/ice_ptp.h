@@ -53,10 +53,6 @@ struct ice_perout_channel {
 	u64 start_time;
 };
 
-enum ice_ptp_ts_status {
-	ICE_PTP_TS_STATUS_DIS = 0,
-	ICE_PTP_TS_STATUS_ENA,
-};
 
 /**
  * struct ice_ptp_port - data used to initialize an external port for PTP
@@ -74,7 +70,6 @@ enum ice_ptp_ts_status {
  * @link_up: indicates whether the link is up
  * @tx_fifo_busy_cnt: number of times the Tx FIFO was busy
  * @port_num: the port number this structure represents
- * @ts_status: indicates the current status of the PTP timestamps
  */
 struct ice_ptp_port {
 	struct work_struct ov_task;
@@ -86,7 +81,6 @@ struct ice_ptp_port {
 	bool link_up;
 	u8 tx_fifo_busy_cnt;
 	u8 port_num;
-	enum ice_ptp_ts_status ts_status;
 };
 
 #define GLTSYN_TGT_H_IDX_MAX		4

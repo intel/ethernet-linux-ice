@@ -368,21 +368,6 @@ static void ice_set_rx_tstamp(struct ice_pf *pf, bool on)
 		pf->ptp.tstamp_config.rx_filter = HWTSTAMP_FILTER_NONE;
 }
 
-/**
- * ice_ptp_set_ts_status - Set port timestamp status
- * @pf: Board private structure
- * @ena: boolean to set the timestamp status
- *
- * Set the timestamp status for the PHY port based on current requested
- * timestamp config.
- */
-static void ice_ptp_set_ts_status(struct ice_pf *pf, bool ena)
-{
-	if (ena)
-		pf->ptp.port.ts_status = ICE_PTP_TS_STATUS_ENA;
-	else
-		pf->ptp.port.ts_status = ICE_PTP_TS_STATUS_DIS;
-}
 
 /**
  * ice_ptp_cfg_timestamp - Configure timestamp for init/deinit
@@ -397,7 +382,6 @@ static void ice_ptp_cfg_timestamp(struct ice_pf *pf, bool ena)
 	ice_set_tx_tstamp(pf, ena);
 	ice_set_rx_tstamp(pf, ena);
 
-	ice_ptp_set_ts_status(pf, ena);
 }
 
 /**
@@ -1602,9 +1586,8 @@ static void ice_ptp_reset_ts_memory_quad(struct ice_pf *pf, int quad)
 /**
  * ice_ptp_check_tx_fifo - Check whether Tx FIFO is in an OK state
  * @port: PTP port for which Tx FIFO is checked
- * @fifo_ok: Set to true if FIFO is OK; false otherwise
  */
-static int ice_ptp_check_tx_fifo(struct ice_ptp_port *port, bool *fifo_ok)
+static int ice_ptp_check_tx_fifo(struct ice_ptp_port *port)
 {
 	int quad = port->port_num / ICE_PORTS_PER_QUAD;
 	int offs = port->port_num % ICE_PORTS_PER_QUAD;
@@ -1616,10 +1599,9 @@ static int ice_ptp_check_tx_fifo(struct ice_ptp_port *port, bool *fifo_ok)
 	pf = ptp_port_to_pf(port);
 	hw = &pf->hw;
 
-	if (port->tx_fifo_busy_cnt == FIFO_OK) {
-		*fifo_ok = true;
+
+	if (port->tx_fifo_busy_cnt == FIFO_OK)
 		return 0;
-	}
 
 	/* need to read FIFO state */
 	if (offs == 0 || offs == 1)
@@ -1642,7 +1624,6 @@ static int ice_ptp_check_tx_fifo(struct ice_ptp_port *port, bool *fifo_ok)
 
 	if (phy_sts & FIFO_EMPTY) {
 		port->tx_fifo_busy_cnt = FIFO_OK;
-		*fifo_ok = true;
 		return 0;
 	}
 
@@ -1657,12 +1638,10 @@ static int ice_ptp_check_tx_fifo(struct ice_ptp_port *port, bool *fifo_ok)
 			port->port_num, quad);
 		ice_ptp_reset_ts_memory_quad(pf, quad);
 		port->tx_fifo_busy_cnt = FIFO_OK;
-		*fifo_ok = true;
 		return 0;
 	}
 
-	*fifo_ok = false;
-	return 0;
+	return -EAGAIN;
 }
 
 /**
@@ -1690,22 +1669,9 @@ static int ice_ptp_check_tx_offset_valid(struct ice_ptp_port *port)
 	if (atomic_cmpxchg(&port->tx_offset_lock, false, true))
 		return -EBUSY;
 
-	if (port->ts_status == ICE_PTP_TS_STATUS_ENA) {
-		bool tx_fifo_ok = false;
-
-		err = ice_ptp_check_tx_fifo(port, &tx_fifo_ok);
-		if (err) {
-			/* log an error, can't do much else here */
-			dev_err(dev, "Failed to check Tx FIFO for port %d\n",
-				port->port_num);
-			goto out_unlock;
-		}
-
-		if (!tx_fifo_ok) {
-			err = -EAGAIN;
-			goto out_unlock;
-		}
-	}
+	err = ice_ptp_check_tx_fifo(port);
+	if (err)
+		goto out_unlock;
 
 	status = ice_read_phy_reg_e822(hw, port->port_num, P_REG_TX_OV_STATUS,
 				       &val);
@@ -1880,14 +1846,8 @@ ice_ptp_port_phy_start(struct ice_ptp_port *ptp_port, bool phy_start)
 	if (status)
 		goto out_unlock;
 
-	if (!ptp_port->ts_status) {
-		val |= P_REG_PS_SFT_RESET_M;
-		status = ice_write_phy_reg_e822(hw, port, P_REG_PS, val);
-		if (status)
-			goto out_unlock;
-	}
 
-	if (phy_start && ptp_port->link_up && ptp_port->ts_status) {
+	if (phy_start && ptp_port->link_up) {
 		ice_phy_cfg_lane_e822(hw, port);
 		ice_ptp_port_phy_set_parpcs_incval(pf, port);
 
@@ -1955,6 +1915,10 @@ out_unlock:
  */
 int ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup)
 {
+	/* If PTP is not supported on this function, nothing to do */
+	if (!test_bit(ICE_FLAG_PTP_ENA, pf->flags))
+		return 0;
+
 	if (linkup && !test_bit(ICE_FLAG_PTP, pf->flags)) {
 		dev_err(ice_pf_to_dev(pf), "PTP not ready, failed to prepare port %d\n",
 			port);
@@ -2886,13 +2850,6 @@ ice_ptp_set_timestamp_mode(struct ice_pf *pf, struct hwtstamp_config *config)
 		break;
 	default:
 		return -ERANGE;
-	}
-
-	if (!ice_is_e810(&pf->hw)) {
-		bool ena_ts = config->tx_type || config->rx_filter;
-
-		ice_ptp_set_ts_status(pf, ena_ts);
-		ice_ptp_port_phy_start(&pf->ptp.port, ena_ts);
 	}
 
 	return 0;

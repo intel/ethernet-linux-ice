@@ -2768,8 +2768,7 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 
 	phy_type_mask_lo = ICE_PHY_TYPE_LOW_10GBASE_T |
 			   ICE_PHY_TYPE_LOW_10G_SFI_DA |
-			   ICE_PHY_TYPE_LOW_10G_SFI_AOC_ACC |
-			   ICE_PHY_TYPE_LOW_10G_SFI_C2C;
+			   ICE_PHY_TYPE_LOW_10G_SFI_AOC_ACC;
 	if (phy_types_low & phy_type_mask_lo) {
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     10000baseT_Full);
@@ -2777,7 +2776,8 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 						10000baseT_Full);
 	}
 
-	phy_type_mask_lo = ICE_PHY_TYPE_LOW_10GBASE_KR_CR1;
+	phy_type_mask_lo = ICE_PHY_TYPE_LOW_10GBASE_KR_CR1 |
+			   ICE_PHY_TYPE_LOW_10G_SFI_C2C;
 	if (phy_types_low & phy_type_mask_lo) {
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     10000baseKR_Full);
@@ -2818,8 +2818,7 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 			   ICE_PHY_TYPE_LOW_25GBASE_CR |
 			   ICE_PHY_TYPE_LOW_25GBASE_CR_S |
 			   ICE_PHY_TYPE_LOW_25GBASE_CR1 |
-			   ICE_PHY_TYPE_LOW_25G_AUI_AOC_ACC |
-			   ICE_PHY_TYPE_LOW_25G_AUI_C2C;
+			   ICE_PHY_TYPE_LOW_25G_AUI_AOC_ACC;
 	if (phy_types_low & phy_type_mask_lo) {
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     25000baseCR_Full);
@@ -2838,7 +2837,8 @@ ice_phy_type_to_ethtool(struct net_device *netdev,
 
 	phy_type_mask_lo = ICE_PHY_TYPE_LOW_25GBASE_KR |
 			   ICE_PHY_TYPE_LOW_25GBASE_KR_S |
-			   ICE_PHY_TYPE_LOW_25GBASE_KR1;
+			   ICE_PHY_TYPE_LOW_25GBASE_KR1 |
+			   ICE_PHY_TYPE_LOW_25G_AUI_C2C;
 	if (phy_types_low & phy_type_mask_lo) {
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     25000baseKR_Full);
@@ -3639,7 +3639,6 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 	case ICE_PHY_TYPE_LOW_10GBASE_T:
 	case ICE_PHY_TYPE_LOW_10G_SFI_DA:
 	case ICE_PHY_TYPE_LOW_10G_SFI_AOC_ACC:
-	case ICE_PHY_TYPE_LOW_10G_SFI_C2C:
 	case ICE_PHY_TYPE_LOW_10GBASE_SR:
 	case ICE_PHY_TYPE_LOW_10GBASE_LR:
 		ecmd->supported = SUPPORTED_10000baseT_Full;
@@ -3647,6 +3646,7 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 			ecmd->advertising = ADVERTISED_10000baseT_Full;
 		break;
 	case ICE_PHY_TYPE_LOW_10GBASE_KR_CR1:
+	case ICE_PHY_TYPE_LOW_10G_SFI_C2C:
 		ecmd->supported = SUPPORTED_10000baseKR_Full;
 		ecmd->advertising = ADVERTISED_10000baseKR_Full;
 		break;
