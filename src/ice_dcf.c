@@ -54,6 +54,9 @@ static const enum ice_adminq_opc aqc_permitted_tbl[] = {
 	ice_aqc_opc_query_acl_entry,
 	ice_aqc_opc_query_acl_actpair,
 	ice_aqc_opc_query_acl_counter,
+
+	/* QoS */
+	ice_aqc_opc_query_port_ets,
 };
 
 /**
@@ -118,6 +121,50 @@ bool ice_dcf_is_udp_tunnel_aq_cmd(struct ice_aq_desc *desc, u8 *aq_buf)
 }
 
 /**
+ * ice_is_vf_adq_enabled - Check if any VF has ADQ enabled
+ * @pf: pointer to the PF structure
+ * @vf_id: on true return, the first VF ID that we found had ADQ enabled
+ *
+ * Return true if any VF has ADQ enabled. Return false otherwise.
+ */
+static bool ice_is_vf_adq_enabled(struct ice_pf *pf, u16 *vf_id)
+{
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	ice_for_each_vf(pf, bkt, vf) {
+		if (vf->adq_enabled) {
+			*vf_id = vf->vf_id;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * ice_vf_chnl_fltrs_enabled - Check if a VF has TC filters enabled
+ * @pf: pointer to the PF structure
+ * @vf_id: on true return, the first VF ID that we found had TC filters
+ *
+ * Return true if any VF has TC filters. Return false otherwise.
+ */
+static bool ice_vf_chnl_fltrs_enabled(struct ice_pf *pf, u16 *vf_id)
+{
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	ice_for_each_vf(pf, bkt, vf) {
+		if (vf->num_dmac_chnl_fltrs) {
+			*vf_id = vf->vf_id;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
  * ice_check_dcf_allowed - check if DCF is allowed based on various checks
  * @vf: pointer to the VF to check
  */
@@ -148,12 +195,11 @@ bool ice_check_dcf_allowed(struct ice_vf *vf)
 		return false;
 	}
 #endif /* NETIF_F_HW_TC */
-	ice_for_each_vf(pf, i) {
-		if (pf->vf[i].adq_enabled) {
-			dev_err(dev, "ADQ on VF %d is currently enabled. Device Control Functionality cannot be enabled.\n",
-				pf->vf[i].vf_id);
-			return false;
-		}
+
+	if (ice_is_vf_adq_enabled(pf, &i)) {
+		dev_err(dev, "ADQ on VF %d is currently enabled. Device Control Functionality cannot be enabled.\n",
+			i);
+		return false;
 	}
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -162,12 +208,11 @@ bool ice_check_dcf_allowed(struct ice_vf *vf)
 		return false;
 	}
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
-	ice_for_each_vf(pf, i) {
-		if (pf->vf[i].num_dmac_chnl_fltrs) {
-			dev_err(dev, "TC filters on VF %d are currently in use. Device Control Functionality cannot be enabled.\n",
-				pf->vf[i].vf_id);
-			return false;
-		}
+
+	if (ice_vf_chnl_fltrs_enabled(pf, &i)) {
+		dev_err(dev, "TC filters on VF %d are currently in use. Device Control Functionality cannot be enabled.\n",
+			i);
+		return false;
 	}
 
 #ifdef HAVE_NETDEV_SB_DEV
@@ -405,15 +450,15 @@ void ice_rm_dcf_sw_vsi_rule(struct ice_pf *pf, u16 hw_vsi_id)
 						       s_entry->vsi_list_info,
 						       hw_vsi_id);
 			if (ret && ret != -ENOENT)
-				dev_err(ice_pf_to_dev(pf),
-					"Failed to remove VSI %u from VSI list : %d\n",
-					hw_vsi_id, ret);
+				ice_dev_err_errno(ice_pf_to_dev(pf), ret,
+						  "Failed to remove VSI %u from VSI list",
+						  hw_vsi_id);
 		} else if (s_entry->fwd_id.hw_vsi_id == hw_vsi_id) {
 			ret = ice_dcf_rm_sw_rule_to_vsi(pf, s_entry);
 			if (ret)
-				dev_err(ice_pf_to_dev(pf),
-					"Failed to remove VSI %u switch rule : %d\n",
-					hw_vsi_id, ret);
+				ice_dev_err_errno(ice_pf_to_dev(pf), ret,
+						  "Failed to remove VSI %u switch rule",
+						  hw_vsi_id);
 		}
 }
 
@@ -445,16 +490,16 @@ void ice_rm_all_dcf_sw_rules(struct ice_pf *pf)
 			rule_id = sw_rule->rule_id;
 			ret = ice_dcf_rm_sw_rule_to_vsi_list(pf, sw_rule);
 			if (ret)
-				dev_err(ice_pf_to_dev(pf),
-					"Failed to remove switch rule 0x%04x with list id %u : %d\n",
-					rule_id, list_id, ret);
+				ice_dev_err_errno(ice_pf_to_dev(pf), ret,
+						  "Failed to remove switch rule 0x%04x with list id %u",
+						  rule_id, list_id);
 		} else {
 			rule_id = sw_rule->rule_id;
 			ret = ice_dcf_rm_sw_rule_to_vsi(pf, sw_rule);
 			if (ret)
-				dev_err(ice_pf_to_dev(pf),
-					"Failed to remove switch rule 0x%04x : %d\n",
-					rule_id, ret);
+				ice_dev_err_errno(ice_pf_to_dev(pf), ret,
+						  "Failed to remove switch rule 0x%04x",
+						  rule_id);
 		}
 
 	/* clears rule filter management data if AdminQ command has error */

@@ -3,12 +3,14 @@
 
 /* The driver transmit and receive code */
 
-#include <linux/prefetch.h>
 #include <linux/mm.h>
+#include <linux/netdevice.h>
+#include <linux/prefetch.h>
 #include "ice_txrx_lib.h"
 #include "ice_lib.h"
 #include "ice.h"
 #include "ice_dcb_lib.h"
+#include <net/dsfield.h>
 #ifdef HAVE_XDP_SUPPORT
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 #include "ice_xsk.h"
@@ -24,7 +26,6 @@
 #include <net/busy_poll.h>
 
 #define ICE_RX_HDR_SIZE		256
-
 
 #define FDIR_DESC_RXDID 0x40
 #define ICE_FDIR_CLEAN_DELAY 10
@@ -119,8 +120,6 @@ ice_prgm_fdir_fltr(struct ice_vsi *vsi, struct ice_fltr_desc *fdir_desc,
 static void
 ice_unmap_and_free_tx_buf(struct ice_ring *ring, struct ice_tx_buf *tx_buf)
 {
-	struct ice_vsi *vsi = ring->vsi;
-
 	if (tx_buf->skb) {
 		if (tx_buf->tx_flags & ICE_TX_FLAGS_DUMMY_PKT)
 			devm_kfree(ring->dev, tx_buf->raw_buf);
@@ -135,11 +134,6 @@ ice_unmap_and_free_tx_buf(struct ice_ring *ring, struct ice_tx_buf *tx_buf)
 					 dma_unmap_addr(tx_buf, dma),
 					 dma_unmap_len(tx_buf, len),
 					 DMA_TO_DEVICE);
-		if (unlikely(tx_buf->tx_flags & ICE_TX_FLAGS_TSYN)) {
-			dev_kfree_skb_any(vsi->ptp_tx_skb[tx_buf->ptp_ts_idx]);
-			vsi->ptp_tx_skb[tx_buf->ptp_ts_idx] = NULL;
-			tx_buf->ptp_ts_idx = -1;
-		}
 	} else if (dma_unmap_len(tx_buf, len)) {
 		dma_unmap_page(ring->dev,
 			       dma_unmap_addr(tx_buf, dma),
@@ -234,6 +228,14 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 	struct ice_tx_desc *tx_desc;
 	struct ice_tx_buf *tx_buf;
 
+	/* get the bql data ready */
+#ifdef HAVE_XDP_SUPPORT
+	if (!ice_ring_is_xdp(tx_ring))
+		netdev_txq_bql_complete_prefetchw(txring_txq(tx_ring));
+#else
+	netdev_txq_bql_complete_prefetchw(txring_txq(tx_ring));
+#endif /* HAVE_XDP_SUPPORT */
+
 	tx_buf = &tx_ring->tx_buf[i];
 	tx_desc = ICE_TX_DESC(tx_ring, i);
 	i -= tx_ring->count;
@@ -246,6 +248,9 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 		/* if next_to_watch is not set then there is no work pending */
 		if (!eop_desc)
 			break;
+
+		/* follow the guidelines of other drivers */
+		prefetchw(&tx_buf->skb->users);
 
 		smp_rmb();	/* prevent any other reads prior to eop_desc */
 
@@ -332,8 +337,7 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 		return !!budget;
 #endif /* HAVE_XDP_SUPPORT */
 
-	netdev_tx_completed_queue(txring_txq(tx_ring), total_pkts,
-				  total_bytes);
+	netdev_tx_completed_queue(txring_txq(tx_ring), total_pkts, total_bytes);
 
 #define TX_WAKE_THRESHOLD ((s16)(DESC_NEEDED * 2))
 	if (unlikely(total_pkts && netif_carrier_ok(tx_ring->netdev) &&
@@ -342,11 +346,9 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 		 * sees the new next_to_clean.
 		 */
 		smp_mb();
-		if (__netif_subqueue_stopped(tx_ring->netdev,
-					     tx_ring->q_index) &&
+		if (netif_tx_queue_stopped(txring_txq(tx_ring)) &&
 		    !test_bit(ICE_VSI_DOWN, vsi->state)) {
-			netif_wake_subqueue(tx_ring->netdev,
-					    tx_ring->q_index);
+			netif_tx_wake_queue(txring_txq(tx_ring));
 			++tx_ring->tx_stats.restart_q;
 		}
 	}
@@ -641,13 +643,15 @@ ice_run_xdp(struct ice_ring *rx_ring, struct xdp_buff *xdp,
 		break;
 	default:
 		bpf_warn_invalid_xdp_action(act);
-		/* fallthrough -- not supported action */
+		fallthrough; /* not supported action */
+
 	case XDP_ABORTED:
 		trace_xdp_exception(rx_ring->netdev, xdp_prog, act);
 #ifdef ICE_ADD_PROBES
 		rx_ring->xdp_stats.xdp_unknown++;
 #endif
-		/* fallthrough -- handle aborts by dropping frame */
+		fallthrough; /* handle aborts by dropping frame */
+
 	case XDP_DROP:
 		result = ICE_XDP_CONSUMED;
 #ifdef ICE_ADD_PROBES
@@ -1396,7 +1400,6 @@ ice_rx_queue_override(struct sk_buff *skb, struct ice_ring *rx_ring,
 	if (flags & ICE_RX_FLEXI_FLAGS_ACK)
 		return;
 
-
 	/* proceed only when filter type for channel is of type dest
 	 * port or src+dest port or tunnel
 	 */
@@ -1769,27 +1772,70 @@ static void ice_enable_interrupt(struct ice_q_vector *q_vector)
 	bool wb_en = q_vector->wb_on_itr;
 	u32 itr_val;
 
-	if (test_bit(ICE_DOWN, vsi->state))
+	if (test_bit(ICE_VSI_DOWN, vsi->state))
 		return;
 
-	/* When exiting WB_ON_ITR, let ITR resume its normal
-	 * interrupts-enabled path.
+	/* trigger an ITR delayed software interrupt when exiting busy poll, to
+	 * make sure to catch any pending cleanups that might have been missed
+	 * due to interrupt state transition. If busy poll or poll isn't
+	 * enabled, then don't update ITR, and just enable the interrupt.
 	 */
-	if (wb_en)
+	if (!wb_en) {
+		itr_val = ice_buildreg_itr(ICE_ITR_NONE, 0);
+	} else {
 		q_vector->wb_on_itr = false;
 
-	itr_val = ice_buildreg_itr(ICE_ITR_NONE, 0);
-	/* trigger an immediate software interrupt when exiting
-	 * busy poll, to make sure to catch any pending cleanups
-	 * that might have been missed due to interrupt state
-	 * transition.
-	 */
-	if (wb_en) {
+		/* do two things here with a single write. Set up the third ITR
+		 * index to be used for software interrupt moderation, and then
+		 * trigger a software interrupt with a rate limit of 20K on
+		 * software interrupts, this will help avoid high interrupt
+		 * loads due to frequently polling and exiting polling.
+		 */
+		itr_val = ice_buildreg_itr(ICE_IDX_ITR2, ICE_ITR_20K);
 		itr_val |= GLINT_DYN_CTL_SWINT_TRIG_M |
-			   GLINT_DYN_CTL_SW_ITR_INDX_M |
+			   ICE_IDX_ITR2 << GLINT_DYN_CTL_SW_ITR_INDX_S |
 			   GLINT_DYN_CTL_SW_ITR_INDX_ENA_M;
 	}
 	wr32(&vsi->back->hw, GLINT_DYN_CTL(q_vector->reg_idx), itr_val);
+}
+
+/**
+ * ice_force_wb - trigger force write-back by setting WB_ON_ITR bit
+ * @hw: ptr to HW
+ * @q_vector: pointer to q_vector
+ *
+ * This function is used to force write-backs by setting WB_ON_ITR bit
+ * in DYN_CTLN register. WB_ON_ITR and INTENA are mutually exclusive bits.
+ * Setting WB_ON_ITR bits means Tx and Rx descriptors are written back based
+ * on ITR expiration irrespective of INTENA setting
+ */
+static void ice_force_wb(struct ice_hw *hw, struct ice_q_vector *q_vector)
+{
+	if (q_vector->num_ring_rx || q_vector->num_ring_tx) {
+#ifdef ADQ_PERF_COUNTERS
+		q_vector->ch_stats.num_wb_on_itr_set++;
+#endif /* ADQ_PERF_COUNTERS */
+		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx),
+		     ICE_GLINT_DYN_CTL_WB_ON_ITR(0, ICE_RX_ITR));
+	}
+
+	/* needed to avoid triggering WB_ON_ITR again which typically
+	 * happens from ice_set_wb_on_itr function
+	 */
+	q_vector->wb_on_itr = true;
+}
+
+/**
+ * ice_vector_intr_busypoll
+ * @qv: pointer to q_vector
+ *
+ * Returns: true if vector is transitioning from INTERRUPT
+ * to BUSY_POLL based on current and previous state of vector
+ */
+static bool ice_vector_intr_busypoll(struct ice_q_vector *qv)
+{
+	return !(qv->state_flags & ICE_CHNL_PREV_IN_BP) &&
+		(qv->state_flags & ICE_CHNL_IN_BP);
 }
 
 /**
@@ -1862,7 +1908,7 @@ state_update:
 skip_state_update:
 	if (q_vector->state_flags & ICE_CHNL_IN_BP) {
 		q_vector->jiffy = jiffies;
-		/* triffer force_wb by setting WB_ON_ITR only when
+		/* trigger force_wb by setting WB_ON_ITR only when
 		 * - vector is transitioning from INTR->BUSY_POLL
 		 * - once_in_bp is false, this is to prevent from doing it
 		 * every time whenever vector state is changing from
@@ -1909,7 +1955,6 @@ ice_handle_chnl_vector(struct ice_q_vector *q_vector, bool unlikely_cb_bp)
 #endif /* ADQ_PERF_COUNTERS */
 	struct ice_vsi *ch_vsi = q_vector->ch->ch_vsi;
 	struct ice_vsi *vsi = q_vector->vsi;
-
 
 	/* caller of this function deteremines next occurrence/execution context
 	 * of napi_poll (means next time whether napi_poll will be invoked from
@@ -1964,6 +2009,18 @@ ice_handle_chnl_vector(struct ice_q_vector *q_vector, bool unlikely_cb_bp)
 }
 
 #ifdef HAVE_NAPI_STATE_IN_BUSY_POLL
+/**
+ * ice_vector_ever_in_busypoll - check entry to busy poll
+ * @qv: pointer to q_vector
+ *
+ * Returns: true if vector state is currently OR previously BUSY_POLL
+ */
+static bool ice_vector_ever_in_busypoll(struct ice_q_vector *qv)
+{
+	return (qv->state_flags & ICE_CHNL_PREV_IN_BP) ||
+	       (qv->state_flags & ICE_CHNL_IN_BP);
+}
+
 /**
  * ice_chnl_vector_bypass_clean_complete
  * @napi: ptr to napi
@@ -2364,7 +2421,7 @@ bypass:
  */
 static int __ice_maybe_stop_tx(struct ice_ring *tx_ring, unsigned int size)
 {
-	netif_stop_subqueue(tx_ring->netdev, tx_ring->q_index);
+	netif_tx_stop_queue(txring_txq(tx_ring));
 	/* Memory barrier before checking head and tail */
 	smp_mb();
 
@@ -2372,8 +2429,8 @@ static int __ice_maybe_stop_tx(struct ice_ring *tx_ring, unsigned int size)
 	if (likely(ICE_DESC_UNUSED(tx_ring) < size))
 		return -EBUSY;
 
-	/* A reprieve! - use start_subqueue because it doesn't call schedule */
-	netif_start_subqueue(tx_ring->netdev, tx_ring->q_index);
+	/* A reprieve! - use start_queue because it doesn't call schedule */
+	netif_tx_start_queue(txring_txq(tx_ring));
 	++tx_ring->tx_stats.restart_q;
 	return 0;
 }
@@ -2415,6 +2472,7 @@ ice_tx_map(struct ice_ring *tx_ring, struct ice_tx_buf *first,
 	struct sk_buff *skb;
 	skb_frag_t *frag;
 	dma_addr_t dma;
+	bool kick;
 
 	td_tag = off->td_l2tag1;
 	td_cmd = off->td_cmd;
@@ -2423,7 +2481,6 @@ ice_tx_map(struct ice_ring *tx_ring, struct ice_tx_buf *first,
 
 	data_len = skb->data_len;
 	size = skb_headlen(skb);
-
 
 	tx_desc = ICE_TX_DESC(tx_ring, i);
 
@@ -2497,9 +2554,6 @@ ice_tx_map(struct ice_ring *tx_ring, struct ice_tx_buf *first,
 		tx_buf = &tx_ring->tx_buf[i];
 	}
 
-	/* record bytecount for BQL */
-	netdev_tx_sent_queue(txring_txq(tx_ring), first->bytecount);
-
 	/* record SW timestamp if HW timestamp is not available */
 	skb_tx_timestamp(first->skb);
 
@@ -2527,9 +2581,10 @@ ice_tx_map(struct ice_ring *tx_ring, struct ice_tx_buf *first,
 	ice_maybe_stop_tx(tx_ring, DESC_NEEDED);
 
 	/* notify HW of packet */
-#ifdef HAVE_SKB_XMIT_MORE
-	if (netif_xmit_stopped(txring_txq(tx_ring)) || !netdev_xmit_more()) {
-#endif /* HAVE_SKB_XMIT_MORE */
+	kick = __netdev_tx_sent_queue(txring_txq(tx_ring), first->bytecount,
+				      netdev_xmit_more());
+	if (kick) {
+		/* notify HW of packet */
 		writel_relaxed(i, tx_ring->tail);
 #ifndef SPIN_UNLOCK_IMPLIES_MMIOWB
 
@@ -2538,9 +2593,7 @@ ice_tx_map(struct ice_ring *tx_ring, struct ice_tx_buf *first,
 		 */
 		mmiowb();
 #endif /* SPIN_UNLOCK_IMPLIES_MMIOWB */
-#ifdef HAVE_SKB_XMIT_MORE
 	}
-#endif /* HAVE_SKB_XMIT_MORE */
 
 	return;
 
@@ -2559,7 +2612,6 @@ dma_error:
 	tx_ring->next_to_use = i;
 }
 
-
 /**
  * ice_tx_csum - Enable Tx checksum offloads
  * @first: pointer to the first descriptor
@@ -2570,9 +2622,9 @@ dma_error:
 static
 int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 {
-#ifdef ICE_ADD_PROBES
+#if defined(ICE_ADD_PROBES)
 	struct ice_ring *tx_ring = off->tx_ring;
-#endif
+#endif /* ICE_ADD_PROBES */
 	u32 l4_len = 0, l3_len = 0, l2_len = 0;
 	struct sk_buff *skb = first->skb;
 	union {
@@ -3361,11 +3413,13 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 		    ch->fltr_type == ICE_CHNL_FLTR_TYPE_LAST)
 			return;
 #ifdef ADQ_PERF_COUNTERS
+		{
 		struct ice_ring *ch_tx_ring;
 
 		ch_tx_ring = qv->vsi->tx_rings[q_index + ch->base_q];
 		if (ch_tx_ring)
 			ch_tx_ring->ch_q_stats.tx.num_mark_atr_setup++;
+		}
 #endif /* ADQ_PERF_COUNTERS */
 	}
 
@@ -3377,7 +3431,6 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 	tx_ring->next_to_use = (i < tx_ring->count) ? i : 0;
 
 	ice_set_dflt_val_fd_desc(&fd_ctx);
-
 
 	/* set report completion to NONE, means flow-director programming
 	 * status won't be informed to SW.
@@ -3400,46 +3453,38 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 }
 
 /**
- * ice_tsyn - set up the tsyn context descriptor
- * @tx_ring:  ptr to the ring to send
- * @skb:      ptr to the skb we're sending
+ * ice_tstamp - set up context descriptor for hardware timestamp
+ * @tx_ring: pointer to the Tx ring to send buffer on
+ * @skb: pointer to the SKB we're sending
  * @first: Tx buffer
- * @off: Quad Word 1
- * @ptp_idx: ptp index to be filled in
- *
- * Returns NETDEV_TX_BUSY if not index avail, else OK
+ * @off: Tx offload parameters
  */
-static netdev_tx_t
-ice_tsyn(struct ice_ring *tx_ring, struct sk_buff *skb,
-	 struct ice_tx_buf *first,
-	 struct ice_tx_offload_params *off, int *ptp_idx)
+static void
+ice_tstamp(struct ice_ring *tx_ring, struct sk_buff *skb,
+	   struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 {
-	struct ice_vsi *vsi = tx_ring->vsi;
-	int idx;
+	s8 idx;
 
-	if (!vsi->ptp_tx)
-		return NETDEV_TX_BUSY;
+	/* only timestamp the outbound packet if the user has requested it */
+	if (likely(!(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)))
+		return;
+
+	if (!tx_ring->ptp_tx)
+		return;
 
 	/* Tx timestamps cannot be sampled when doing TSO */
 	if (first->tx_flags & ICE_TX_FLAGS_TSO)
-		return NETDEV_TX_BUSY;
+		return;
 
-	idx = ice_ptp_get_ts_idx(vsi);
-	if (idx >= 0) {
-		skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
-		vsi->ptp_tx_skb[idx] = skb_get(skb);
-		*ptp_idx = idx;
-	} else {
-		vsi->tx_hwtstamp_skipped++;
-		return NETDEV_TX_BUSY;
-	}
+	/* Grab an open timestamp slot */
+	idx = ice_ptp_request_ts(tx_ring->tx_tstamps, skb);
+	if (idx < 0)
+		return;
 
 	off->cd_qw1 |= (u64)(ICE_TX_DESC_DTYPE_CTX |
 			     (ICE_TX_CTX_DESC_TSYN << ICE_TXD_CTX_QW1_CMD_S) |
 			     ((u64)idx << ICE_TXD_CTX_QW1_TSO_LEN_S));
 	first->tx_flags |= ICE_TX_FLAGS_TSYN;
-
-	return NETDEV_TX_OK;
 }
 
 /**
@@ -3457,9 +3502,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	struct ice_tx_buf *first;
 	struct ethhdr *eth;
 	unsigned int count;
-	bool tsyn = true;
 	int tso, csum;
-	int idx = -1;
 
 	ice_trace(xmit_frame_ring, tx_ring, skb);
 
@@ -3482,6 +3525,9 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 		tx_ring->tx_stats.tx_busy++;
 		return NETDEV_TX_BUSY;
 	}
+
+	/* prefetch for bql data which is infrequently used */
+	netdev_txq_bql_enqueue_prefetchw(txring_txq(tx_ring));
 
 	offload.tx_ring = tx_ring;
 
@@ -3523,17 +3569,8 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 					ICE_TX_CTX_DESC_SWTCH_UPLINK <<
 					ICE_TXD_CTX_QW1_CMD_S);
 
-	/* only timestamp the outbound packet if the user has requested it */
-#ifdef SKB_SHARED_TX_IS_UNION
-	if (likely(!(skb_tx(skb)->hardware)))
-#else
-	if (likely(!(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)))
-#endif /* SKB_SHARED_TX_IS_UNION */
-		tsyn = false;
+	ice_tstamp(tx_ring, skb, first, &offload);
 
-	if (tsyn &&
-	    ice_tsyn(tx_ring, skb, first, &offload, &idx) == NETDEV_TX_BUSY)
-		goto out_ptp_drop;
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 	if (ice_is_switchdev_running(vsi->back))
 		ice_eswitch_set_target_vsi(skb, &offload);
@@ -3554,11 +3591,8 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 		cdesc->qw1 = cpu_to_le64(offload.cd_qw1);
 	}
 
-
 	if (ice_ring_ch_enabled(tx_ring))
 		ice_chnl_inline_fd(tx_ring, skb, first->tx_flags);
-
-	first->ptp_ts_idx = idx;
 
 	ice_tx_map(tx_ring, first, &offload);
 	return NETDEV_TX_OK;
@@ -3567,8 +3601,6 @@ out_drop:
 	ice_trace(xmit_frame_ring_drop, tx_ring, skb);
 	dev_kfree_skb_any(skb);
 	return NETDEV_TX_OK;
-out_ptp_drop:
-	return NETDEV_TX_BUSY;
 }
 
 /**
@@ -3593,6 +3625,68 @@ netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 		return NETDEV_TX_OK;
 
 	return ice_xmit_frame_ring(skb, tx_ring);
+}
+
+/**
+ * ice_get_dscp_up - return the UP/TC value for a SKB
+ * @dcbcfg: DCB config that contains DSCP to UP/TC mapping
+ * @skb: SKB to query for info to determine UP/TC
+ *
+ * This function is to only be called when the PF is in L3 DSCP PFC mode
+ */
+static inline
+u8 ice_get_dscp_up(struct ice_dcbx_cfg *dcbcfg, struct sk_buff *skb)
+{
+	u8 dscp = 0;
+
+	if (skb->protocol == htons(ETH_P_IP))
+		dscp = ipv4_get_dsfield(ip_hdr(skb)) >> 2;
+	else if (skb->protocol == htons(ETH_P_IPV6))
+		dscp = ipv6_get_dsfield(ipv6_hdr(skb)) >> 2;
+
+	return dcbcfg->dscp_map[dscp];
+}
+
+#ifndef HAVE_NDO_SELECT_QUEUE_SB_DEV
+#if defined(HAVE_NDO_SELECT_QUEUE_ACCEL) || defined(HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK)
+#ifndef HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
+u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		     void __always_unused *accel_priv,
+		     select_queue_fallback_t fallback)
+#else /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		     void __always_unused *accel_priv);
+#endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+#else /* HAVE_NDO_SELECT_QUEUE_ACCEL || HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK */
+u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb)
+#endif /*HAVE_NDO_SELECT_QUEUE_ACCEL || HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK */
+#else /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
+#ifdef HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
+u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		     struct net_device *sb_dev)
+#else /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		     struct net_device *sb_dev,
+		     select_queue_fallback_t fallback)
+#endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+#endif /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
+{
+	struct ice_pf *pf = ice_netdev_to_pf(netdev);
+	struct ice_dcbx_cfg *dcbcfg;
+
+	dcbcfg = &pf->hw.port_info->qos_cfg.local_dcbx_cfg;
+	if (dcbcfg->pfc_mode == ICE_QOS_MODE_DSCP)
+		skb->priority = ice_get_dscp_up(dcbcfg, skb);
+
+#if defined(HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED)
+	return netdev_pick_tx(netdev, skb, sb_dev);
+#elif defined(HAVE_NDO_SELECT_QUEUE_SB_DEV)
+	return fallback(netdev, skb, sb_dev);
+#elif defined(HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK)
+	return fallback(netdev, skb);
+#else
+	return __netdev_pick_tx(netdev, skb);
+#endif
 }
 
 /**

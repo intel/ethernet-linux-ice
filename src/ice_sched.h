@@ -34,7 +34,6 @@
 #define ICE_PSM_CLK_446MHZ_IN_HZ 446428571
 #define ICE_PSM_CLK_390MHZ_IN_HZ 390625000
 
-
 struct rl_profile_params {
 	u32 bw;			/* in Kbps */
 	u16 rl_multiplier;
@@ -115,8 +114,7 @@ enum ice_status
 ice_sched_cfg_vsi(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u16 maxqs,
 		  u8 owner, bool enable);
 enum ice_status ice_rm_vsi_lan_cfg(struct ice_port_info *pi, u16 vsi_handle);
-enum ice_status
-ice_rm_vsi_rdma_cfg(struct ice_port_info *pi, u16 vsi_handle);
+enum ice_status ice_rm_vsi_rdma_cfg(struct ice_port_info *pi, u16 vsi_handle);
 struct ice_sched_node *
 ice_sched_get_vsi_node(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 		       u16 vsi_handle);

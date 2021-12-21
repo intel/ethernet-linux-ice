@@ -216,7 +216,6 @@ int ice_get_ethtool_fdir_entry(struct ice_hw *hw, struct ethtool_rxnfc *cmd)
 	else
 		fsp->ring_cookie = rule->orig_q_index;
 
-
 	idx = ice_ethtool_flow_to_fltr(fsp->flow_type);
 	if (idx == ICE_FLTR_PTYPE_NONF_NONE) {
 		dev_err(ice_hw_to_dev(hw), "Missing input index for flow_type %d\n",
@@ -324,7 +323,7 @@ void ice_fdir_rem_adq_chnl(struct ice_hw *hw, u16 vsi_idx)
 		struct ice_fd_hw_prof *prof = hw->fdir_prof[flow];
 		int tun, i;
 
-		if (!prof)
+		if (!prof || !prof->cnt)
 			continue;
 
 		for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
@@ -1624,13 +1623,34 @@ int ice_fdir_create_dflt_rules(struct ice_pf *pf)
 }
 
 /**
+ * ice_fdir_del_all_fltrs - Delete all flow director filters
+ * @vsi: the VSI being changed
+ *
+ * This function needs to be called while holding hw->fdir_fltr_lock
+ */
+void ice_fdir_del_all_fltrs(struct ice_vsi *vsi)
+{
+	struct ice_fdir_fltr *f_rule, *tmp;
+	struct ice_pf *pf = vsi->back;
+	struct ice_hw *hw = &pf->hw;
+
+	list_for_each_entry_safe(f_rule, tmp, &hw->fdir_list_head, fltr_node) {
+		if (!f_rule->acl_fltr)
+			ice_fdir_write_all_fltr(pf, f_rule, false);
+		ice_fdir_update_cntrs(hw, f_rule->flow_type, f_rule->acl_fltr,
+				      false);
+		list_del(&f_rule->fltr_node);
+		devm_kfree(ice_pf_to_dev(pf), f_rule);
+	}
+}
+
+/**
  * ice_vsi_manage_fdir - turn on/off flow director
  * @vsi: the VSI being changed
  * @ena: boolean value indicating if this is an enable or disable request
  */
 void ice_vsi_manage_fdir(struct ice_vsi *vsi, bool ena)
 {
-	struct ice_fdir_fltr *f_rule, *tmp;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	enum ice_fltr_ptype flow;
@@ -1644,14 +1664,8 @@ void ice_vsi_manage_fdir(struct ice_vsi *vsi, bool ena)
 	mutex_lock(&hw->fdir_fltr_lock);
 	if (!test_and_clear_bit(ICE_FLAG_FD_ENA, pf->flags))
 		goto release_lock;
-	list_for_each_entry_safe(f_rule, tmp, &hw->fdir_list_head, fltr_node) {
-		if (!f_rule->acl_fltr)
-			ice_fdir_write_all_fltr(pf, f_rule, false);
-		ice_fdir_update_cntrs(hw, f_rule->flow_type, f_rule->acl_fltr,
-				      false);
-		list_del(&f_rule->fltr_node);
-		devm_kfree(ice_pf_to_dev(pf), f_rule);
-	}
+
+	ice_fdir_del_all_fltrs(vsi);
 
 	if (hw->fdir_prof)
 		for (flow = ICE_FLTR_PTYPE_NONF_NONE; flow < ICE_FLTR_PTYPE_MAX;
@@ -1842,7 +1856,7 @@ ice_update_ring_dest_vsi(struct ice_vsi *vsi, u16 *dest_vsi, u32 *ring)
 		 * specified
 		 */
 		if ((*ring < ch->base_q) ||
-		    (*ring > (ch->base_q + ch->num_rxq)))
+		    (*ring >= (ch->base_q + ch->num_rxq)))
 			continue;
 
 		/* update the dest_vsi based on channel */
@@ -2094,7 +2108,6 @@ int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 
 	if (!test_bit(ICE_FLAG_FD_ENA, pf->flags))
 		return -EOPNOTSUPP;
-
 
 	/* Do not program filters during reset */
 	if (ice_is_reset_in_progress(pf->state)) {

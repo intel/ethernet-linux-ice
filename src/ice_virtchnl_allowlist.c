@@ -93,7 +93,7 @@ static const u32 cap_dcf_allowlist_opcodes[] = {
 	VIRTCHNL_OP_DCF_VLAN_OFFLOAD,
 	VIRTCHNL_OP_DCF_CMD_DESC, VIRTCHNL_OP_DCF_CMD_BUFF,
 	VIRTCHNL_OP_DCF_DISABLE, VIRTCHNL_OP_DCF_GET_VSI_MAP,
-	VIRTCHNL_OP_DCF_GET_PKG_INFO,
+	VIRTCHNL_OP_DCF_GET_PKG_INFO, VIRTCHNL_OP_DCF_CONFIG_BW,
 };
 
 /* VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC */
@@ -111,6 +111,10 @@ static const u32 fdir_pf_allowlist_opcodes[] = {
 	VIRTCHNL_OP_ADD_FDIR_FILTER, VIRTCHNL_OP_DEL_FDIR_FILTER,
 };
 
+/* VIRTCHNL_VF_OFFLOAD_QoS */
+static const u32 tc_allowlist_opcodes[] = {
+	VIRTCHNL_OP_GET_QOS_CAPS, VIRTCHNL_OP_CONFIG_QUEUE_TC_MAP,
+};
 
 static const u32 large_num_qpairs_allowlist_opcodes[] = {
 	VIRTCHNL_OP_GET_MAX_RSS_QREGION,
@@ -142,6 +146,7 @@ static const struct allowlist_opcode_info allowlist_opcodes[] = {
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC, rx_flex_desc_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF, adv_rss_pf_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_FDIR_PF, fdir_pf_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_QOS, tc_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_LARGE_NUM_QPAIRS, large_num_qpairs_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_VLAN_V2, vlan_v2_allowlist_opcodes),
 };

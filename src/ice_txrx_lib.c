@@ -147,7 +147,6 @@ ice_rx_csum(struct ice_ring *ring, struct sk_buff *skb,
 
 	decoded = ice_decode_rx_desc_ptype(ptype);
 
-
 	/* Start with CHECKSUM_NONE and by default csum_level = 0 */
 	skb->ip_summed = CHECKSUM_NONE;
 	skb_checksum_none_assert(skb);
@@ -155,7 +154,6 @@ ice_rx_csum(struct ice_ring *ring, struct sk_buff *skb,
 	/* check if Rx checksum is enabled */
 	if (!(ring->netdev->features & NETIF_F_RXCSUM))
 		return;
-
 
 	/* check if HW has decoded the packet and checksum */
 	if (!(rx_status0 & BIT(ICE_RX_FLEX_DESC_STATUS0_L3L4P_S)))
@@ -236,12 +234,7 @@ ice_process_skb_fields(struct ice_ring *rx_ring,
 	ice_rx_hash(rx_ring, rx_desc, skb, ptype);
 
 	/* modifies the skb - consumes the enet header */
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-	skb->protocol = eth_type_trans(skb, ice_eswitch_get_target_netdev
-				       (rx_ring, rx_desc));
-#else
 	skb->protocol = eth_type_trans(skb, rx_ring->netdev);
-#endif /* CONFIG_NET_DEVLINK */
 
 	ice_rx_csum(rx_ring, skb, rx_desc, ptype);
 	if (rx_ring->ptp_rx)

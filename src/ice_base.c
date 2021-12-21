@@ -414,7 +414,7 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	 */
 	if (ice_is_dvm_ena(hw))
 		if (vsi->type == ICE_VSI_VF &&
-		    ice_vf_is_port_vlan_ena(&vsi->back->vf[vsi->vf_id]))
+		    ice_vf_is_port_vlan_ena(ice_get_vf(vsi->back, vsi->vf_id)))
 			rlan_ctx.l2tsel = 1;
 		else
 			rlan_ctx.l2tsel = 0;
@@ -499,6 +499,7 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 
 	ring->rx_buf_len = ring->vsi->rx_buf_len;
 
+#ifdef HAVE_XDP_BUFF_RXQ
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 	if (ring->vsi->type == ICE_VSI_PF) {
 		if (!xdp_rxq_info_is_reg(&ring->xdp_rxq))
@@ -563,11 +564,13 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 			return err;
 	}
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
+#endif /* HAVE_XDP_BUFF_RXQ */
 
 	err = ice_setup_rx_ctx(ring);
 	if (err) {
-		dev_err(dev, "ice_setup_rx_ctx failed for RxQ %d, err %d\n",
-			ring->q_index, err);
+		ice_dev_err_errno(dev, err,
+				  "ice_setup_rx_ctx failed for RxQ %d",
+				  ring->q_index);
 		return err;
 	}
 
@@ -714,8 +717,9 @@ err_out:
 	while (v_idx--)
 		ice_free_q_vector(vsi, v_idx);
 
-	dev_err(dev, "Failed to allocate %d q_vector for VSI %d, ret=%d\n",
-		vsi->num_q_vectors, vsi->vsi_num, err);
+	ice_dev_err_errno(dev, err,
+			  "Failed to allocate %d q_vector for VSI %d",
+			  vsi->num_q_vectors, vsi->vsi_num);
 	vsi->num_q_vectors = 0;
 	return err;
 }
@@ -754,9 +758,14 @@ void ice_vsi_map_rings_to_vectors(struct ice_vsi *vsi)
 		for (q_id = q_base; q_id < (q_base + tx_rings_per_v); q_id++) {
 			struct ice_ring *tx_ring = vsi->tx_rings[q_id];
 
-			tx_ring->q_vector = q_vector;
-			tx_ring->next = q_vector->tx.ring;
-			q_vector->tx.ring = tx_ring;
+			if (tx_ring) {
+				tx_ring->q_vector = q_vector;
+				tx_ring->next = q_vector->tx.ring;
+				q_vector->tx.ring = tx_ring;
+			} else {
+				dev_err(ice_pf_to_dev(vsi->back), "NULL Tx ring found\n");
+				break;
+			}
 		}
 		tx_rings_rem -= tx_rings_per_v;
 
@@ -771,9 +780,14 @@ void ice_vsi_map_rings_to_vectors(struct ice_vsi *vsi)
 		for (q_id = q_base; q_id < (q_base + rx_rings_per_v); q_id++) {
 			struct ice_ring *rx_ring = vsi->rx_rings[q_id];
 
-			rx_ring->q_vector = q_vector;
-			rx_ring->next = q_vector->rx.ring;
-			q_vector->rx.ring = rx_ring;
+			if (rx_ring) {
+				rx_ring->q_vector = q_vector;
+				rx_ring->next = q_vector->rx.ring;
+				q_vector->rx.ring = rx_ring;
+			} else {
+				dev_err(ice_pf_to_dev(vsi->back), "NULL Rx ring found\n");
+				break;
+			}
 		}
 		rx_rings_rem -= rx_rings_per_v;
 	}
@@ -1004,7 +1018,7 @@ ice_vsi_stop_tx_ring(struct ice_vsi *vsi, enum ice_disq_rst_src rst_src,
 	} else if (status == ICE_ERR_DOES_NOT_EXIST) {
 		dev_dbg(ice_pf_to_dev(vsi->back), "LAN Tx queues do not exist, nothing to disable\n");
 	} else if (status) {
-		dev_err(ice_pf_to_dev(vsi->back), "Failed to disable LAN Tx queues, error: %s\n",
+		dev_dbg(ice_pf_to_dev(vsi->back), "Failed to disable LAN Tx queues, error: %s\n",
 			ice_stat_str(status));
 		return -ENODEV;
 	}

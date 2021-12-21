@@ -14,7 +14,6 @@
 #define ICE_FLTR_TX BIT(1)
 #define ICE_FLTR_TX_RX (ICE_FLTR_RX | ICE_FLTR_TX)
 
-
 #define DUMMY_ETH_HDR_LEN		16
 #define ICE_SW_RULE_RX_TX_ETH_HDR_SIZE \
 	(offsetof(struct ice_aqc_sw_rules_elem, pdata.lkup_tx_rx.hdr) + \
@@ -28,7 +27,6 @@
 #define ICE_SW_RULE_VSI_LIST_SIZE(n) \
 	(offsetof(struct ice_aqc_sw_rules_elem, pdata.vsi_list.vsi) + \
 	 ((n) * sizeof(((struct ice_sw_rule_vsi_list *)0)->vsi[0])))
-
 
 /* Worst case buffer length for ice_aqc_opc_get_res_alloc */
 #define ICE_MAX_RES_TYPES 0x80
@@ -168,7 +166,6 @@ struct ice_adv_lkup_elem {
 	union ice_prot_hdr m_u;	/* Mask of header values to match */
 };
 
-
 struct ice_sw_act_ctrl {
 	/* Source VSI for LOOKUP_TX or source port for LOOKUP_RX */
 	u16 src;
@@ -198,12 +195,24 @@ struct ice_rule_query_data {
 	u16 vsi_handle;
 };
 
+/*
+ * This structure allows to pass info about lb_en and lan_en
+ * flags to ice_add_adv_rule. Values in act would be used
+ * only if act_valid was set to true, otherwise dflt
+ * values would be used.
+ */
+struct ice_adv_rule_flags_info {
+	u32 act;
+	u8 act_valid;		/* indicate if flags in act are valid */
+};
+
 struct ice_adv_rule_info {
 	enum ice_sw_tunnel_type tun_type;
 	struct ice_sw_act_ctrl sw_act;
 	u32 priority;
 	u8 rx; /* true means LOOKUP_RX otherwise LOOKUP_TX */
 	u16 fltr_rule_id;
+	struct ice_adv_rule_flags_info flags_info;
 };
 
 /* A collection of one or more four word recipe */
@@ -286,7 +295,6 @@ struct ice_fltr_list_entry {
 	enum ice_status status;
 	struct ice_fltr_info fltr_info;
 };
-
 
 /* This defines an entry in the list that maintains MAC or VLAN membership
  * to HW list mapping, since multiple VSIs can subscribe to the same MAC or
@@ -418,7 +426,6 @@ ice_add_mac_with_sw_marker(struct ice_hw *hw, struct ice_fltr_info *f_info,
 enum ice_status
 ice_add_mac_with_counter(struct ice_hw *hw, struct ice_fltr_info *f_info);
 void ice_remove_vsi_fltr(struct ice_hw *hw, u16 vsi_handle);
-
 
 /* Promisc/defport setup for VSIs */
 enum ice_status

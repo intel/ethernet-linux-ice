@@ -8,9 +8,7 @@
 #include "ice_lib.h"
 #include "ice_fltr.h"
 
-
 static struct dentry *ice_debugfs_root;
-
 
 static void ice_dump_pf(struct ice_pf *pf)
 {
@@ -38,9 +36,9 @@ static void ice_dump_pf(struct ice_pf *pf)
 		 ice_get_valid_res_count(pf->irq_tracker));
 	dev_info(dev, "\tnum_avail_sw_msix = %d\n", pf->num_avail_sw_msix);
 	dev_info(dev, "\tsriov_base_vector = %d\n", pf->sriov_base_vector);
-	dev_info(dev, "\tnum_alloc_vfs = %d\n", pf->num_alloc_vfs);
-	dev_info(dev, "\tnum_qps_per_vf = %d\n", pf->num_qps_per_vf);
-	dev_info(dev, "\tnum_msix_per_vf = %d\n", pf->num_msix_per_vf);
+	dev_info(dev, "\tnum_alloc_vfs = %d\n", pf->vfs.num_alloc);
+	dev_info(dev, "\tnum_qps_per_vf = %d\n", pf->vfs.num_qps_per);
+	dev_info(dev, "\tnum_msix_per_vf = %d\n", pf->vfs.num_msix_per);
 }
 
 static void ice_dump_pf_vsi_list(struct ice_pf *pf)
@@ -55,13 +53,13 @@ static void ice_dump_pf_vsi_list(struct ice_pf *pf)
 			continue;
 
 		dev_info(dev, "vsi[%d]:\n", i);
-		dev_info(dev, "\tvsi = %pK\n", vsi);
+		dev_info(dev, "\tvsi = %p\n", vsi);
 		dev_info(dev, "\tvsi_num = %d\n", vsi->vsi_num);
 		dev_info(dev, "\ttype = %s\n", ice_vsi_type_str(vsi->type));
 		if (vsi->type == ICE_VSI_VF)
 			dev_info(dev, "\tvf_id = %d\n", vsi->vf_id);
-		dev_info(dev, "\tback = %pK\n", vsi->back);
-		dev_info(dev, "\tnetdev = %pK\n", vsi->netdev);
+		dev_info(dev, "\tback = %p\n", vsi->back);
+		dev_info(dev, "\tnetdev = %p\n", vsi->netdev);
 		dev_info(dev, "\tmax_frame = %d\n", vsi->max_frame);
 		dev_info(dev, "\trx_buf_len = %d\n", vsi->rx_buf_len);
 		dev_info(dev, "\tnum_txq = %d\n", vsi->num_txq);
@@ -122,6 +120,36 @@ static void ice_dump_pf_fdir(struct ice_pf *pf)
 		 GLQF_FD_SIZE_FD_GSIZE_S);
 	dev_info(dev, "\tdevice best_effort pool = %d\n",
 		 hw->func_caps.fd_fltr_best_effort);
+}
+
+/**
+ * ice_dump_rclk_status - print the PHY recovered clock status
+ * @pf: pointer to PF
+ *
+ * Print the PHY's recovered clock pin status.
+ */
+static void ice_dump_rclk_status(struct ice_pf *pf)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	u8 pin;
+
+	for (pin = ICE_C827_RCLKA_PIN; pin < ICE_C827_RCLK_PINS_NUM; pin++) {
+		const char *pin_name, *pin_state;
+		u8 port_num, flags;
+		u32 freq;
+
+		port_num = ICE_AQC_SET_PHY_REC_CLK_OUT_CURR_PORT;
+		if (ice_aq_get_phy_rec_clk_out(&pf->hw, pin, &port_num,
+					       &flags, &freq))
+			return;
+		pin_name = pin == ICE_C827_RCLKA_PIN ? "C827_0-RCLKA" :
+			   "C827_0-RCLKB";
+		pin_state = flags & ICE_AQC_SET_PHY_REC_CLK_OUT_OUT_EN ?
+			    "Enabled" : "Disabled";
+
+		dev_info(dev, "State for port %d, %s: %s\n", port_num,
+			 pin_name, pin_state);
+	}
 }
 
 /**
@@ -215,6 +243,234 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_BLOCK_TX_DESC) ?
 		 "enabled" : "disabled");
 }
+
+#define ICE_E810T_NEVER_USE_PIN 0xff
+#define ZL_VER_MAJOR_SHIFT	24
+#define ZL_VER_MAJOR_MASK	ICE_M(0xff, ZL_VER_MAJOR_SHIFT)
+#define ZL_VER_MINOR_SHIFT	16
+#define ZL_VER_MINOR_MASK	ICE_M(0xff, ZL_VER_MINOR_SHIFT)
+#define ZL_VER_REV_SHIFT	8
+#define ZL_VER_REV_MASK		ICE_M(0xff, ZL_VER_REV_SHIFT)
+#define ZL_VER_BF_SHIFT		0
+#define ZL_VER_BF_MASK		ICE_M(0xff, ZL_VER_BF_SHIFT)
+#define PIN_FAIL_FLAGS		(ICE_AQC_GET_CGU_IN_CFG_STATUS_SCM_FAIL | \
+				ICE_AQC_GET_CGU_IN_CFG_STATUS_CFM_FAIL | \
+				ICE_AQC_GET_CGU_IN_CFG_STATUS_GST_FAIL | \
+				ICE_AQC_GET_CGU_IN_CFG_STATUS_PFM_FAIL)
+
+/**
+ * ice_get_dpll_status - get the detailed state of the clock generator
+ * @pf: pointer to PF
+ * @buff: buffer for the state to be printed
+ * @buff_size: size of the buffer
+ *
+ * This function reads current status of the ZL CGU and prints it to the buffer
+ * buff_size will be updated to reflect the number of bytes written to the
+ * buffer
+ *
+ * Return: 0 on success, error code otherwise
+ */
+static int
+ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
+{
+	u8 pin, synce_prio, ptp_prio, ver_major, ver_minor, rev, bugfix;
+	struct ice_aqc_get_cgu_abilities abilities = {0};
+	struct ice_aqc_get_cgu_input_config cfg = {0};
+	struct device *dev = ice_pf_to_dev(pf);
+	u32 cgu_id, cgu_cfg_ver, cgu_fw_ver;
+	enum ice_e810t_cgu_state cgu_state;
+	size_t bytes_left = *buff_size;
+	struct ice_hw *hw = &pf->hw;
+	char pin_name[MAX_PIN_NAME];
+	enum ice_status status;
+	s64 phase_offset;
+	int cnt = 0;
+
+	memset(&abilities, 0, sizeof(struct ice_aqc_get_cgu_abilities));
+	status = ice_aq_get_cgu_abilities(hw, &abilities);
+	if (status) {
+		dev_err(dev,
+			"Failed to read CGU caps, status: %d, Error: 0x%02X\n",
+			status, hw->adminq.sq_last_status);
+		abilities.num_inputs = 7;
+		abilities.pps_dpll_idx = 1;
+		abilities.synce_dpll_idx = 0;
+		abilities.cgu_part_num =
+			ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032;
+	}
+
+	status = ice_aq_get_cgu_info(hw, &cgu_id, &cgu_cfg_ver, &cgu_fw_ver);
+	if (status)
+		return ice_status_to_errno(status);
+
+	if (abilities.cgu_part_num ==
+	    ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032) {
+		cnt = snprintf(buff, bytes_left, "Found ZL80032 CGU\n");
+
+		/* Read DPLL config version from AQ */
+		ver_major = (cgu_cfg_ver & ZL_VER_MAJOR_MASK)
+			     >> ZL_VER_MAJOR_SHIFT;
+		ver_minor = (cgu_cfg_ver & ZL_VER_MINOR_MASK)
+			     >> ZL_VER_MINOR_SHIFT;
+		rev = (cgu_cfg_ver & ZL_VER_REV_MASK) >> ZL_VER_REV_SHIFT;
+		bugfix = (cgu_cfg_ver & ZL_VER_BF_MASK) >> ZL_VER_BF_SHIFT;
+
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"DPLL Config ver: %d.%d.%d.%d\n", ver_major,
+				ver_minor, rev, bugfix);
+	}
+
+	cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nCGU Input status:\n");
+	cnt += snprintf(&buff[cnt], bytes_left - cnt,
+			"                   |            |      priority     |\n"
+			"      input (idx)  |    state   | EEC (%d) | PPS (%d) |\n",
+			abilities.synce_dpll_idx, abilities.pps_dpll_idx);
+	cnt += snprintf(&buff[cnt], bytes_left - cnt,
+			"  ---------------------------------------------------\n");
+
+	for (pin = 0; pin < abilities.num_inputs; pin++) {
+		char *pin_state;
+		u8 data;
+
+		status = ice_aq_get_input_pin_cfg(hw, &cfg, pin);
+		if (status)
+			data = PIN_FAIL_FLAGS;
+		else
+			data = (cfg.status & PIN_FAIL_FLAGS);
+
+		/* get either e810t pin names or generic ones */
+		ice_dpll_pin_idx_to_name(pf, pin, pin_name);
+
+		/* get pin priorities */
+		if (ice_aq_get_cgu_ref_prio(hw, abilities.synce_dpll_idx, pin,
+					    &synce_prio))
+			synce_prio = ICE_E810T_NEVER_USE_PIN;
+		if (ice_aq_get_cgu_ref_prio(hw, abilities.pps_dpll_idx, pin,
+					    &ptp_prio))
+			ptp_prio = ICE_E810T_NEVER_USE_PIN;
+
+		/* if all flags are set, the pin is invalid */
+		if (data == PIN_FAIL_FLAGS)
+			pin_state = "invalid";
+		/* if some flags are set, the pin is validating */
+		else if (data)
+			pin_state = "validating";
+		/* if all flags are cleared, the pin is valid */
+		else
+			pin_state = "valid";
+
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"  %12s (%d) | %10s |     %3d |     %3d |\n",
+				pin_name, pin, pin_state, synce_prio, ptp_prio);
+	}
+
+	cgu_state = ice_get_zl_state_e810t(hw, abilities.synce_dpll_idx, &pin,
+					   NULL);
+	/* SYNCE DPLL status */
+	ice_dpll_pin_idx_to_name(pf, pin, pin_name);
+	cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nEEC DPLL:\n");
+	cnt += snprintf(&buff[cnt], bytes_left - cnt,
+			"\tCurrent reference:\t%s\n", pin_name);
+
+	cnt += snprintf(&buff[cnt], bytes_left - cnt,
+			"\tStatus:\t\t\t%s\n",
+			ice_cgu_state_to_name(cgu_state));
+
+	cgu_state = ice_get_zl_state_e810t(hw, abilities.pps_dpll_idx, &pin,
+					   &phase_offset);
+	/* PTP DPLL status */
+	ice_dpll_pin_idx_to_name(pf, pin, pin_name);
+	cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nPPS DPLL:\n");
+	cnt += snprintf(&buff[cnt], bytes_left - cnt,
+			"\tCurrent reference:\t%s\n", pin_name);
+	cnt += snprintf(&buff[cnt], bytes_left - cnt,
+			"\tStatus:\t\t\t%s\n",
+			ice_cgu_state_to_name(cgu_state));
+
+	if (cgu_state != ICE_CGU_STATE_INVALID)
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"\tPhase offset:\t\t\t%lld\n",
+				phase_offset);
+
+	*buff_size = cnt;
+	return 0;
+}
+
+/**
+ * ice_debugfs_cgu_read - debugfs interface for reading DPLL status
+ * @filp: the opened file
+ * @user_buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ *
+ * Return: number of bytes read
+ */
+static ssize_t ice_debugfs_cgu_read(struct file *filp, char __user *user_buf,
+				    size_t count, loff_t *ppos)
+{
+	struct ice_pf *pf = filp->private_data;
+	size_t buffer_size = PAGE_SIZE;
+	char *kbuff;
+	int err;
+
+	if (*ppos != 0)
+		return 0;
+
+	kbuff = (char *)get_zeroed_page(GFP_KERNEL);
+	if (!kbuff)
+		return -ENOMEM;
+
+	err = ice_get_dpll_status(pf, kbuff, &buffer_size);
+
+	if (err) {
+		err = -EIO;
+		goto err;
+	}
+
+	err = simple_read_from_buffer(user_buf, count, ppos, kbuff,
+				      buffer_size);
+
+err:
+	free_page((unsigned long)kbuff);
+	return err;
+}
+
+#define DEBUGFS_CGU_STATE_BUFF_SIZE	3
+/**
+ * ice_debugfs_cgu_state_read - debugfs interface for reading SyncE DPLL status
+ * @filp: the opened file
+ * @user_buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ *
+ * Return: number of bytes read
+ */
+static ssize_t ice_debugfs_cgu_state_read(struct file *filp,
+					  char __user *user_buf, size_t count,
+					  loff_t *ppos)
+{
+	size_t cnt, buffer_size = DEBUGFS_CGU_STATE_BUFF_SIZE;
+	char kbuff[DEBUGFS_CGU_STATE_BUFF_SIZE] = {0};
+	struct ice_pf *pf = filp->private_data;
+
+	cnt = snprintf(kbuff, buffer_size, "%d\n", pf->synce_dpll_state);
+
+	return simple_read_from_buffer(user_buf, count, ppos, kbuff, cnt);
+}
+
+static const struct file_operations ice_debugfs_cgu_fops = {
+	.owner = THIS_MODULE,
+	.llseek = default_llseek,
+	.open  = simple_open,
+	.read  = ice_debugfs_cgu_read,
+};
+
+static const struct file_operations ice_debugfs_cgu_state_fops = {
+	.owner = THIS_MODULE,
+	.llseek = default_llseek,
+	.open  = simple_open,
+	.read  = ice_debugfs_cgu_state_read,
+};
 
 static const char *module_id_to_name(u16 module_id)
 {
@@ -409,7 +665,6 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 			}
 			ret = ice_aq_get_vsi_params(hw, vsi_ctx, NULL);
 			if (ret) {
-				ret = -EINVAL;
 				devm_kfree(dev, vsi_ctx);
 				goto command_help;
 			}
@@ -496,6 +751,9 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 				 pf->globr_count);
 			dev_info(dev, "emp reset count: %d\n", pf->empr_count);
 			dev_info(dev, "pf reset count: %d\n", pf->pfr_count);
+		} else if ((!strncmp(argv[1], "rclk_status", 11))) {
+			if (ice_is_feature_supported(pf, ICE_F_PHY_RCLK))
+				ice_dump_rclk_status(pf);
 		}
 
 #ifdef CONFIG_DCB
@@ -562,12 +820,8 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 		if (ret)
 			goto command_help;
 
-		ice_cgu_cfg_ts_pll(pf, false, (enum ice_time_ref_freq)time_ref_freq,
-				   (enum ice_cgu_time_ref_sel)time_ref_sel,
-				   (enum ice_src_tmr_mode)src_tmr_mode);
-		ice_cgu_cfg_ts_pll(pf, true, (enum ice_time_ref_freq)time_ref_freq,
-				   (enum ice_cgu_time_ref_sel)time_ref_sel,
-				   (enum ice_src_tmr_mode)src_tmr_mode);
+		ice_cfg_cgu_pll_e822(hw, time_ref_freq, time_ref_sel);
+		ice_ptp_update_incval(pf, time_ref_freq, src_tmr_mode);
 	} else {
 command_help:
 		dev_info(dev, "unknown or invalid command '%s'\n", cmd_buf);
@@ -597,6 +851,8 @@ command_help:
 #ifdef ICE_ADD_PROBES
 		dev_info(dev, "\t dump arfs_stats\n");
 #endif /* ICE_ADD_PROBES */
+		if (ice_is_feature_supported(pf, ICE_F_PHY_RCLK))
+			dev_info(dev, "\t dump rclk_status\n");
 		ret = -EINVAL;
 		goto command_write_done;
 	}
@@ -634,6 +890,16 @@ void ice_debugfs_pf_init(struct ice_pf *pf)
 				    &ice_debugfs_command_fops);
 	if (!pfile)
 		goto create_failed;
+
+	/* Expose external CGU debugfs interface if CGU available*/
+	if (ice_is_feature_supported(pf, ICE_F_CGU)) {
+		if (!debugfs_create_file("cgu", 0400, pf->ice_debugfs_pf, pf,
+					 &ice_debugfs_cgu_fops))
+			goto create_failed;
+		if (!debugfs_create_file("cgu_state", 0400, pf->ice_debugfs_pf,
+					 pf, &ice_debugfs_cgu_state_fops))
+			goto create_failed;
+	}
 
 	return;
 

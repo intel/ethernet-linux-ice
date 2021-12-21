@@ -6,6 +6,7 @@
 
 #include "ice_type.h"
 #include "ice_common.h"
+#include <scsi/iscsi_proto.h>
 
 #define ICE_DCBX_STATUS_NOT_STARTED	0
 #define ICE_DCBX_STATUS_IN_PROGRESS	1
@@ -143,7 +144,6 @@ struct ice_cee_app_prio {
 	__be16 lower_oui;
 	u8 prio_map;
 } __packed;
-
 
 enum ice_status
 ice_aq_get_lldp_mib(struct ice_hw *hw, u8 bridge_type, u8 mib_type, void *buf,

@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 1.6.7
+Version: 1.7.16
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
@@ -18,6 +18,10 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-root
 %define pciids    %find %{_pciids}
 %define pcitable  %find %{_pcitable}
 Requires: kernel, findutils, gawk, bash
+%define need_aux %(rpm -q --whatprovides /lib/modules/`uname -r`/build/include/linux/auxiliary_bus.h > /dev/null 2>&1 && echo 0 || echo 2)
+%if (%need_aux == 2)
+Requires: auxiliary
+%endif
 
 # Check for existence of %kernel_module_package_buildreqs ...
 %if 0%{?!kernel_module_package_buildreqs:1}
@@ -42,15 +46,21 @@ make -C src INSTALL_MOD_PATH=%{buildroot} MANDIR=%{_mandir} modules_install mand
 # Remove modules files that we do not want to include
 find %{buildroot}/lib/modules/ -name 'modules.*' -exec rm -f {} \;
 cd %{buildroot}
-find lib -name "ice.ko" \
-	-fprintf %{_builddir}/%{name}-%{version}/file.list "/%p\n"
+find lib -name "ice.ko" -printf "/%p\n" \
+	>%{_builddir}/%{name}-%{version}/file.list
+find lib -name "auxiliary.ko" -printf "/%p\n" \
+	>%{_builddir}/%{name}-%{version}/aux.list
+find lib -path "*extern-symvers/auxiliary.symvers" -printf "/%p\n" \
+	>>%{_builddir}/%{name}-%{version}/aux.list
+find * -name "auxiliary_bus.h" -printf "/%p\n" \
+	>>%{_builddir}/%{name}-%{version}/aux.list
 
 
 %clean
 rm -rf %{buildroot}
 
 %files -f file.list
-/lib/firmware/updates/intel/ice/ddp/ice-1.3.26.0.pkg
+/lib/firmware/updates/intel/ice/ddp/ice-1.3.27.0.pkg
 /lib/firmware/updates/intel/ice/ddp/ice.pkg
 /lib/firmware/updates/intel/ice/ddp/LICENSE
 
@@ -394,3 +404,16 @@ else
 	exit -1
 fi
 
+%package -n auxiliary
+Summary: Auxiliary bus driver (backport)
+Version: 1.0.0
+
+%description -n auxiliary
+The Auxiliary bus driver (auxiliary.ko), backported from upstream, for use by kernels that don't have auxiliary bus.
+
+# The if is used to hide this whole section. This causes RPM to skip the build
+# of the auxiliary subproject entirely.
+%if (%need_aux == 2)
+%files -n auxiliary -f aux.list
+%doc aux.list
+%endif

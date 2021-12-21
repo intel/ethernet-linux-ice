@@ -930,11 +930,10 @@ ice_aq_set_pfc_mode(struct ice_hw *hw, u8 pfc_mode, struct ice_sq_cd *cd)
 	if (status)
 		return status;
 
-	/* The spec isn't clear about whether the FW will return an error code
-	 * if the PFC mode requested by the driver was not set. The spec just
-	 * says that the FW will write the PFC mode set back into cmd->pfc_mode,
-	 * so after the AQ has been executed, check if cmd->pfc_mode is what was
-	 * requested.
+	/* FW will write the PFC mode set back into cmd->pfc_mode, but if DCB is
+	 * disabled, FW will write back 0 to cmd->pfc_mode. After the AQ has
+	 * been executed, check if cmd->pfc_mode is what was requested. If not,
+	 * return an error.
 	 */
 	if (cmd->pfc_mode != pfc_mode)
 		return ICE_ERR_NOT_SUPPORTED;
@@ -1570,7 +1569,7 @@ ice_add_dscp_pfc_tlv(struct ice_lldp_org_tlv *tlv, struct ice_dcbx_cfg *dcbcfg)
 	tlv->ouisubtype = htonl(ouisubtype);
 
 	buf[0] = dcbcfg->pfc.pfccap & 0xF;
-	buf[1] = dcbcfg->pfc.pfcena & 0xF;
+	buf[1] = dcbcfg->pfc.pfcena;
 }
 
 /**
@@ -1718,7 +1717,8 @@ ice_aq_query_port_ets(struct ice_port_info *pi,
 		return ICE_ERR_PARAM;
 	cmd = &desc.params.port_ets;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_query_port_ets);
-	cmd->port_teid = pi->root->info.node_teid;
+	if (pi->root)
+		cmd->port_teid = pi->root->info.node_teid;
 
 	status = ice_aq_send_cmd(pi->hw, &desc, buf, buf_size, cd);
 	return status;

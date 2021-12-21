@@ -17,15 +17,14 @@ struct ice_info_ctx {
 	struct ice_hw_dev_caps dev_caps;
 };
 
-/*
- * The following functions are used to format specific strings for various
+/* The following functions are used to format specific strings for various
  * devlink info versions. The ctx parameter is used to provide the storage
  * buffer, as well as any ancillary information calculated when the info
  * request was made.
  *
- * If a version does not exist, for example a "stored" version that does not
- * exist because no update is pending, the function should leave the buffer in
- * the ctx structure empty and return 0.
+ * If a version does not exist, for example when attempting to get the
+ * inactive version of flash when there is no pending update, the function
+ * should leave the buffer in the ctx structure empty.
  */
 
 static void ice_info_get_dsn(struct ice_pf *pf, struct ice_info_ctx *ctx)
@@ -54,15 +53,16 @@ static void ice_info_fw_mgmt(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	struct ice_hw *hw = &pf->hw;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u", hw->fw_maj_ver, hw->fw_min_ver,
-		 hw->fw_patch);
+	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u",
+		 hw->fw_maj_ver, hw->fw_min_ver, hw->fw_patch);
 }
 
 static void ice_info_fw_api(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	struct ice_hw *hw = &pf->hw;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u", hw->api_maj_ver, hw->api_min_ver);
+	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u",
+		 hw->api_maj_ver, hw->api_min_ver, hw->api_patch);
 }
 
 static void ice_info_fw_build(struct ice_pf *pf, struct ice_info_ctx *ctx)
@@ -79,7 +79,9 @@ static void ice_info_fw_srev(struct ice_pf *pf, struct ice_info_ctx *ctx)
 	snprintf(ctx->buf, sizeof(ctx->buf), "%u", nvm->srev);
 }
 
-static void ice_info_pending_fw_srev(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_pending_fw_srev(struct ice_pf __always_unused *pf,
+			 struct ice_info_ctx *ctx)
 {
 	struct ice_nvm_info *nvm = &ctx->pending_nvm;
 
@@ -91,10 +93,13 @@ static void ice_info_orom_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	struct ice_orom_info *orom = &pf->hw.flash.orom;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u", orom->major, orom->build, orom->patch);
+	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u",
+		 orom->major, orom->build, orom->patch);
 }
 
-static void ice_info_pending_orom_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_pending_orom_ver(struct ice_pf __always_unused *pf,
+			  struct ice_info_ctx *ctx)
 {
 	struct ice_orom_info *orom = &ctx->pending_orom;
 
@@ -110,7 +115,9 @@ static void ice_info_orom_srev(struct ice_pf *pf, struct ice_info_ctx *ctx)
 	snprintf(ctx->buf, sizeof(ctx->buf), "%u", orom->srev);
 }
 
-static void ice_info_pending_orom_srev(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_pending_orom_srev(struct ice_pf __always_unused *pf,
+			   struct ice_info_ctx *ctx)
 {
 	struct ice_orom_info *orom = &ctx->pending_orom;
 
@@ -125,12 +132,15 @@ static void ice_info_nvm_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
 	snprintf(ctx->buf, sizeof(ctx->buf), "%x.%02x", nvm->major, nvm->minor);
 }
 
-static void ice_info_pending_nvm_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_pending_nvm_ver(struct ice_pf __always_unused *pf,
+			 struct ice_info_ctx *ctx)
 {
 	struct ice_nvm_info *nvm = &ctx->pending_nvm;
 
 	if (ctx->dev_caps.common_cap.nvm_update_pending_nvm)
-		snprintf(ctx->buf, sizeof(ctx->buf), "%x.%02x", nvm->major, nvm->minor);
+		snprintf(ctx->buf, sizeof(ctx->buf), "%x.%02x",
+			 nvm->major, nvm->minor);
 }
 
 static void ice_info_eetrack(struct ice_pf *pf, struct ice_info_ctx *ctx)
@@ -140,7 +150,9 @@ static void ice_info_eetrack(struct ice_pf *pf, struct ice_info_ctx *ctx)
 	snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", nvm->eetrack);
 }
 
-static void ice_info_pending_eetrack(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_pending_eetrack(struct ice_pf __always_unused *pf,
+			 struct ice_info_ctx *ctx)
 {
 	struct ice_nvm_info *nvm = &ctx->pending_nvm;
 
@@ -155,15 +167,17 @@ static void ice_info_ddp_pkg_name(struct ice_pf *pf, struct ice_info_ctx *ctx)
 	snprintf(ctx->buf, sizeof(ctx->buf), "%s", hw->active_pkg_name);
 }
 
-static void ice_info_ddp_pkg_version(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_ddp_pkg_version(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	struct ice_pkg_ver *pkg = &pf->hw.active_pkg_ver;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u.%u", pkg->major, pkg->minor, pkg->update,
-		 pkg->draft);
+	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u.%u",
+		 pkg->major, pkg->minor, pkg->update, pkg->draft);
 }
 
-static void ice_info_ddp_pkg_bundle_id(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_ddp_pkg_bundle_id(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", pf->hw.active_track_id);
 }
@@ -172,10 +186,11 @@ static void ice_info_netlist_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	struct ice_netlist_info *netlist = &pf->hw.flash.netlist;
 
-	/* The netlist versions are BCD formatted */
-	snprintf(ctx->buf, sizeof(ctx->buf), "%x.%x.%x-%x.%x.%x", netlist->major, netlist->minor,
-		 netlist->type >> 16, netlist->type & 0xFFFF, netlist->rev,
-		 netlist->cust_ver);
+	/* The netlist version fields are BCD formatted */
+	snprintf(ctx->buf, sizeof(ctx->buf), "%x.%x.%x-%x.%x.%x",
+		 netlist->major, netlist->minor,
+		 netlist->type >> 16, netlist->type & 0xFFFF,
+		 netlist->rev, netlist->cust_ver);
 }
 
 static void ice_info_netlist_build(struct ice_pf *pf, struct ice_info_ctx *ctx)
@@ -185,19 +200,23 @@ static void ice_info_netlist_build(struct ice_pf *pf, struct ice_info_ctx *ctx)
 	snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", netlist->hash);
 }
 
-static void ice_info_pending_netlist_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_pending_netlist_ver(struct ice_pf __always_unused *pf,
+			     struct ice_info_ctx *ctx)
 {
 	struct ice_netlist_info *netlist = &ctx->pending_netlist;
 
-	/* The netlist versions are BCD formatted */
+	/* The netlist version fields are BCD formatted */
 	if (ctx->dev_caps.common_cap.nvm_update_pending_netlist)
 		snprintf(ctx->buf, sizeof(ctx->buf), "%x.%x.%x-%x.%x.%x",
 			 netlist->major, netlist->minor,
-			 netlist->type >> 16, netlist->type & 0xFFFF, netlist->rev,
-			 netlist->cust_ver);
+			 netlist->type >> 16, netlist->type & 0xFFFF,
+			 netlist->rev, netlist->cust_ver);
 }
 
-static void ice_info_pending_netlist_build(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void
+ice_info_pending_netlist_build(struct ice_pf __always_unused *pf,
+			       struct ice_info_ctx *ctx)
 {
 	struct ice_netlist_info *netlist = &ctx->pending_netlist;
 
@@ -205,9 +224,24 @@ static void ice_info_pending_netlist_build(struct ice_pf *pf, struct ice_info_ct
 		snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", netlist->hash);
 }
 
-#define fixed(key, getter) { ICE_VERSION_FIXED, key, getter }
-#define running(key, getter) { ICE_VERSION_RUNNING, key, getter }
-#define stored(key, getter) { ICE_VERSION_STORED, key, getter }
+#define fixed(key, getter) { ICE_VERSION_FIXED, key, getter, NULL }
+#define running(key, getter) { ICE_VERSION_RUNNING, key, getter, NULL }
+#define stored(key, getter, fallback) \
+	{ ICE_VERSION_STORED, key, getter, fallback }
+
+/* The combined() macro inserts both the running entry as well as a stored
+ * entry. The running entry will always report the version from the active
+ * handler. The stored entry will first try the pending handler, and fallback
+ * to the active handler if the pending function does not report a version.
+ * The pending handler should check the status of a pending update for the
+ * relevant flash component. It should only fill in the buffer in the case
+ * where a valid pending version is available. This ensures that the related
+ * stored and running versions remain in sync, and that stored versions are
+ * correctly reported as expected.
+ */
+#define combined(key, active, pending) \
+	running(key, active), \
+	stored(key, pending, active)
 
 enum ice_version_type {
 	ICE_VERSION_FIXED,
@@ -219,28 +253,27 @@ static const struct ice_devlink_version {
 	enum ice_version_type type;
 	const char *key;
 	void (*getter)(struct ice_pf *pf, struct ice_info_ctx *ctx);
+	void (*fallback)(struct ice_pf *pf, struct ice_info_ctx *ctx);
 } ice_devlink_versions[] = {
 	fixed(DEVLINK_INFO_VERSION_GENERIC_BOARD_ID, ice_info_pba),
 	running(DEVLINK_INFO_VERSION_GENERIC_FW_MGMT, ice_info_fw_mgmt),
 	running("fw.mgmt.api", ice_info_fw_api),
 	running("fw.mgmt.build", ice_info_fw_build),
-	running("fw.mgmt.srev", ice_info_fw_srev),
-	stored("fw.mgmt.srev", ice_info_pending_fw_srev),
-	running(DEVLINK_INFO_VERSION_GENERIC_FW_UNDI, ice_info_orom_ver),
-	stored(DEVLINK_INFO_VERSION_GENERIC_FW_UNDI, ice_info_pending_orom_ver),
-	running("fw.undi.srev", ice_info_orom_srev),
-	stored("fw.undi.srev", ice_info_pending_orom_srev),
-	running("fw.psid.api", ice_info_nvm_ver),
-	stored("fw.psid.api", ice_info_pending_nvm_ver),
-	running(DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID, ice_info_eetrack),
-	stored(DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID, ice_info_pending_eetrack),
+	combined("fw.mgmt.srev", ice_info_fw_srev, ice_info_pending_fw_srev),
+	combined(DEVLINK_INFO_VERSION_GENERIC_FW_UNDI,
+		 ice_info_orom_ver, ice_info_pending_orom_ver),
+	combined("fw.undi.srev", ice_info_orom_srev,
+		 ice_info_pending_orom_srev),
+	combined("fw.psid.api", ice_info_nvm_ver, ice_info_pending_nvm_ver),
+	combined(DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID,
+		 ice_info_eetrack, ice_info_pending_eetrack),
 	running("fw.app.name", ice_info_ddp_pkg_name),
 	running(DEVLINK_INFO_VERSION_GENERIC_FW_APP, ice_info_ddp_pkg_version),
 	running("fw.app.bundle_id", ice_info_ddp_pkg_bundle_id),
-	running("fw.netlist", ice_info_netlist_ver),
-	stored("fw.netlist", ice_info_pending_netlist_ver),
-	running("fw.netlist.build", ice_info_netlist_build),
-	stored("fw.netlist.build", ice_info_pending_netlist_build),
+	combined("fw.netlist", ice_info_netlist_ver,
+		 ice_info_pending_netlist_ver),
+	combined("fw.netlist.build", ice_info_netlist_build,
+		 ice_info_pending_netlist_build),
 };
 
 /**
@@ -265,6 +298,11 @@ static int ice_devlink_info_get(struct devlink *devlink,
 	enum ice_status status;
 	size_t i;
 	int err;
+
+	if (ice_get_fw_mode(hw) == ICE_FW_MODE_REC) {
+		NL_SET_ERR_MSG_MOD(extack, "Device firmware is in recovery mode. Unable to collect version info.");
+		return -EOPNOTSUPP;
+	}
 
 	err = ice_wait_for_reset(pf, 10 * HZ);
 	if (err) {
@@ -341,6 +379,14 @@ static int ice_devlink_info_get(struct devlink *devlink,
 
 		ice_devlink_versions[i].getter(pf, ctx);
 
+		/* If the default getter doesn't report a version, use the
+		 * fallback function. This is primarily useful in the case of
+		 * "stored" versions that want to report the same value as the
+		 * running version in the normal case of no pending update.
+		 */
+		if (ctx->buf[0] == '\0' && ice_devlink_versions[i].fallback)
+			ice_devlink_versions[i].fallback(pf, ctx);
+
 		/* Do not report missing versions */
 		if (ctx->buf[0] == '\0')
 			continue;
@@ -399,6 +445,11 @@ ice_devlink_minsrev_get(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct ice_minsrev_info minsrevs = {};
 	enum ice_status status;
 
+#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
+	if (!pf->devlink_params_published)
+		return -ENODEV;
+#endif
+
 	if (id != ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV &&
 	    id != ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV)
 		return -EINVAL;
@@ -454,6 +505,11 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct ice_minsrev_info minsrevs = {};
 	enum ice_status status;
 
+#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
+	if (!pf->devlink_params_published)
+		return -ENODEV;
+#endif
+
 	switch (id) {
 	case ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV:
 		minsrevs.nvm_valid = true;
@@ -499,6 +555,13 @@ ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_para
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
 	enum ice_status status;
+
+#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
+	if (!pf->devlink_params_published) {
+		NL_SET_ERR_MSG_MOD(extack, "Driver has not published parameters");
+		return -ENODEV;
+	}
+#endif
 
 	if (id != ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV &&
 	    id != ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV)
@@ -566,77 +629,17 @@ static const struct devlink_param ice_devlink_params[] = {
 #endif /* HAVE_DEVLINK_PARAMS */
 
 #ifdef HAVE_DEVLINK_FLASH_UPDATE
-/**
- * ice_devlink_flash_update - Update firmware stored in flash on the device
- * @devlink: pointer to devlink associated with device to update
- * @params: flash update parameters
- * @extack: netlink extended ACK structure
- *
- * Perform a device flash update. The bulk of the update logic is contained
- * within the ice_flash_pldm_image function.
- *
- * Returns: zero on success, or an error code on failure.
- */
-static int
-ice_devlink_flash_update(struct devlink *devlink,
-			 struct devlink_flash_update_params *params,
-			 struct netlink_ext_ack *extack)
-{
-	struct ice_pf *pf = devlink_priv(devlink);
-#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_FW
-	struct device *dev = &pf->pdev->dev;
-#endif
-	struct ice_hw *hw = &pf->hw;
-#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_FW
-	const struct firmware *fw;
-#endif
-	u8 preservation;
-	int err;
-
-	if (!params->overwrite_mask) {
-		/* preserve all settings and identifiers */
-		preservation = ICE_AQC_NVM_PRESERVE_ALL;
-	} else if (params->overwrite_mask == DEVLINK_FLASH_OVERWRITE_SETTINGS) {
-		/* overwrite settings, but preserve the vital device identifiers */
-		preservation = ICE_AQC_NVM_PRESERVE_SELECTED;
-	} else if (params->overwrite_mask == (DEVLINK_FLASH_OVERWRITE_SETTINGS |
-					      DEVLINK_FLASH_OVERWRITE_IDENTIFIERS)) {
-		/* overwrite both settings and identifiers, preserve nothing */
-		preservation = ICE_AQC_NVM_NO_PRESERVATION;
-	} else {
-		NL_SET_ERR_MSG_MOD(extack, "Requested overwrite mask is not supported");
-		return -EOPNOTSUPP;
-	}
-
-	if (!hw->dev_caps.common_cap.nvm_unified_update) {
-		NL_SET_ERR_MSG_MOD(extack, "Current firmware does not support unified update");
-		return -EOPNOTSUPP;
-	}
-
-	err = ice_check_for_pending_update(pf, NULL, extack);
-	if (err)
-		return err;
-
-	devlink_flash_update_status_notify(devlink, "Preparing to flash", NULL, 0, 0);
-
-#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_FW
-	err = request_firmware(&fw, params->file_name, dev);
-	if (err) {
-		NL_SET_ERR_MSG_MOD(extack, "Unable to read file from disk");
-		return err;
-	}
-
-	err = ice_flash_pldm_image(pf, fw, preservation, extack);
-
-	release_firmware(fw);
-
-	return err;
-#else
-	return ice_flash_pldm_image(pf, params->fw, preservation, extack);
-#endif
-}
-
 #ifdef HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY
+/**
+ * ice_devlink_flash_update_notify_compat - Compatibility for begin/end notify
+ * @devlink: pointer to the devlink instance for this device
+ * @params: flash update parameters
+ * @extack: netlink extended ACK message structure
+ *
+ * Compatibility wrapper which handles calling
+ * devlink_flash_update_begin_notify and devlink_flash_update_end_notify when
+ * the kernel does not do this for us.
+ */
 static int
 ice_devlink_flash_update_notify_compat(struct devlink *devlink,
 				       struct devlink_flash_update_params *params,
@@ -645,14 +648,24 @@ ice_devlink_flash_update_notify_compat(struct devlink *devlink,
 	int err;
 
 	devlink_flash_update_begin_notify(devlink);
-	err = ice_devlink_flash_update(devlink, params, extack);
+	err = ice_flash_pldm_image(devlink, params, extack);
 	devlink_flash_update_end_notify(devlink);
 
 	return err;
 }
-#endif
+#endif /* HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY */
 
 #ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
+/**
+ * ice_devlink_flash_update_params_compat - Compatibility for params argument
+ * @devlink: pointer to the devlink instance for this device
+ * @file_name: the file name to request the firmware from
+ * @component: the flash component to update
+ * @extack: netlink extended ACK message structure
+ *
+ * Compatibility wrapper which handles creating the flash update parameters
+ * structure for kernels which do not have this structure defined yet.
+ */
 static int
 ice_devlink_flash_update_params_compat(struct devlink *devlink, const char *file_name,
 				       const char *component, struct netlink_ext_ack *extack)
@@ -670,16 +683,112 @@ ice_devlink_flash_update_params_compat(struct devlink *devlink, const char *file
 #ifdef HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY
 	return ice_devlink_flash_update_notify_compat(devlink, &params, extack);
 #else
-	return ice_devlink_flash_update(devlink, &params, extack);
+	err = ice_flash_pldm_image(devlink, params, extack);
 #endif
 }
 #endif /* !HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
 #endif /* HAVE_DEVLINK_FLASH_UPDATE */
 
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+/**
+ * ice_devlink_reload_down - Start reload
+ * @devlink: pointer to the devlink instance to reload
+ * @netns_change: if true, the network namespace is changing
+ * @action: the action to perform. Must be DEVLINK_RELOAD_ACTION_FW_ACTIVATE
+ * @limit: limits on what reload should do, such as not resetting
+ * @extack: netlink extended ACK structure
+ *
+ * Command issued by devlink core to perform a reload. This driver only
+ * supports firmware activation.
+ */
+static int
+ice_devlink_reload_down(struct devlink *devlink, bool netns_change,
+			enum devlink_reload_action action,
+			enum devlink_reload_limit limit,
+			struct netlink_ext_ack *extack)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	enum ice_status status;
+	u8 pending;
+	int err;
+
+	err = ice_get_pending_updates(pf, &pending, extack);
+	if (err)
+		return err;
+
+	if (!pending) {
+		NL_SET_ERR_MSG_MOD(extack, "No pending firmware update");
+		return -ECANCELED;
+	}
+
+	if (pf->fw_empr_disabled) {
+		NL_SET_ERR_MSG_MOD(extack, "EMP reset is not available. To activate firmware, a reboot or power cycle is needed\n");
+		return -ECANCELED;
+	}
+
+	dev_dbg(dev, "Issuing device EMP reset to activate firmware\n");
+
+	status = ice_aq_nvm_update_empr(hw);
+	if (status) {
+		dev_err(dev, "Failed to trigger EMP device reset to reload firmware, err %s aq_err %s\n",
+			ice_stat_str(status),
+			ice_aq_str(hw->adminq.sq_last_status));
+		NL_SET_ERR_MSG_MOD(extack, "Failed to trigger EMP device reset to reload firmware");
+		return -EIO;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_reload_up - Finish reload
+ * @devlink: pointer to the devlink instance reloading
+ * @action: the action requested
+ * @limit: limits imposed by userspace, such as not resetting
+ * @actions_performed: on return, indicate what actions actually performed
+ * @extack: netlink extended ACK structure
+ *
+ * Complete a reload, such as waiting for the driver to come back up. The ice
+ * driver only supports firmware activation, which requires a device reset.
+ */
+static int
+ice_devlink_reload_up(struct devlink *devlink,
+		      enum devlink_reload_action action,
+		      enum devlink_reload_limit limit,
+		      u32 *actions_performed,
+		      struct netlink_ext_ack *extack)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	int err;
+
+	*actions_performed = BIT(DEVLINK_RELOAD_ACTION_FW_ACTIVATE);
+
+	err = ice_wait_for_reset(pf, 20 * HZ);
+	if (err) {
+		NL_SET_ERR_MSG_MOD(extack, "Device still resetting");
+		return err;
+	}
+
+	/* After a device reset is complete, we no longer know whether the EMP
+	 * reset is restricted.
+	 */
+	pf->fw_empr_disabled = false;
+
+	return 0;
+}
+#endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
+
 static const struct devlink_ops ice_devlink_ops = {
 #ifdef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
 	.supported_flash_update_params = DEVLINK_SUPPORT_FLASH_UPDATE_OVERWRITE_MASK,
 #endif /* HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+	.reload_actions = BIT(DEVLINK_RELOAD_ACTION_FW_ACTIVATE),
+	.reload_down = ice_devlink_reload_down,
+	.reload_up = ice_devlink_reload_up,
+#endif
 	.eswitch_mode_get = ice_eswitch_mode_get,
 	.eswitch_mode_set = ice_eswitch_mode_set,
 #ifdef HAVE_DEVLINK_INFO_GET
@@ -691,7 +800,7 @@ static const struct devlink_ops ice_devlink_ops = {
 #elif defined(HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY)
 	.flash_update = ice_devlink_flash_update_notify_compat,
 #else
-	.flash_update = ice_devlink_flash_update,
+	.flash_update = ice_flash_pldm_image,
 #endif
 #endif /* HAVE_DEVLINK_FLASH_UPDATE */
 };
@@ -713,7 +822,7 @@ struct ice_pf *ice_allocate_pf(struct device *dev)
 {
 	struct devlink *devlink;
 
-	devlink = devlink_alloc(&ice_devlink_ops, sizeof(struct ice_pf));
+	devlink = devlink_alloc(&ice_devlink_ops, sizeof(struct ice_pf), dev);
 	if (!devlink)
 		return NULL;
 
@@ -738,22 +847,29 @@ int ice_devlink_register(struct ice_pf *pf)
 {
 	struct devlink *devlink = priv_to_devlink(pf);
 	struct device *dev = ice_pf_to_dev(pf);
+#ifdef HAVE_DEVLINK_PARAMS
 	int err;
+#endif /* HAVE_DEVLINK_PARAMS */
 
-	err = devlink_register(devlink, dev);
-	if (err) {
-		dev_err(dev, "devlink registration failed: %d\n", err);
-		return err;
-	}
+#ifdef HAVE_DEVLINK_REGISTER_SETS_DEV
+	devlink_register(devlink, dev);
+#else
+	devlink_register(devlink);
+#endif
 
 #ifdef HAVE_DEVLINK_PARAMS
 	err = devlink_params_register(devlink, ice_devlink_params,
 				      ARRAY_SIZE(ice_devlink_params));
 	if (err) {
-		dev_err(dev, "devlink params registration failed: %d\n", err);
+		ice_dev_err_errno(dev, err,
+				  "devlink params registration failed");
 		return err;
 	}
 #endif /* HAVE_DEVLINK_PARAMS */
+
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+	devlink_reload_enable(devlink);
+#endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 
 	return 0;
 }
@@ -767,6 +883,10 @@ int ice_devlink_register(struct ice_pf *pf)
 void ice_devlink_unregister(struct ice_pf *pf)
 {
 	struct devlink *devlink = priv_to_devlink(pf);
+
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+	devlink_reload_disable(devlink);
+#endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 
 #ifdef HAVE_DEVLINK_PARAMS
 	devlink_params_unregister(devlink, ice_devlink_params,
@@ -782,8 +902,12 @@ void ice_devlink_unregister(struct ice_pf *pf)
 void ice_devlink_params_publish(struct ice_pf __maybe_unused *pf)
 {
 #ifdef HAVE_DEVLINK_PARAMS
+#ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 	devlink_params_publish(priv_to_devlink(pf));
+#else
+	pf->devlink_params_published = 1;
 #endif
+#endif /* HAVE_DEVLINK_PARAMS */
 }
 
 /**
@@ -793,8 +917,29 @@ void ice_devlink_params_publish(struct ice_pf __maybe_unused *pf)
 void ice_devlink_params_unpublish(struct ice_pf __maybe_unused *pf)
 {
 #ifdef HAVE_DEVLINK_PARAMS
+#ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 	devlink_params_unpublish(priv_to_devlink(pf));
+#else
+	pf->devlink_params_published = 0;
 #endif
+#endif /* HAVE_DEVLINK_PARAMS */
+}
+
+/**
+ * ice_devlink_set_switch_id - Set unical switch id based on pci dsn
+ * @pf: the PF to create a devlink port for
+ * @ppid: struct with switch id information
+ */
+static void
+ice_devlink_set_switch_id(struct ice_pf *pf, struct netdev_phys_item_id *ppid)
+{
+	struct pci_dev *pdev = pf->pdev;
+	u64 id;
+
+	id = pci_get_dsn(pdev);
+
+	ppid->id_len = sizeof(id);
+	put_unaligned_be64(id, &ppid->id);
 }
 
 /**
@@ -823,15 +968,18 @@ int ice_devlink_create_pf_port(struct ice_pf *pf)
 		return -EIO;
 
 	attrs.flavour = DEVLINK_PORT_FLAVOUR_PHYSICAL;
-	attrs.phys.port_number = vsi->port_info->lport;
+	attrs.phys.port_number = pf->hw.bus.func;
+
+	ice_devlink_set_switch_id(pf, &attrs.switch_id);
 
 	devlink_port_attrs_set(devlink_port, &attrs);
 	devlink = priv_to_devlink(pf);
 
 	err = devlink_port_register(devlink, devlink_port, vsi->idx);
 	if (err) {
-		dev_err(dev, "Failed to create devlink port for PF %d, error %d\n",
-			pf->hw.pf_id, err);
+		ice_dev_err_errno(dev, err,
+				  "Failed to create devlink port for PF %d",
+				  pf->hw.pf_id);
 		return err;
 	}
 
@@ -882,13 +1030,16 @@ int ice_devlink_create_vf_port(struct ice_vf *vf)
 	attrs.pci_vf.pf = pf->hw.bus.func;
 	attrs.pci_vf.vf = vf->vf_id;
 
+	ice_devlink_set_switch_id(pf, &attrs.switch_id);
+
 	devlink_port_attrs_set(devlink_port, &attrs);
 	devlink = priv_to_devlink(pf);
 
 	err = devlink_port_register(devlink, devlink_port, vsi->idx);
 	if (err) {
-		dev_err(dev, "Failed to create devlink port for VF %d, error %d\n",
-			vf->vf_id, err);
+		ice_dev_err_errno(dev, err,
+				  "Failed to create devlink port for VF %d",
+				  vf->vf_id);
 		return err;
 	}
 
@@ -914,18 +1065,25 @@ void ice_devlink_destroy_vf_port(struct ice_vf *vf)
 
 #ifdef HAVE_DEVLINK_REGIONS
 #ifdef HAVE_DEVLINK_REGION_OPS_SNAPSHOT
+#define ICE_DEVLINK_READ_BLK_SIZE (1024 * 1024)
+
 #ifdef HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS
+
 /**
- * ice_devlink_nvm_snapshot - Capture a snapshot of the Shadow RAM contents
+ * ice_devlink_nvm_snapshot - Capture a snapshot of the NVM flash contents
  * @devlink: the devlink instance
  * @ops: the devlink region being snapshotted
  * @extack: extended ACK response structure
  * @data: on exit points to snapshot data buffer
  *
  * This function is called in response to the DEVLINK_CMD_REGION_TRIGGER for
- * the shadow-ram devlink region. It captures a snapshot of the shadow ram
- * contents. This snapshot can later be viewed via the devlink-region
- * interface.
+ * the nvm-flash devlink region. It captures a snapshot of the full NVM flash
+ * contents, including both banks of flash. This snapshot can later be viewed
+ * via the devlink-region interface.
+ *
+ * It captures the flash using the FLASH_ONLY bit set when reading via
+ * firmware, so it does not read the current Shadow RAM contents. For that,
+ * use the shadow-ram region.
  *
  * @returns zero on success, and updates the data pointer. Returns a non-zero
  * error code on failure.
@@ -942,12 +1100,93 @@ ice_devlink_nvm_snapshot(struct devlink *devlink,
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
 	enum ice_status status;
-	u8 *nvm_data;
-	u32 nvm_size;
+	u8 *nvm_data, *tmp, i;
+	u32 nvm_size, left;
+	s8 num_blks;
 
 	nvm_size = hw->flash.flash_size;
 	nvm_data = vzalloc(nvm_size);
 	if (!nvm_data)
+		return -ENOMEM;
+
+	num_blks = DIV_ROUND_UP(nvm_size, ICE_DEVLINK_READ_BLK_SIZE);
+	tmp = nvm_data;
+	left = nvm_size;
+
+	/* some systems take longer to read the nvm than others which causes the
+	 * fw to reclaim the nvm lock before the entire nvm has been read. fix
+	 * this by breaking the reads of the nvm into smaller chunks that will
+	 * probably not take as long. this has some overhead since we are
+	 * increasing the number of AQ commands, but it should always work
+	 */
+	for (i = 0; i < num_blks; i++) {
+		u32 read_sz = min_t(u32, ICE_DEVLINK_READ_BLK_SIZE, left);
+
+		status = ice_acquire_nvm(hw, ICE_RES_READ);
+		if (status) {
+			dev_dbg(dev, "ice_acquire_nvm failed, err %d aq_err %d\n",
+				status, hw->adminq.sq_last_status);
+			NL_SET_ERR_MSG_MOD(extack, "Failed to acquire NVM semaphore");
+			vfree(nvm_data);
+			return -EIO;
+		}
+
+		status = ice_read_flat_nvm(hw, i * ICE_DEVLINK_READ_BLK_SIZE,
+					   &read_sz, tmp, false);
+		if (status) {
+			dev_dbg(dev, "ice_read_flat_nvm failed after reading %u bytes, err %d aq_err %d\n",
+				read_sz, status, hw->adminq.sq_last_status);
+			NL_SET_ERR_MSG_MOD(extack, "Failed to read NVM contents");
+			ice_release_nvm(hw);
+			vfree(nvm_data);
+			return -EIO;
+		}
+
+		ice_release_nvm(hw);
+
+		tmp += read_sz;
+		left -= read_sz;
+	}
+
+	*data = nvm_data;
+
+	return 0;
+}
+
+#ifdef HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS
+/**
+ * ice_devlink_sram_snapshot - Capture a snapshot of the Shadow RAM contents
+ * @devlink: the devlink instance
+ * @ops: the devlink region being snapshotted
+ * @extack: extended ACK response structure
+ * @data: on exit points to snapshot data buffer
+ *
+ * This function is called in response to the DEVLINK_CMD_REGION_TRIGGER for
+ * the shadow-ram devlink region. It captures a snapshot of the shadow ram
+ * contents. This snapshot can later be viewed via the devlink-region
+ * interface.
+ *
+ * @returns zero on success, and updates the data pointer. Returns a non-zero
+ * error code on failure.
+ */
+#endif /* HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS */
+static int
+ice_devlink_sram_snapshot(struct devlink *devlink,
+#ifdef HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS
+			  const struct devlink_region_ops __always_unused *ops,
+#endif /* HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS */
+			  struct netlink_ext_ack *extack, u8 **data)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	enum ice_status status;
+	u8 *sram_data;
+	u32 sram_size;
+
+	sram_size = hw->flash.sr_words * 2u;
+	sram_data = vzalloc(sram_size);
+	if (!sram_data)
 		return -ENOMEM;
 
 	status = ice_acquire_nvm(hw, ICE_RES_READ);
@@ -955,23 +1194,25 @@ ice_devlink_nvm_snapshot(struct devlink *devlink,
 		dev_dbg(dev, "ice_acquire_nvm failed, err %d aq_err %d\n",
 			status, hw->adminq.sq_last_status);
 		NL_SET_ERR_MSG_MOD(extack, "Failed to acquire NVM semaphore");
-		vfree(nvm_data);
+		vfree(sram_data);
 		return -EIO;
 	}
 
-	status = ice_read_flat_nvm(hw, 0, &nvm_size, nvm_data, false);
+	/* Read from the Shadow RAM, rather than directly from NVM */
+	status = ice_read_flat_nvm(hw, 0, &sram_size, sram_data, true);
 	if (status) {
 		dev_dbg(dev, "ice_read_flat_nvm failed after reading %u bytes, err %d aq_err %d\n",
-			nvm_size, status, hw->adminq.sq_last_status);
-		NL_SET_ERR_MSG_MOD(extack, "Failed to read NVM contents");
+			sram_size, status, hw->adminq.sq_last_status);
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Failed to read Shadow RAM contents");
 		ice_release_nvm(hw);
-		vfree(nvm_data);
+		vfree(sram_data);
 		return -EIO;
 	}
 
 	ice_release_nvm(hw);
 
-	*data = nvm_data;
+	*data = sram_data;
 
 	return 0;
 }
@@ -1033,6 +1274,14 @@ static const struct devlink_region_ops ice_nvm_region_ops = {
 #endif
 };
 
+static const struct devlink_region_ops ice_sram_region_ops = {
+	.name = "shadow-ram",
+	.destructor = vfree,
+#ifdef HAVE_DEVLINK_REGION_OPS_SNAPSHOT
+	.snapshot = ice_devlink_sram_snapshot,
+#endif
+};
+
 static const struct devlink_region_ops ice_devcaps_region_ops = {
 	.name = "device-caps",
 	.destructor = vfree,
@@ -1052,23 +1301,32 @@ void ice_devlink_init_regions(struct ice_pf *pf)
 {
 	struct devlink *devlink = priv_to_devlink(pf);
 	struct device *dev = ice_pf_to_dev(pf);
-	u64 nvm_size;
+	u64 nvm_size, sram_size;
 
 	nvm_size = pf->hw.flash.flash_size;
 	pf->nvm_region = devlink_region_create(devlink, &ice_nvm_region_ops, 1,
 					       nvm_size);
 	if (IS_ERR(pf->nvm_region)) {
-		dev_err(dev, "failed to create NVM devlink region, err %ld\n",
-			PTR_ERR(pf->nvm_region));
+		ice_dev_err_errno(dev, PTR_ERR(pf->nvm_region),
+				  "failed to create NVM devlink region");
 		pf->nvm_region = NULL;
+	}
+
+	sram_size = pf->hw.flash.sr_words * 2u;
+	pf->sram_region = devlink_region_create(devlink, &ice_sram_region_ops,
+						1, sram_size);
+	if (IS_ERR(pf->sram_region)) {
+		dev_err(dev, "failed to create shadow-ram devlink region, err %ld\n",
+			PTR_ERR(pf->sram_region));
+		pf->sram_region = NULL;
 	}
 
 	pf->devcaps_region = devlink_region_create(devlink,
 						   &ice_devcaps_region_ops, 10,
 						   ICE_AQ_MAX_BUF_LEN);
 	if (IS_ERR(pf->devcaps_region)) {
-		dev_err(dev, "failed to create device-caps devlink region, err %ld\n",
-			PTR_ERR(pf->devcaps_region));
+		ice_dev_err_errno(dev, PTR_ERR(pf->devcaps_region),
+				  "failed to create device-caps devlink region");
 		pf->devcaps_region = NULL;
 	}
 }
@@ -1083,6 +1341,9 @@ void ice_devlink_destroy_regions(struct ice_pf *pf)
 {
 	if (pf->nvm_region)
 		devlink_region_destroy(pf->nvm_region);
+
+	if (pf->sram_region)
+		devlink_region_destroy(pf->sram_region);
 
 	if (pf->devcaps_region)
 		devlink_region_destroy(pf->devcaps_region);

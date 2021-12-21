@@ -3,7 +3,6 @@
 
 #include "ice_common.h"
 
-
 #define ICE_CQ_INIT_REGS(qinfo, prefix)				\
 do {								\
 	(qinfo)->sq.head = prefix##_ATQH;			\
@@ -26,7 +25,6 @@ do {								\
 	(qinfo)->rq.head_mask = prefix##_ARQH_ARQH_M;		\
 } while (0)
 
-
 /**
  * ice_adminq_init_regs - Initialize AdminQ registers
  * @hw: pointer to the hardware structure
@@ -39,7 +37,6 @@ static void ice_adminq_init_regs(struct ice_hw *hw)
 
 	ICE_CQ_INIT_REGS(cq, PF_FW);
 }
-
 
 /**
  * ice_mailbox_init_regs - Initialize Mailbox registers
@@ -575,7 +572,6 @@ shutdown_rq_out:
 	return ret_code;
 }
 
-
 /**
  * ice_init_check_adminq - Check version for Admin Queue to know if its alive
  * @hw: pointer to the hardware structure
@@ -588,7 +584,6 @@ static enum ice_status ice_init_check_adminq(struct ice_hw *hw)
 	status = ice_aq_get_fw_ver(hw, NULL);
 	if (status)
 		goto init_ctrlq_free_rq;
-
 
 	if (!ice_aq_ver_check(hw)) {
 		status = ICE_ERR_FW_API_VER;
@@ -1231,7 +1226,6 @@ ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ARQ: desc and buffer:\n");
 
 	ice_debug_cq(hw, (void *)desc, e->msg_buf, cq->rq_buf_size);
-
 
 	/* Restore the original datalen and buffer address in the desc,
 	 * FW updates datalen to indicate the event message size

@@ -433,7 +433,6 @@ ice_aq_dealloc_acl_cntrs(struct ice_hw *hw, struct ice_acl_cntrs *cntrs,
 	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
 }
 
-
 /**
  * ice_prog_acl_prof_ranges - program ACL profile ranges
  * @hw: pointer to the HW struct

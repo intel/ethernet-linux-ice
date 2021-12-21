@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ===============================================================================
 
-June 2, 2021
+December 10, 2021
 
 ===============================================================================
 
@@ -22,7 +22,7 @@ Overview
 ========
 This driver supports kernel versions 3.10.0 and newer. However, some features
 may require a newer kernel version. The associated Virtual Function (VF) driver
-for this driver is iavf.
+for this driver is iavf. The associated RDMA driver for this driver is irdma.
 
 Driver information can be obtained using ethtool, lspci, and ip. Instructions
 on updating ethtool can be found in the section Additional Configurations later
@@ -110,12 +110,12 @@ you must follow these steps:
 Building and Installation
 =========================
 The ice driver requires the Dynamic Device Personalization (DDP) package file
-to enable advanced features (such as dynamic tunneling, Flow Director, RSS, and
-ADQ, or others). The driver installation process installs the default DDP
-package file and creates a soft link ice.pkg to the physical package
-ice-x.x.x.x.pkg in the firmware root directory (typically /lib/firmware/ or
-/lib/firmware/updates/). The driver install process also puts both the driver
-module and the DDP file in the initramfs/initrd image.
+to enable advanced features (such as dynamic tunneling, Intel(R) Ethernet Flow
+Director, RSS, and ADQ, or others). The driver installation process installs
+the default DDP package file and creates a soft link ice.pkg to the physical
+package ice-x.x.x.x.pkg in the firmware root directory (typically
+/lib/firmware/ or /lib/firmware/updates/). The driver install process also puts
+both the driver module and the DDP file in the initramfs/initrd image.
 
 NOTE: When the driver loads, it looks for intel/ice/ddp/ice.pkg in the firmware
 root. If this file exists, the driver will download it into the device. If not,
@@ -123,37 +123,6 @@ the driver will go into Safe Mode where it will use the configuration contained
 in the device's NVM. This is NOT a supported configuration and many advanced
 features will not be functional. See "Dynamic Device Personalization" later for
 more information.
-
-
-To build a binary RPM package of this driver
---------------------------------------------
-Note: RPM functionality has only been tested in Red Hat distributions.
-
-1. Run the following command, where <x.x.x> is the version number for the
-   driver tar file.
-
-   # rpmbuild -tb ice-<x.x.x>.tar.gz
-
-   NOTE: For the build to work properly, the currently running kernel MUST
-   match the version and configuration of the installed kernel sources. If
-   you have just recompiled the kernel, reboot the system before building.
-
-2. After building the RPM, the last few lines of the tool output contain the
-   location of the RPM file that was built. Install the RPM with one of the
-   following commands, where <RPM> is the location of the RPM file:
-
-   # rpm -Uvh <RPM>
-       or
-   # dnf/yum localinstall <RPM>
-
-NOTES:
-- To compile the driver on some kernel/arch combinations, you may need to
-install a package with the development version of libelf (e.g. libelf-dev,
-libelf-devel, elfutilsl-libelf-devel).
-- When compiling an out-of-tree driver, details will vary by distribution.
-However, you will usually need a kernel-devel RPM or some RPM that provides the
-kernel headers at a minimum. The RPM kernel-devel will usually fill in the link
-at /lib/modules/'uname -r'/build.
 
 
 To manually build the driver
@@ -220,6 +189,44 @@ feature (dyndbg). See "Dynamic Debug" later in this README for more information.
 
    # ping <IP_address>
 
+ 
+To build a binary RPM package of this driver
+--------------------------------------------
+Note: RPM functionality has only been tested in Red Hat distributions.
+
+1. Run the following command, where <x.x.x> is the version number for the
+   driver tar file.
+
+   # rpmbuild -tb ice-<x.x.x>.tar.gz
+
+   NOTE: For the build to work properly, the currently running kernel MUST
+   match the version and configuration of the installed kernel sources. If
+   you have just recompiled the kernel, reboot the system before building.
+
+2. After building the RPM, the last few lines of the tool output contain the
+   location of the RPM file that was built. Install the RPM with one of the
+   following commands, where <RPM> is the location of the RPM file:
+
+   # rpm -Uvh <RPM>
+       or
+   # dnf/yum localinstall <RPM>
+
+3. If your distribution or kernel does not contain inbox support for auxiliary
+   bus, you must also install the auxiliary RPM:
+
+   # rpm -Uvh <ice RPM> <auxiliary RPM>
+       or
+   # dnf/yum localinstall <ice RPM> <auxiliary RPM>
+
+NOTES:
+- To compile the driver on some kernel/arch combinations, you may need to
+install a package with the development version of libelf (e.g. libelf-dev,
+libelf-devel, elfutilsl-libelf-devel).
+- When compiling an out-of-tree driver, details will vary by distribution.
+However, you will usually need a kernel-devel RPM or some RPM that provides the
+kernel headers at a minimum. The RPM kernel-devel will usually fill in the link
+at /lib/modules/'uname -r'/build.
+
 
 Command Line Parameters
 =======================
@@ -240,13 +247,6 @@ The driver utilizes the ethtool interface for driver configuration and
 diagnostics, as well as displaying statistical information. The latest ethtool
 version is required for this functionality. Download it at:
 https://kernel.org/pub/software/network/ethtool/
-
-NOTE: The rx_bytes value of ethtool does not match the rx_bytes value of
-Netdev, due to the 4-byte CRC being stripped by the device. The difference
-between the two rx_bytes values will be 4 x the number of Rx packets. For
-example, if Rx packets are 10 and Netdev (software statistics) displays
-rx_bytes as "X", then ethtool (hardware statistics) will display rx_bytes as
-"X+40" (4 bytes CRC x 10 packets).
 
 
 Viewing Link Messages
@@ -345,10 +345,9 @@ The ice driver supports the following RDMA protocols:
 The major difference is that iWARP performs RDMA over TCP, while RoCEv2 uses
 UDP.
 
-For detailed installation and configuration information, see the README file in
-the RDMA driver tarball.
+- RDMA requires auxiliary bus support. Refer to "Auxiliary Bus" in this
+README for more information.
 
-Notes:
 - Devices based on the Intel(R) Ethernet 800 Series do not support RDMA when
 operating in multiport mode with more than 4 ports.
 
@@ -356,6 +355,39 @@ operating in multiport mode with more than 4 ports.
 and vice versa. To enforce this, on kernels 4.5 and above, the driver checks
 for this mutual exclusion. On kernels older than 4.5, the driver cannot check
 for this exclusion and is unaware of bonding events.
+
+For detailed installation and configuration information for RDMA, see the
+README file in the irdma driver tarball.
+
+
+RDMA in the VF
+--------------
+Devices based on the Intel(R) Ethernet 800 Series support RDMA in a Linux VF,
+on supported Windows or Linux hosts.
+
+The iavf driver supports the following RDMA protocols in the VF:
+- iWARP (Internet Wide Area RDMA Protocol)
+- RoCEv2 (RDMA over Converged Ethernet)
+
+Refer to the README inside the irdma driver tarball for details on configuring
+RDMA in the VF.
+
+NOTE: To support VF RDMA, load the irdma driver on the host before creating
+VFs. Otherwise VF RDMA support may not be negotiated between the VF and PF
+driver.
+
+
+Auxiliary Bus
+-------------
+Inter-Driver Communication (IDC) is the mechanism in which LAN drivers (such as
+ice) communicate with peer drivers (such as irdma). Starting in kernel 5.11,
+Intel LAN and RDMA drivers use an auxiliary bus mechanism for IDC.
+
+RDMA functionality requires use of the auxiliary bus.
+
+If your kernel supports the auxiliary bus, the LAN and RDMA drivers will use
+the inbox auxiliary bus for IDC. For kernels lower than 5.11, the base driver
+will automatically install an out-of-tree auxiliary bus module.
 
 
 NVM Express* (NVMe) over TCP and Fabrics
@@ -582,6 +614,27 @@ For example:
      tcp dst_port 5555 skip_sw hw_tc 1
 
 
+Using ADQ to filter GTP
+-----------------------
+You must have a DDP package that supports GTP; the default OS package does not.
+Download the appropriate package from your hardware vendor and load it on your
+device. Use the tc command to add a GTP filter. For example:
+
+# tc filter add dev <ethX> protocol ip parent ffff: prio 1 flower src_ip
+16.0.0.0/16 ip_proto udp dst_port 5678 enc_dst_port 2152 skip_sw hw_tc 1
+
+Where:
+  prio: Priority
+  flower: Flow-based traffic control filter
+  src_ip/dst_ip: inner Source/Dest IP start (16.0.0.0/16)
+  dst_port: inner destination port of application (5678)
+  enc_dst_port: outer destination port (for GTP user data tunnelling occurs on
+UDP port 2152)
+  enc_key_id: tunnel id (vxlan id)
+  skip_sw: Flag to add the rule only in hardware
+  hw_tc: Route incoming traffic flow to hardware TC number provided (here TC1)
+
+
 Intel(R) Ethernet Flow Director
 -------------------------------
 The Intel Ethernet Flow Director performs the following tasks:
@@ -789,6 +842,16 @@ And <option> is one or more of:
   d	Hash on the IP destination address of the Rx packet.
   f	Hash on bytes 0 and 1 of the Layer 4 header of the Rx packet.
   n	Hash on bytes 2 and 3 of the Layer 4 header of the Rx packet.
+
+For example, to hash on the source and destination IP address for TCP IPv4
+traffic, use the following:
+
+# ethtool -N <ethX> rx-flow-hash tcp4 sd
+
+To hash on the source and destination ports for UDP IPv6 traffic, use the
+following:
+
+# ethtool -N <ethX> rx-flow-hash udp6 sdfn
 
 
 Accelerated Receive Flow Steering (aRFS)
@@ -1048,6 +1111,33 @@ NOTE: This feature can be disabled for a specific VF:
 # ip link set <ethX> vf <vf id> spoofchk {off|on}
 
 
+VLAN Pruning
+------------
+The ice driver allows you to enable or disable VLAN pruning for the VF VSI
+using the ethtool private flag vf-vlan-pruning.
+
+NOTE:
+- You cannot change this private flag while any VFs are active.
+- If a port VLAN is configured, VLAN pruning will always be enabled.
+- When VLAN pruning is enabled, the interface will:
+    - Discard all packets with a VLAN tag when Rx VLAN filtering is disabled.
+    - Discard untagged packets when Rx VLAN filtering is enabled.
+
+To disable or enable VLAN pruning on all VFs, do the following:
+1. Deinitialize any VFs.
+2. On the PF, use the following command:
+
+# ethtool --set-priv-flags <ethX> vf-vlan-pruning on|off
+  Where:
+  on - enables VLAN pruning
+  off - disables VLAN pruning (default)
+
+3. Initialize and configure any VFs.
+
+VLAN pruning will then be disabled or enabled on any of these VFs, depending on
+the flag you set.
+
+
 Switchdev mode
 --------------
 The PF driver supports legacy and switchdev eSwitch modes. Switchdev mode
@@ -1112,6 +1202,14 @@ Switchdev mode supports the following ip link commands to configure the VF:
 * node_guid - supported
 * port_guid - supported
 
+To limit the VF's interrupt rate for Rx and Tx in switchdev mode, use the
+following command, where <N> is the desired cap for the interrupt rate:
+
+# ethtool -C $vf_pr rx-usecs-high <N>
+
+For detailed setup and configuration information for switchdev mode, refer to
+the configuration guide at https://cdrdv2.intel.com/v1/dl/getContent/645272.
+
 
 Jumbo Frames
 ------------
@@ -1165,8 +1263,7 @@ For more details, please refer to the ethtool man page.
 
 Data Center Bridging (DCB)
 --------------------------
-NOTE:
-The kernel assumes that TC0 is available, and will disable Priority Flow
+NOTE: The kernel assumes that TC0 is available, and will disable Priority Flow
 Control (PFC) on the device if TC0 is not available. To fix this, ensure TC0 is
 enabled when setting up DCB on your switch.
 
@@ -1239,7 +1336,6 @@ To view the currently configured mappings, use the following:
 # lldptool -t -i <ethX> -V APP -c
 
 NOTE:
-- You cannot enable L3 QoS mode if RDMA is active.
 - L3 QoS mode is not available when FW-LLDP is enabled. You also cannot enable
 FW-LLDP if L3 QoS mode is active. Disable FW-LLDP before switching to L3 QoS
 mode. Refer to the "FW-LLDP (Firmware Link Layer Discovery Protocol)" section
@@ -1270,8 +1366,8 @@ take effect. If "LLDP AGENT" is set to disabled, you cannot enable it from the
 OS.
 
 
-Flow Control
-------------
+Link-Level Flow Control (LFC)
+-----------------------------
 Ethernet Flow Control (IEEE 802.3x) can be configured with ethtool to enable
 receiving and transmitting pause frames for ice. When transmit is enabled,
 pause frames are generated when the receive packet buffer crosses a predefined
@@ -1309,9 +1405,8 @@ this issue, disable and reenable LFC using ethtool:
 
 NAPI
 ----
-This driver supports NAPI (Rx polling mode).
-For more information on NAPI, see
-https://www.linuxfoundation.org/collaborate/workgroups/networking/napi
+This driver supports NAPI (Rx polling mode). For more information on NAPI, see
+https://www.linuxfoundation.org/collaborate/workgroups/networking/napi.
 
 
 MACVLAN
@@ -1361,6 +1456,11 @@ NOTES:
 - VLAN protocols use the following EtherTypes:
     802.1Q = EtherType 0x8100
     802.1ad = EtherType 0x88A8
+- For QinQ traffic to work at MTU 1500, the L2 peer (switch port or another
+NIC) should be able to receive Ethernet frames of 1526 bytes. Some third-party
+NICs support a maximum Ethernet frame size of 1522 bytes at MTU 1500, which
+will cause QinQ traffic to fail. To work around this issue, restrict the MTU on
+the Intel Ethernet device to 1496.
 
 
 Double VLANs
@@ -1445,6 +1545,53 @@ Precision Time Protocol (PTP) is used to synchronize clocks in a computer
 network. PTP support varies among Intel devices that support this driver. Use
 'ethtool -T <ethX>' to get a definitive list of PTP capabilities supported by
 the device.
+
+NOTE: You can only change the state of the Clock Generation Unit (CGU) Fast
+Lock flag (cgu-fast-lock) on PF0.
+
+
+SyncE Support
+-------------
+On hardware that supports Synchronous Ethernet (SyncE), the ice driver has
+interfaces that allow you to synchronize frequencies with other SyncE-supported
+ports. After you manually configure SyncE, the device dynamically selects the
+best quality signal from the ones that are available. Then, once the signal is
+locked, it synchronizes its frequency clock to it. The best quality signal is
+determined based on the topology configured with the ice SyncE interfaces.
+
+To enable a recovered clock for a given Ethernet device, run the following:
+
+# echo <ena> <pin> > /sys/class/net/<ethX>/device/phy/synce
+  Where:
+  <ena>:
+    0 = Disables the given recovered clock pin
+    1 = Enables the given recovered clock pin
+  <pin>:
+    0 = Enables the higher priority pin
+    1 = Enable the lower priority pin
+
+For example, to enable the higher-priority recovered clock from Port 0 and a
+lower-priority recovered clock from Port 1, run the following:
+
+# echo 1 0 > /sys/class/net/$ETH0/device/phy/synce
+# echo 1 1 > /sys/class/net/$ETH1/device/phy/synce
+
+To disable recovered clocks, run the following:
+
+# echo 0 0 > /sys/class/net/$ETH0/device/phy/synce
+# echo 0 1 > /sys/class/net/$ETH1/device/phy/synce
+
+To check the recovered clock status, run the following, where <pci> is the PCI
+location:
+
+# echo dump rclk_status > /sys/kernel/debug/ice/<pci>/command
+# dmesg
+
+For example:
+# echo dump rclk_status > /sys/kernel/debug/ice/0000:03:00.0/command
+
+NOTE: You can only change the state of the Clock Generation Unit (CGU) Fast
+Lock flag (cgu-fast-lock) on PF0.
 
 
 Tunnel/Overlay Stateless Offloads
@@ -1750,6 +1897,16 @@ address to ensure that the VM is operating correctly.
 Issuing the command 'ethtool -S' does not display Tx/Rx packet statistics. This
 is by convention. Use other tools (such as the 'ip' command) that display
 standard netdev statistics such as Tx/Rx packet statistics.
+
+
+'ethtool -S' rx_bytes and ip stats rx_bytes don't match statistics
+------------------------------------------------------------------
+The rx_bytes value of ethtool does not match the rx_bytes value of Netdev, due
+to the 4-byte CRC being stripped by the device. The difference between the two
+rx_bytes values will be 4 x the number of Rx packets. For example, if Rx
+packets are 10 and Netdev (software statistics) displays rx_bytes as "X", then
+ethtool (hardware statistics) will display rx_bytes as "X+40" (4 bytes CRC x 10
+packets).
 
 
 Unexpected Issues when the device driver and DPDK share a device

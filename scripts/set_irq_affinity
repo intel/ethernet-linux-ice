@@ -107,8 +107,19 @@ done
 # for now the user must specify interfaces
 if [ -z "$IFACES" ]; then
 	usage
-	exit 1
+	exit 2
 fi
+
+notfound()
+{
+	echo $MYIFACE: not found
+	exit 15
+}
+
+# check the interfaces exist
+for MYIFACE in $IFACES; do
+	grep -q $MYIFACE /proc/net/dev || notfound
+done
 
 # support functions
 
@@ -231,9 +242,7 @@ doaff()
 
 	irqs=$(grep "$queues" /proc/interrupts | cut -f1 -d:)
 	[ -z "$irqs" ] && irqs=$(grep $IFACE /proc/interrupts | cut -f1 -d:)
-	[ -z "$irqs" ] && irqs=$(for i in `ls -Ux /sys/class/net/$IFACE/device/msi_irqs` ;\
-	                         do grep "$i:.*TxRx" /proc/interrupts | grep -v fdir | cut -f 1 -d : ;\
-	                         done)
+	[ -z "$irqs" ] && irqs=$(for i in `ls -1 /sys/class/net/${IFACE}/device/msi_irqs | sort -n` ;do grep -w $i: /proc/interrupts | egrep -v 'fdir|async|misc|ctrl' | cut -f 1 -d :; done)
 	[ -z "$irqs" ] && echo "Error: Could not find interrupts for $IFACE"
 
 	if [ "$SHOW" == "1" ] ; then

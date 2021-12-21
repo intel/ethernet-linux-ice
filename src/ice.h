@@ -30,6 +30,7 @@
 #include <linux/timer.h>
 #include <linux/delay.h>
 #include <linux/bitmap.h>
+#include <linux/hashtable.h>
 #include <linux/log2.h>
 #include <linux/ip.h>
 #include <linux/sctp.h>
@@ -38,6 +39,7 @@
 #include <linux/if_bridge.h>
 #include <linux/string.h>
 #include <linux/ctype.h>
+#include <linux/sizes.h>
 #ifdef HAVE_XDP_SUPPORT
 #include <linux/bpf.h>
 #include <linux/filter.h>
@@ -65,16 +67,13 @@
 #include "ice_common.h"
 #include "ice_flow.h"
 #include "ice_sched.h"
-#include <linux/mfd/core.h>
+#include <linux/auxiliary_bus.h>
 #include <linux/idr.h>
 #include "ice_idc_int.h"
 #include "virtchnl.h"
 #include "ice_virtchnl_pf.h"
-#include "ice_sriov.h"
+#include "ice_vf_mbx.h"
 #include "ice_ptp.h"
-#include "ice_cgu.h"
-#include "ice_cgu_ops.h"
-#include "ice_cgu_util.h"
 #include "ice_fdir.h"
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 #include "ice_xsk.h"
@@ -113,6 +112,7 @@
 #include "ice_repr.h"
 #include "ice_eswitch.h"
 #include "ice_vsi_vlan_ops.h"
+#include "ice_gnss.h"
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0		0
@@ -254,9 +254,12 @@ struct ice_fwlog_user_input {
 enum ice_feature {
 	ICE_F_DSCP,
 	ICE_F_PTP_EXTTS,
+	ICE_F_CGU,
+	ICE_F_PHY_RCLK,
+	ICE_F_SMA_CTRL,
+	ICE_F_GNSS,
 	ICE_F_MAX
 };
-
 
 enum ice_channel_fltr_type {
 	ICE_CHNL_FLTR_TYPE_INVALID,
@@ -354,9 +357,9 @@ enum ice_pf_state {
 	ICE_NEEDS_RESTART,
 	ICE_PREPARED_FOR_RESET,	/* set by driver when prepared */
 	ICE_RESET_OICR_RECV,		/* set by driver after rcv reset OICR */
-	ICE_PFR_REQ,			/* set by driver and peers */
-	ICE_CORER_REQ,		/* set by driver and peers */
-	ICE_GLOBR_REQ,		/* set by driver and peers */
+	ICE_PFR_REQ,			/* set by driver and aux drivers */
+	ICE_CORER_REQ,		/* set by driver and aux drivers */
+	ICE_GLOBR_REQ,		/* set by driver and aux drivers */
 	ICE_CORER_RECV,		/* set by OICR handler */
 	ICE_GLOBR_RECV,		/* set by OICR handler */
 	ICE_EMPR_RECV,		/* set by OICR handler */
@@ -380,10 +383,9 @@ enum ice_pf_state {
 	ICE_VFLR_EVENT_PENDING,
 	ICE_FLTR_OVERFLOW_PROMISC,
 	ICE_VF_DIS,
+	ICE_VF_DEINIT_IN_PROGRESS,
 	ICE_CFG_BUSY,
 	ICE_SERVICE_SCHED,
-	ICE_PTP_TX_TS_READY,
-	ICE_PTP_EXT_TS_READY,
 	ICE_SERVICE_DIS,
 	ICE_FD_FLUSH_REQ,
 	ICE_OICR_INTR_DIS,		/* Global OICR interrupt disabled */
@@ -516,7 +518,6 @@ struct ice_vsi {
 	struct ice_vsi_vlan_ops outer_vlan_ops;
 	u16 num_vlan;
 
-
 	/* queue information */
 	u8 tx_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
 	u8 rx_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
@@ -539,6 +540,7 @@ struct ice_vsi {
 	u8 xdp_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
 #endif /* HAVE_XDP_SUPPORT */
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
+	unsigned long *af_xdp_zc_qps;    /* tracks AF_XDP ZC enabled qps */
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
 	struct xdp_umem **xsk_umems;
 	u16 num_xsk_umems_used;
@@ -549,10 +551,6 @@ struct ice_vsi {
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 	struct tc_mqprio_qopt_offload mqprio_qopt;/* queue parameters */
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
-	DECLARE_BITMAP(ptp_tx_idx, INDEX_PER_QUAD);
-	struct sk_buff *ptp_tx_skb[INDEX_PER_QUAD];
-	u32 tx_hwtstamp_skipped;
-	u8 ptp_tx:1;
 
 	/* Channel Specific Fields */
 	struct ice_vsi *tc_map_vsi[ICE_CHNL_MAX_TC];
@@ -599,7 +597,6 @@ struct ice_vsi {
 	u16 old_ena_tc;
 
 	struct ice_channel *ch;
-	struct net_device **target_netdevs;
 
 	/* setup back reference, to which aggregator node this VSI
 	 * corresponds to
@@ -771,9 +768,9 @@ enum ice_pf_flags {
 	ICE_FLAG_DCB_CAPABLE,
 	ICE_FLAG_DCB_ENA,
 	ICE_FLAG_FD_ENA,
-	ICE_FLAG_PTP_ENA,		/* NVM PTP support */
+	ICE_FLAG_PTP_SUPPORTED,		/* NVM PTP support */
 	ICE_FLAG_PTP,			/* PTP successfully initialized */
-	ICE_FLAG_PEER_ENA,
+	ICE_FLAG_AUX_ENA,
 	ICE_FLAG_ADV_FEATURES,
 #ifdef NETIF_F_HW_TC
 	ICE_FLAG_TC_MQPRIO,		/* support for Multi queue TC */
@@ -793,13 +790,18 @@ enum ice_pf_flags {
 	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA,
 	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_CFG,
 	ICE_FLAG_MOD_POWER_UNSUPPORTED,
+	ICE_FLAG_PHY_FW_LOAD_FAILED,
 	ICE_FLAG_ETHTOOL_CTXT,		/* set when ethtool holds RTNL lock */
 	ICE_FLAG_LEGACY_RX,
 	ICE_FLAG_VF_TRUE_PROMISC_ENA,
 	ICE_FLAG_MDD_AUTO_RESET_VF,
-	ICE_FLAG_VF_VLAN_PRUNE_DIS,
+	ICE_FLAG_VF_VLAN_PRUNING,
 	ICE_FLAG_LINK_LENIENT_MODE_ENA,
 	ICE_FLAG_ESWITCH_CAPABLE,
+	ICE_FLAG_DPLL_FAST_LOCK,
+	ICE_FLAG_DPLL_MONITOR,
+	ICE_FLAG_EXTTS_FILTER,
+	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
 
@@ -845,28 +847,21 @@ struct ice_agg_node {
 	u8 valid;
 };
 
-enum ice_flash_update_preservation {
-	/* Preserve all settings and fields */
-	ICE_FLASH_UPDATE_PRESERVE_ALL = 0,
-	/* Preserve limited fields, such as VPD, PCI serial ID, MACs, etc */
-	ICE_FLASH_UPDATE_PRESERVE_LIMITED,
-	/* Return all fields to factory settings */
-	ICE_FLASH_UPDATE_PRESERVE_FACTORY_SETTINGS,
-	/* Do not perform any preservation */
-	ICE_FLASH_UPDATE_PRESERVE_NONE,
-};
-
 struct ice_pf {
 	struct pci_dev *pdev;
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_REGIONS
 	struct devlink_region *nvm_region;
+	struct devlink_region *sram_region;
 	struct devlink_region *devcaps_region;
 #endif /* HAVE_DEVLINK_REGIONS */
 	/* devlink port data */
 	struct devlink_port devlink_port;
 #endif /* CONFIG_NET_DEVLINK */
+#if defined(HAVE_DEVLINK_PARAMS) && !defined(HAVE_DEVLINK_PARAMS_PUBLISH)
+	u8 devlink_params_published:1;
+#endif /* HAVE_DEVLINK_PARAMS && !HAVE_DEVLINK_PARAMS_PUBLISH */
 
 	/* OS reserved IRQ details */
 	struct msix_entry *msix_entries;
@@ -885,15 +880,7 @@ struct ice_pf {
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *ice_debugfs_pf;
 #endif /* CONFIG_DEBUG_FS */
-	/* Virtchnl/SR-IOV config info */
-	struct ice_vf *vf;
-	u16 num_alloc_vfs;	/* actual number of VFs allocated */
-	u16 num_vfs_supported;		/* num VFs supported for this PF */
-	u16 num_qps_per_vf;
-	u16 num_msix_per_vf;
-	/* used to ratelimit the MDD event logging */
-	unsigned long last_printed_mdd_jiffies;
-	DECLARE_BITMAP(malvfs, ICE_MAX_VF_COUNT);
+	struct ice_vfs vfs;
 	DECLARE_BITMAP(features, ICE_F_MAX);
 	DECLARE_BITMAP(state, ICE_STATE_NBITS);
 	DECLARE_BITMAP(flags, ICE_PF_FLAGS_NBITS);
@@ -908,10 +895,11 @@ struct ice_pf {
 	struct mutex tc_mutex;		/* lock to protect TC changes */
 	u32 msg_enable;
 	struct ice_ptp ptp;
-	struct ice_cgu_info cgu_info;
+	struct tty_driver *ice_gnss_tty_driver;
+	struct tty_port gnss_tty_port[ICE_GNSS_TTY_MINOR_DEVICES];
+	struct gnss_serial *gnss_serial[ICE_GNSS_TTY_MINOR_DEVICES];
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
-	struct ice_peer_obj *rdma_peer;
 #ifdef HAVE_NETDEV_SB_DEV
 	/* MACVLAN specific variables */
 	DECLARE_BITMAP(avail_macvlan, ICE_MAX_MACVLANS);
@@ -924,6 +912,7 @@ struct ice_pf {
 	spinlock_t aq_wait_lock;
 	struct hlist_head aq_wait_list;
 	wait_queue_head_t aq_wait_queue;
+	bool fw_empr_disabled;
 
 	wait_queue_head_t reset_wait_queue;
 
@@ -975,8 +964,8 @@ struct ice_pf {
 	unsigned long tx_timeout_last_recovery;
 	u32 tx_timeout_recovery_level;
 	char int_name[ICE_INT_NAME_STR_LEN];
-	struct ice_peer_obj_int **peers;
-	int peer_idx;
+	struct iidc_core_dev_info **cdev_infos;
+	int aux_idx;
 	u32 sw_int_count;
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 	/* count of tc_flower filters specific to channel (aka where filter
@@ -1015,6 +1004,8 @@ struct ice_pf {
 #define ICE_VF_AGG_NODE_ID_START	65
 #define ICE_MAX_VF_AGG_NODES		32
 	struct ice_agg_node vf_agg_node[ICE_MAX_VF_AGG_NODES];
+	enum ice_e810t_cgu_state synce_dpll_state;
+	enum ice_e810t_cgu_state ptp_dpll_state;
 };
 
 struct ice_netdev_priv {
@@ -1038,9 +1029,6 @@ struct ice_netdev_priv {
 	struct ice_repr *repr;
 };
 
-extern struct ida ice_peer_index_ida;
-
-
 /**
  * ice_vector_ch_enabled
  * @qv: pointer to q_vector, can be NULL
@@ -1063,45 +1051,6 @@ static inline bool ice_vector_busypoll_intr(struct ice_q_vector *qv)
 {
 	return (qv->state_flags & ICE_CHNL_PREV_IN_BP) &&
 	      !(qv->state_flags & ICE_CHNL_IN_BP);
-}
-
-/**
- * ice_vector_ever_in_busypoll
- * @qv: pointer to q_vector
- *
- * This function returns true if vectors current OR previous state
- * is BUSY_POLL
- */
-static inline bool ice_vector_ever_in_busypoll(struct ice_q_vector *qv)
-{
-	return (qv->state_flags & ICE_CHNL_PREV_IN_BP) ||
-	       (qv->state_flags & ICE_CHNL_IN_BP);
-}
-
-/**
- * ice_vector_state_curr_prev_intr
- * @qv: pointer to q_vector
- *
- * This function returns true if vectors current AND previous state
- * is INTERRUPT
- */
-static inline bool ice_vector_state_curr_prev_intr(struct ice_q_vector *qv)
-{
-	return !(qv->state_flags & ICE_CHNL_PREV_IN_BP) &&
-	       !(qv->state_flags & ICE_CHNL_IN_BP);
-}
-
-/**
- * ice_vector_intr_busypoll
- * @qv: pointer to q_vector
- *
- * This function returns true if vector is transitioning from INTERRUPT
- * to BUSY_POLL based on current and previous state of vector
- */
-static inline bool ice_vector_intr_busypoll(struct ice_q_vector *qv)
-{
-	return !(qv->state_flags & ICE_CHNL_PREV_IN_BP) &&
-		(qv->state_flags & ICE_CHNL_IN_BP);
 }
 
 /**
@@ -1150,33 +1099,6 @@ ice_sw_intr_cntr(struct ice_q_vector *q_vector, bool napi_codepath)
 		q_vector->ch_stats.num_sw_intr_serv_task++;
 }
 #endif /* ADQ_PERF_COUNTERS */
-
-/**
- * ice_force_wb - trigger force write-back by setting WB_ON_ITR bit
- * @hw: ptr to HW
- * @q_vector: pointer to q_vector
- *
- * This function is used to force write-backs by setting WB_ON_ITR bit
- * in DYN_CTLN register. WB_ON_ITR and INTENA are mutually exclusive bits.
- * Setting WB_ON_ITR bits means Tx and Rx descriptors are written back based
- * on ITR expiration irrespective of INTENA setting
- */
-static inline void
-ice_force_wb(struct ice_hw *hw, struct ice_q_vector *q_vector)
-{
-	if (q_vector->num_ring_rx || q_vector->num_ring_tx) {
-#ifdef ADQ_PERF_COUNTERS
-		q_vector->ch_stats.num_wb_on_itr_set++;
-#endif /* ADQ_PERF_COUNTERS */
-		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx),
-		     ICE_GLINT_DYN_CTL_WB_ON_ITR(0, ICE_RX_ITR));
-	}
-
-	/* needed to avoid triggering WB_ON_ITR again which typically
-	 * happens from ice_set_wb_on_itr function
-	 */
-	q_vector->wb_on_itr = true;
-}
 
 /**
  * ice_irq_dynamic_ena - Enable default interrupt generation settings
@@ -1241,25 +1163,26 @@ static inline struct xsk_buff_pool *ice_xsk_umem(struct ice_ring *ring)
 static inline struct xdp_umem *ice_xsk_umem(struct ice_ring *ring)
 #endif
 {
+	struct ice_vsi *vsi = ring->vsi;
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
-	struct xdp_umem **umems = ring->vsi->xsk_umems;
+	struct xdp_umem **umems = vsi->xsk_umems;
 #endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 	u16 qid = ring->q_index;
 
 	if (ice_ring_is_xdp(ring))
-		qid -= ring->vsi->num_xdp_txq;
+		qid -= vsi->num_xdp_txq;
 
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
-	if (qid >= ring->vsi->num_xsk_umems || !umems || !umems[qid] ||
-	    !ice_is_xdp_ena_vsi(ring->vsi))
+	if (qid >= vsi->num_xsk_umems || !umems || !umems[qid] ||
+	    !ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
 		return NULL;
 
 	return umems[qid];
 #else
-	if (!ice_is_xdp_ena_vsi(ring->vsi))
+	if (!ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
 		return NULL;
 
-	return xsk_get_pool_from_qid(ring->vsi->netdev, qid);
+	return xsk_get_pool_from_qid(vsi->netdev, qid);
 #endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 }
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
@@ -1272,10 +1195,7 @@ static inline struct xdp_umem *ice_xsk_umem(struct ice_ring *ring)
  */
 static inline struct ice_vsi *ice_get_main_vsi(struct ice_pf *pf)
 {
-	if (pf->vsi)
-		return pf->vsi[0];
-
-	return NULL;
+	return pf->vsi[0];
 }
 
 /**
@@ -1590,28 +1510,17 @@ int ice_get_rss_key(struct ice_vsi *vsi, u8 *seed);
 void ice_fill_rss_lut(u8 *lut, u16 rss_table_size, u16 rss_size);
 int ice_schedule_reset(struct ice_pf *pf, enum ice_reset_req reset);
 void ice_print_link_msg(struct ice_vsi *vsi, bool isup);
-#if IS_ENABLED(CONFIG_MFD_CORE)
-int ice_init_peer_devices(struct ice_pf *pf);
+int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name);
+void ice_unplug_aux_dev(struct iidc_core_dev_info *cdev_info);
+int ice_plug_aux_devs(struct ice_pf *pf);
+void ice_unplug_aux_devs(struct ice_pf *pf);
+int ice_init_aux_devices(struct ice_pf *pf);
 int
-ice_for_each_peer(struct ice_pf *pf, void *data,
-		  int (*fn)(struct ice_peer_obj_int *, void *));
+ice_for_each_aux(struct ice_pf *pf, void *data,
+		 int (*fn)(struct iidc_core_dev_info *, void *));
 #ifdef CONFIG_PM
-void ice_peer_refresh_msix(struct ice_pf *pf);
+void ice_cdev_info_refresh_msix(struct ice_pf *pf);
 #endif /* CONFIG_PM */
-#else /* !CONFIG_MFD_CORE */
-static inline int ice_init_peer_devices(struct ice_pf *pf) { return 0; }
-
-static inline int
-ice_for_each_peer(struct ice_pf *pf, void *data,
-		  int (*fn)(struct ice_peer_obj_int *, void *))
-{
-	return 0;
-}
-
-#ifdef CONFIG_PM
-static inline void ice_peer_refresh_msix(struct ice_pf *pf) { }
-#endif /* CONFIG_PM */
-#endif /* !CONFIG_MFD_CORE */
 #ifdef HAVE_NETDEV_UPPER_INFO
 /**
  * ice_set_sriov_cap - enable SRIOV in PF flags
@@ -1638,8 +1547,9 @@ static inline void ice_clear_sriov_cap(struct ice_pf *pf)
  */
 static inline void ice_set_rdma_cap(struct ice_pf *pf)
 {
-	if (pf->hw.func_caps.common_cap.iwarp)
+	if (pf->hw.func_caps.common_cap.iwarp && pf->num_rdma_msix) {
 		set_bit(ICE_FLAG_IWARP_ENA, pf->flags);
+	}
 }
 
 /**
@@ -1657,6 +1567,7 @@ const char *ice_aq_str(enum ice_aq_err aq_err);
 bool ice_is_wol_supported(struct ice_hw *hw);
 int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
 			  struct ice_rq_event_info *event);
+void ice_fdir_del_all_fltrs(struct ice_vsi *vsi);
 int
 ice_fdir_write_fltr(struct ice_pf *pf, struct ice_fdir_fltr *input, bool add,
 		    bool is_tun);

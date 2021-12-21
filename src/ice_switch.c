@@ -5,11 +5,11 @@
 #include "ice_flex_type.h"
 #include "ice_flow.h"
 
-
 #define ICE_ETH_DA_OFFSET		0
 #define ICE_ETH_ETHTYPE_OFFSET		12
 #define ICE_ETH_VLAN_TCI_OFFSET		14
 #define ICE_MAX_VLAN_ID			0xFFF
+#define ICE_IPV6_ETHER_ID		0x86DD
 
 /* Dummy ethernet header needed in the ice_aqc_sw_rules_elem
  * struct to configure any switch filter rules.
@@ -29,7 +29,6 @@
 static const u8 dummy_eth_header[DUMMY_ETH_HDR_LEN] = { 0x2, 0, 0, 0, 0, 0,
 							0x2, 0, 0, 0, 0, 0,
 							0x81, 0, 0, 0};
-
 
 struct ice_dummy_pkt_offsets {
 	enum ice_protocol_type type;
@@ -254,8 +253,8 @@ static const u8 dummy_udp_packet[] = {
 /* offset info for MAC + VLAN + IPv4 + UDP dummy packet */
 static const struct ice_dummy_pkt_offsets dummy_vlan_udp_packet_offsets[] = {
 	{ ICE_MAC_OFOS,		0 },
-	{ ICE_ETYPE_OL,		12 },
-	{ ICE_VLAN_OFOS,	14 },
+	{ ICE_VLAN_OFOS,	12 },
+	{ ICE_ETYPE_OL,		16 },
 	{ ICE_IPV4_OFOS,	18 },
 	{ ICE_UDP_ILOS,		38 },
 	{ ICE_PROTOCOL_LAST,	0 },
@@ -267,9 +266,9 @@ static const u8 dummy_vlan_udp_packet[] = {
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
 
-	0x81, 0x00,		/* ICE_ETYPE_OL 12 */
+	0x81, 0x00, 0x00, 0x00, /* ICE_VLAN_OFOS 12 */
 
-	0x00, 0x00, 0x08, 0x00, /* ICE_VLAN_OFOS 14 */
+	0x08, 0x00,		/* ICE_ETYPE_OL 16 */
 
 	0x45, 0x00, 0x00, 0x1c, /* ICE_IPV4_OFOS 18 */
 	0x00, 0x01, 0x00, 0x00,
@@ -318,8 +317,8 @@ static const u8 dummy_tcp_packet[] = {
 /* offset info for MAC + VLAN (C-tag, 802.1Q) + IPv4 + TCP dummy packet */
 static const struct ice_dummy_pkt_offsets dummy_vlan_tcp_packet_offsets[] = {
 	{ ICE_MAC_OFOS,		0 },
-	{ ICE_ETYPE_OL,		12 },
-	{ ICE_VLAN_OFOS,	14 },
+	{ ICE_VLAN_OFOS,	12 },
+	{ ICE_ETYPE_OL,		16 },
 	{ ICE_IPV4_OFOS,	18 },
 	{ ICE_TCP_IL,		38 },
 	{ ICE_PROTOCOL_LAST,	0 },
@@ -331,9 +330,9 @@ static const u8 dummy_vlan_tcp_packet[] = {
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
 
-	0x81, 0x00,		/* ICE_ETYPE_OL 12 */
+	0x81, 0x00, 0x00, 0x00,	/* ICE_VLAN_OFOS 12 */
 
-	0x00, 0x00, 0x08, 0x00, /* ICE_VLAN_OFOS 14 */
+	0x08, 0x00,		/* ICE_ETYPE_OL 16 */
 
 	0x45, 0x00, 0x00, 0x28, /* ICE_IPV4_OFOS 18 */
 	0x00, 0x01, 0x00, 0x00,
@@ -389,8 +388,8 @@ static const u8 dummy_tcp_ipv6_packet[] = {
 static const struct ice_dummy_pkt_offsets
 dummy_vlan_tcp_ipv6_packet_offsets[] = {
 	{ ICE_MAC_OFOS,		0 },
-	{ ICE_ETYPE_OL,		12 },
-	{ ICE_VLAN_OFOS,	14 },
+	{ ICE_VLAN_OFOS,	12 },
+	{ ICE_ETYPE_OL,		16 },
 	{ ICE_IPV6_OFOS,	18 },
 	{ ICE_TCP_IL,		58 },
 	{ ICE_PROTOCOL_LAST,	0 },
@@ -402,9 +401,9 @@ static const u8 dummy_vlan_tcp_ipv6_packet[] = {
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
 
-	0x81, 0x00,		/* ICE_ETYPE_OL 12 */
+	0x81, 0x00, 0x00, 0x00,	/* ICE_VLAN_OFOS 12 */
 
-	0x00, 0x00, 0x86, 0xDD, /* ICE_VLAN_OFOS 14 */
+	0x86, 0xDD,		/* ICE_ETYPE_OL 16 */
 
 	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_OFOS 18 */
 	0x00, 0x14, 0x06, 0x00, /* Next header is TCP */
@@ -467,8 +466,8 @@ static const u8 dummy_udp_ipv6_packet[] = {
 static const struct ice_dummy_pkt_offsets
 dummy_vlan_udp_ipv6_packet_offsets[] = {
 	{ ICE_MAC_OFOS,		0 },
-	{ ICE_ETYPE_OL,		12 },
-	{ ICE_VLAN_OFOS,	14 },
+	{ ICE_VLAN_OFOS,	12 },
+	{ ICE_ETYPE_OL,		16 },
 	{ ICE_IPV6_OFOS,	18 },
 	{ ICE_UDP_ILOS,		58 },
 	{ ICE_PROTOCOL_LAST,	0 },
@@ -480,9 +479,9 @@ static const u8 dummy_vlan_udp_ipv6_packet[] = {
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
 
-	0x81, 0x00,		/* ICE_ETYPE_OL 12 */
+	0x81, 0x00, 0x00, 0x00,/* ICE_VLAN_OFOS 12 */
 
-	0x00, 0x00, 0x86, 0xDD, /* ICE_VLAN_OFOS 14 */
+	0x86, 0xDD,		/* ICE_ETYPE_OL 16 */
 
 	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_OFOS 18 */
 	0x00, 0x08, 0x11, 0x00, /* Next header UDP */
@@ -1087,7 +1086,6 @@ static const u8 dummy_ipv6_gtpu_ipv6_packet[] = {
 	0x00, 0x00,
 };
 
-
 /* this is a recipe to profile association bitmap */
 static DECLARE_BITMAP(recipe_to_profile[ICE_MAX_NUM_RECIPES],
 			  ICE_MAX_NUM_PROFILES);
@@ -1110,7 +1108,6 @@ static void ice_collect_result_idx(struct ice_aqc_recipe_data_elem *buf,
 		set_bit(buf->content.result_indx & ~ICE_AQ_RECIPE_RESULT_EN,
 		        recp->res_idxs);
 }
-
 
 /**
  * ice_get_recp_frm_fw - update SW bookkeeping from FW recipe entries
@@ -1987,18 +1984,36 @@ ice_update_vsi(struct ice_hw *hw, u16 vsi_handle, struct ice_vsi_ctx *vsi_ctx,
 enum ice_status
 ice_cfg_iwarp_fltr(struct ice_hw *hw, u16 vsi_handle, bool enable)
 {
-	struct ice_vsi_ctx *ctx;
+	struct ice_vsi_ctx *ctx, *cached_ctx;
+	enum ice_status status;
 
-	ctx = ice_get_vsi_ctx(hw, vsi_handle);
-	if (!ctx)
+	cached_ctx = ice_get_vsi_ctx(hw, vsi_handle);
+	if (!cached_ctx)
 		return ICE_ERR_DOES_NOT_EXIST;
+
+	ctx = devm_kcalloc(ice_hw_to_dev(hw), 1, sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return ICE_ERR_NO_MEMORY;
+
+	ctx->info.q_opt_rss = cached_ctx->info.q_opt_rss;
+	ctx->info.q_opt_tc = cached_ctx->info.q_opt_tc;
+	ctx->info.q_opt_flags = cached_ctx->info.q_opt_flags;
+
+	ctx->info.valid_sections = cpu_to_le16(ICE_AQ_VSI_PROP_Q_OPT_VALID);
 
 	if (enable)
 		ctx->info.q_opt_flags |= ICE_AQ_VSI_Q_OPT_PE_FLTR_EN;
 	else
 		ctx->info.q_opt_flags &= ~ICE_AQ_VSI_Q_OPT_PE_FLTR_EN;
 
-	return ice_update_vsi(hw, vsi_handle, ctx, NULL);
+	status = ice_update_vsi(hw, vsi_handle, ctx, NULL);
+	if (!status) {
+		cached_ctx->info.q_opt_flags = ctx->info.q_opt_flags;
+		cached_ctx->info.valid_sections |= ctx->info.valid_sections;
+	}
+
+	devm_kfree(ice_hw_to_dev(hw), ctx);
+	return status;
 }
 
 /**
@@ -2641,7 +2656,6 @@ enum ice_status ice_get_initial_sw_cfg(struct ice_hw *hw)
 		}
 	} while (req_desc && !status);
 
-
 out:
 	devm_kfree(ice_hw_to_dev(hw), rbuf);
 	return status;
@@ -2793,7 +2807,6 @@ ice_dump_all_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lkup,
 		break;
 	}
 }
-
 
 /**
  * ice_fill_sw_info - Helper function to populate lb_en and lan_en
@@ -2948,7 +2961,7 @@ ice_fill_sw_rule(struct ice_hw *hw, struct ice_fltr_info *f_info,
 		break;
 	case ICE_SW_LKUP_ETHERTYPE_MAC:
 		daddr = f_info->l_data.ethertype_mac.mac_addr;
-		/* fall-through */
+		fallthrough;
 	case ICE_SW_LKUP_ETHERTYPE:
 		off = (__force __be16 *)(eth_hdr + ICE_ETH_ETHTYPE_OFFSET);
 		*off = cpu_to_be16(f_info->l_data.ethertype_mac.ethertype);
@@ -2959,7 +2972,7 @@ ice_fill_sw_rule(struct ice_hw *hw, struct ice_fltr_info *f_info,
 		break;
 	case ICE_SW_LKUP_PROMISC_VLAN:
 		vlan_id = f_info->l_data.mac_vlan.vlan_id;
-		/* fall-through */
+		fallthrough;
 	case ICE_SW_LKUP_PROMISC:
 		daddr = f_info->l_data.mac_vlan.mac_addr;
 		break;
@@ -2990,7 +3003,6 @@ ice_fill_sw_rule(struct ice_hw *hw, struct ice_fltr_info *f_info,
 	if (opc != ice_aqc_opc_update_sw_rules)
 		s_rule->pdata.lkup_tx_rx.hdr_len = cpu_to_le16(eth_hdr_sz);
 }
-
 
 /**
  * ice_dump_sw_rules - Function to dump sw rules
@@ -4144,7 +4156,7 @@ ice_add_mac_rule(struct ice_hw *hw, struct list_head *m_list,
 			if (ice_find_rule_entry(rule_head,
 						&m_list_itr->fltr_info)) {
 				mutex_unlock(rule_lock);
-				return ICE_ERR_ALREADY_EXISTS;
+				continue;
 			}
 			mutex_unlock(rule_lock);
 			num_unicast++;
@@ -4241,7 +4253,6 @@ ice_add_mac_exit:
 		devm_kfree(ice_hw_to_dev(hw), s_rule);
 	return status;
 }
-
 
 /**
  * ice_add_mac - Add a MAC address based filter rule
@@ -4439,7 +4450,6 @@ ice_add_vlan_rule(struct ice_hw *hw, struct list_head *v_list,
 	return 0;
 }
 
-
 /**
  * ice_add_vlan - Add a VLAN based filter rule
  * @hw: pointer to the hardware structure
@@ -4493,7 +4503,6 @@ ice_add_mac_vlan_rule(struct ice_hw *hw, struct list_head *mv_list,
 	}
 	return 0;
 }
-
 
 /**
  * ice_add_mac_vlan - Add a MAC VLAN address based filter rule
@@ -4549,7 +4558,6 @@ ice_add_eth_mac_rule(struct ice_hw *hw, struct list_head *em_list,
 	return 0;
 }
 
-
 /**
  * ice_add_eth_mac - Add a ethertype based filter rule
  * @hw: pointer to the hardware structure
@@ -4598,7 +4606,6 @@ ice_remove_eth_mac_rule(struct ice_hw *hw, struct list_head *em_list,
 	return 0;
 }
 
-
 /**
  * ice_remove_eth_mac - remove a ethertype based filter rule
  * @hw: pointer to the hardware structure
@@ -4613,7 +4620,6 @@ ice_remove_eth_mac(struct ice_hw *hw, struct list_head *em_list)
 
 	return ice_remove_eth_mac_rule(hw, em_list, hw->switch_info);
 }
-
 
 /**
  * ice_rem_sw_rule_info
@@ -4869,7 +4875,6 @@ enum ice_status ice_remove_mac(struct ice_hw *hw, struct list_head *m_list)
 	return ice_remove_mac_rule(hw, m_list, recp_list);
 }
 
-
 /**
  * ice_remove_vlan_rule - Remove VLAN based filter rule
  * @hw: pointer to the hardware structure
@@ -4894,7 +4899,6 @@ ice_remove_vlan_rule(struct ice_hw *hw, struct list_head *v_list,
 	}
 	return 0;
 }
-
 
 /**
  * ice_remove_vlan - remove a VLAN address based filter rule
@@ -4941,7 +4945,6 @@ ice_remove_mac_vlan_rule(struct ice_hw *hw, struct list_head *v_list,
 	return 0;
 }
 
-
 /**
  * ice_remove_mac_vlan - remove a MAC VLAN address based filter rule
  * @hw: pointer to the hardware structure
@@ -4958,7 +4961,6 @@ ice_remove_mac_vlan(struct ice_hw *hw, struct list_head *mv_list)
 	recp_list = &hw->switch_info->recp_list[ICE_SW_LKUP_MAC_VLAN];
 	return ice_remove_mac_vlan_rule(hw, mv_list, recp_list);
 }
-
 
 /**
  * ice_vsi_uses_fltr - Determine if given VSI uses specified filter
@@ -5056,7 +5058,6 @@ ice_add_to_vsi_fltr_list(struct ice_hw *hw, u16 vsi_handle,
 	return status;
 }
 
-
 /**
  * ice_determine_promisc_mask
  * @fi: filter info to parse
@@ -5090,7 +5091,6 @@ static u8 ice_determine_promisc_mask(struct ice_fltr_info *fi)
 	return promisc_mask;
 }
 
-
 /**
  * _ice_get_vsi_promisc - get promiscuous mode of given VSI
  * @hw: pointer to the hardware structure
@@ -5098,22 +5098,25 @@ static u8 ice_determine_promisc_mask(struct ice_fltr_info *fi)
  * @promisc_mask: pointer to mask to be filled in
  * @vid: VLAN ID of promisc VLAN VSI
  * @sw: pointer to switch info struct for which function add rule
+ * @lkup: switch rule filter lookup type
  */
 static enum ice_status
 _ice_get_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 *promisc_mask,
-		     u16 *vid, struct ice_switch_info *sw)
+		     u16 *vid, struct ice_switch_info *sw,
+		     enum ice_sw_lkup_type lkup)
 {
 	struct ice_fltr_mgmt_list_entry *itr;
 	struct list_head *rule_head;
 	struct mutex *rule_lock;	/* Lock to protect filter rule list */
 
-	if (!ice_is_vsi_valid(hw, vsi_handle))
+	if (!ice_is_vsi_valid(hw, vsi_handle) ||
+	    (lkup != ICE_SW_LKUP_PROMISC && lkup != ICE_SW_LKUP_PROMISC_VLAN))
 		return ICE_ERR_PARAM;
 
 	*vid = 0;
 	*promisc_mask = 0;
-	rule_head = &sw->recp_list[ICE_SW_LKUP_PROMISC].filt_rules;
-	rule_lock = &sw->recp_list[ICE_SW_LKUP_PROMISC].filt_rule_lock;
+	rule_head = &sw->recp_list[lkup].filt_rules;
+	rule_lock = &sw->recp_list[lkup].filt_rule_lock;
 
 	mutex_lock(rule_lock);
 	list_for_each_entry(itr, rule_head, list_entry) {
@@ -5142,46 +5145,7 @@ ice_get_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 *promisc_mask,
 		    u16 *vid)
 {
 	return _ice_get_vsi_promisc(hw, vsi_handle, promisc_mask,
-				    vid, hw->switch_info);
-}
-
-/**
- * _ice_get_vsi_vlan_promisc - get VLAN promiscuous mode of given VSI
- * @hw: pointer to the hardware structure
- * @vsi_handle: VSI handle to retrieve info from
- * @promisc_mask: pointer to mask to be filled in
- * @vid: VLAN ID of promisc VLAN VSI
- * @sw: pointer to switch info struct for which function add rule
- */
-static enum ice_status
-_ice_get_vsi_vlan_promisc(struct ice_hw *hw, u16 vsi_handle, u8 *promisc_mask,
-			  u16 *vid, struct ice_switch_info *sw)
-{
-	struct ice_fltr_mgmt_list_entry *itr;
-	struct list_head *rule_head;
-	struct mutex *rule_lock;	/* Lock to protect filter rule list */
-
-	if (!ice_is_vsi_valid(hw, vsi_handle))
-		return ICE_ERR_PARAM;
-
-	*vid = 0;
-	*promisc_mask = 0;
-	rule_head = &sw->recp_list[ICE_SW_LKUP_PROMISC_VLAN].filt_rules;
-	rule_lock = &sw->recp_list[ICE_SW_LKUP_PROMISC_VLAN].filt_rule_lock;
-
-	mutex_lock(rule_lock);
-	list_for_each_entry(itr, rule_head, list_entry) {
-		/* Continue if this filter doesn't apply to this VSI or the
-		 * VSI ID is not in the VSI map for this filter
-		 */
-		if (!ice_vsi_uses_fltr(itr, vsi_handle))
-			continue;
-
-		*promisc_mask |= ice_determine_promisc_mask(&itr->fltr_info);
-	}
-	mutex_unlock(rule_lock);
-
-	return 0;
+				    vid, hw->switch_info, ICE_SW_LKUP_PROMISC);
 }
 
 /**
@@ -5195,8 +5159,9 @@ enum ice_status
 ice_get_vsi_vlan_promisc(struct ice_hw *hw, u16 vsi_handle, u8 *promisc_mask,
 			 u16 *vid)
 {
-	return _ice_get_vsi_vlan_promisc(hw, vsi_handle, promisc_mask,
-					 vid, hw->switch_info);
+	return _ice_get_vsi_promisc(hw, vsi_handle, promisc_mask,
+				    vid, hw->switch_info,
+				    ICE_SW_LKUP_PROMISC_VLAN);
 }
 
 /**
@@ -5607,7 +5572,6 @@ ice_remove_vsi_fltr_rule(struct ice_hw *hw, u16 vsi_handle,
 				 sw->recp_list, ICE_SW_LKUP_PROMISC_VLAN);
 }
 
-
 /**
  * ice_remove_vsi_fltr - Remove all filters for a VSI
  * @hw: pointer to the hardware structure
@@ -5971,7 +5935,7 @@ static const struct ice_prot_ext_tbl_entry ice_prot_ext[ICE_PROTOCOL_LAST] = {
 	{ ICE_MAC_OFOS,		{ 0, 2, 4, 6, 8, 10, 12 } },
 	{ ICE_MAC_IL,		{ 0, 2, 4, 6, 8, 10, 12 } },
 	{ ICE_ETYPE_OL,		{ 0 } },
-	{ ICE_VLAN_OFOS,	{ 0, 2 } },
+	{ ICE_VLAN_OFOS,	{ 2, 0 } },
 	{ ICE_IPV4_OFOS,	{ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18 } },
 	{ ICE_IPV4_IL,		{ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18 } },
 	{ ICE_IPV6_OFOS,	{ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24,
@@ -6166,8 +6130,6 @@ ice_fill_valid_words(struct ice_adv_lkup_elem *rule,
 	return ret_val;
 }
 
-
-
 /**
  * ice_create_first_fit_recp_def - Create a recipe grouping
  * @hw: pointer to the hardware structure
@@ -6187,7 +6149,6 @@ ice_create_first_fit_recp_def(struct ice_hw *hw,
 {
 	struct ice_pref_recipe_group *grp = NULL;
 	u8 j;
-
 
 	*recp_cnt = 0;
 
@@ -6934,7 +6895,6 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	if (status)
 		goto err_unroll;
 
-
 	/* Group match words into recipes using preferred recipe grouping
 	 * criteria.
 	 */
@@ -6959,7 +6919,6 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	status = ice_fill_fv_word_index(hw, &rm->fv_list, &rm->rg_list);
 	if (status)
 		goto err_unroll;
-
 
 	/* get bitmap of all profiles the recipe will be associated with */
 	bitmap_zero(profiles, ICE_MAX_NUM_PROFILES);
@@ -7075,6 +7034,12 @@ ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 			ipv6 = true;
 		else if (lkups[i].type == ICE_VLAN_OFOS)
 			vlan = true;
+		else if (lkups[i].type == ICE_ETYPE_OL &&
+			 lkups[i].h_u.ethertype.ethtype_id ==
+				cpu_to_be16(ICE_IPV6_ETHER_ID) &&
+			 lkups[i].m_u.ethertype.ethtype_id ==
+				cpu_to_be16(0xFFFF))
+			ipv6 = true;
 	}
 
 	/* figure out which dummy packet and dummy offset to use if user
@@ -7356,15 +7321,23 @@ ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 		 * over any significant packet data.
 		 */
 		for (j = 0; j < len / sizeof(u16); j++)
+#ifdef __CHECKER__
 			/* cppcheck-suppress objectIndex */
+#endif /* __CHECKER__ */
 			if (((u16 *)&lkups[i].m_u)[j])
 				((u16 *)(pkt + offset))[j] =
 					(((u16 *)(pkt + offset))[j] &
+#ifdef __CHECKER__
 					 /* cppcheck-suppress objectIndex */
+#endif /* __CHECKER__ */
 					 ~((u16 *)&lkups[i].m_u)[j]) |
+#ifdef __CHECKER__
 					/* cppcheck-suppress objectIndex */
+#endif /* __CHECKER__ */
 					(((u16 *)&lkups[i].h_u)[j] &
+#ifdef __CHECKER__
 					 /* cppcheck-suppress objectIndex */
+#endif /* __CHECKER__ */
 					 ((u16 *)&lkups[i].m_u)[j]);
 	}
 
@@ -7625,7 +7598,9 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 
 		ptr = (u16 *)&lkups[i].m_u;
 		for (j = 0; j < sizeof(lkups->m_u) / sizeof(u16); j++)
+#ifdef __CHECKER__
 			/* cppcheck-suppress objectIndex */
+#endif /* __CHECKER__ */
 			if (ptr[j] != 0)
 				word_cnt++;
 	}
@@ -7684,7 +7659,14 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	s_rule = devm_kzalloc(ice_hw_to_dev(hw), rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return ICE_ERR_NO_MEMORY;
-	act |= ICE_SINGLE_ACT_LB_ENABLE | ICE_SINGLE_ACT_LAN_ENABLE;
+	if (!rinfo->flags_info.act_valid) {
+		act |= ICE_SINGLE_ACT_LAN_ENABLE;
+		act |= ICE_SINGLE_ACT_LB_ENABLE;
+	}
+	else
+		act |= rinfo->flags_info.act & (ICE_SINGLE_ACT_LAN_ENABLE |
+						ICE_SINGLE_ACT_LB_ENABLE);
+
 	switch (rinfo->sw_act.fltr_act) {
 	case ICE_FWD_TO_VSI:
 		act |= (rinfo->sw_act.fwd_id.hw_vsi_id <<
@@ -8080,7 +8062,6 @@ enum ice_status ice_rem_adv_rule_for_vsi(struct ice_hw *hw, u16 vsi_handle)
 	}
 	return 0;
 }
-
 
 /**
  * ice_replay_vsi_fltr - Replay filters for requested VSI

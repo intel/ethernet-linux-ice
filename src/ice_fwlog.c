@@ -15,7 +15,7 @@ static void cache_cfg(struct ice_hw *hw, struct ice_fwlog_cfg *cfg)
 }
 
 /**
- * valid_module_entries - validate all the  module entry IDs and log levels
+ * valid_module_entries - validate all the module entry IDs and log levels
  * @hw: pointer to the HW structure
  * @entries: entries to validate
  * @num_entries: number of entries to validate
@@ -273,7 +273,7 @@ status_out:
 }
 
 /**
- *ice_aq_fwlog_register - Register PF for firmware logging events (0xFF31)
+ * ice_aq_fwlog_register - Register PF for firmware logging events (0xFF31)
  * @hw: pointer to the HW structure
  * @reg: true to register and false to unregister
  */

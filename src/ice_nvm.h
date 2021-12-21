@@ -63,19 +63,6 @@ union ice_nvm_access_data {
 	struct ice_nvm_features drv_features; /* NVM features */
 };
 
-/* NVM Access registers */
-#define GL_HIDA(_i)			(0x00082000 + ((_i) * 4))
-#define GL_HIBA(_i)			(0x00081000 + ((_i) * 4))
-#define GL_HICR				0x00082040
-#define GL_HICR_EN			0x00082044
-#define GLGEN_CSR_DEBUG_C		0x00075750
-#define GLPCI_LBARCTRL			0x0009DE74
-#define GLNVM_GENS			0x000B6100
-#define GLNVM_FLA			0x000B6108
-
-#define ICE_NVM_ACCESS_GL_HIDA_MAX	15
-#define ICE_NVM_ACCESS_GL_HIBA_MAX	1023
-
 enum ice_status
 ice_handle_nvm_access(struct ice_hw *hw, struct ice_nvm_access_cmd *cmd,
 		      union ice_nvm_access_data *data);
@@ -110,7 +97,8 @@ ice_aq_update_nvm(struct ice_hw *hw, u16 module_typeid, u32 offset,
 		  struct ice_sq_cd *cd);
 enum ice_status ice_nvm_validate_checksum(struct ice_hw *hw);
 enum ice_status ice_nvm_recalculate_checksum(struct ice_hw *hw);
-enum ice_status ice_nvm_write_activate(struct ice_hw *hw, u8 cmd_flags);
+enum ice_status
+ice_nvm_write_activate(struct ice_hw *hw, u16 cmd_flags, u8 *response_flags);
 enum ice_status ice_aq_nvm_update_empr(struct ice_hw *hw);
 enum ice_status
 ice_nvm_set_pkg_data(struct ice_hw *hw, bool del_pkg_data_flag, u8 *data,

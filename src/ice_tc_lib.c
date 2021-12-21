@@ -66,8 +66,7 @@ ice_detect_filter_conflict(struct ice_pf *pf,
 		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID)) {
 			if (fltr->tenant_id && tc_fltr->tenant_id &&
 			    fltr->tenant_id == tc_fltr->tenant_id) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Unsupported filter combination across TC, filter exist with same tunnel key for other TC(see dmesg log)");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same tunnel key for other TC(see dmesg log)");
 				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same tunnel key (%u)\n",
 					fltr->action.tc_class,
 					be32_to_cpu(fltr->tenant_id));
@@ -98,15 +97,13 @@ ice_detect_filter_conflict(struct ice_pf *pf,
 		 */
 		if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) {
 			if (dport && dst_port && dport == dst_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Unsupported filter combination across TC, filter exist with same destination port for other TC, as destination port based filter(see dmesg log)");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same destination port for other TC, as destination port based filter(see dmesg log)");
 				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as destination port based filter. This is to avoid unexpected packet mirroring.\n",
 					fltr->action.tc_class, dst_port);
 				return -EOPNOTSUPP;
 			}
 			if (dport && src_port && dport == src_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Unsupported filter combination across TC, filter exist with same destination port for other TC, as source port based filter(see dmesg log)");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same destination port for other TC, as source port based filter(see dmesg log)");
 				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as source port based filter. This is to avoid unexpected packet mirroring.\n",
 					fltr->action.tc_class, src_port);
 				return -EOPNOTSUPP;
@@ -115,15 +112,13 @@ ice_detect_filter_conflict(struct ice_pf *pf,
 
 		if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)  {
 			if (sport && dst_port && sport == dst_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Unsupported filter combination across TC, filter exist with same source port for other TC, as destination port based filter (see dmesg log)");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same source port for other TC, as destination port based filter (see dmesg log)");
 				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as destination port based filter. This is to avoid unexpected packet mirroring.\n",
 					fltr->action.tc_class, dst_port);
 				return -EOPNOTSUPP;
 			}
 			if (sport && src_port && sport == src_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Unsupported filter combination across TC, filter exist with same source port for other TC, as source port based filter (see dmesg log)");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same source port for other TC, as source port based filter (see dmesg log)");
 				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as source port based filter. This is to avoid unexpected packet mirroring.\n",
 					fltr->action.tc_class, src_port);
 				return -EOPNOTSUPP;
@@ -191,26 +186,22 @@ ice_chnl_fltr_type_chk(struct ice_pf *pf, struct ice_tc_flower_fltr *tc_fltr,
 	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_SRC_PORT) {
 		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) &&
 		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC_PORT to SRC + DEST_PORT\n",
+			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC_PORT to SRC + DEST_PORT\n",
 				tc_fltr->action.tc_class);
 			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT;
 		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC_PORT to DEST_PORT\n",
+			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC_PORT to DEST_PORT\n",
 				tc_fltr->action.tc_class);
 			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_PORT;
 		}
 	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_DEST_PORT) {
 		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) &&
 		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from DEST_PORT to SRC + DEST_PORT\n",
+			dev_dbg(dev, "Changing filter type for action (tc_class %d) from DEST_PORT to SRC + DEST_PORT\n",
 				tc_fltr->action.tc_class);
 			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT;
 		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from DEST_PORT to SRC_PORT\n",
+			dev_dbg(dev, "Changing filter type for action (tc_class %d) from DEST_PORT to SRC_PORT\n",
 				tc_fltr->action.tc_class);
 			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_PORT;
 		}
@@ -224,15 +215,13 @@ ice_chnl_fltr_type_chk(struct ice_pf *pf, struct ice_tc_flower_fltr *tc_fltr,
 
 		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) &&
 		    (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT))) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC+DEST_PORT to DEST_PORT\n",
+			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC+DEST_PORT to DEST_PORT\n",
 				tc_fltr->action.tc_class);
 			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_PORT;
 		} else if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT) &&
 			   (!(tc_fltr->flags &
 			      ICE_TC_FLWR_FIELD_DEST_L4_PORT))) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC+DEST_PORT to SRC_PORT\n",
+			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC+DEST_PORT to SRC_PORT\n",
 				tc_fltr->action.tc_class);
 			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_PORT;
 		}
@@ -455,8 +444,22 @@ ice_determine_gtp_tun_type(struct ice_pf *pf, u16 l4_proto, u32 flags,
 }
 
 /**
+ * ice_is_tunnel_fltr - is this a tunnel filter
+ * @f: Pointer to tc-flower filter
+ *
+ * This function should be called only after tunnel_type
+ * of the filter is set by calling ice_tc_tun_parse()
+ */
+static bool ice_is_tunnel_fltr(struct ice_tc_flower_fltr *f)
+{
+	return (f->tunnel_type == TNL_VXLAN ||
+		f->tunnel_type == TNL_GENEVE ||
+		f->tunnel_type == TNL_GTP);
+}
+
+/**
  * ice_tc_count_lkups - determine lookup count for switch filter
- * @flags: tc-flower flags
+ * @flags: TC-flower flags
  * @headers: Pointer to TC flower filter header structure
  * @fltr: Pointer to outer TC filter structure
  *
@@ -468,12 +471,8 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 {
 	int lkups_cnt = 0;
 
-	if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID)
-		lkups_cnt++;
-
-	/* is Tunnel ID specified */
-	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID) {
-		/* For ADQ filter, outer DMAC gets added implictly */
+	if (ice_is_tunnel_fltr(fltr)) {
+		/* For ADQ filter, outer DMAC gets added implicitly */
 		if (flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC)
 			lkups_cnt++;
 		/* Copy outer L4 port for non-GTP tunnel */
@@ -483,6 +482,9 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 					lkups_cnt++;
 		}
 		/* due to tunnel */
+		if (fltr->tenant_id)
+			lkups_cnt++;
+	} else if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID) {
 		lkups_cnt++;
 	}
 
@@ -494,14 +496,14 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 	if (flags & ICE_TC_FLWR_FIELD_VLAN)
 		lkups_cnt++;
 
-	/* is IPv[4|6] fields specified? */
+	/* are IPv[4|6] fields specified? */
 	if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV4 | ICE_TC_FLWR_FIELD_SRC_IPV4))
 		lkups_cnt++;
 	else if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV6 |
 			  ICE_TC_FLWR_FIELD_SRC_IPV6))
 		lkups_cnt++;
 
-	/* is L4 (TCP/UDP/any other L4 protocol fields specified? */
+	/* is L4 (TCP/UDP/any other L4 protocol fields) specified? */
 	if (flags & (ICE_TC_FLWR_FIELD_DEST_L4_PORT |
 		     ICE_TC_FLWR_FIELD_SRC_L4_PORT))
 		lkups_cnt++;
@@ -510,16 +512,16 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 }
 
 /**
- * ice_tc_fill_rules - fill filter rules based on tc fltr
- * @hw: pointer to hw structure
- * @flags: tc flower field flags
- * @tc_fltr: pointer to tc flower filter
+ * ice_tc_fill_rules - fill filter rules based on TC fltr
+ * @hw: pointer to HW structure
+ * @flags: TC flower field flags
+ * @tc_fltr: pointer to TC flower filter
  * @list: list of advance rule elements
  * @rule_info: pointer to information about rule
  * @l4_proto: pointer to information such as L4 proto type
  *
- * Fill ice_adv_lkup_elem list based on tc flower flags and
- * tc flower headers. This list should be used to add
+ * Fill ice_adv_lkup_elem list based on TC flower flags and
+ * TC flower headers. This list should be used to add
  * advance filter in hardware.
  */
 static int
@@ -532,16 +534,9 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
 	int i = 0;
 
-	if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID) {
-		list[i].type = ICE_ETYPE_OL;
-		list[i].h_u.ethertype.ethtype_id = headers->l2_key.n_proto;
-		list[i].m_u.ethertype.ethtype_id = headers->l2_mask.n_proto;
-		i++;
-	}
-
 	/* copy L2 (MAC) fields, Outer UDP (in case of tunnel) port info */
-	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID) {
-		u32 tenant_id;
+	if (ice_is_tunnel_fltr(tc_fltr)) {
+		u32 tenant_id = tc_fltr->tenant_id;
 
 		/* copy L2 (MAC) fields if specified, For tunnel outer DMAC
 		 * is needed and supported and is part of outer_headers.dst_mac
@@ -568,41 +563,34 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 				i++;
 			}
 		}
+		if (tenant_id) {
+			/* setup encap info in list elements such as
+			 * VNI/encap key-id, mask, type of tunnel
+			 */
+			if (tc_fltr->tunnel_type == TNL_VXLAN)
+				list[i].type = ICE_VXLAN;
+			else if (tc_fltr->tunnel_type == TNL_GENEVE)
+				list[i].type = ICE_GENEVE;
+			else if (tc_fltr->tunnel_type == TNL_GTP)
+				list[i].type = ICE_GTP;
 
-		/* setup encap info in list elements such as VNI/encap key-id,
-		 * mask, type of tunnel
-		 */
-		if (tc_fltr->tunnel_type == TNL_VXLAN)
-			list[i].type = ICE_VXLAN;
-		else if (tc_fltr->tunnel_type == TNL_GENEVE)
-			list[i].type = ICE_GENEVE;
-		else if (tc_fltr->tunnel_type == TNL_GTP)
-			list[i].type = ICE_GTP;
-
-		if (tc_fltr->tunnel_type == TNL_VXLAN ||
-		    tc_fltr->tunnel_type == TNL_GENEVE) {
-			tenant_id = be32_to_cpu(tc_fltr->tenant_id) << 8;
-			list[i].h_u.tnl_hdr.vni = cpu_to_be32(tenant_id);
-			if (tenant_id)
-				/* 24 bit tunnel key: mask "\xff\xff\xff\x00" */
+			if (tc_fltr->tunnel_type == TNL_VXLAN ||
+			    tc_fltr->tunnel_type == TNL_GENEVE) {
+				tenant_id = be32_to_cpu(tenant_id) << 8;
+				list[i].h_u.tnl_hdr.vni =
+					cpu_to_be32(tenant_id);
+				/* 24bit tunnel key mask "\xff\xff\xff\x00" */
 				memcpy(&list[i].m_u.tnl_hdr.vni,
 				       "\xff\xff\xff\x00", 4);
-			else
-				memcpy(&list[i].m_u.tnl_hdr.vni,
-				       "\x00\x00\x00\x00", 4);
-		} else if (tc_fltr->tunnel_type == TNL_GTP) {
-			tenant_id = be32_to_cpu(tc_fltr->tenant_id);
-			list[i].h_u.gtp_hdr.teid = cpu_to_be32(tenant_id);
-			if (tenant_id)
-				/* 32 bit tunnel key: mask "\xff\xff\xff\xff" */
+			} else if (tc_fltr->tunnel_type == TNL_GTP) {
+				list[i].h_u.gtp_hdr.teid = tenant_id;
+				/* 32bit tunnel key mask "\xff\xff\xff\xff" */
 				memcpy(&list[i].m_u.gtp_hdr.teid,
 				       "\xff\xff\xff\xff", 4);
-			else
-				memcpy(&list[i].m_u.gtp_hdr.teid,
-				       "\x00\x00\x00x00", 4);
+			}
+			/* advance list index */
+			i++;
 		}
-		/* advance list index */
-		i++;
 
 		/* now access values from inner_headers such as inner MAC (if
 		 * supported), inner IPv4[6], Inner L4 ports, hence update
@@ -611,6 +599,16 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		headers = &tc_fltr->inner_headers;
 	} else {
 		rule_info->tun_type = ICE_NON_TUN;
+
+		if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID) {
+			list[i].type = ICE_ETYPE_OL;
+			list[i].h_u.ethertype.ethtype_id =
+					headers->l2_key.n_proto;
+			list[i].m_u.ethertype.ethtype_id =
+					headers->l2_mask.n_proto;
+			i++;
+		}
+
 		/* copy L2 (MAC) fields, for non-tunnel case */
 		if (flags & (ICE_TC_FLWR_FIELD_DST_MAC |
 			     ICE_TC_FLWR_FIELD_SRC_MAC)) {
@@ -644,7 +642,6 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		i++;
 	}
 
-
 	/* copy L3 (IPv[4|6]: src, dest) address */
 	if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV4 |
 		     ICE_TC_FLWR_FIELD_SRC_IPV4)) {
@@ -652,15 +649,18 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 		/* For encap, Outer L3 and L4 based are not supported,
 		 * hence if user specified L3, L4 fields, they are treated
-		 * as inner L3 and L4 respectivelt
+		 * as inner L3 and L4 respectively
 		 */
-		if (flags & ICE_TC_FLWR_FIELD_TENANT_ID)
+		if (ice_is_tunnel_fltr(tc_fltr))
 			list[i].type = ICE_IPV4_IL;
 		else
 			list[i].type = ICE_IPV4_OFOS;
 
 		l3_key = &headers->l3_key;
 		l3_mask = &headers->l3_mask;
+		list[i].h_u.ipv4_hdr.protocol = l3_key->ip_proto;
+		list[i].m_u.ipv4_hdr.protocol = l3_mask->ip_proto;
+
 		if (flags & ICE_TC_FLWR_FIELD_DEST_IPV4) {
 			list[i].h_u.ipv4_hdr.dst_addr = l3_key->dst_ipv4;
 			list[i].m_u.ipv4_hdr.dst_addr = l3_mask->dst_ipv4;
@@ -675,7 +675,7 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		struct ice_ipv6_hdr *ipv6_hdr, *ipv6_mask;
 		struct ice_tc_l3_hdr *l3_key, *l3_mask;
 
-		if (flags & ICE_TC_FLWR_FIELD_TENANT_ID)
+		if (ice_is_tunnel_fltr(tc_fltr))
 			list[i].type = ICE_IPV6_IL;
 		else
 			list[i].type = ICE_IPV6_OFOS;
@@ -683,6 +683,8 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		ipv6_mask = &list[i].m_u.ipv6_hdr;
 		l3_key = &headers->l3_key;
 		l3_mask = &headers->l3_mask;
+		ipv6_hdr->next_hdr = l3_key->ip_proto;
+		ipv6_mask->next_hdr = l3_mask->ip_proto;
 
 		if (flags & ICE_TC_FLWR_FIELD_DEST_IPV6) {
 			memcpy(&ipv6_hdr->dst_addr, &l3_key->dst_ipv6_addr,
@@ -715,12 +717,10 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 				*l4_proto = IPPROTO_TCP;
 		} else if (headers->l3_key.ip_proto == IPPROTO_UDP) {
 			/* Check if UDP dst port is known as a tunnel port */
-			if (ice_tunnel_port_in_use(hw, dst_port, NULL)) {
+			if (ice_tunnel_port_in_use(hw, dst_port, NULL))
 				list[i].type = ICE_UDP_OF;
-				rule_info->tun_type = ICE_SW_TUN_VXLAN;
-			} else {
+			else
 				list[i].type = ICE_UDP_ILOS;
-			}
 			/* detected L4 proto is UDP */
 			if (l4_proto)
 				*l4_proto = IPPROTO_UDP;
@@ -740,8 +740,9 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 }
 
 #ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
-static int ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
-				       struct flow_action_entry *act)
+static int
+ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
+			    struct flow_action_entry *act)
 {
 	struct ice_repr *repr;
 
@@ -764,16 +765,14 @@ static int ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
 			fltr->dest_vsi = np->vsi;
 			fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
 		} else {
-			NL_SET_ERR_MSG_MOD(fltr->extack,
-					   "Unsupported netdevice in switchdev mode");
+			NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported netdevice in switchdev mode");
 			return -EINVAL;
 		}
 
 		break;
 
 	default:
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unsupported action in switchdev mode");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported action in switchdev mode");
 		return -EINVAL;
 	}
 
@@ -787,8 +786,8 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &fltr->outer_headers;
 	struct ice_adv_rule_info rule_info = { 0 };
 	struct ice_rule_query_data rule_added;
-	struct ice_adv_lkup_elem *list;
 	struct ice_hw *hw = &vsi->back->hw;
+	struct ice_adv_lkup_elem *list;
 	u32 flags = fltr->flags;
 	enum ice_status status;
 	int lkups_cnt;
@@ -800,8 +799,7 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 				ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
 				ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
 				ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unsupported encap field(s)");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported encap field(s)");
 		return -EOPNOTSUPP;
 	}
 
@@ -817,7 +815,14 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	}
 
 	rule_info.sw_act.fltr_act = fltr->action.fltr_act;
-	rule_info.sw_act.vsi_handle = fltr->dest_vsi->idx;
+	if (fltr->action.fltr_act != ICE_DROP_PACKET)
+		rule_info.sw_act.vsi_handle = fltr->dest_vsi->idx;
+	/* For now, making priority to be highest, and it also becomes
+	 * the priority for recipe which will get created as a result of
+	 * new extraction sequence based on input set.
+	 * Priority '7' is max val for switch recipe, higher the number
+	 * results into order of switch rule evaluation.
+	 */
 	rule_info.priority = 7;
 
 	if (fltr->direction == ICE_ESWITCH_FLTR_INGRESS) {
@@ -828,6 +833,8 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		rule_info.sw_act.flag |= ICE_FLTR_TX;
 		rule_info.sw_act.src = vsi->idx;
 		rule_info.rx = false;
+		rule_info.flags_info.act = ICE_SINGLE_ACT_LAN_ENABLE;
+		rule_info.flags_info.act_valid = true;
 	}
 
 	/* specify the cookie as filter_rule_id */
@@ -835,13 +842,11 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 
 	status = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info, &rule_added);
 	if (status == ICE_ERR_ALREADY_EXISTS) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter because it already exist");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because it already exist");
 		ret = -EINVAL;
 		goto exit;
 	} else if (status) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter due to error");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter due to error");
 		ret = -EIO;
 		goto exit;
 	}
@@ -851,12 +856,6 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	 */
 	fltr->rid = rule_added.rid;
 	fltr->rule_id = rule_added.rule_id;
-
-	if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS) {
-		if (ice_fltr_update_flags(vsi, fltr->rule_id, fltr->rid,
-					  ICE_SINGLE_ACT_LAN_ENABLE))
-			ice_rem_adv_rule_by_id(hw, &rule_added);
-	}
 
 exit:
 	kfree(list);
@@ -895,8 +894,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 
 	dev = ice_pf_to_dev(pf);
 	if (ice_is_safe_mode(pf)) {
-		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-				   "Unable to add filter because driver is in safe mode");
+		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because driver is in safe mode");
 		return -EOPNOTSUPP;
 	}
 
@@ -905,8 +903,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 				ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
 				ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
 				ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
-		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-				   "Unsupported encap field(s)");
+		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported encap field(s)");
 		return -EOPNOTSUPP;
 	}
 
@@ -927,6 +924,11 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		goto exit;
 	}
 
+	if (tc_fltr->tunnel_type == TNL_VXLAN)
+		rule_info.tun_type = ICE_SW_TUN_VXLAN;
+	else if (tc_fltr->tunnel_type == TNL_GENEVE)
+		rule_info.tun_type = ICE_SW_TUN_GENEVE;
+
 	/* Now determine correct TUN type of based on encap params */
 	if ((flags & ICE_TC_FLWR_FIELD_TENANT_ID) &&
 	    tc_fltr->tunnel_type == TNL_GTP) {
@@ -936,8 +938,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 				dev_err(dev, "Unable to add filter because could not determine tun type, VSI %u, vf_id:%u\n",
 					vsi->vsi_num, vsi->vf_id);
 			else
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Unable to add filter because could not determine TUN type. ");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because could not determine TUN type. ");
 			ret = -EINVAL;
 			goto exit;
 		}
@@ -946,8 +947,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	rule_info.sw_act.fltr_act = tc_fltr->action.fltr_act;
 	if (tc_fltr->action.tc_class >= ICE_CHNL_START_TC) {
 		if (!ch_vsi) {
-			NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-					   "Unable to add filter because specified destination doesn't exist");
+			NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because specified destination doesn't exist");
 			ret = -EINVAL;
 			goto exit;
 		}
@@ -961,7 +961,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 				ret = -EINVAL;
 				goto exit;
 			}
-			vf = &pf->vf[vsi->vf_id];
+			vf = ice_get_vf(pf, vsi->vf_id);
 			if (!vf) {
 				dev_err(dev, "VF is NULL for VSI->type: ICE_VF_VSI and vf_id %d\n",
 					vsi->vf_id);
@@ -984,8 +984,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		/* perform fltr_type check for channel (aka ADQ) VSI */
 		ret = ice_chnl_fltr_type_chk(pf, tc_fltr, &fltr_type);
 		if (ret) {
-			NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-					   "Unable to add filter because filter type check failed");
+			NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because filter type check failed");
 			dev_err(dev, "Unable to add filter because filter type check failed");
 			ret = -EINVAL;
 			goto exit;
@@ -1032,13 +1031,11 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 
 	status = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info, &rule_added);
 	if (status == ICE_ERR_ALREADY_EXISTS) {
-		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-				   "Unable to add filter because it already exist");
+		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because it already exist");
 		ret = -EINVAL;
 		goto exit;
 	} else if (status) {
-		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-				   "Unable to add filter due to error");
+		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter due to error");
 		ret = -EIO;
 		goto exit;
 	}
@@ -1127,14 +1124,13 @@ ice_tc_set_ipv6(struct flow_match_ipv6_addrs *match,
 	 */
 	if (ipv6_addr_loopback(&match->key->dst) ||
 	    ipv6_addr_loopback(&match->key->src)) {
-		NL_SET_ERR_MSG_MOD(fltr->extack, "Bad ipv6, addr is LOOPBACK");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Bad IPv6, addr is LOOPBACK");
 		return -EINVAL;
 	}
 	/* if src/dest IPv6 address is *,* error */
 	if (ipv6_addr_any(&match->mask->dst) &&
 	    ipv6_addr_any(&match->mask->src)) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Bad src/dest IPV6, addr is any");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Bad src/dest IPv6, addr is any");
 		return -EINVAL;
 	}
 	if (!ipv6_addr_any(&match->mask->dst)) {
@@ -1235,7 +1231,7 @@ ice_is_tnl_gtp(struct net_device *tunnel_dev,
 		enc_dst_port = be16_to_cpu(match.key->dst);
 
 		/* Outer UDP port is GTP well known port,
-		 * if 'enc_dst_port' matched with GTP wellknown port,
+		 * if 'enc_dst_port' matched with GTP well known port,
 		 * return true from this function.
 		 */
 		if (enc_dst_port != ICE_GTP_TNL_WELLKNOWN_PORT) {
@@ -1245,7 +1241,7 @@ ice_is_tnl_gtp(struct net_device *tunnel_dev,
 			return false;
 		}
 
-		/* all checks passed including outer UDP port  to be qualified
+		/* all checks passed including outer UDP port to be qualified
 		 * for GTP tunnel
 		 */
 		return true;
@@ -1270,8 +1266,9 @@ ice_tc_tun_get_type(struct net_device *tunnel_dev,
 #if IS_ENABLED(CONFIG_VXLAN)
 	if (netif_is_vxlan(tunnel_dev))
 		return TNL_VXLAN;
+#endif
 #endif /* HAVE_VXLAN_TYPE */
-#elif defined(HAVE_GENEVE_TYPE)
+#ifdef HAVE_GENEVE_TYPE
 #if IS_ENABLED(CONFIG_GENEVE)
 	if (netif_is_geneve(tunnel_dev))
 		return TNL_GENEVE;
@@ -1366,8 +1363,8 @@ ice_tc_tun_parse(struct net_device *filter_dev, struct ice_vsi *vsi,
 	dev = ice_pf_to_dev(pf);
 	tunnel_type = ice_tc_tun_get_type(filter_dev, rule);
 
-	/* VXLAN and GTP tunnel are supported now */
-	if (tunnel_type == TNL_VXLAN || tunnel_type == TNL_GTP) {
+	if (tunnel_type == TNL_VXLAN || tunnel_type == TNL_GTP ||
+	    tunnel_type == TNL_GENEVE) {
 		err = ice_tc_tun_info(pf, f, fltr, tunnel_type);
 		if (err) {
 			dev_err(dev, "Failed to parse tunnel (tunnel_type %u) attributes\n",
@@ -1404,8 +1401,7 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
 
 	err = ice_tc_tun_parse(filter_dev, vsi, f, fltr, headers);
 	if (err) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "failed to parse tunnel attributes");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "failed to parse tunnel attributes");
 		return err;
 	}
 
@@ -1473,8 +1469,10 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &fltr->outer_headers;
 	struct flow_rule *rule = flow_cls_offload_flow_rule(f);
-	struct flow_dissector *dissector = rule->match.dissector;
 	u16 n_proto_mask = 0, n_proto_key = 0, addr_type = 0;
+	struct flow_dissector *dissector;
+
+	dissector = rule->match.dissector;
 
 	if (dissector->used_keys &
 	    ~(BIT(FLOW_DISSECTOR_KEY_CONTROL) |
@@ -1504,16 +1502,26 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 	}
 
 #if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
-	if ((flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) ||
-	     flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) ||
-	     flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_KEYID) ||
-	     flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS))) {
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) ||
+	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) ||
+	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_KEYID) ||
+#ifdef HAVE_VXLAN_TYPE
+#if IS_ENABLED(CONFIG_VXLAN)
+	    netif_is_vxlan(filter_dev) ||
+#endif
+#endif /* HAVE_VXLAN_TYPE */
+#ifdef HAVE_GENEVE_TYPE
+#if IS_ENABLED(CONFIG_GENEVE)
+	    netif_is_geneve(filter_dev) ||
+#endif
+#endif /* HAVE_GENEVE_TYPE */
+	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)
+	  ) {
 		int err;
 
 		err = ice_parse_tunnel_attr(filter_dev, vsi, f, fltr, headers);
 		if (err) {
-			NL_SET_ERR_MSG_MOD(fltr->extack,
-					   "Failed to parse TC flower tunnel attributes");
+			NL_SET_ERR_MSG_MOD(fltr->extack, "Failed to parse TC flower tunnel attributes");
 			return err;
 		}
 
@@ -1540,13 +1548,13 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 			n_proto_key = 0;
 			n_proto_mask = 0;
 		} else {
-			if (!ice_is_adq_active(vsi->back))
-				fltr->flags |= ICE_TC_FLWR_FIELD_ETH_TYPE_ID;
+			fltr->flags |= ICE_TC_FLWR_FIELD_ETH_TYPE_ID;
 		}
 
 		headers->l2_key.n_proto = cpu_to_be16(n_proto_key);
 		headers->l2_mask.n_proto = cpu_to_be16(n_proto_mask);
 		headers->l3_key.ip_proto = match.key->ip_proto;
+		headers->l3_mask.ip_proto = match.mask->ip_proto;
 	}
 
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ETH_ADDRS)) {
@@ -1587,10 +1595,8 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (mask->vlan_id) {
 			if (mask->vlan_id == VLAN_VID_MASK) {
 				fltr->flags |= ICE_TC_FLWR_FIELD_VLAN;
-				fltr->flags &= ~ICE_TC_FLWR_FIELD_ETH_TYPE_ID;
 			} else {
-				NL_SET_ERR_MSG_MOD(fltr->extack,
-						   "Bad VLAN mask");
+				NL_SET_ERR_MSG_MOD(fltr->extack, "Bad VLAN mask");
 				return -EINVAL;
 			}
 		}
@@ -1622,10 +1628,8 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (match.mask->vlan_id) {
 			if (match.mask->vlan_id == VLAN_VID_MASK) {
 				fltr->flags |= ICE_TC_FLWR_FIELD_VLAN;
-				fltr->flags &= ~ICE_TC_FLWR_FIELD_ETH_TYPE_ID;
 			} else {
-				NL_SET_ERR_MSG_MOD(fltr->extack,
-						   "Bad VLAN mask");
+				NL_SET_ERR_MSG_MOD(fltr->extack, "Bad VLAN mask");
 				return -EINVAL;
 			}
 		}
@@ -1674,8 +1678,7 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		case IPPROTO_UDP:
 			break;
 		default:
-			NL_SET_ERR_MSG_MOD(fltr->extack,
-					   "Only UDP and TCP transport are supported");
+			NL_SET_ERR_MSG_MOD(fltr->extack, "Only UDP and TCP transport are supported");
 			return -EINVAL;
 		}
 	}
@@ -1707,13 +1710,11 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 		if (add) {
 			err = ice_fltr_add_mac(vsi, dst_mac, act);
 			if (err)
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Could not add MAC filters");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not add MAC filters");
 		} else {
 			err = ice_fltr_remove_mac(vsi, dst_mac, act);
 			if (err)
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Could not remove MAC filters");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not remove MAC filters");
 		}
 		break;
 	case ICE_TC_FLWR_FLTR_FLAGS_VLAN:
@@ -1722,34 +1723,29 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 				ICE_VLAN(ETH_P_8021Q, vlan_id, 0, act);
 			err = vlan_ops->add_vlan(vsi, &vlan);
 			if (err)
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Could not add VLAN filters");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not add VLAN filters");
 		} else {
 			struct ice_vlan vlan =
 				ICE_VLAN(ETH_P_8021Q, vlan_id, 0, act);
 			err = vlan_ops->del_vlan(vsi, &vlan);
 			if (err)
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Could not delete VLAN filters");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not delete VLAN filters");
 		}
 		break;
 	case ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN:
 		if (add) {
 			err = ice_fltr_add_mac_vlan(vsi, dst_mac, vlan_id, act);
 			if (err)
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Could not add MAC VLAN filters");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not add MAC VLAN filters");
 		} else {
 			err = ice_fltr_remove_mac_vlan(vsi, dst_mac, vlan_id,
 						       act);
 			if (err)
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-						   "Could not remove MAC VLAN filters");
+				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not remove MAC VLAN filters");
 		}
 		break;
 	default:
-		NL_SET_ERR_MSG_MOD(tc_fltr->extack,
-				   "Not a default filter type");
+		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Not a default filter type");
 		err = -EOPNOTSUPP;
 		break;
 	}
@@ -1802,35 +1798,30 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	struct ice_vsi *main_vsi;
 
 	if (tc < 0) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter because specified destination is invalid");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because specified destination is invalid");
 		return -EINVAL;
 	}
 	if (!tc) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter because of invalid destination");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because of invalid destination");
 		return -EINVAL;
 	}
 
 	if (!(vsi->all_enatc & BIT(tc))) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter because of non-existence destination");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because of non-existence destination");
 		return -EINVAL;
 	}
 
 	/* Redirect to a TC class or Queue Group */
 	main_vsi = ice_get_main_vsi(vsi->back);
 	if (!main_vsi || !main_vsi->netdev) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter because of invalid netdevice");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because of invalid netdevice");
 		return -EINVAL;
 	}
 
 	if ((fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID) &&
 	    (fltr->flags & (ICE_TC_FLWR_FIELD_DST_MAC |
 			   ICE_TC_FLWR_FIELD_SRC_MAC))) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter because filter using tunnel key and inner MAC is unsupported combination");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because filter using tunnel key and inner MAC is unsupported combination");
 		return -EOPNOTSUPP;
 	}
 
@@ -1842,12 +1833,12 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	 * this code won't do anything
 	 * 2. For non-tunnel, if user didn't specify MAC address, add implicit
 	 * dest MAC to be lower netdev's active unicast MAC address
-	 * 3. For tunnel,  as of now tc-filter thru flower classifier doesn't
+	 * 3. For tunnel,  as of now TC-filter thru flower classifier doesn't
 	 * have provision for user to specify outer DMAC, hence driver to
 	 * implicitly add outer dest MAC to be lower netdev's active unicast
 	 * MAC address.
 	 */
-	if (fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID)  {
+	if (ice_is_tunnel_fltr(fltr)) {
 		if (!(fltr->flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC)) {
 			ether_addr_copy(fltr->outer_headers.l2_key.dst_mac,
 					main_vsi->netdev->dev_addr);
@@ -1868,8 +1859,7 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	if (!ice_mac_fltr_exist(&main_vsi->back->hw,
 				fltr->outer_headers.l2_key.dst_mac,
 				main_vsi->idx)) {
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Unable to add filter because legacy MAC filter for specified destination doesn't exist");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because legacy MAC filter for specified destination doesn't exist");
 		return -EINVAL;
 	}
 
@@ -1881,8 +1871,7 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 
 		if (!ice_vlan_fltr_exist(&main_vsi->back->hw, vlan_id,
 					 main_vsi->idx)) {
-			NL_SET_ERR_MSG_MOD(fltr->extack,
-					   "Unable to add filter because legacy VLAN filter for specified destination doesn't exist");
+			NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because legacy VLAN filter for specified destination doesn't exist");
 			return -EINVAL;
 		}
 	}
@@ -1949,10 +1938,11 @@ ice_parse_tc_flower_actions(struct ice_vsi *vsi,
 #endif /* HAVE_TCF_EXTS_TO_LIST */
 #ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
 		if (ice_is_eswitch_mode_switchdev(vsi->back)) {
-			int err =  ice_eswitch_tc_parse_action(fltr, act);
+			int err = ice_eswitch_tc_parse_action(fltr, act);
 
 			if (err)
 				return err;
+			continue;
 		}
 #else
 		if (ice_is_eswitch_mode_switchdev(vsi->back))
@@ -1966,8 +1956,7 @@ ice_parse_tc_flower_actions(struct ice_vsi *vsi,
 #else
 		if (is_tcf_gact_shot(tc_act)) {
 #endif
-			NL_SET_ERR_MSG_MOD(fltr->extack,
-					   "Unsupported action DROP");
+			NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported action DROP");
 			return -EINVAL;
 		}
 		fltr->action.fltr_act = ICE_FWD_TO_VSI;
@@ -2002,12 +1991,10 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 
 	if (err) {
 		if (err == ICE_ERR_DOES_NOT_EXIST) {
-			NL_SET_ERR_MSG_MOD(fltr->extack,
-					   "filter does not exist\n");
+			NL_SET_ERR_MSG_MOD(fltr->extack, "Filter does not exist");
 			return -ENOENT;
 		}
-		NL_SET_ERR_MSG_MOD(fltr->extack,
-				   "Failed to delete TC flower filter");
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Failed to delete TC flower filter");
 		return -EIO;
 	}
 
@@ -2043,7 +2030,7 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
  * @f: Pointer to flower offload structure
  * @__fltr: Pointer to struct ice_tc_flower_fltr
  *
- * This function parses tc-flower input fields, parses action,
+ * This function parses TC-flower input fields, parses action,
  * and adds a filter.
  */
 #ifdef HAVE_TC_INDIR_BLOCK
@@ -2135,7 +2122,7 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 	struct net_device *vsi_netdev = vsi->netdev;
 	struct ice_tc_flower_fltr *fltr;
 	struct ice_pf *pf = vsi->back;
-	int err = 0;
+	int err;
 
 	if (ice_is_reset_in_progress(pf->state))
 		return -EBUSY;
@@ -2160,15 +2147,12 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 		 * Avoid triggering explicit error in this case.
 		 */
 		if (netdev == vsi_netdev)
-			NL_SET_ERR_MSG_MOD(extack,
-					   "can't apply TC flower filters, turn ON hw-tc-offload and try again");
+			NL_SET_ERR_MSG_MOD(extack, "can't apply TC flower filters, turn ON hw-tc-offload and try again");
 #else
-		NL_SET_ERR_MSG_MOD(extack,
-				   "can't apply TC flower filters, turn ON hw-tc-offload and try again");
+		NL_SET_ERR_MSG_MOD(extack, "can't apply TC flower filters, turn ON hw-tc-offload and try again");
 #endif /* HAVE_TC_INDIR_BLOCK */
 #else  /* !HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK */
-		netdev_err(vsi_netdev,
-			   "can't apply TC flower filters, turn ON hw-tc-offload and try again\n");
+		netdev_err(vsi_netdev, "can't apply TC flower filters, turn ON hw-tc-offload and try again\n");
 #endif /* HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK */
 		return -EINVAL;
 	}
@@ -2177,17 +2161,15 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 	fltr = ice_find_tc_flower_fltr(pf, cls_flower->cookie);
 	if (fltr) {
 #ifdef HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK
-		NL_SET_ERR_MSG_MOD(extack,
-				   "filter cookie already exists, ignoring");
+		NL_SET_ERR_MSG_MOD(extack, "filter cookie already exists, ignoring");
 #else
-		netdev_warn(vsi_netdev,
-			    "filter cookie %lx already exists, ignoring\n",
+		netdev_warn(vsi_netdev, "filter cookie %lx already exists, ignoring\n",
 			    fltr->cookie);
 #endif /* HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK */
 		return -EEXIST;
 	}
 
-	/* prep and add tc-flower filter in HW */
+	/* prep and add TC-flower filter in HW */
 	err = ice_add_tc_fltr(netdev, vsi, cls_flower, &fltr);
 	if (err)
 		return err;
@@ -2234,8 +2216,7 @@ ice_del_cls_flower(struct ice_vsi *vsi, struct flow_cls_offload *cls_flower)
 			return 0;
 
 #ifdef HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK
-		NL_SET_ERR_MSG_MOD(cls_flower->common.extack,
-				   "failed to delete TC flower filter because unable to find it");
+		NL_SET_ERR_MSG_MOD(cls_flower->common.extack, "failed to delete TC flower filter because unable to find it");
 #else
 		dev_err(ice_pf_to_dev(pf),
 			"failed to delete TC flower filter because unable to find it\n");
@@ -2261,7 +2242,7 @@ ice_del_cls_flower(struct ice_vsi *vsi, struct flow_cls_offload *cls_flower)
 }
 
 /**
- * ice_replay_tc_fltrs - replay tc filters
+ * ice_replay_tc_fltrs - replay TC filters
  * @pf: pointer to PF struct
  */
 void ice_replay_tc_fltrs(struct ice_pf *pf)

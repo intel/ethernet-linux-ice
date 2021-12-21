@@ -11,10 +11,11 @@ int ice_eswitch_configure(struct ice_pf *pf);
 int ice_eswitch_rebuild(struct ice_pf *pf);
 int ice_eswitch_mode_get(struct devlink *devlink, u16 *mode);
 void ice_eswitch_stop_all_tx_queues(struct ice_pf *pf);
+int ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf,
+				const u8 *mac);
+void ice_eswitch_replay_vf_mac_rule(struct ice_vf *vf);
+void ice_eswitch_del_vf_mac_rule(struct ice_vf *vf);
 
-struct net_device *
-ice_eswitch_get_target_netdev(struct ice_ring *rx_ring,
-			      union ice_32b_rx_flex_desc *rx_desc);
 #ifdef HAVE_METADATA_PORT_INFO
 void ice_eswitch_set_target_vsi(struct sk_buff *skb,
 				struct ice_tx_offload_params *off);
@@ -57,6 +58,15 @@ static inline
 void ice_eswitch_set_target_vsi(struct sk_buff *skb, struct ice_tx_offload_params *off) { }
 static inline void ice_eswitch_update_repr(struct ice_vsi *vsi) { }
 static inline void ice_eswitch_stop_all_tx_queues(struct ice_pf *pf) { }
+static inline void ice_eswitch_replay_vf_mac_rule(struct ice_vf *vf) { }
+static inline void ice_eswitch_del_vf_mac_rule(struct ice_vf *vf) { }
+
+static inline int
+ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf,
+			    const u8 *mac)
+{
+	return 0;
+}
 
 static inline int
 ice_eswitch_configure(struct ice_pf *pf)
@@ -80,13 +90,6 @@ static inline netdev_tx_t
 ice_eswitch_port_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	return 0;
-}
-
-static inline struct net_device *
-ice_eswitch_get_target_netdev(struct ice_ring *rx_ring,
-			      union ice_32b_rx_flex_desc *rx_desc)
-{
-	return NULL;
 }
 #endif /* CONFIG_NET_DEVLINK */
 #endif

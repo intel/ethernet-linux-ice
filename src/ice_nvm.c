@@ -3,6 +3,7 @@
 
 #include "ice_common.h"
 
+#define GL_MNG_DEF_DEVID 0x000B611C
 
 /**
  * ice_aq_read_nvm
@@ -191,7 +192,6 @@ ice_aq_erase_nvm(struct ice_hw *hw, u16 module_typeid, struct ice_sq_cd *cd)
 	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
 }
 
-
 /**
  * ice_read_sr_word_aq - Reads Shadow RAM via AQ
  * @hw: pointer to the HW structure
@@ -219,7 +219,6 @@ ice_read_sr_word_aq(struct ice_hw *hw, u16 offset, u16 *data)
 	*data = le16_to_cpu(data_local);
 	return 0;
 }
-
 
 /**
  * ice_acquire_nvm - Generic request for acquiring the NVM ownership
@@ -386,6 +385,42 @@ ice_read_nvm_module(struct ice_hw *hw, enum ice_bank_select bank, u32 offset, u1
 }
 
 /**
+ * ice_get_nvm_css_hdr_len - Read the CSS header length from the NVM CSS header
+ * @hw: pointer to the HW struct
+ * @bank: whether to read from the active or inactive flash bank
+ * @hdr_len: storage for header length in words
+ *
+ * Read the CSS header length from the NVM CSS header and add the Authentication
+ * header size, and then convert to words.
+ */
+static enum ice_status
+ice_get_nvm_css_hdr_len(struct ice_hw *hw, enum ice_bank_select bank,
+			u32 *hdr_len)
+{
+	u16 hdr_len_l, hdr_len_h;
+	enum ice_status status;
+	u32 hdr_len_dword;
+
+	status = ice_read_nvm_module(hw, bank, ICE_NVM_CSS_HDR_LEN_L,
+				     &hdr_len_l);
+	if (status)
+		return status;
+
+	status = ice_read_nvm_module(hw, bank, ICE_NVM_CSS_HDR_LEN_H,
+				     &hdr_len_h);
+	if (status)
+		return status;
+
+	/* CSS header length is in DWORD, so convert to words and add
+	 * authentication header size
+	 */
+	hdr_len_dword = hdr_len_h << 16 | hdr_len_l;
+	*hdr_len = (hdr_len_dword * 2) + ICE_NVM_AUTH_HEADER_LEN;
+
+	return 0;
+}
+
+/**
  * ice_read_nvm_sr_copy - Read a word from the Shadow RAM copy in the NVM bank
  * @hw: pointer to the HW structure
  * @bank: whether to read from the active or inactive NVM module
@@ -398,7 +433,16 @@ ice_read_nvm_module(struct ice_hw *hw, enum ice_bank_select bank, u32 offset, u1
 static enum ice_status
 ice_read_nvm_sr_copy(struct ice_hw *hw, enum ice_bank_select bank, u32 offset, u16 *data)
 {
-	return ice_read_nvm_module(hw, bank, ICE_NVM_SR_COPY_WORD_OFFSET + offset, data);
+	enum ice_status status;
+	u32 hdr_len;
+
+	status = ice_get_nvm_css_hdr_len(hw, bank, &hdr_len);
+	if (status)
+		return status;
+
+	hdr_len = roundup(hdr_len, 32);
+
+	return ice_read_nvm_module(hw, bank, hdr_len + offset, data);
 }
 
 /**
@@ -691,22 +735,26 @@ enum ice_status ice_get_inactive_nvm_ver(struct ice_hw *hw, struct ice_nvm_info 
  */
 static enum ice_status ice_get_orom_srev(struct ice_hw *hw, enum ice_bank_select bank, u32 *srev)
 {
+	u32 orom_size_word = hw->flash.banks.orom_size / 2;
 	enum ice_status status;
 	u16 srev_l, srev_h;
 	u32 css_start;
+	u32 hdr_len;
 
-	if (hw->flash.banks.orom_size < ICE_NVM_OROM_TRAILER_LENGTH) {
+	status = ice_get_nvm_css_hdr_len(hw, bank, &hdr_len);
+	if (status)
+		return status;
+
+	if (orom_size_word < hdr_len) {
 		ice_debug(hw, ICE_DBG_NVM, "Unexpected Option ROM Size of %u\n",
 			  hw->flash.banks.orom_size);
 		return ICE_ERR_CFG;
 	}
 
 	/* calculate how far into the Option ROM the CSS header starts. Note
-	 * that ice_read_orom_module takes a word offset so we need to
-	 * divide by 2 here.
+	 * that ice_read_orom_module takes a word offset
 	 */
-	css_start = (hw->flash.banks.orom_size - ICE_NVM_OROM_TRAILER_LENGTH) / 2;
-
+	css_start = orom_size_word - hdr_len;
 	status = ice_read_orom_module(hw, bank, css_start + ICE_NVM_CSS_SREV_L, &srev_l);
 	if (status)
 		return status;
@@ -758,7 +806,9 @@ ice_get_orom_civd_data(struct ice_hw *hw, enum ice_bank_select bank,
 
 		/* Verify that the simple checksum is zero */
 		for (i = 0; i < sizeof(tmp); i++)
+#ifdef __CHECKER__
 			/* cppcheck-suppress objectIndex */
+#endif /* __CHECKER__ */
 			sum += ((u8 *)&tmp)[i];
 
 		if (sum) {
@@ -902,7 +952,6 @@ exit_error:
 
 	return status;
 }
-
 
 /**
  * ice_get_inactive_netlist_ver
@@ -1175,7 +1224,6 @@ enum ice_status ice_init_nvm(struct ice_hw *hw)
 	return 0;
 }
 
-
 /**
  * ice_nvm_validate_checksum
  * @hw: pointer to the HW struct
@@ -1239,22 +1287,41 @@ enum ice_status ice_nvm_recalculate_checksum(struct ice_hw *hw)
 /**
  * ice_nvm_write_activate
  * @hw: pointer to the HW struct
- * @cmd_flags: NVM activate admin command bits (banks to be validated)
+ * @cmd_flags: flags for write activate command
+ * @response_flags: response indicators from firmware
  *
  * Update the control word with the required banks' validity bits
  * and dumps the Shadow RAM to flash (0x0707)
+ *
+ * cmd_flags controls which banks to activate, the preservation level to use
+ * when activating the NVM bank, and whether an EMP reset is required for
+ * activation.
+ *
+ * Note that the 16bit cmd_flags value is split between two separate 1 byte
+ * flag values in the descriptor.
+ *
+ * On successful return of the firmware command, the response_flags variable
+ * is updated with the flags reported by firmware indicating certain status,
+ * such as whether EMP reset is enabled.
  */
-enum ice_status ice_nvm_write_activate(struct ice_hw *hw, u8 cmd_flags)
+enum ice_status
+ice_nvm_write_activate(struct ice_hw *hw, u16 cmd_flags, u8 *response_flags)
 {
 	struct ice_aqc_nvm *cmd;
 	struct ice_aq_desc desc;
+	enum ice_status status;
 
 	cmd = &desc.params.nvm;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_nvm_write_activate);
 
-	cmd->cmd_flags = cmd_flags;
+	cmd->cmd_flags = ICE_LO_BYTE(cmd_flags);
+	cmd->offset_high = ICE_HI_BYTE(cmd_flags);
 
-	return ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+	if (!status && response_flags)
+		*response_flags = cmd->cmd_flags;
+
+	return status;
 }
 
 /**
@@ -1361,7 +1428,7 @@ ice_update_nvm_minsrevs(struct ice_hw *hw, struct ice_minsrev_info *minsrevs)
 		goto exit_release_res;
 
 	/* Dump the Shadow RAM to the flash */
-	status = ice_nvm_write_activate(hw, 0);
+	status = ice_nvm_write_activate(hw, 0, NULL);
 
 exit_release_res:
 	ice_release_nvm(hw);
@@ -1467,6 +1534,7 @@ ice_validate_nvm_rw_reg(struct ice_nvm_access_cmd *cmd)
 	case GLGEN_CSR_DEBUG_C:
 	case GLGEN_RSTAT:
 	case GLPCI_LBARCTRL:
+	case GL_MNG_DEF_DEVID:
 	case GLNVM_GENS:
 	case GLNVM_FLA:
 	case PF_FUNC_RID:
@@ -1475,11 +1543,11 @@ ice_validate_nvm_rw_reg(struct ice_nvm_access_cmd *cmd)
 		break;
 	}
 
-	for (i = 0; i <= ICE_NVM_ACCESS_GL_HIDA_MAX; i++)
+	for (i = 0; i <= GL_HIDA_MAX_INDEX; i++)
 		if (offset == (u32)GL_HIDA(i))
 			return 0;
 
-	for (i = 0; i <= ICE_NVM_ACCESS_GL_HIBA_MAX; i++)
+	for (i = 0; i <= GL_HIBA_MAX_INDEX; i++)
 		if (offset == (u32)GL_HIBA(i))
 			return 0;
 

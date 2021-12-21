@@ -154,7 +154,6 @@ struct ice_tx_buf {
 	u32 tx_flags;
 	DEFINE_DMA_UNMAP_LEN(len);
 	DEFINE_DMA_UNMAP_ADDR(dma);
-	int ptp_ts_idx;
 };
 
 struct ice_tx_offload_params {
@@ -329,7 +328,6 @@ struct ice_xdp_stats {
 
 /* descriptor ring, associated with a VSI */
 struct ice_ring {
-	/* CL1 - 1st cacheline starts here */
 	struct ice_ring *next;		/* pointer to next ring in q_vector */
 	void *desc;			/* Descriptor ring memory */
 	struct device *dev;		/* Used for DMA mapping */
@@ -341,9 +339,17 @@ struct ice_ring {
 		struct ice_tx_buf *tx_buf;
 		struct ice_rx_buf *rx_buf;
 	};
-	/* CL2 - 2nd cacheline starts here */
+	/* --- cacheline 1 boundary (64 bytes) --- */
 	u16 q_index;			/* Queue number of ring */
 	u16 q_handle;			/* Queue handle per TC */
+
+#ifdef HAVE_XDP_SUPPORT
+#define ICE_TX_FLAGS_RING_XDP			BIT(0)
+#endif /* HAVE_XDP_SUPPORT */
+#define ICE_RX_FLAGS_RING_BUILD_SKB		BIT(1)
+#define ICE_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1	BIT(2)
+#define ICE_TX_FLAGS_VLAN_TAG_LOC_L2TAG2	BIT(3)
+	u8 flags;
 
 	u16 count;			/* Number of descriptors */
 	u16 reg_idx;			/* HW register index of the ring */
@@ -369,6 +375,7 @@ struct ice_ring {
 		struct ice_rxq_stats rx_stats;
 	};
 
+	/* --- cacheline 2 boundary (128 bytes) was 8 bytes ago --- */
 	struct rcu_head rcu;		/* to avoid race on free */
 	DECLARE_BITMAP(xps_state, ICE_TX_NBITS);	/* XPS Config State */
 	struct ice_channel *ch;
@@ -382,36 +389,34 @@ struct ice_ring {
 	struct xsk_buff_pool *xsk_pool;
 #else
 	struct xdp_umem *xsk_pool;
-#endif
+#endif /* HAVE_NETDEV_BPF_XSK_POOL */
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 	struct zero_copy_allocator zca;
 #endif
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
-	/* CL3 - 3rd cacheline starts here */
 #ifdef HAVE_XDP_BUFF_RXQ
+	/* --- cacheline 3 boundary (192 bytes) --- */
 	struct xdp_rxq_info xdp_rxq;
 #endif /* HAVE_XDP_BUFF_RXQ */
 #endif /* HAVE_XDP_SUPPORT */
 
-	/* CLX - the below items are only accessed infrequently and should be
-	 * in their own cache line if possible
-	 */
-#ifdef HAVE_XDP_SUPPORT
-#define ICE_TX_FLAGS_RING_XDP			BIT(0)
-#endif /* HAVE_XDP_SUPPORT */
-#define ICE_RX_FLAGS_RING_BUILD_SKB		BIT(1)
-#define ICE_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1	BIT(2)
-#define ICE_TX_FLAGS_VLAN_TAG_LOC_L2TAG2	BIT(3)
-	u8 flags;
+	/* --- cacheline 4 boundary (256 bytes) --- */
 	dma_addr_t dma;			/* physical address of ring */
 	unsigned int size;		/* length of descriptor ring in bytes */
 	u32 txq_teid;			/* Added Tx queue TEID */
-	u16 rx_buf_len;
+	u32 ch_inline_fd_cnt_index;
 	u8 rx_crc_strip_dis;
 	u8 dcb_tc;			/* Traffic class of ring */
-	u64 cached_systime;
+	u16 rx_buf_len;
+
+	struct ice_ptp_tx *tx_tstamps;
+	u64 cached_phctime;
 	u8 ptp_rx:1;
-	u32 ch_inline_fd_cnt_index;
+	u8 ptp_tx:1;
+
+	/* cacheline - the below items are only accessed infrequently and
+	 * should be in their own cache line if possible
+	 */
 #ifdef ADQ_PERF_COUNTERS
 	struct ice_ch_q_stats ch_q_stats;
 #endif /* ADQ_PERF_COUNTERS */
@@ -480,11 +485,32 @@ static inline unsigned int ice_rx_pg_order(struct ice_ring *ring)
 
 #define ice_rx_pg_size(_ring) (PAGE_SIZE << ice_rx_pg_order(_ring))
 
-
 union ice_32b_rx_flex_desc;
 
 bool ice_alloc_rx_bufs(struct ice_ring *rxr, u16 cleaned_count);
 netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev);
+#ifndef HAVE_NDO_SELECT_QUEUE_SB_DEV
+#if defined(HAVE_NDO_SELECT_QUEUE_ACCEL) || defined(HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK)
+#ifndef HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
+u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
+		     void *accel_priv, select_queue_fallback_t fallback);
+#else /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
+		     void *accel_priv);
+#endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+#else /* HAVE_NDO_SELECT_QUEUE_ACCEL || HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK */
+u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb);
+#endif /* HAVE_NDO_SELECT_QUEUE_ACCEL || HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK */
+#else /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
+#ifdef HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
+u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
+		     struct net_device *sb_dev);
+#else /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
+		     struct net_device *sb_dev,
+		     select_queue_fallback_t fallback);
+#endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
+#endif /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
 void ice_clean_tx_ring(struct ice_ring *tx_ring);
 void ice_clean_rx_ring(struct ice_ring *rx_ring);
 int ice_setup_tx_ring(struct ice_ring *tx_ring);

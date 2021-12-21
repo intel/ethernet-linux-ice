@@ -19,12 +19,6 @@ SHELL=/bin/bash
 ifneq ($(KERNELRELEASE),)
 # kbuild part of makefile
 
-ifeq ($(KERNEL_CONFIG_INCLUDED),1)
-  ifndef CONFIG_MFD_CORE
-    $(warning NOTE: CONFIG_MFD_CORE is not enabled in the kernel configuration; peer driver support is disabled)
-  endif # CONFIG_MFD_CORE
-endif # KERNEL_CONFIG_INCLUDED
-
 #
 # Makefile for the Intel(R) Ethernet Connection E800 Series Linux Driver
 #
@@ -32,7 +26,7 @@ endif # KERNEL_CONFIG_INCLUDED
 ccflags-y += -I$(src)
 subdir-ccflags-y += -I$(src)
 
-obj-$(CONFIG_ICE) += ice.o
+obj-m += ice.o
 
 ice-y := ice_main.o	\
 	 ice_controlq.o	\
@@ -48,6 +42,7 @@ ice-y := ice_main.o	\
 	 ice_pf_vsi_vlan_ops.o \
 	 ice_vsi_vlan_ops.o \
 	 ice_vsi_vlan_lib.o \
+	 ice_gnss.o	\
 	 ice_tc_lib.o	\
 	 ice_fdir.o	\
 	 ice_ethtool_fdir.o	\
@@ -59,17 +54,17 @@ ice-y := ice_main.o	\
 	 ice_flow.o		\
 	 ice_lag.o		\
 	 ice_fwlog.o		\
+	 ice_ieps.o		\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
-ice-$(CONFIG_MFD_CORE:m=y) += ice_idc.o
+ice-y += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
 ice-$(CONFIG_PCI_IOV) += ice_virtchnl_allowlist.o
 ice-$(CONFIG_PCI_IOV) += ice_dcf.o
 ice-$(CONFIG_PCI_IOV) += ice_virtchnl_fdir.o
-ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_sriov.o ice_vf_vsi_vlan_ops.o
+ice-$(CONFIG_PCI_IOV) += ice_virtchnl_pf.o ice_vf_mbx.o ice_vf_vsi_vlan_ops.o
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o
-ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_cgu_ops.o ice_cgu_util.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
 ice-$(CONFIG_XDP_SOCKETS) += ice_xsk.o
@@ -82,6 +77,11 @@ endif
 ifndef CONFIG_DIMLIB
 ice-y += kcompat_dim.o kcompat_net_dim.o
 endif
+
+ifeq (${NEED_AUX_BUS},2)
+obj-m += auxiliary.o
+endif
+
 else	# ifneq($(KERNELRELEASE),)
 # normal makefile
 
@@ -96,6 +96,7 @@ endif
 
 # ice does not support building on kernels older than 3.10.0
 $(call minimum_kver_check,3,10,0)
+
 
 # Command to update initramfs or display a warning message
 ifeq (${cmd_initrd},)
@@ -133,6 +134,7 @@ DDP_PKG_DEST := ${DDP_PKG_DEST_PATH}/${DDP_PKG_NAME}
 DDP_PKG_LINK := ${DRIVER}.pkg
 modules_install: all
 	+$(call kernelbuild,modules_install)
+	${auxiliary_post_install}
 ifneq (${DDP_PKG_ORIGIN},)
 	@# Install DDP package file if provided/required with ice module
 	install -D -m 644 ${DDP_PKG_ORIGIN} ${DDP_PKG_DEST}
@@ -142,7 +144,7 @@ ifneq (${DDP_PKG_ORIGIN},)
 endif
 
 mandocs_install: all
-	install -D -m 644 ${DRIVER}.${MANSECTION}.gz ${INSTALL_MOD_PATH}${MANDIR}/man${MANSECTION}/${DRIVER}.${MANSECTION}.gz
+	install -D -m 644 ${DRIVER}.${MANSECTION}.gz ${INSTALL_MOD_PATH}/${MANDIR}/man${MANSECTION}/${DRIVER}.${MANSECTION}.gz
 
 # After installing all the files, perform necessary work to ensure the system
 # will use the new modules. This includes running depmod to update module
@@ -157,6 +159,7 @@ install: modules_install mandocs_install
 # build root. Thus, it must not update the initramfs image or run depmod.
 modules_uninstall:
 	rm -f ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_MOD_DIR}/${DRIVER}.ko
+	${auxiliary_post_uninstall}
 ifneq (${DDP_PKG_ORIGIN},)
 	@# Uninstall DDP package file if provided/required with ice module
 	(cd ${DDP_PKG_DEST_PATH} && \
@@ -166,7 +169,7 @@ ifneq (${DDP_PKG_ORIGIN},)
 endif
 
 mandocs_uninstall:
-	rm -f ${INSTALL_MOD_PATH}${MANDIR}/man${MANSECTION}/${DRIVER}.${MANSECTION}.gz 2>/dev/null
+	rm -f ${INSTALL_MOD_PATH}/${MANDIR}/man${MANSECTION}/${DRIVER}.${MANSECTION}.gz 2>/dev/null
 
 # After uninstalling all the files, perform necessary work to restore the
 # system back to using the default kernel modules. This includes running depmod
@@ -174,6 +177,13 @@ mandocs_uninstall:
 uninstall: modules_uninstall mandocs_uninstall
 	$(call cmd_depmod)
 	$(call cmd_initramfs)
+
+auxiliary_info:
+	@../scripts/check_aux_bus --verbose --ksrc="${KSRC}" --build-kernel="${BUILD_KERNEL}"
+
+ifeq (${NEED_AUX_BUS},1)
+all: auxiliary_info
+endif
 
 help:
 	@echo 'Building external (out-of-tree) modules:'
@@ -185,6 +195,7 @@ help:
 	@echo '  modules_uninstall - uninstall the module(s) only'
 	@echo '  mandocs_uninstall - uninstall the manpage only'
 	@echo '  uninstall         - uninstall the module(s) and manpage, and update initramfs'
+	@echo '  auxiliary_info    - print information about the auxiliary module'
 	@echo ''
 	@echo 'Command-line options:'
 	@echo '  KSRC=<path>     - Path to kernel source (defaults to running kernel)'
@@ -196,6 +207,6 @@ help:
 	@echo '                           (.../updates/drivers/net/ethernet/intel/${DRIVER}/)'
 	@echo ''
 
-.PHONY: all clean modules_install mandocs_install install modules_uninstall mandocs_uninstall uninstall help
+.PHONY: all clean modules_install mandocs_install install modules_uninstall mandocs_uninstall uninstall help auxiliary_info
 
 endif	# ifneq($(KERNELRELEASE),)

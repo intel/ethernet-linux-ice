@@ -218,7 +218,6 @@ struct ice_fltr_desc {
 				(0x1ULL << ICE_FXD_FLTR_WB_QW1_FAIL_PROF_S)
 #define ICE_FXD_FLTR_WB_QW1_FAIL_PROF_YES	0x1ULL
 
-
 enum ice_rx_desc_status_bits {
 	/* Note: These are predefined bit offsets */
 	ICE_RX_DESC_STATUS_DD_S			= 0,
@@ -249,14 +248,12 @@ enum ice_rx_desc_status_bits {
 #define ICE_RXD_QW1_STATUS_TSYNVALID_S ICE_RX_DESC_STATUS_TSYNVALID_S
 #define ICE_RXD_QW1_STATUS_TSYNVALID_M BIT_ULL(ICE_RXD_QW1_STATUS_TSYNVALID_S)
 
-
 enum ice_rx_desc_fltstat_values {
 	ICE_RX_DESC_FLTSTAT_NO_DATA	= 0,
 	ICE_RX_DESC_FLTSTAT_RSV_FD_ID	= 1, /* 16byte desc? FD_ID : RSV */
 	ICE_RX_DESC_FLTSTAT_RSV		= 2,
 	ICE_RX_DESC_FLTSTAT_RSS_HASH	= 3,
 };
-
 
 #define ICE_RXD_QW1_ERROR_S	19
 #define ICE_RXD_QW1_ERROR_M		(0xFFUL << ICE_RXD_QW1_ERROR_S)
@@ -356,7 +353,6 @@ enum ice_rx_ptype_payload_layer {
 	ICE_RX_PTYPE_PAYLOAD_LAYER_PAY4	= 3,
 };
 
-
 #define ICE_RXD_QW1_LEN_PBUF_S	38
 #define ICE_RXD_QW1_LEN_PBUF_M	(0x3FFFULL << ICE_RXD_QW1_LEN_PBUF_S)
 
@@ -365,7 +361,6 @@ enum ice_rx_ptype_payload_layer {
 
 #define ICE_RXD_QW1_LEN_SPH_S	63
 #define ICE_RXD_QW1_LEN_SPH_M	BIT_ULL(ICE_RXD_QW1_LEN_SPH_S)
-
 
 enum ice_rx_desc_ext_status_bits {
 	/* Note: These are predefined bit offsets */
@@ -376,7 +371,6 @@ enum ice_rx_desc_ext_status_bits {
 	ICE_RX_DESC_EXT_STATUS_FDLONGB_S	= 9,
 	ICE_RX_DESC_EXT_STATUS_PELONGB_S	= 11,
 };
-
 
 enum ice_rx_desc_pe_status_bits {
 	/* Note: These are predefined bit offsets */
@@ -397,7 +391,6 @@ enum ice_rx_desc_pe_status_bits {
 #define ICE_RX_PROG_STATUS_DESC_QW1_PROGID_S	2
 #define ICE_RX_PROG_STATUS_DESC_QW1_PROGID_M	\
 			(0x7UL << ICE_RX_PROG_STATUS_DESC_QW1_PROGID_S)
-
 
 #define ICE_RX_PROG_STATUS_DESC_QW1_ERROR_S	19
 #define ICE_RX_PROG_STATUS_DESC_QW1_ERROR_M	\
@@ -642,7 +635,6 @@ struct ice_32b_rx_flex_desc_nic_2 {
 	} flex_ts;
 };
 
-
 /* Receive Flex Descriptor profile IDs: There are a total
  * of 64 profiles where profile IDs 0/1 are for legacy; and
  * profiles 2-63 are flex profiles that can be programmed
@@ -820,6 +812,14 @@ enum ice_rx_flex_desc_exstat_bits {
 	ICE_RX_FLEX_DESC_EXSTAT_OVERSIZE_S = 3,
 };
 
+/*
+ * For ice_32b_rx_flex_desc.ts_low:
+ * [0]: Timestamp-low validity bit
+ * [1:7]: Timestamp-low value
+ */
+#define ICE_RX_FLEX_DESC_TS_L_VALID_S	0x01
+#define ICE_RX_FLEX_DESC_TS_L_VALID_M	ICE_RX_FLEX_DESC_TS_L_VALID_S
+#define ICE_RX_FLEX_DESC_TS_L_M		0xFE
 
 #define ICE_RXQ_CTX_SIZE_DWORDS		8
 #define ICE_RXQ_CTX_SZ			(ICE_RXQ_CTX_SIZE_DWORDS * sizeof(u32))
@@ -967,6 +967,11 @@ struct ice_tx_ctx_desc {
 	__le64 qw1;
 };
 
+#define ICE_TX_GSC_DESC_START	0  /* 7 BITS */
+#define ICE_TX_GSC_DESC_OFFSET	7  /* 4 BITS */
+#define ICE_TX_GSC_DESC_TYPE	11 /* 2 BITS */
+#define ICE_TX_GSC_DESC_ENA	13 /* 1 BIT */
+
 #define ICE_TXD_CTX_QW1_DTYPE_S	0
 #define ICE_TXD_CTX_QW1_DTYPE_M	(0xFUL << ICE_TXD_CTX_QW1_DTYPE_S)
 
@@ -1036,7 +1041,6 @@ enum ice_tx_ctx_desc_eipt_offload {
 #define ICE_TXD_CTX_QW0_L4T_CS_S	23
 #define ICE_TXD_CTX_QW0_L4T_CS_M	BIT_ULL(ICE_TXD_CTX_QW0_L4T_CS_S)
 
-
 #define ICE_LAN_TXQ_MAX_QGRPS	127
 #define ICE_LAN_TXQ_MAX_QDIS	1023
 
@@ -1090,7 +1094,6 @@ struct ice_tx_cmpltnq {
 	u8 cmpl_type;
 } __packed;
 
-
 /* LAN Tx Completion Queue Context */
 struct ice_tx_cmpltnq_ctx {
 	u64 base;
@@ -1117,7 +1120,6 @@ struct ice_tx_drbell_fmt {
 	u8 rs;
 	u32 db;
 };
-
 
 /* LAN Tx Doorbell Queue Context */
 struct ice_tx_drbell_q_ctx {
@@ -1395,18 +1397,5 @@ static inline struct ice_rx_ptype_decoded ice_decode_rx_desc_ptype(u16 ptype)
 {
 	return ice_ptype_lkup[ptype];
 }
-
-#define ICE_LINK_SPEED_UNKNOWN		0
-#define ICE_LINK_SPEED_10MBPS		10
-#define ICE_LINK_SPEED_100MBPS		100
-#define ICE_LINK_SPEED_1000MBPS		1000
-#define ICE_LINK_SPEED_2500MBPS		2500
-#define ICE_LINK_SPEED_5000MBPS		5000
-#define ICE_LINK_SPEED_10000MBPS	10000
-#define ICE_LINK_SPEED_20000MBPS	20000
-#define ICE_LINK_SPEED_25000MBPS	25000
-#define ICE_LINK_SPEED_40000MBPS	40000
-#define ICE_LINK_SPEED_50000MBPS	50000
-#define ICE_LINK_SPEED_100000MBPS	100000
 
 #endif /* _ICE_LAN_TX_RX_H_ */

@@ -49,11 +49,25 @@
 #define ICE_MAX_VF_RESET_SLEEP_MS	20
 #define ICE_MAX_IPSEC_CAPABLE_VF_ID	127
 
-#define ice_for_each_vf(pf, i) \
-	for ((i) = 0; (i) < (pf)->num_alloc_vfs; (i)++)
+/**
+ * ice_for_each_vf - Iterate over each VF entry
+ * @pf: pointer to the PF private structure
+ * @bkt: bucket index used for iteration
+ * @vf: pointer to the VF entry currently being processed in the loop
+ *
+ * The bkt variable is an unsigned integer iterator used to traverse the VF
+ * entries. It is *not* guaranteed to be the VF's vf_id. Do not assume it is.
+ * Use vf->vf_id to get the id number if needed.
+ */
+#define ice_for_each_vf(pf, bkt, vf) \
+	hash_for_each((pf)->vfs.table, (bkt), (vf), entry)
 
 /* Max number of flexible descriptor rxdid */
 #define ICE_FLEX_DESC_RXDID_MAX_NUM 64
+
+#define ICE_VF_UCAST_PROMISC_BITS ICE_PROMISC_UCAST_RX
+#define ICE_VF_UCAST_VLAN_PROMISC_BITS	(ICE_PROMISC_UCAST_RX | \
+					 ICE_PROMISC_VLAN_RX)
 
 /* Specific VF states */
 enum ice_vf_states {
@@ -195,7 +209,10 @@ struct ice_vc_vf_ops {
 	int (*dis_dcf_cap)(struct ice_vf *vf);
 	int (*dcf_get_vsi_map)(struct ice_vf *vf);
 	int (*dcf_query_pkg_info)(struct ice_vf *vf);
+	int (*dcf_config_vf_tc)(struct ice_vf *vf, u8 *msg);
 	int (*handle_rss_cfg_msg)(struct ice_vf *vf, u8 *msg, bool add);
+	int (*get_qos_caps)(struct ice_vf *vf);
+	int (*cfg_q_tc_map)(struct ice_vf *vf, u8 *msg);
 	int (*add_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*del_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*get_max_rss_qregion)(struct ice_vf *vf);
@@ -211,10 +228,26 @@ struct ice_vc_vf_ops {
 	int (*dis_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
 };
 
+/* Virtchnl/SR-IOV config info */
+struct ice_vfs {
+	DECLARE_HASHTABLE(table, 8);	/* table of VF entries */
+	u16 num_alloc;			/* number of allocated VFs */
+	u16 num_supported;		/* max supported VFs on this PF */
+	u16 num_qps_per;		/* number of queue pairs per VF */
+	u16 num_msix_per;		/* number of MSI-X vectors per VF */
+	unsigned long last_printed_mdd_jiffies; /* MDD message rate limit */
+	DECLARE_BITMAP(malvfs, ICE_MAX_VF_COUNT); /* malicious VF indicator */
+};
+
 /* VF information structure */
 struct ice_vf {
+	struct hlist_node entry;
 	struct ice_pf *pf;
 
+	/* Used during virtchnl message handling and NDO ops against the VF
+	 * that will trigger a VFR
+	 */
+	struct mutex cfg_lock;
 
 	u16 vf_id;			/* VF ID in the PF space */
 	u16 lan_vsi_idx;		/* index into PF struct */
@@ -302,8 +335,11 @@ static inline u16 ice_vf_chnl_dmac_fltr_cnt(struct ice_vf *vf)
 	return vf->num_dmac_chnl_fltrs;
 }
 
-
 #ifdef CONFIG_PCI_IOV
+struct ice_vf *ice_get_vf(struct ice_pf *pf, u16 vf_id);
+int
+ice_get_vf_port_info(struct ice_pf *pf, u16 vf_id,
+		     struct iidc_vf_port_info *vf_port_info);
 void ice_dump_all_vfs(struct ice_pf *pf);
 struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf);
 void ice_process_vflr_event(struct ice_pf *pf);
@@ -327,7 +363,6 @@ void ice_restore_all_vfs_msi_state(struct pci_dev *pdev);
 bool
 ice_is_malicious_vf(struct ice_pf *pf, struct ice_rq_event_info *event,
 		    u16 num_msg_proc, u16 num_msg_pending);
-
 
 #ifdef IFLA_VF_VLAN_INFO_MAX
 int
@@ -354,6 +389,7 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted);
 int ice_set_vf_link_state(struct net_device *netdev, int vf_id, int link_state);
 #endif
 
+bool ice_is_vf_disabled(struct ice_vf *vf);
 int ice_check_vf_ready_for_cfg(struct ice_vf *vf);
 
 int ice_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool ena);
@@ -382,6 +418,10 @@ ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 bool ice_vf_is_port_vlan_ena(struct ice_vf *vf);
 #else /* CONFIG_PCI_IOV */
+static inline struct ice_vf *ice_get_vf(struct ice_pf *pf, u16 vf_id)
+{
+	return NULL;
+}
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 static inline struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf)
 {
@@ -401,6 +441,12 @@ static inline int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
 {
 	return -EOPNOTSUPP;
 }
+
+static inline bool ice_is_vf_disabled(struct ice_vf *vf)
+{
+	return true;
+}
+
 static inline void ice_vc_set_dflt_vf_ops(struct ice_vc_vf_ops *ops) { }
 static inline void ice_set_vf_state_qs_dis(struct ice_vf *vf) { }
 static inline
@@ -408,6 +454,14 @@ void ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *even
 static inline void ice_print_vfs_mdd_events(struct ice_pf *pf) { }
 static inline void ice_print_vf_rx_mdd_event(struct ice_vf *vf) { }
 static inline void ice_restore_all_vfs_msi_state(struct pci_dev *pdev) { }
+static inline int
+ice_get_vf_port_info(struct ice_pf __always_unused *pf,
+		     u16 __always_unused vf_id,
+		     struct iidc_vf_port_info __always_unused *vf_port_info)
+{
+	return -EOPNOTSUPP;
+}
+
 static inline bool
 ice_is_malicious_vf(struct ice_pf __always_unused *pf,
 		    struct ice_rq_event_info __always_unused *event,
@@ -559,4 +613,14 @@ static inline bool ice_vf_is_port_vlan_ena(struct ice_vf __always_unused *vf)
 	return false;
 }
 #endif /* CONFIG_PCI_IOV */
+
+static inline u16 ice_abs_vf_id(struct ice_hw *hw, u16 rel_vf_id)
+{
+	return rel_vf_id + hw->func_caps.vf_base_id;
+}
+
+static inline u16 ice_rel_vf_id(struct ice_hw *hw, u16 abs_vf_id)
+{
+	return abs_vf_id - hw->func_caps.vf_base_id;
+}
 #endif /* _ICE_VIRTCHNL_PF_H_ */

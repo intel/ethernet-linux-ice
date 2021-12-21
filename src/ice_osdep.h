@@ -34,11 +34,56 @@ struct ice_dma_mem {
 		       rowsize, groupsize, buf,			\
 		       len, false)
 
+#ifdef CONFIG_SYMBOLIC_ERRNAME
+/**
+ * ice_print_errno - logs message with appended error
+ * @func: logging function (such as dev_err, netdev_warn, etc.)
+ * @obj: first argument that func takes
+ * @code: standard error code (negative integer)
+ * @fmt: format string (without "\n" in the end)
+ *
+ * Uses kernel logging function of your choice to log provided message
+ * with error code and (if allowed by kernel) its symbolic
+ * representation apended. All additional format arguments can be
+ * added at the end.
+ * Supports only functions that take an additional
+ * argument before formatted string.
+ */
+#define ice_print_errno(func, obj, code, fmt, args...) ({		\
+	long code_ = (code);						\
+	BUILD_BUG_ON(fmt[strlen(fmt) - 1] == '\n');			\
+	func(obj, fmt ", error: %ld (%pe)\n",				\
+	     ##args, code_, ERR_PTR(code_));				\
+})
+/**
+ * ice_err_arg - replaces error code as a logging function argument
+ * @err: standard error code (negative integer)
+ */
+#define ice_err_arg(err) ERR_PTR(err)
+/**
+ * ice_err_format - replaces %(l)d format corresponding to an error code
+ */
+#define ice_err_format() "%pe"
+#else
+#define ice_print_errno(func, obj, code, fmt, args...) ({		\
+	BUILD_BUG_ON(fmt[strlen(fmt) - 1] == '\n');			\
+	func(obj, fmt ", error: %ld\n",	 ##args, (long)code);		\
+})
+#define ice_err_arg(err) ((long)err)
+#define ice_err_format() "%ld"
+#endif /* CONFIG_SYMBOLIC_ERRNAME */
+#define ice_dev_err_errno(dev, code, fmt, args...)			\
+	ice_print_errno(dev_err, dev, code, fmt, ##args)
+#define ice_dev_warn_errno(dev, code, fmt, args...)			\
+	ice_print_errno(dev_warn, dev, code, fmt, ##args)
+#define ice_dev_info_errno(dev, code, fmt, args...)			\
+	ice_print_errno(dev_info, dev, code, fmt, ##args)
+#define ice_dev_dbg_errno(dev, code, fmt, args...)			\
+	ice_print_errno(dev_dbg, dev, code, fmt, ##args)
 
 #ifdef CONFIG_DYNAMIC_DEBUG
 #define ice_debug(hw, type, fmt, args...) \
 	dev_dbg(ice_hw_to_dev(hw), fmt, ##args)
-
 
 #define ice_debug_array(hw, type, rowsize, groupsize, buf, len) \
 	print_hex_dump_debug(KBUILD_MODNAME " ",		\

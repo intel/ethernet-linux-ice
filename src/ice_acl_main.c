@@ -3,7 +3,6 @@
 
 /* ACL support for ice */
 
-
 #include "ice.h"
 #include "ice_lib.h"
 #include "ice_flow.h"
@@ -126,7 +125,6 @@ ice_acl_set_ip4_usr_seg(struct ice_flow_seg_info *seg,
 
 	return 0;
 }
-
 
 /**
  * ice_acl_check_input_set - Checks that a given ACL input set is valid

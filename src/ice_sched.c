@@ -3,8 +3,6 @@
 
 #include "ice_sched.h"
 
-
-
 /**
  * ice_sched_add_root_node - Insert the Tx scheduler root node in SW DB
  * @pi: port information structure
@@ -777,7 +775,6 @@ static void ice_sched_clear_rl_prof(struct ice_port_info *pi)
 	u16 ln;
 	struct ice_hw *hw = pi->hw;
 
-
 	for (ln = 0; ln < hw->num_tx_sched_layers; ln++) {
 		struct ice_aqc_rl_profile_info *rl_prof_elem;
 		struct ice_aqc_rl_profile_info *rl_prof_tmp;
@@ -909,7 +906,6 @@ ice_aq_cfg_l2_node_cgd(struct ice_hw *hw, u16 num_l2_nodes,
 	cmd->num_l2_nodes = cpu_to_le16(num_l2_nodes);
 	return ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
 }
-
 
 /**
  * ice_sched_add_elems - add nodes to HW and SW DB
@@ -1080,7 +1076,9 @@ ice_sched_add_nodes_to_layer(struct ice_port_info *pi,
 	*num_nodes_added = 0;
 	while (*num_nodes_added < num_nodes) {
 		u16 max_child_nodes, num_added = 0;
+#ifdef __CHECKER__
 		/* cppcheck-suppress unusedVariable */
+#endif /* __CHECKER__ */
 		u32 temp;
 
 		status = ice_sched_add_nodes_to_hw_layer(pi, tc_node, parent,
@@ -1181,7 +1179,6 @@ static u8 ice_sched_get_agg_layer(struct ice_hw *hw)
 	return hw->sw_entry_point_layer;
 }
 
-
 /**
  * ice_rm_dflt_leaf_node - remove the default leaf node in the tree
  * @pi: port information structure
@@ -1259,7 +1256,6 @@ enum ice_status ice_sched_init_port(struct ice_port_info *pi)
 	if (!pi)
 		return ICE_ERR_PARAM;
 	hw = pi->hw;
-
 
 	/* Query the Default Topology from FW */
 	buf = devm_kzalloc(ice_hw_to_dev(hw), ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
@@ -1419,7 +1415,6 @@ enum ice_status ice_sched_query_res_alloc(struct ice_hw *hw)
 		status = ICE_ERR_NO_MEMORY;
 		goto sched_query_out;
 	}
-
 
 sched_query_out:
 	devm_kfree(ice_hw_to_dev(hw), buf);
@@ -3014,6 +3009,9 @@ ice_sched_update_elem(struct ice_hw *hw, struct ice_sched_node *node,
 	u16 num_elems = 1;
 
 	buf = *info;
+	/* For TC nodes, CIR config is not supported */
+	if (node->info.data.elem_type == ICE_AQC_ELEM_TYPE_TC)
+		buf.data.valid_sections &= ~ICE_AQC_ELEM_VALID_CIR;
 	/* Parent TEID is reserved field in this aq call */
 	buf.parent_teid = 0;
 	/* Element type is reserved field in this aq call */
@@ -3737,7 +3735,9 @@ ice_cfg_agg_vsi_priority_per_tc(struct ice_port_info *pi, u32 agg_id,
 		list_for_each_entry(agg_vsi_info, &agg_info->agg_vsi_list,
 				    list_entry)
 			if (agg_vsi_info->vsi_handle == vsi_handle) {
+#ifdef __CHECKER__
 				/* cppcheck-suppress unreadVariable */
+#endif /* __CHECKER__ */
 				vsi_handle_valid = true;
 				break;
 			}
@@ -3895,8 +3895,8 @@ static u16 ice_sched_calc_wakeup(struct ice_hw *hw, s32 bw)
 	u16 wakeup = 0;
 
 	/* Get the wakeup integer value */
-	bytes_per_sec = div64_long(((s64)bw * 1000), BITS_PER_BYTE);
-	wakeup_int = div64_long(hw->psm_clk_freq, bytes_per_sec);
+	bytes_per_sec = div64_s64(bw * 1000, BITS_PER_BYTE);
+	wakeup_int = div64_s64(hw->psm_clk_freq, bytes_per_sec);
 	if (wakeup_int > 63) {
 		wakeup = (u16)((1 << 15) | wakeup_int);
 	} else {
@@ -3904,18 +3904,18 @@ static u16 ice_sched_calc_wakeup(struct ice_hw *hw, s32 bw)
 		 * Convert Integer value to a constant multiplier
 		 */
 		wakeup_b = (s64)ICE_RL_PROF_MULTIPLIER * wakeup_int;
-		wakeup_a = div64_long((s64)ICE_RL_PROF_MULTIPLIER * hw->psm_clk_freq,
-				      bytes_per_sec);
+		wakeup_a = div64_s64(ICE_RL_PROF_MULTIPLIER * hw->psm_clk_freq,
+				     bytes_per_sec);
 
 		/* Get Fraction value */
 		wakeup_f = wakeup_a - wakeup_b;
 
 		/* Round up the Fractional value via Ceil(Fractional value) */
-		if (wakeup_f > div64_long(ICE_RL_PROF_MULTIPLIER, 2))
+		if (wakeup_f > div64_s64(ICE_RL_PROF_MULTIPLIER, 2))
 			wakeup_f += 1;
 
-		wakeup_f_int = (s32) div64_long(wakeup_f * ICE_RL_PROF_FRACTION,
-						ICE_RL_PROF_MULTIPLIER);
+		wakeup_f_int = (s32) div64_s64(wakeup_f * ICE_RL_PROF_FRACTION,
+					       ICE_RL_PROF_MULTIPLIER);
 		wakeup |= (u16)(wakeup_int << 9);
 		wakeup |= (u16)(0x1ff & wakeup_f_int);
 	}
@@ -3947,20 +3947,20 @@ ice_sched_bw_to_rl_profile(struct ice_hw *hw, u32 bw,
 		return status;
 
 	/* Bytes per second from Kbps */
-	bytes_per_sec = div64_long(((s64)bw * 1000), BITS_PER_BYTE);
+	bytes_per_sec = div64_s64(bw * 1000, BITS_PER_BYTE);
 
 	/* encode is 6 bits but really useful are 5 bits */
 	for (i = 0; i < 64; i++) {
 		u64 pow_result = BIT_ULL(i);
 
-		ts_rate = div64_long((s64)hw->psm_clk_freq,
-				     pow_result * ICE_RL_PROF_TS_MULTIPLIER);
+		ts_rate = div64_s64(hw->psm_clk_freq,
+				    pow_result * ICE_RL_PROF_TS_MULTIPLIER);
 		if (ts_rate <= 0)
 			continue;
 
 		/* Multiplier value */
-		mv_tmp = div64_long(bytes_per_sec * ICE_RL_PROF_MULTIPLIER,
-				    ts_rate);
+		mv_tmp = div64_s64(bytes_per_sec * ICE_RL_PROF_MULTIPLIER,
+				   ts_rate);
 
 		/* Round to the nearest ICE_RL_PROF_MULTIPLIER */
 		mv = round_up_64bit(mv_tmp, ICE_RL_PROF_MULTIPLIER);
@@ -4392,7 +4392,6 @@ ice_sched_set_node_bw_lmt(struct ice_port_info *pi, struct ice_sched_node *node,
 		return ice_sched_set_node_bw_dflt(pi, node, rl_type, layer_num);
 	return ice_sched_set_node_bw(pi, node, rl_type, bw, layer_num);
 }
-
 
 /**
  * ice_sched_set_node_bw_dflt_lmt - set node's BW limit to default

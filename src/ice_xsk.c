@@ -393,6 +393,8 @@ static int ice_xsk_umem_disable(struct ice_vsi *vsi, u16 qid)
 	if (!umem)
 		return -EINVAL;
 
+	clear_bit(qid, vsi->af_xdp_zc_qps);
+
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 	ice_xsk_umem_dma_unmap(vsi, umem);
 #else
@@ -424,9 +426,7 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 	struct xdp_umem_fq_reuse *reuseq;
 #endif
-#ifndef HAVE_AF_XDP_NETDEV_UMEM
 	int err;
-#endif
 
 	if (vsi->type != ICE_VSI_PF)
 		return -EINVAL;
@@ -459,11 +459,18 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 
 	xsk_reuseq_free(xsk_reuseq_swap(umem, reuseq));
 
-	return ice_xsk_umem_dma_map(vsi, umem);
+	err = ice_xsk_umem_dma_map(vsi, umem);
 #else
-	return xsk_pool_dma_map(umem, ice_pf_to_dev(vsi->back),
+	err = xsk_pool_dma_map(umem, ice_pf_to_dev(vsi->back),
 			       ICE_RX_DMA_ATTR);
 #endif
+
+	if (err)
+		return err;
+
+	set_bit(qid, vsi->af_xdp_zc_qps);
+
+	return 0;
 }
 
 /**
@@ -935,10 +942,10 @@ ice_run_xdp_zc(struct ice_ring *rx_ring, struct xdp_buff *xdp)
 		break;
 	default:
 		bpf_warn_invalid_xdp_action(act);
-		/* fallthrough -- not supported action */
+		fallthrough; /* not supported action */
 	case XDP_ABORTED:
 		trace_xdp_exception(rx_ring->netdev, xdp_prog, act);
-		/* fallthrough -- handle aborts by dropping frame */
+		fallthrough; /* handle aborts by dropping frame */
 	case XDP_DROP:
 		result = ICE_XDP_CONSUMED;
 		break;

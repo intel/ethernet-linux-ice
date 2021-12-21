@@ -101,9 +101,9 @@ static void ice_display_lag_info(struct ice_lag *lag)
  */
 static void ice_lag_info_event(struct ice_lag *lag, void *ptr)
 {
-	struct net_device *event_netdev, *netdev_tmp;
 	struct netdev_notifier_bonding_info *info;
 	struct netdev_bonding_info *bonding_info;
+	struct net_device *event_netdev;
 	const char *lag_netdev_name;
 
 	event_netdev = netdev_notifier_info_to_dev(ptr);
@@ -123,19 +123,6 @@ static void ice_lag_info_event(struct ice_lag *lag, void *ptr)
 		netdev_dbg(lag->netdev, "Bonding event recv, but slave info not for us\n");
 		goto lag_out;
 	}
-
-	rcu_read_lock();
-	for_each_netdev_in_bond_rcu(lag->upper_netdev, netdev_tmp) {
-		if (!netif_is_ice(netdev_tmp))
-			continue;
-
-		if (netdev_tmp && netdev_tmp != lag->netdev &&
-		    lag->peer_netdev != netdev_tmp) {
-			dev_hold(netdev_tmp);
-			lag->peer_netdev = netdev_tmp;
-		}
-	}
-	rcu_read_unlock();
 
 	if (bonding_info->slave.state)
 		ice_lag_set_backup(lag);
@@ -158,7 +145,6 @@ ice_lag_link(struct ice_lag *lag, struct netdev_notifier_changeupper_info *info)
 	struct ice_pf *pf = lag->pf;
 	int peers = 0;
 
-
 	if (lag->bonded)
 		dev_warn(ice_pf_to_dev(pf), "%s Already part of a bond\n",
 			 netdev_name(lag->netdev));
@@ -174,6 +160,7 @@ ice_lag_link(struct ice_lag *lag, struct netdev_notifier_changeupper_info *info)
 	}
 
 	ice_clear_sriov_cap(pf);
+	ice_unplug_aux_dev(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID));
 	ice_clear_rdma_cap(pf);
 
 	lag->bonded = true;
@@ -193,6 +180,7 @@ ice_lag_unlink(struct ice_lag *lag,
 	       struct netdev_notifier_changeupper_info *info)
 {
 	struct net_device *netdev_tmp, *upper = info->upper_dev;
+	struct iidc_core_dev_info *cdev_info;
 	struct ice_pf *pf = lag->pf;
 	bool found = false;
 
@@ -226,6 +214,17 @@ ice_lag_unlink(struct ice_lag *lag,
 
 	ice_set_sriov_cap(pf);
 	ice_set_rdma_cap(pf);
+	cdev_info = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+	if (cdev_info) {
+		char *name;
+
+		if (cdev_info->rdma_protocol == IIDC_RDMA_PROTOCOL_IWARP)
+			name = IIDC_RDMA_IWARP_NAME;
+		else
+			name = IIDC_RDMA_ROCE_NAME;
+
+		ice_plug_aux_dev(cdev_info, name);
+	}
 	lag->bonded = false;
 	lag->role = ICE_LAG_NONE;
 }
@@ -323,6 +322,9 @@ ice_lag_event_handler(struct notifier_block *notif_blk, unsigned long event,
 		break;
 	case NETDEV_BONDING_INFO:
 		ice_lag_info_event(lag, ptr);
+		break;
+	case NETDEV_UNREGISTER:
+		ice_lag_unlink(lag, ptr);
 		break;
 	default:
 		break;

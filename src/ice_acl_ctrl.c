@@ -4,7 +4,6 @@
 #include "ice_acl.h"
 #include "ice_flow.h"
 
-
 /* Determine the TCAM index of entry 'e' within the ACL table */
 #define ICE_ACL_TBL_TCAM_IDX(e) ((e) / ICE_AQC_ACL_TCAM_DEPTH)
 

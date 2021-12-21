@@ -17,6 +17,75 @@
  * generic network stack functions
  */
 
+/* NEED_NETDEV_TXQ_BQL_PREFETCH
+ *
+ * functions
+ * netdev_txq_bql_complete_prefetchw()
+ * netdev_txq_bql_enqueue_prefetchw()
+ *
+ * were added in kernel 4.20 upstream commit
+ * 535114539bb2 ("net: add netdev_txq_bql_{enqueue, complete}_prefetchw()
+ * helpers")
+ */
+#ifdef NEED_NETDEV_TXQ_BQL_PREFETCH
+/**
+ *      netdev_txq_bql_enqueue_prefetchw - prefetch bql data for write
+ *      @dev_queue: pointer to transmit queue
+ *
+ * BQL enabled drivers might use this helper in their ndo_start_xmit(),
+ * to give appropriate hint to the CPU.
+ */
+static inline
+void netdev_txq_bql_enqueue_prefetchw(struct netdev_queue *dev_queue)
+{
+#ifdef CONFIG_BQL
+	prefetchw(&dev_queue->dql.num_queued);
+#endif
+}
+
+/**
+ *      netdev_txq_bql_complete_prefetchw - prefetch bql data for write
+ *      @dev_queue: pointer to transmit queue
+ *
+ * BQL enabled drivers might use this helper in their TX completion path,
+ * to give appropriate hint to the CPU.
+ */
+static inline
+void netdev_txq_bql_complete_prefetchw(struct netdev_queue *dev_queue)
+{
+#ifdef CONFIG_BQL
+	prefetchw(&dev_queue->dql.limit);
+#endif
+}
+#endif /* NEED_NETDEV_TXQ_BQL_PREFETCH */
+
+/* NEED_NETDEV_TX_SENT_QUEUE
+ *
+ * __netdev_tx_sent_queue was added in kernel 4.20 upstream commit
+ * 3e59020abf0f ("net: bql: add __netdev_tx_sent_queue()")
+ */
+#ifdef NEED_NETDEV_TX_SENT_QUEUE
+/* Variant of netdev_tx_sent_queue() for drivers that are aware
+ * that they should not test BQL status themselves.
+ * We do want to change __QUEUE_STATE_STACK_XOFF only for the last
+ * skb of a batch.
+ * Returns true if the doorbell must be used to kick the NIC.
+ */
+static inline bool __netdev_tx_sent_queue(struct netdev_queue *dev_queue,
+					  unsigned int bytes,
+					  bool xmit_more)
+{
+	if (xmit_more) {
+#ifdef CONFIG_BQL
+		dql_queued(&dev_queue->dql, bytes);
+#endif
+		return netif_tx_queue_stopped(dev_queue);
+	}
+	netdev_tx_sent_queue(dev_queue, bytes);
+	return true;
+}
+#endif /* NEED_NETDEV_TX_SENT_QUEUE */
+
 /* NEED_NET_PREFETCH
  *
  * net_prefetch was introduced by commit f468f21b7af0 ("net: Take common
@@ -34,25 +103,30 @@ static inline void net_prefetch(void *p)
 }
 #endif /* NEED_NET_PREFETCH */
 
-/* NEED_SKB_FRAG_OFF_ACCESSORS
+/* NEED_SKB_FRAG_OFF and NEED_SKB_FRAG_OFF_ADD
  *
  * skb_frag_off and skb_frag_off_add were added in upstream commit
  * 7240b60c98d6 ("linux: Add skb_frag_t page_offset accessors")
  *
  * Implementing the wrappers directly for older kernels which still have the
  * old implementation of skb_frag_t is trivial.
+ *
+ * LTS 4.19 backported the define for skb_frag_off in 4.19.201.
+ * d94d95ae0dd0 ("gro: ensure frag0 meets IP header alignment")
+ * Need to exclude defining skb_frag_off for 4.19.X where X > 200
  */
-#ifdef NEED_SKB_FRAG_OFF_ACCESSORS
+#ifdef NEED_SKB_FRAG_OFF
 static inline unsigned int skb_frag_off(const skb_frag_t *frag)
 {
 	return frag->page_offset;
 }
-
+#endif /* NEED_SKB_FRAG_OFF */
+#ifdef NEED_SKB_FRAG_OFF_ADD
 static inline void skb_frag_off_add(skb_frag_t *frag, int delta)
 {
 	frag->page_offset += delta;
 }
-#endif
+#endif /* NEED_SKB_FRAG_OFF_ADD */
 
 /*
  * NETIF_F_HW_L2FW_DOFFLOAD related functions
@@ -207,6 +281,22 @@ devlink_flash_update_status_notify(struct devlink __always_unused *devlink,
 }
 #endif /* NEED_DEVLINK_FLASH_UPDATE_STATUS_NOTIFY */
 
+#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
+struct devlink_flash_update_params {
+	const char *file_name;
+	const char *component;
+	u32 overwrite_mask;
+};
+
+#ifndef DEVLINK_FLASH_OVERWRITE_SETTINGS
+#define DEVLINK_FLASH_OVERWRITE_SETTINGS BIT(0)
+#endif
+
+#ifndef DEVLINK_FLASH_OVERWRITE_IDENTIFIERS
+#define DEVLINK_FLASH_OVERWRITE_IDENTIFIERS BIT(1)
+#endif
+#endif /* !HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
+
 /* NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY
  *
  * devlink_flash_update_timeout_notify was added by upstream commit
@@ -317,6 +407,36 @@ _kc_devlink_port_attrs_set(struct devlink_port *devlink_port,
 #define devlink_port_attrs_set _kc_devlink_port_attrs_set
 
 #endif /* NEED_DEVLINK_PORT_ATTRS_SET_STRUCT */
+
+/*
+ * NEED_DEVLINK_ALLOC_SETS_DEV
+ *
+ * Since commit 919d13a7e455 ("devlink: Set device as early as possible"), the
+ * devlink device pointer is set by devlink_alloc instead of by
+ * devlink_register.
+ *
+ * devlink_alloc now includes the device pointer in its signature, while
+ * devlink_register no longer includes it.
+ *
+ * This implementation provides a replacement for devlink_alloc which will
+ * take and then silently discard the extra dev pointer.
+ *
+ * To use devlink_register, drivers must check
+ * HAVE_DEVLINK_REGISTER_SETS_DEV. Note that we can't easily provide
+ * a backport of the change to devlink_register directly. Although the dev
+ * pointer is accessible from the devlink pointer through the driver private
+ * section, it is device driver specific and is not easily accessible in
+ * compat code.
+ */
+#ifdef NEED_DEVLINK_ALLOC_SETS_DEV
+static inline struct devlink *
+_kc_devlink_alloc(const struct devlink_ops *ops, size_t priv_size,
+		  struct device * __always_unused dev)
+{
+	return devlink_alloc(ops, priv_size);
+}
+#define devlink_alloc _kc_devlink_alloc
+#endif /* NEED_DEVLINK_ALLOC_SETS_DEV */
 
 #endif /* CONFIG_NET_DEVLINK */
 
@@ -489,5 +609,179 @@ static inline struct system_counterval_t convert_art_ns_to_tsc(u64 art_ns)
 #endif /* !CONFIG_X86 */
 #endif /* NEED_CONVERT_ART_NS_TO_TSC */
 #endif /* HAVE_PTP_CROSSTIMESTAMP */
+
+/*
+ * PTP functions and definitions
+ */
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
+#include <linux/ptp_clock_kernel.h>
+#include <linux/ptp_clock.h>
+
+/* PTP_* ioctl flags
+ *
+ * PTP_PEROUT_ONE_SHOT and PTP_PEROUT_DUTY_CYCLE were added by commit
+ * f65b71aa25a6 ("ptp: add ability to configure duty cycle for periodic
+ * output")
+ *
+ * PTP_PEROUT_PHASE was added in commit b6bd41363a1c ("ptp: introduce
+ * a phase offset in the periodic output request")
+ *
+ * PTP_STRICT_FLAGS was added in commit 6138e687c7b6 ("ptp: Introduce strict
+ * checking of external time stamp options.")
+ *
+ * These flags control behavior for the periodic output PTP ioctl. For older
+ * kernels, we define the flags as 0. This allows bitmask checks on flags to
+ * work as expected, since these feature flags will become no-ops on kernels
+ * that lack support.
+ *
+ * Drivers can check if the relevant feature is actually supported by using an
+ * '#if' on the flag instead of an '#ifdef'
+ */
+#ifndef PTP_PEROUT_PHASE
+#define PTP_PEROUT_PHASE 0
+#endif
+
+#ifndef PTP_PEROUT_DUTY_CYCLE
+#define PTP_PEROUT_DUTY_CYCLE 0
+#endif
+
+#ifndef PTP_STRICT_FLAGS
+#define PTP_STRICT_FLAGS 0
+#endif
+
+#ifndef PTP_PEROUT_PHASE
+/* PTP_PEROUT_PHASE
+ *
+ * The PTP_PEROUT_PHASE flag was added in commit b6bd41363a1c ("ptp: introduce
+ * a phase offset in the periodic output request") as a way for userspace to
+ * request a phase-offset periodic output that starts on some arbitrary
+ * multiple of the clock period.
+ *
+ * For older kernels, define this flag to 0 so that checks for if it is
+ * enabled will always fail. Drivers should use '#if PTP_PEROUT_PHASE' to
+ * determine if the kernel has phase support, and use the flag as normal for
+ * checking supported flags or if the flag is enabled for a given request.
+ */
+#define PTP_PEROUT_PHASE 0
+#endif
+
+#endif /* CONFIG_PTP_1588_CLOCK */
+
+#ifdef NEED_BUS_FIND_DEVICE_CONST_DATA
+/* NEED_BUS_FIND_DEVICE_CONST_DATA
+ *
+ * bus_find_device() was updated in upstream commit 418e3ea157ef
+ * ("bus_find_device: Unify the match callback with class_find_device")
+ * to take a const void *data parameter and also have the match() function
+ * passed in take a const void *data parameter.
+ *
+ * all of the kcompat below makes it so the caller can always just call
+ * bus_find_device() according to the upstream kernel without having to worry
+ * about const vs. non-const arguments.
+ */
+struct _kc_bus_find_device_custom_data {
+	const void *real_data;
+	int (*real_match)(struct device *dev, const void *data);
+};
+
+static inline int _kc_bus_find_device_wrapped_match(struct device *dev, void *data)
+{
+	struct _kc_bus_find_device_custom_data *custom_data = data;
+
+	return custom_data->real_match(dev, custom_data->real_data);
+}
+
+static inline struct device *
+_kc_bus_find_device(struct bus_type *type, struct device *start,
+		    const void *data,
+		    int (*match)(struct device *dev, const void *data))
+{
+	struct _kc_bus_find_device_custom_data custom_data = {};
+
+	custom_data.real_data = data;
+	custom_data.real_match = match;
+
+	return bus_find_device(type, start, &custom_data,
+			       _kc_bus_find_device_wrapped_match);
+}
+
+/* force callers of bus_find_device() to call _kc_bus_find_device() on kernels
+ * where NEED_BUS_FIND_DEVICE_CONST_DATA is defined
+ */
+#define bus_find_device(type, start, data, match) \
+	_kc_bus_find_device(type, start, data, match)
+#endif /* NEED_BUS_FIND_DEVICE_CONST_DATA */
+
+#ifdef NEED_DEV_PM_DOMAIN_ATTACH_DETACH
+#include <linux/acpi.h>
+/* NEED_DEV_PM_DOMAIN_ATTACH_DETACH
+ *
+ * dev_pm_domain_attach() and dev_pm_domain_detach() were added in upstream
+ * commit 46420dd73b80 ("PM / Domains: Add APIs to attach/detach a PM domain for
+ * a device"). To support older kernels and OSVs that don't have these API, just
+ * implement how older versions worked by directly calling acpi_dev_pm_attach()
+ * and acpi_dev_pm_detach().
+ */
+static inline int dev_pm_domain_attach(struct device *dev, bool power_on)
+{
+	if (dev->pm_domain)
+		return 0;
+
+	if (ACPI_HANDLE(dev))
+		return acpi_dev_pm_attach(dev, true);
+
+	return 0;
+}
+
+static inline void dev_pm_domain_detach(struct device *dev, bool power_off)
+{
+	if (ACPI_HANDLE(dev))
+		acpi_dev_pm_detach(dev, true);
+}
+#endif /* NEED_DEV_PM_DOMAIN_ATTACH_DETACH */
+
+#ifdef NEED_CPU_LATENCY_QOS_RENAME
+/* NEED_CPU_LATENCY_QOS_RENAME
+ *
+ * The PM_QOS_CPU_DMA_LATENCY definition was removed in 67b06ba01857 ("PM:
+ * QoS: Drop PM_QOS_CPU_DMA_LATENCY and rename related functions"). The
+ * related functions were renamed to use "cpu_latency_qos_" prefix.
+ *
+ * Use wrapper functions to map the new API onto the API available in older
+ * kernels.
+ */
+#include <linux/pm_qos.h>
+static inline void
+cpu_latency_qos_add_request(struct pm_qos_request *req, s32 value)
+{
+	pm_qos_add_request(req, PM_QOS_CPU_DMA_LATENCY, value);
+}
+
+static inline void
+cpu_latency_qos_update_request(struct pm_qos_request *req, s32 new_value)
+{
+	pm_qos_update_request(req, new_value);
+}
+
+static inline void
+cpu_latency_qos_remove_request(struct pm_qos_request *req)
+{
+	pm_qos_remove_request(req);
+}
+#endif /* NEED_CPU_LATENCY_QOS_RENAME */
+
+#ifdef NEED_DECLARE_STATIC_KEY_FALSE
+/* NEED_DECLARE_STATIC_KEY_FALSE
+ *
+ * DECLARE_STATIC_KEY_FALSE was added by upstream commit
+ * 525e0ac4d2b2 ("locking/static_keys: Provide DECLARE and
+ * well as DEFINE macros")
+ *
+ * The definition is now necessary to handle
+ * the xdpdrv work with more than 64 cpus
+ */
+#define DECLARE_STATIC_KEY_FALSE(name)	\
+	extern struct static_key_false name
+#endif /* NEED_DECLARE_STATIC_KEY_FALSE */
 
 #endif /* _KCOMPAT_IMPL_H_ */

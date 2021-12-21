@@ -37,20 +37,24 @@ void ice_vf_vsi_init_vlan_ops(struct ice_vsi *vsi)
 	struct ice_pf *pf = vsi->back;
 	struct ice_vf *vf;
 
-	vf = &pf->vf[vsi->vf_id];
+	vf = ice_get_vf(pf, vsi->vf_id);
 
 	if (ice_is_dvm_ena(&pf->hw)) {
 		vlan_ops = &vsi->outer_vlan_ops;
 
 		/* outer VLAN ops regardless of port VLAN config */
 		vlan_ops->add_vlan = ice_vsi_add_vlan;
-		vlan_ops->dis_rx_filtering = ice_vsi_dis_rx_vlan_filtering;
 		vlan_ops->ena_tx_filtering = ice_vsi_ena_tx_vlan_filtering;
 		vlan_ops->dis_tx_filtering = ice_vsi_dis_tx_vlan_filtering;
 
 		if (ice_vf_is_port_vlan_ena(vf)) {
 			/* setup outer VLAN ops */
 			vlan_ops->set_port_vlan = ice_vsi_set_outer_port_vlan;
+			/* all Rx traffic should be in the domain of the
+			 * assigned port VLAN, so prevent disabling Rx VLAN
+			 * filtering
+			 */
+			vlan_ops->dis_rx_filtering = noop_vlan;
 			vlan_ops->ena_rx_filtering =
 				ice_vsi_ena_rx_vlan_filtering;
 
@@ -63,7 +67,10 @@ void ice_vf_vsi_init_vlan_ops(struct ice_vsi *vsi)
 			vlan_ops->ena_insertion = ice_vsi_ena_inner_insertion;
 			vlan_ops->dis_insertion = ice_vsi_dis_inner_insertion;
 		} else {
-			if (test_bit(ICE_FLAG_VF_VLAN_PRUNE_DIS, pf->flags))
+			vlan_ops->dis_rx_filtering =
+				ice_vsi_dis_rx_vlan_filtering;
+
+			if (!test_bit(ICE_FLAG_VF_VLAN_PRUNING, pf->flags))
 				vlan_ops->ena_rx_filtering = noop_vlan;
 			else
 				vlan_ops->ena_rx_filtering =
@@ -88,7 +95,6 @@ void ice_vf_vsi_init_vlan_ops(struct ice_vsi *vsi)
 
 		/* inner VLAN ops regardless of port VLAN config */
 		vlan_ops->add_vlan = ice_vsi_add_vlan;
-		vlan_ops->dis_rx_filtering = ice_vsi_dis_rx_vlan_filtering;
 		vlan_ops->ena_tx_filtering = ice_vsi_ena_tx_vlan_filtering;
 		vlan_ops->dis_tx_filtering = ice_vsi_dis_tx_vlan_filtering;
 
@@ -96,8 +102,15 @@ void ice_vf_vsi_init_vlan_ops(struct ice_vsi *vsi)
 			vlan_ops->set_port_vlan = ice_vsi_set_inner_port_vlan;
 			vlan_ops->ena_rx_filtering =
 				ice_vsi_ena_rx_vlan_filtering;
+			/* all Rx traffic should be in the domain of the
+			 * assigned port VLAN, so prevent disabling Rx VLAN
+			 * filtering
+			 */
+			vlan_ops->dis_rx_filtering = noop_vlan;
 		} else {
-			if (test_bit(ICE_FLAG_VF_VLAN_PRUNE_DIS, pf->flags))
+			vlan_ops->dis_rx_filtering =
+				ice_vsi_dis_rx_vlan_filtering;
+			if (!test_bit(ICE_FLAG_VF_VLAN_PRUNING, pf->flags))
 				vlan_ops->ena_rx_filtering = noop_vlan;
 			else
 				vlan_ops->ena_rx_filtering =
@@ -127,7 +140,7 @@ void ice_vf_vsi_init_vlan_ops(struct ice_vsi *vsi)
  */
 void ice_vf_vsi_cfg_dvm_legacy_vlan_mode(struct ice_vsi *vsi)
 {
-	struct ice_vf *vf = &vsi->back->vf[vsi->vf_id];
+	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
 	struct ice_vsi_vlan_ops *vlan_ops;
 	struct device *dev = ice_pf_to_dev(vf->pf);
 
@@ -193,7 +206,7 @@ void ice_vf_vsi_cfg_dvm_legacy_vlan_mode(struct ice_vsi *vsi)
  */
 void ice_vf_vsi_cfg_svm_legacy_vlan_mode(struct ice_vsi *vsi)
 {
-	struct ice_vf *vf = &vsi->back->vf[vsi->vf_id];
+	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
 
 	if (ice_is_dvm_ena(&vsi->back->hw) || ice_vf_is_port_vlan_ena(vf))
 		return;
@@ -209,7 +222,7 @@ void ice_vf_vsi_cfg_svm_legacy_vlan_mode(struct ice_vsi *vsi)
  */
 int ice_vf_vsi_dcf_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
-	struct ice_vf *vf = &vsi->back->vf[vsi->vf_id];
+	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
 	int err;
 
 	if (!ice_is_dvm_ena(&vsi->back->hw) || ice_vf_is_port_vlan_ena(vf))
@@ -235,7 +248,7 @@ int ice_vf_vsi_dcf_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan *vla
  */
 int ice_vf_vsi_dcf_ena_outer_vlan_stripping(struct ice_vsi *vsi, u16 tpid)
 {
-	struct ice_vf *vf = &vsi->back->vf[vsi->vf_id];
+	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
 	int err;
 
 	if (!ice_is_dvm_ena(&vsi->back->hw) || ice_vf_is_port_vlan_ena(vf))

@@ -8,6 +8,7 @@
 #endif /* CONFIG_NET_DEVLINK */
 #include "ice_virtchnl_pf.h"
 #include "ice_tc_lib.h"
+#include "ice_lib.h"
 
 #ifdef HAVE_NDO_GET_PHYS_PORT_NAME
 /**
@@ -34,7 +35,7 @@ ice_repr_get_phys_port_name(struct net_device *netdev, char *buf, size_t len)
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 	/* Devlink port is registered and devlink core is taking care of name formatting. */
-	if (repr->vf->devlink_port.registered)
+	if (repr->vf->devlink_port.devlink)
 		return -EOPNOTSUPP;
 #endif /* CONFIG_NET_DEVLINK */
 
@@ -62,7 +63,7 @@ ice_repr_get_stats64(struct net_device *netdev, struct rtnl_link_stats64 *stats)
 	struct ice_eth_stats *eth_stats;
 	struct ice_vsi *vsi;
 
-	if (ice_check_vf_ready_for_cfg(np->repr->vf))
+	if (ice_is_vf_disabled(np->repr->vf))
 #ifdef HAVE_VOID_NDO_GET_STATS64
 		return;
 #else
@@ -234,7 +235,27 @@ ice_repr_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 		return -EOPNOTSUPP;
 	}
 }
-#endif /* ESWITCH_SUPPORT */
+#endif /* HAVE_TC_SETUP_CLSFLOWER */
+
+/**
+ * ice_repr_change_mtu - NDO callback to change the MTU on port representor
+ * @netdev: network interface device structure
+ * @new_mtu: new value for MTU
+ *
+ * Returns 0 on success, negative on failure
+ */
+static int ice_repr_change_mtu(struct net_device *netdev, int new_mtu)
+{
+	int err;
+
+	err = ice_check_mtu_valid(netdev, new_mtu);
+	if (err)
+		return err;
+
+	netdev->mtu = (unsigned int)new_mtu;
+
+	return 0;
+}
 
 static const struct net_device_ops ice_repr_netdev_ops = {
 #ifdef HAVE_NDO_GET_PHYS_PORT_NAME
@@ -245,6 +266,11 @@ static const struct net_device_ops ice_repr_netdev_ops = {
 	.ndo_stop = ice_repr_stop,
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 	.ndo_start_xmit = ice_eswitch_port_start_xmit,
+#ifdef HAVE_RHEL7_EXTENDED_MIN_MAX_MTU
+	.extended.ndo_change_mtu = ice_repr_change_mtu,
+#else
+	.ndo_change_mtu = ice_repr_change_mtu,
+#endif /* HAVE_RHEL7_EXTENDED_MIN_MAX_MTU */
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
 	.ndo_get_devlink_port = ice_repr_get_devlink_port,
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
@@ -304,6 +330,12 @@ static int ice_repr_add(struct ice_vf *vf)
 	if (!repr)
 		return -ENOMEM;
 
+	repr->mac_rule = kzalloc(sizeof(*repr->mac_rule), GFP_KERNEL);
+	if (!repr->mac_rule) {
+		err = -ENOMEM;
+		goto err_alloc_rule;
+	}
+
 	repr->netdev = alloc_etherdev(sizeof(struct ice_netdev_priv));
 	if (!repr->netdev) {
 		err =  -ENOMEM;
@@ -329,6 +361,16 @@ static int ice_repr_add(struct ice_vf *vf)
 	if (err)
 		goto err_devlink;
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
+
+#ifdef HAVE_NETDEVICE_MIN_MAX_MTU
+#ifdef HAVE_RHEL7_EXTENDED_MIN_MAX_MTU
+	repr->netdev->extended->min_mtu = ETH_MIN_MTU;
+	repr->netdev->extended->max_mtu = ICE_MAX_MTU;
+#else
+	repr->netdev->min_mtu = ETH_MIN_MTU;
+	repr->netdev->max_mtu = ICE_MAX_MTU;
+#endif /* HAVE_RHEL7_EXTENDED_MIN_MAX_MTU */
+#endif /* HAVE_NETDEVICE_MIN_MAX_MTU */
 #endif /* CONFIG_NET_DEVLINK */
 
 	err = ice_repr_reg_netdev(repr->netdev);
@@ -340,6 +382,8 @@ static int ice_repr_add(struct ice_vf *vf)
 	devlink_port_type_eth_set(&vf->devlink_port, repr->netdev);
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #endif /* CONFIG_NET_DEVLINK */
+
+	ice_vc_change_ops_to_repr(&vf->vc_ops);
 
 	return 0;
 
@@ -356,6 +400,9 @@ err_alloc_q_vector:
 	free_netdev(repr->netdev);
 	repr->netdev = NULL;
 err_alloc:
+	kfree(repr->mac_rule);
+	repr->mac_rule = NULL;
+err_alloc_rule:
 	kfree(repr);
 	vf->repr = NULL;
 	return err;
@@ -367,6 +414,9 @@ err_alloc:
  */
 static void ice_repr_rem(struct ice_vf *vf)
 {
+	if (!vf->repr)
+		return;
+
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
 	ice_devlink_destroy_vf_port(vf);
@@ -377,42 +427,12 @@ static void ice_repr_rem(struct ice_vf *vf)
 	unregister_netdev(vf->repr->netdev);
 	free_netdev(vf->repr->netdev);
 	vf->repr->netdev = NULL;
+	kfree(vf->repr->mac_rule);
+	vf->repr->mac_rule = NULL;
 	kfree(vf->repr);
 	vf->repr = NULL;
-}
 
-
-/**
- * ice_repr_add_for_all_vfs - add port representor for all VFs
- * @pf: pointer to PF structure
- */
-int ice_repr_add_for_all_vfs(struct ice_pf *pf)
-{
-	int err;
-	int i;
-
-
-	ice_for_each_vf(pf, i) {
-		struct ice_vf *vf = &pf->vf[i];
-
-		err = ice_repr_add(vf);
-		if (err)
-			goto err;
-
-		ice_vc_change_ops_to_repr(&vf->vc_ops);
-	}
-
-	return 0;
-
-err:
-	for (i = i - 1; i >= 0; i--) {
-		struct ice_vf *vf = &pf->vf[i];
-
-		ice_repr_rem(vf);
-		ice_vc_set_dflt_vf_ops(&vf->vc_ops);
-	}
-
-	return err;
+	ice_vc_set_dflt_vf_ops(&vf->vc_ops);
 }
 
 /**
@@ -421,15 +441,35 @@ err:
  */
 void ice_repr_rem_from_all_vfs(struct ice_pf *pf)
 {
-	int i;
+	struct ice_vf *vf;
+	unsigned int bkt;
 
-
-	ice_for_each_vf(pf, i) {
-		struct ice_vf *vf = &pf->vf[i];
-
+	ice_for_each_vf(pf, bkt, vf)
 		ice_repr_rem(vf);
-		ice_vc_set_dflt_vf_ops(&vf->vc_ops);
+}
+
+/**
+ * ice_repr_add_for_all_vfs - add port representor for all VFs
+ * @pf: pointer to PF structure
+ */
+int ice_repr_add_for_all_vfs(struct ice_pf *pf)
+{
+	struct ice_vf *vf;
+	unsigned int bkt;
+	int err;
+
+	ice_for_each_vf(pf, bkt, vf) {
+		err = ice_repr_add(vf);
+		if (err)
+			goto err;
 	}
+
+	return 0;
+
+err:
+	ice_repr_rem_from_all_vfs(pf);
+
+	return err;
 }
 
 /**

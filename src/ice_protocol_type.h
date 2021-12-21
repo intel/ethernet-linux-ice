@@ -117,8 +117,10 @@ enum ice_prot_id {
 	ICE_PROT_MPLS_IL	= 29,
 	ICE_PROT_IPV4_OF_OR_S	= 32,
 	ICE_PROT_IPV4_IL	= 33,
+	ICE_PROT_IPV4_IL_IL	= 34,
 	ICE_PROT_IPV6_OF_OR_S	= 40,
 	ICE_PROT_IPV6_IL	= 41,
+	ICE_PROT_IPV6_IL_IL	= 42,
 	ICE_PROT_IPV6_FRAG	= 47,
 	ICE_PROT_TCP_IL		= 49,
 	ICE_PROT_UDP_OF		= 52,
@@ -146,7 +148,6 @@ enum ice_prot_id {
 };
 
 #define ICE_VNI_OFFSET		12 /* offset of VNI from ICE_PROT_UDP_OF */
-
 
 #define ICE_MAC_OFOS_HW		1
 #define ICE_MAC_IL_HW		4
@@ -188,7 +189,6 @@ struct ice_protocol_entry {
 	u8 protocol_id;
 };
 
-
 struct ice_ether_hdr {
 	u8 dst_addr[ETH_ALEN];
 	u8 src_addr[ETH_ALEN];
@@ -205,8 +205,8 @@ struct ice_ether_vlan_hdr {
 };
 
 struct ice_vlan_hdr {
-	__be16 vlan;
 	__be16 type;
+	__be16 vlan;
 };
 
 struct ice_ipv4_hdr {
@@ -314,7 +314,6 @@ struct ice_ah_hdr {
 struct ice_nat_t_hdr {
 	struct ice_esp_hdr esp;
 };
-
 
 struct ice_nvgre {
 	__be16 flags;

@@ -2,7 +2,7 @@
 /* Copyright (C) 2018-2021, Intel Corporation. */
 
 #include "ice_common.h"
-#include "ice_sriov.h"
+#include "ice_vf_mbx.h"
 
 /**
  * ice_aq_send_msg_to_vf
@@ -39,7 +39,6 @@ ice_aq_send_msg_to_vf(struct ice_hw *hw, u16 vfid, u32 v_opcode, u32 v_retval,
 	return ice_sq_send_cmd(hw, &hw->mailboxq, &desc, msg, msglen, cd);
 }
 
-
 /**
  * ice_conv_link_speed_to_virtchnl
  * @adv_link_support: determines the format of the returned link speed
@@ -59,40 +58,40 @@ u32 ice_conv_link_speed_to_virtchnl(bool adv_link_support, u16 link_speed)
 	if (adv_link_support)
 		switch (link_speed) {
 		case ICE_AQ_LINK_SPEED_10MB:
-			speed = ICE_LINK_SPEED_10MBPS;
+			speed = SPEED_10;
 			break;
 		case ICE_AQ_LINK_SPEED_100MB:
-			speed = ICE_LINK_SPEED_100MBPS;
+			speed = SPEED_100;
 			break;
 		case ICE_AQ_LINK_SPEED_1000MB:
-			speed = ICE_LINK_SPEED_1000MBPS;
+			speed = SPEED_1000;
 			break;
 		case ICE_AQ_LINK_SPEED_2500MB:
-			speed = ICE_LINK_SPEED_2500MBPS;
+			speed = SPEED_2500;
 			break;
 		case ICE_AQ_LINK_SPEED_5GB:
-			speed = ICE_LINK_SPEED_5000MBPS;
+			speed = SPEED_5000;
 			break;
 		case ICE_AQ_LINK_SPEED_10GB:
-			speed = ICE_LINK_SPEED_10000MBPS;
+			speed = SPEED_10000;
 			break;
 		case ICE_AQ_LINK_SPEED_20GB:
-			speed = ICE_LINK_SPEED_20000MBPS;
+			speed = SPEED_20000;
 			break;
 		case ICE_AQ_LINK_SPEED_25GB:
-			speed = ICE_LINK_SPEED_25000MBPS;
+			speed = SPEED_25000;
 			break;
 		case ICE_AQ_LINK_SPEED_40GB:
-			speed = ICE_LINK_SPEED_40000MBPS;
+			speed = SPEED_40000;
 			break;
 		case ICE_AQ_LINK_SPEED_50GB:
-			speed = ICE_LINK_SPEED_50000MBPS;
+			speed = SPEED_50000;
 			break;
 		case ICE_AQ_LINK_SPEED_100GB:
-			speed = ICE_LINK_SPEED_100000MBPS;
+			speed = SPEED_100000;
 			break;
 		default:
-			speed = ICE_LINK_SPEED_UNKNOWN;
+			speed = 0;
 			break;
 		}
 	else
