@@ -7,10 +7,10 @@
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 struct ice_pf *ice_allocate_pf(struct device *dev);
 
-int ice_devlink_register(struct ice_pf *pf);
+void ice_devlink_register(struct ice_pf *pf);
 void ice_devlink_unregister(struct ice_pf *pf);
-void ice_devlink_params_publish(struct ice_pf *pf);
-void ice_devlink_params_unpublish(struct ice_pf *pf);
+int ice_devlink_register_params(struct ice_pf *pf);
+void ice_devlink_unregister_params(struct ice_pf *pf);
 int ice_devlink_create_pf_port(struct ice_pf *pf);
 void ice_devlink_destroy_pf_port(struct ice_pf *pf);
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
@@ -23,10 +23,10 @@ static inline struct ice_pf *ice_allocate_pf(struct device *dev)
 	return devm_kzalloc(dev, sizeof(struct ice_pf), GFP_KERNEL);
 }
 
-static inline int ice_devlink_register(struct ice_pf *pf) { return 0; }
+static inline void ice_devlink_register(struct ice_pf *pf) { }
 static inline void ice_devlink_unregister(struct ice_pf *pf) { }
-static inline void ice_devlink_params_publish(struct ice_pf *pf) { }
-static inline void ice_devlink_params_unpublish(struct ice_pf *pf) { }
+static inline int ice_devlink_register_params(struct ice_pf *pf) { return 0; }
+static inline void ice_devlink_unregister_params(struct ice_pf *pf) { }
 static inline int ice_devlink_create_pf_port(struct ice_pf *pf) { return 0; }
 static inline void ice_devlink_destroy_pf_port(struct ice_pf *pf) { }
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
@@ -42,5 +42,16 @@ void ice_devlink_destroy_regions(struct ice_pf *pf);
 static inline void ice_devlink_init_regions(struct ice_pf *pf) { }
 static inline void ice_devlink_destroy_regions(struct ice_pf *pf) { }
 #endif
+
+int ice_devlink_tc_params_register(struct ice_vsi *vsi);
+void ice_devlink_tc_params_unregister(struct ice_vsi *vsi);
+
+#ifdef HAVE_DEVLINK_HEALTH
+void ice_devlink_init_mdd_reporter(struct ice_pf *pf);
+void ice_devlink_destroy_mdd_reporter(struct ice_pf *pf);
+void ice_devlink_report_mdd_event(struct ice_pf *pf, enum ice_mdd_src src,
+				  u8 pf_num, u16 vf_num, u8 event, u16 queue);
+void ice_devlink_clear_after_reset(struct ice_pf *pf);
+#endif /* HAVE_DEVLINK_HEALTH */
 
 #endif /* _ICE_DEVLINK_H_ */

@@ -51,9 +51,6 @@
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #include <net/devlink.h>
 #endif /* CONFIG_NET_DEVLINK */
-#if IS_ENABLED(CONFIG_DCB)
-#include <scsi/iscsi_proto.h>
-#endif /* CONFIG_DCB */
 #ifdef HAVE_CONFIG_DIMLIB
 #include <linux/dim.h>
 #else
@@ -71,7 +68,7 @@
 #include <linux/idr.h>
 #include "ice_idc_int.h"
 #include "virtchnl.h"
-#include "ice_virtchnl_pf.h"
+#include "ice_sriov.h"
 #include "ice_vf_mbx.h"
 #include "ice_ptp.h"
 #include "ice_fdir.h"
@@ -192,8 +189,9 @@ extern const char ice_drv_ver[];
 #define ICE_TX_CTX_DESC(R, i) (&(((struct ice_tx_ctx_desc *)((R)->desc))[i]))
 #define ICE_TX_FDIRDESC(R, i) (&(((struct ice_fltr_desc *)((R)->desc))[i]))
 
-#define ICE_ACL_ENTIRE_SLICE	1
-#define ICE_ACL_HALF_SLICE	2
+#define ICE_ACL_ENTIRE_SLICE         1
+#define ICE_ACL_HALF_SLICE           2
+#define ICE_TCAM_DIVIDER_THRESHOLD   6
 
 /* Minimum BW limit is 500 Kbps for any scheduler node */
 #define ICE_MIN_BW_LIMIT		500
@@ -205,6 +203,23 @@ extern const char ice_drv_ver[];
 #if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
 #define ICE_GTP_TNL_WELLKNOWN_PORT 2152
 #endif /* HAVE_TC_FLOWER_ENC && HAVE_TC_INDIR_BLOCK */
+
+#ifdef HAVE_TC_SETUP_CLSFLOWER
+/* prio 5..7 can be used as advanced switch filter priority. Default recipes
+ * have prio 4 and below, hence prio value between 5..7 can be used as filter
+ * prio for advanced switch filter (advanced switch filter means it needs
+ * new recipe to be created to represent specified extraction sequence because
+ * default recipe extraction sequence does not represent custom extraction)
+ */
+#define ICE_SWITCH_FLTR_PRIO_QUEUE     7
+/* prio 6 is reserved for future use (e.g. switch filter with L3 fields +
+ * (Optional: IP TOS/TTL) + L4 fields + (optionally: TCP fields such as
+ * SYN/FIN/RST))
+ */
+#define ICE_SWITCH_FLTR_PRIO_RSVD      6
+#define ICE_SWITCH_FLTR_PRIO_VSI       5
+#define ICE_SWITCH_FLTR_PRIO_QGRP      ICE_SWITCH_FLTR_PRIO_VSI
+#endif /* ifdef HAVE_TC_SETUP_CLSFLOWER*/
 
 /* Macro for each VSI in a PF */
 #define ice_for_each_vsi(pf, i) \
@@ -261,21 +276,6 @@ enum ice_feature {
 	ICE_F_MAX
 };
 
-enum ice_channel_fltr_type {
-	ICE_CHNL_FLTR_TYPE_INVALID,
-	ICE_CHNL_FLTR_TYPE_SRC_PORT,
-	ICE_CHNL_FLTR_TYPE_DEST_PORT,
-	ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT, /* for future use cases */
-	ICE_CHNL_FLTR_TYPE_TENANT_ID,
-	ICE_CHNL_FLTR_TYPE_SRC_IPV4,
-	ICE_CHNL_FLTR_TYPE_DEST_IPV4,
-	ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV4,
-	ICE_CHNL_FLTR_TYPE_SRC_IPV6,
-	ICE_CHNL_FLTR_TYPE_DEST_IPV6,
-	ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV6,
-	ICE_CHNL_FLTR_TYPE_LAST /* must be last */
-};
-
 struct ice_channel {
 	struct list_head list;
 	u8 type;
@@ -296,7 +296,7 @@ struct ice_channel {
 	atomic_t fd_queue;
 	/* packets services thru' inline-FD filter */
 	u64 fd_pkt_cnt;
-	enum ice_channel_fltr_type fltr_type;
+	u8 inline_fd:1;
 	struct ice_vsi *ch_vsi;
 };
 
@@ -412,7 +412,6 @@ enum ice_vsi_state {
 
 enum ice_chnl_feature {
 	ICE_CHNL_FEATURE_FD_ENA, /* for side-band flow-director */
-	ICE_CHNL_FEATURE_INLINE_FD_ENA, /* for inline flow-director */
 	/* using the SO_MARK socket option will trigger skb->mark to be set.
 	 * Driver should act on skb->mark of not (to align flow to HW queue
 	 * binding) is additionally controlled via ethtool private flag and
@@ -474,7 +473,7 @@ struct ice_vsi {
 	u16 vsi_num;			/* HW (absolute) index of this VSI */
 	u16 idx;			/* software index in pf->vsi[] */
 
-	s16 vf_id;			/* VF ID for SR-IOV VSIs */
+	struct ice_vf *vf;		/* VF associated with this VSI */
 
 	u16 ethtype;			/* Ethernet protocol for pause frame */
 	u16 num_gfltr;
@@ -597,6 +596,7 @@ struct ice_vsi {
 	u16 old_ena_tc;
 
 	struct ice_channel *ch;
+	u8 num_tc_devlink_params;
 
 	/* setup back reference, to which aggregator node this VSI
 	 * corresponds to
@@ -784,7 +784,6 @@ enum ice_pf_flags {
 	ICE_FLAG_BASE_R_FEC,
 #endif /* !ETHTOOL_GFECPARAM */
 	ICE_FLAG_FW_LLDP_AGENT,
-	ICE_FLAG_CHNL_INLINE_FD_ENA,
 	ICE_FLAG_CHNL_INLINE_FD_MARK_ENA,
 	ICE_FLAG_CHNL_PKT_INSPECT_OPT_ENA,
 	ICE_FLAG_CHNL_PKT_CLEAN_BP_STOP_ENA,
@@ -847,6 +846,31 @@ struct ice_agg_node {
 	u8 valid;
 };
 
+#ifdef HAVE_DEVLINK_HEALTH
+enum ice_mdd_src {
+	ICE_MDD_SRC_NONE = 0,
+	ICE_MDD_SRC_TX_PQM,
+	ICE_MDD_SRC_TX_TCLAN,
+	ICE_MDD_SRC_TX_TDPU,
+	ICE_MDD_SRC_RX
+};
+
+struct ice_mdd_event {
+	struct list_head list;
+	enum ice_mdd_src src;
+	u8 pf_num;
+	u16 vf_num;
+	u8 event;
+	u16 queue;
+};
+
+struct ice_mdd_reporter {
+	struct devlink_health_reporter *reporter;
+	u16 count;
+	struct list_head event_list;
+};
+#endif /* HAVE_DEVLINK_HEALTH */
+
 struct ice_pf {
 	struct pci_dev *pdev;
 
@@ -858,10 +882,10 @@ struct ice_pf {
 #endif /* HAVE_DEVLINK_REGIONS */
 	/* devlink port data */
 	struct devlink_port devlink_port;
+#ifdef HAVE_DEVLINK_HEALTH
+	struct ice_mdd_reporter mdd_reporter;
+#endif /* HAVE_DEVLINK_HEALTH */
 #endif /* CONFIG_NET_DEVLINK */
-#if defined(HAVE_DEVLINK_PARAMS) && !defined(HAVE_DEVLINK_PARAMS_PUBLISH)
-	u8 devlink_params_published:1;
-#endif /* HAVE_DEVLINK_PARAMS && !HAVE_DEVLINK_PARAMS_PUBLISH */
 
 	/* OS reserved IRQ details */
 	struct msix_entry *msix_entries;
@@ -912,7 +936,7 @@ struct ice_pf {
 	spinlock_t aq_wait_lock;
 	struct hlist_head aq_wait_list;
 	wait_queue_head_t aq_wait_queue;
-	bool fw_empr_disabled;
+	bool fw_emp_reset_disabled;
 
 	wait_queue_head_t reset_wait_queue;
 
@@ -1005,7 +1029,10 @@ struct ice_pf {
 #define ICE_MAX_VF_AGG_NODES		32
 	struct ice_agg_node vf_agg_node[ICE_MAX_VF_AGG_NODES];
 	enum ice_e810t_cgu_state synce_dpll_state;
+	u8 synce_ref_pin;
 	enum ice_e810t_cgu_state ptp_dpll_state;
+	u8 ptp_ref_pin;
+	s64 ptp_dpll_phase_offset;
 };
 
 struct ice_netdev_priv {
@@ -1307,19 +1334,6 @@ static inline bool ice_vsi_fd_ena(struct ice_vsi *vsi)
 	return !!test_bit(ICE_CHNL_FEATURE_FD_ENA, vsi->features);
 }
 
-/**
- * ice_vsi_inline_fd_ena
- * @vsi: pointer to VSI
- *
- * This function returns true if VSI is enabled for usage of flow-director
- * otherwise returns false. This is controlled thru' ethtool priv-flag
- * 'channel-inline-flow-director'
- */
-static inline bool ice_vsi_inline_fd_ena(struct ice_vsi *vsi)
-{
-	return !!test_bit(ICE_CHNL_FEATURE_INLINE_FD_ENA, vsi->features);
-}
-
 static inline bool ice_vsi_inline_fd_mark_ena(struct ice_vsi *vsi)
 {
 	return !!test_bit(ICE_CHNL_FEATURE_INLINE_FD_MARK_ENA, vsi->features);
@@ -1483,6 +1497,7 @@ int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx);
 void ice_update_pf_stats(struct ice_pf *pf);
 void ice_update_vsi_stats(struct ice_vsi *vsi);
 int ice_up(struct ice_vsi *vsi);
+void ice_fetch_u64_stats_per_ring(struct ice_ring *ring, u64 *pkts, u64 *bytes);
 int ice_down(struct ice_vsi *vsi);
 int ice_vsi_cfg(struct ice_vsi *vsi);
 struct ice_vsi *ice_lb_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi);

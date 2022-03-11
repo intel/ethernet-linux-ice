@@ -396,6 +396,9 @@ ice_cdev_info_update_vsi_filter(struct iidc_core_dev_info *cdev_info,
  * @vf_id: the VF ID of recipient of message
  * @msg: pointer to message contents
  * @len: len of message
+ *
+ * Note that the VF ID is absolute for RDMA operations, but a relative ID for
+ * IPSEC operations.
  */
 static int
 ice_cdev_info_vc_send(struct iidc_core_dev_info *cdev_info, u32 vf_id,
@@ -422,7 +425,7 @@ ice_cdev_info_vc_send(struct iidc_core_dev_info *cdev_info, u32 vf_id,
 		/* The ID is absolute so it must be converted first */
 		rel_vf_id = ice_rel_vf_id(&pf->hw, vf_id);
 
-		if (rel_vf_id >= pf->vfs.num_alloc)
+		if (!ice_is_valid_vf_id(pf, rel_vf_id))
 			return -ENODEV;
 
 		/* VIRTCHNL_OP_RDMA is being used for RoCEv2 msg also */
@@ -790,6 +793,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 			cdev_info->netdev = vsi->netdev;
 			cdev_info->rdma_protocol = IIDC_RDMA_PROTOCOL_IWARP;
 			cdev_info->cdev_info_id = IIDC_RDMA_ID;
+			cdev_info->pf_id = pf->hw.pf_id;
 			ice_cdev_init_rdma_qos_info(pf, &cdev_info->qos_info);
 			/* make sure peer specific resources such as msix_count
 			 * and msix_entries are initialized
@@ -837,3 +841,4 @@ bool ice_is_rdma_aux_loaded(struct ice_pf *pf)
 
 	return loaded;
 }
+

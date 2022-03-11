@@ -4,7 +4,6 @@
 #ifndef _ICE_XSK_H_
 #define _ICE_XSK_H_
 #include "ice_txrx.h"
-#include "ice.h"
 #ifdef HAVE_MEM_TYPE_XSK_BUFF_POOL
 #include <net/xdp_sock_drv.h>
 #endif

@@ -129,17 +129,21 @@ bool ice_dcf_is_udp_tunnel_aq_cmd(struct ice_aq_desc *desc, u8 *aq_buf)
  */
 static bool ice_is_vf_adq_enabled(struct ice_pf *pf, u16 *vf_id)
 {
+	bool adq_enabled = false;
 	struct ice_vf *vf;
 	unsigned int bkt;
 
-	ice_for_each_vf(pf, bkt, vf) {
+	rcu_read_lock();
+	ice_for_each_vf_rcu(pf, bkt, vf) {
 		if (vf->adq_enabled) {
 			*vf_id = vf->vf_id;
-			return true;
+			adq_enabled = true;
+			break;
 		}
 	}
+	rcu_read_unlock();
 
-	return false;
+	return adq_enabled;
 }
 
 /**
@@ -151,17 +155,21 @@ static bool ice_is_vf_adq_enabled(struct ice_pf *pf, u16 *vf_id)
  */
 static bool ice_vf_chnl_fltrs_enabled(struct ice_pf *pf, u16 *vf_id)
 {
+	bool chnl_fltrs_enabled = false;
 	struct ice_vf *vf;
 	unsigned int bkt;
 
-	ice_for_each_vf(pf, bkt, vf) {
+	rcu_read_lock();
+	ice_for_each_vf_rcu(pf, bkt, vf) {
 		if (vf->num_dmac_chnl_fltrs) {
 			*vf_id = vf->vf_id;
-			return true;
+			chnl_fltrs_enabled = true;
+			break;
 		}
 	}
+	rcu_read_unlock();
 
-	return false;
+	return chnl_fltrs_enabled;
 }
 
 /**

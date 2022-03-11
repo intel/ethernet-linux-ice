@@ -6,7 +6,7 @@
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #include "ice_devlink.h"
 #endif /* CONFIG_NET_DEVLINK */
-#include "ice_virtchnl_pf.h"
+#include "ice_sriov.h"
 #include "ice_tc_lib.h"
 #include "ice_lib.h"
 
@@ -162,6 +162,55 @@ ice_repr_get_devlink_port(struct net_device *netdev)
 	return &repr->vf->devlink_port;
 }
 #endif /* CONFIG_NET_DEVLINK && HAVE_DEVLINK_PORT_ATTR_PCI_VF*/
+#if defined(HAVE_NDO_OFFLOAD_STATS) || defined(HAVE_RHEL7_EXTENDED_OFFLOAD_STATS)
+/**
+ * ice_repr_sp_stats64 - get slow path stats for port representor
+ * @dev: network interface device structure
+ * @stats: netlink stats structure
+ *
+ * RX/TX stats are being swapped here to be consistent with VF stats. In slow
+ * path, port representor receives data when the corresponding VF is sending it
+ * (and vice versa), TX and RX bytes/packets are effectively swapped on port
+ * representor.
+ */
+static int
+ice_repr_sp_stats64(const struct net_device *dev,
+		    struct rtnl_link_stats64 *stats)
+{
+	struct ice_netdev_priv *np = netdev_priv(dev);
+	int vf_id = np->repr->vf->vf_id;
+	struct ice_ring *ring;
+	u64 pkts, bytes;
+
+	ring = np->vsi->tx_rings[vf_id];
+	ice_fetch_u64_stats_per_ring(ring, &pkts, &bytes);
+	stats->rx_packets = pkts;
+	stats->rx_bytes = bytes;
+
+	ring = np->vsi->rx_rings[vf_id];
+	ice_fetch_u64_stats_per_ring(ring, &pkts, &bytes);
+	stats->tx_packets = pkts;
+	stats->tx_bytes = bytes;
+
+	return 0;
+}
+
+static bool
+ice_repr_ndo_has_offload_stats(const struct net_device *dev, int attr_id)
+{
+	return attr_id == IFLA_OFFLOAD_XSTATS_CPU_HIT;
+}
+
+static int
+ice_repr_ndo_get_offload_stats(int attr_id, const struct net_device *dev,
+			       void *sp)
+{
+	if (attr_id == IFLA_OFFLOAD_XSTATS_CPU_HIT)
+		return ice_repr_sp_stats64(dev, (struct rtnl_link_stats64 *)sp);
+
+	return -EINVAL;
+}
+#endif /* HAVE_NDO_OFFLOAD_STATS || HAVE_RHEL7_EXTENDED_OFFLOAD_STATS */
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 static int
@@ -282,6 +331,13 @@ static const struct net_device_ops ice_repr_netdev_ops = {
 #endif /* HAVE_RHEL7_NETDEV_OPS_EXT_NDO_SETUP_TC */
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
 #endif /* CONFIG_NET_DEVLINK */
+#ifdef HAVE_NDO_OFFLOAD_STATS
+	.ndo_has_offload_stats = ice_repr_ndo_has_offload_stats,
+	.ndo_get_offload_stats = ice_repr_ndo_get_offload_stats,
+#elif defined(HAVE_RHEL7_EXTENDED_OFFLOAD_STATS)
+	.extended.ndo_has_offload_stats = ice_repr_ndo_has_offload_stats,
+	.extended.ndo_get_offload_stats = ice_repr_ndo_get_offload_stats,
+#endif
 };
 
 /**
@@ -383,7 +439,7 @@ static int ice_repr_add(struct ice_vf *vf)
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #endif /* CONFIG_NET_DEVLINK */
 
-	ice_vc_change_ops_to_repr(&vf->vc_ops);
+	ice_virtchnl_set_repr_ops(vf);
 
 	return 0;
 
@@ -432,7 +488,7 @@ static void ice_repr_rem(struct ice_vf *vf)
 	kfree(vf->repr);
 	vf->repr = NULL;
 
-	ice_vc_set_dflt_vf_ops(&vf->vc_ops);
+	ice_virtchnl_set_dflt_ops(vf);
 }
 
 /**
@@ -443,6 +499,8 @@ void ice_repr_rem_from_all_vfs(struct ice_pf *pf)
 {
 	struct ice_vf *vf;
 	unsigned int bkt;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	ice_for_each_vf(pf, bkt, vf)
 		ice_repr_rem(vf);
@@ -457,6 +515,8 @@ int ice_repr_add_for_all_vfs(struct ice_pf *pf)
 	struct ice_vf *vf;
 	unsigned int bkt;
 	int err;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	ice_for_each_vf(pf, bkt, vf) {
 		err = ice_repr_add(vf);

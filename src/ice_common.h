@@ -4,7 +4,6 @@
 #ifndef _ICE_COMMON_H_
 #define _ICE_COMMON_H_
 
-#include "ice.h"
 #include "ice_type.h"
 #include "ice_nvm.h"
 #include "ice_flex_pipe.h"

@@ -12,6 +12,7 @@
 #include "ice_xsk.h"
 #include "ice_txrx.h"
 #include "ice_txrx_lib.h"
+#include "ice_irq.h"
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 
 /**
@@ -92,7 +93,7 @@ ice_qvec_dis_irq(struct ice_vsi *vsi, struct ice_ring *rx_ring,
 		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx), 0);
 
 		ice_flush(hw);
-		synchronize_irq(pf->msix_entries[v_idx + base].vector);
+		synchronize_irq(ice_get_irq_num(pf, v_idx + base));
 	}
 }
 
@@ -941,7 +942,7 @@ ice_run_xdp_zc(struct ice_ring *rx_ring, struct xdp_buff *xdp)
 		result = !err ? ICE_XDP_REDIR : ICE_XDP_CONSUMED;
 		break;
 	default:
-		bpf_warn_invalid_xdp_action(act);
+		bpf_warn_invalid_xdp_action(rx_ring->netdev, xdp_prog, act);
 		fallthrough; /* not supported action */
 	case XDP_ABORTED:
 		trace_xdp_exception(rx_ring->netdev, xdp_prog, act);
@@ -1309,12 +1310,14 @@ int ice_xsk_async_xmit(struct net_device *netdev, u32 queue_id)
 	 */
 	q_vector = ring->q_vector;
 	if (!napi_if_scheduled_mark_missed(&q_vector->napi)) {
+#if IS_ENABLED(CONFIG_NET_RX_BUSY_POLL)
 		if (ice_ring_ch_enabled(vsi->rx_rings[queue_id]) &&
 		    !ice_vsi_pkt_inspect_opt_ena(vsi))
 #define ICE_BUSY_POLL_BUDGET 8
 			napi_busy_loop(q_vector->napi.napi_id, NULL, NULL,
 				       false, ICE_BUSY_POLL_BUDGET);
 		else
+#endif
 			ice_trigger_sw_intr(&vsi->back->hw, q_vector);
 	}
 

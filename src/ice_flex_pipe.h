@@ -67,9 +67,9 @@ void ice_ptg_free(struct ice_hw *hw, enum ice_block blk, u8 ptg);
 /* XLT2/VSI group functions */
 enum ice_status ice_vsig_update_xlt2(struct ice_hw *hw, enum ice_block blk);
 enum ice_status
-ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id, u8 ptypes[],
-	     const struct ice_ptype_attributes *attr, u16 attr_cnt,
-	     struct ice_fv_word *es, u16 *masks);
+ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id,
+	     unsigned long *ptypes, const struct ice_ptype_attributes *attr,
+	     u16 attr_cnt, struct ice_fv_word *es, u16 *masks);
 void ice_init_all_prof_masks(struct ice_hw *hw);
 void ice_shutdown_all_prof_masks(struct ice_hw *hw);
 struct ice_prof_map *
@@ -84,9 +84,10 @@ enum ice_status
 ice_set_prof_context(struct ice_hw *hw, enum ice_block blk, u64 id, u64 cntxt);
 enum ice_status
 ice_get_prof_context(struct ice_hw *hw, enum ice_block blk, u64 id, u64 *cntxt);
-enum ice_status ice_init_pkg(struct ice_hw *hw, u8 *buff, u32 len);
-enum ice_status
+enum ice_ddp_state ice_init_pkg(struct ice_hw *hw, u8 *buff, u32 len);
+enum ice_ddp_state
 ice_copy_and_init_pkg(struct ice_hw *hw, const u8 *buf, u32 len);
+bool ice_is_init_pkg_successful(enum ice_ddp_state state);
 enum ice_status ice_init_hw_tbls(struct ice_hw *hw);
 void ice_free_seg(struct ice_hw *hw);
 void ice_fill_blk_tbls(struct ice_hw *hw);

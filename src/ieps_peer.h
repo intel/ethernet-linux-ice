@@ -221,6 +221,12 @@ struct ieps_peer_port_attr_data {
 	union ieps_peer_port_attr_cfg cfg;
 };
 
+struct ieps_peer_intphy_reg_rw {
+	__u64 reg;
+	__u32 data;
+	bool is_write;
+};
+
 enum ieps_peer_cmd {
 	IEPS_PEER_CMD_VERSION_CHECK,
 	IEPS_PEER_CMD_I2C_READ,
@@ -237,6 +243,9 @@ enum ieps_peer_cmd {
 	IEPS_PEER_CMD_PORT_GET_MODE,
 	IEPS_PEER_CMD_PORT_SET_ATTR,
 	IEPS_PEER_CMD_PORT_GET_ATTR,
+
+	/* DFX */
+	IEPS_PEER_CMD_INTPHY_REG_RW,
 
 	/* Must be last */
 	NUM_IEPS_PEER_CMD

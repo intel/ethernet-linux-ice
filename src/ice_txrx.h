@@ -408,7 +408,6 @@ struct ice_ring {
 	u8 rx_crc_strip_dis;
 	u8 dcb_tc;			/* Traffic class of ring */
 	u16 rx_buf_len;
-
 	struct ice_ptp_tx *tx_tstamps;
 	u64 cached_phctime;
 	u8 ptp_rx:1;

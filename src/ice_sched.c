@@ -3895,7 +3895,7 @@ static u16 ice_sched_calc_wakeup(struct ice_hw *hw, s32 bw)
 	u16 wakeup = 0;
 
 	/* Get the wakeup integer value */
-	bytes_per_sec = div64_s64(bw * 1000, BITS_PER_BYTE);
+	bytes_per_sec = div64_s64((s64)bw * 1000, BITS_PER_BYTE);
 	wakeup_int = div64_s64(hw->psm_clk_freq, bytes_per_sec);
 	if (wakeup_int > 63) {
 		wakeup = (u16)((1 << 15) | wakeup_int);
@@ -3904,7 +3904,7 @@ static u16 ice_sched_calc_wakeup(struct ice_hw *hw, s32 bw)
 		 * Convert Integer value to a constant multiplier
 		 */
 		wakeup_b = (s64)ICE_RL_PROF_MULTIPLIER * wakeup_int;
-		wakeup_a = div64_s64(ICE_RL_PROF_MULTIPLIER * hw->psm_clk_freq,
+		wakeup_a = div64_s64((s64)ICE_RL_PROF_MULTIPLIER * hw->psm_clk_freq,
 				     bytes_per_sec);
 
 		/* Get Fraction value */
@@ -3947,13 +3947,13 @@ ice_sched_bw_to_rl_profile(struct ice_hw *hw, u32 bw,
 		return status;
 
 	/* Bytes per second from Kbps */
-	bytes_per_sec = div64_s64(bw * 1000, BITS_PER_BYTE);
+	bytes_per_sec = div64_s64((s64)bw * 1000, BITS_PER_BYTE);
 
 	/* encode is 6 bits but really useful are 5 bits */
 	for (i = 0; i < 64; i++) {
 		u64 pow_result = BIT_ULL(i);
 
-		ts_rate = div64_s64(hw->psm_clk_freq,
+		ts_rate = div64_s64((s64)hw->psm_clk_freq,
 				    pow_result * ICE_RL_PROF_TS_MULTIPLIER);
 		if (ts_rate <= 0)
 			continue;

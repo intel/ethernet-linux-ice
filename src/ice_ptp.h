@@ -51,6 +51,9 @@ enum ice_phy_rclk_pins {
 	ICE_C827_RCLK_PINS_NUM		/* number of pins */
 };
 
+#define E810T_CGU_INPUT_C827(_phy, _pin) ((_phy) * ICE_C827_RCLK_PINS_NUM + \
+					  (_pin) + REF1P)
+
 struct ice_perout_channel {
 	bool ena;
 	u32 gpio_pin;
@@ -103,8 +106,8 @@ struct ice_tx_tstamp {
  * @lock: lock to prevent concurrent write to in_use bitmap
  * @tstamps: array of len to store outstanding requests
  * @in_use: bitmap of len to indicate which slots are in use
- * @quad: which quad the timestamps are captured in
- * @quad_offset: offset into timestamp block of the quad to get the real index
+ * @block: which memory block (quad or port) the timestamps are captured in
+ * @offset: offset into timestamp block to get the real index
  * @len: length of the tstamps and in_use fields.
  * @init: if true, the tracker is initialized;
  * @calibrating: if true, the PHY is calibrating the Tx offset. During this
@@ -115,8 +118,8 @@ struct ice_ptp_tx {
 	spinlock_t lock; /* protects access to in_use bitmap */
 	struct ice_tx_tstamp *tstamps;
 	unsigned long *in_use;
-	u8 quad;
-	u8 quad_offset;
+	u8 block;
+	u8 offset;
 	u8 len;
 	u8 init;
 	u8 calibrating;
@@ -124,7 +127,9 @@ struct ice_ptp_tx {
 
 /* Quad and port information for initializing timestamp blocks */
 #define INDEX_PER_QUAD			64
-#define INDEX_PER_PORT			(INDEX_PER_QUAD / ICE_PORTS_PER_QUAD)
+#define INDEX_PER_PORT_E822		16
+#define INDEX_PER_PORT_E810		64
+#define INDEX_PER_PORT_ETH56G		64
 
 /**
  * struct ice_ptp_port - data used to initialize an external port for PTP
@@ -166,6 +171,7 @@ struct ice_ptp_port {
  * @tstamp_config: hardware timestamping configuration
  * @phy_kobj: pointer to phy sysfs object
  * @src_tmr_mode: current device timer mode (locked or nanoseconds)
+ * @reset_time: kernel time after clock stop on reset
  */
 struct ice_ptp {
 	struct ice_ptp_port port;
@@ -181,15 +187,22 @@ struct ice_ptp {
 	struct hwtstamp_config tstamp_config;
 	struct kobject *phy_kobj;
 	enum ice_src_tmr_mode src_tmr_mode;
+	u64 reset_time;
 };
 
-#define __ptp_port_to_ptp(p) \
-	container_of((p), struct ice_ptp, port)
+static inline struct ice_ptp *__ptp_port_to_ptp(struct ice_ptp_port *p)
+{
+	return container_of(p, struct ice_ptp, port);
+}
+
 #define ptp_port_to_pf(p) \
 	container_of(__ptp_port_to_ptp((p)), struct ice_pf, ptp)
 
-#define __ptp_info_to_ptp(i) \
-	container_of((i), struct ice_ptp, info)
+static inline struct ice_ptp *__ptp_info_to_ptp(struct ptp_clock_info *i)
+{
+	return container_of(i, struct ice_ptp, info);
+}
+
 #define ptp_info_to_pf(i) \
 	container_of(__ptp_info_to_ptp((i)), struct ice_pf, ptp)
 
@@ -235,6 +248,9 @@ struct ice_ptp {
 
 #define MAX_PIN_NAME			15
 
+#define	ICE_PTP_PIN_FREQ_1HZ		1
+#define	ICE_PTP_PIN_FREQ_10MHZ		10000000
+
 /* Time allowed for programming periodic clock output */
 #define START_OFFS_NS 100000000
 
@@ -266,6 +282,7 @@ struct ice_ptp {
 struct ice_pf;
 int ice_ptp_set_ts_config(struct ice_pf *pf, struct ifreq *ifr);
 int ice_ptp_get_ts_config(struct ice_pf *pf, struct ifreq *ifr);
+void ice_ptp_cfg_timestamp(struct ice_pf *pf, bool ena);
 int ice_get_ptp_clock_index(struct ice_pf *pf);
 
 s8 ice_ptp_request_ts(struct ice_ptp_tx *tx, struct sk_buff *skb);
@@ -275,6 +292,8 @@ u64
 ice_ptp_read_src_clk_reg(struct ice_pf *pf, struct ptp_system_timestamp *sts);
 void ice_ptp_rx_hwtstamp(struct ice_ring *rx_ring, union ice_32b_rx_flex_desc *rx_desc,
 			 struct sk_buff *skb);
+void ice_ptp_reset(struct ice_pf *pf);
+void ice_ptp_prepare_for_reset(struct ice_pf *pf);
 void ice_ptp_init(struct ice_pf *pf);
 void ice_ptp_release(struct ice_pf *pf);
 int ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup);
@@ -300,6 +319,7 @@ static inline int ice_ptp_get_ts_config(struct ice_pf __always_unused *pf,
 	return 0;
 }
 
+static inline void ice_ptp_cfg_timestamp(struct ice_pf *pf, bool ena) { }
 static inline int
 ice_ptp_check_rx_fifo(struct ice_pf __always_unused *pf,
 		      u8 __always_unused port)
@@ -323,7 +343,9 @@ static inline void ice_ptp_rx_hwtstamp(struct ice_ring *rx_ring,
 				       union ice_32b_rx_flex_desc *rx_desc,
 				       struct sk_buff *skb) { }
 static inline void ice_ptp_init(struct ice_pf *pf) { }
+static inline void ice_ptp_reset(struct ice_pf *pf) { }
 static inline void ice_ptp_release(struct ice_pf *pf) { }
+static inline void ice_ptp_prepare_for_reset(struct ice_pf *pf) { }
 static inline int ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup)
 { return 0; }
 #endif /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */

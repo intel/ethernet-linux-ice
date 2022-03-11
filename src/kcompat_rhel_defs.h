@@ -32,6 +32,12 @@
 #endif /* 7.3 */
 
 /*****************************************************************************/
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,4))
+#else /* >= 7.4 */
+#define HAVE_RHEL7_EXTENDED_OFFLOAD_STATS
+#endif /* 7.4 */
+
+/*****************************************************************************/
 #if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,5))
 #else /* >= 7.5 */
 #define HAVE_TCF_EXTS_TO_LIST
@@ -57,9 +63,12 @@
 #else /* >= 8.0 */
 #undef HAVE_TCF_EXTS_TO_LIST
 #undef HAVE_ETHTOOL_NEW_100G_BITS
+#define HAVE_NDO_OFFLOAD_STATS
+#undef HAVE_RHEL7_EXTENDED_OFFLOAD_STATS
 #define HAVE_TCF_EXTS_FOR_EACH_ACTION
 /* 7.7 undefs it due to a backport in 7.7+, but 8.0 needs it still */
 #define NEED_NETDEV_TX_SENT_QUEUE
+#define HAVE_DEVLINK_REGIONS
 #endif /* 8.0 */
 
 /*****************************************************************************/
@@ -82,12 +91,17 @@
 #undef NEED_FLOW_INDR_BLOCK_CB_REGISTER
 #define HAVE_FLOW_INDR_BLOCK_LOCK
 #define HAVE_DEVLINK_PORT_ATTRS_SET_SWITCH_ID
+#define HAVE_DEVLINK_HEALTH
 #endif /* 8.2 */
 
 /*****************************************************************************/
 #if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8,3))
 #else /* >= 8.3 */
 #undef NEED_CPU_LATENCY_QOS_RENAME
+#define HAVE_DEVLINK_HEALTH_OPS_EXTACK
+#define HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
+#define HAVE_DEVLINK_REGION_OPS_SNAPSHOT
+#undef NEED_DEVLINK_REGION_CREATE_OPS
 #endif /* 8.3 */
 
 /*****************************************************************************/
@@ -97,6 +111,7 @@
 #undef NEED_NET_PREFETCH
 #undef NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY
 #undef HAVE_XDP_QUERY_PROG
+#define HAVE_ETHTOOL_COALESCE_PARAMS_SUPPORT
 #endif /* 8.4 */
 
 /*****************************************************************************/
@@ -104,9 +119,16 @@
 #else /* >= 8.5 */
 #define HAVE_DEVLINK_FLASH_UPDATE_PARAMS
 #define HAVE_DEVLINK_FLASH_UPDATE_PARAMS_FW
+#define HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS
 #undef HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY
 #undef HAVE_XDP_BUFF_RXQ
 #undef HAVE_NAPI_BUSY_LOOP
 #endif /* 8.5 */
+
+/*****************************************************************************/
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9,0))
+#else /* >= 9.0 */
+#define HAVE_XDP_BUFF_RXQ
+#endif /* 9.0 */
 
 #endif /* _KCOMPAT_RHEL_DEFS_H_ */

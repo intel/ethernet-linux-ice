@@ -44,16 +44,26 @@
 #endif /* 3,19,0 */
 
 /*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,3,0))
+#define NEED_DEFINE_STATIC_KEY_FALSE
+#define NEED_STATIC_BRANCH
+#else /* >= 4,3,0 */
+#define NEED_DECLARE_STATIC_KEY_FALSE
+#endif /* 4,3,0 */
+
+/*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,8,0))
 #else /* >= 4,8,0 */
 #define HAVE_TCF_EXTS_TO_LIST
+#define HAVE_PCI_ALLOC_IRQ
 #endif /* 4,8,0 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,9,0))
-#define NEED_DECLARE_STATIC_KEY_FALSE
 #else /* >= 4,9,0 */
 #define HAVE_KTHREAD_DELAYED_API
+#define HAVE_NDO_OFFLOAD_STATS
+#undef NEED_DECLARE_STATIC_KEY_FALSE
 #endif /* 4,9,0 */
 
 /*****************************************************************************/
@@ -65,8 +75,10 @@
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0))
 #define NEED_TC_SETUP_QDISC_MQPRIO
+#define NEED_NETDEV_XDP_STRUCT
 #else /* >= 4,15,0 */
 #define HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
+#define HAVE_NDO_BPF
 #endif /* 4,15,0 */
 
 /*****************************************************************************/
@@ -97,6 +109,7 @@
 #else /* >= 4,19,0 */
 #undef HAVE_TCF_EXTS_TO_LIST
 #define HAVE_TCF_EXTS_FOR_EACH_ACTION
+#define HAVE_DEVLINK_REGIONS
 #endif /* 4,19,0 */
 
 /*****************************************************************************/
@@ -111,6 +124,7 @@
 #define HAVE_ETHTOOL_200G_BITS
 #define HAVE_ETHTOOL_NEW_100G_BITS
 #define HAVE_DEVLINK_PARAMS_PUBLISH
+#define HAVE_DEVLINK_HEALTH
 #endif /* 5.1.0 */
 
 /*****************************************************************************/
@@ -146,10 +160,18 @@
 #endif /* 5.4.0 */
 
 /*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,5,0))
+#else /* >= 5.5.0 */
+#define HAVE_DEVLINK_HEALTH_OPS_EXTACK
+#endif /* 5.5.0 */
+
+/*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,7,0))
 #define NEED_DEVLINK_REGION_CREATE_OPS
 #define NEED_CPU_LATENCY_QOS_RENAME
 #else /* >= 5.7.0 */
+#define HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
+#define HAVE_DEVLINK_REGION_OPS_SNAPSHOT
 #endif /* 5.7.0 */
 
 /*****************************************************************************/
@@ -211,6 +233,23 @@
 #else /* >= 5.15.0 */
 #define HAVE_ETHTOOL_COALESCE_EXTACK
 #define HAVE_NDO_ETH_IOCTL
+#define HAVE_DEVICE_IN_MDEV_PARENT_OPS
 #endif /* 5.15.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,16,0))
+#else /* >= 5.16.0 */
+#define HAVE_DEVLINK_SET_FEATURES
+#define HAVE_DEVLINK_NOTIFY_REGISTER
+#endif /* 5.16.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,17,0))
+#define NEED_NO_NETDEV_PROG_XDP_WARN_ACTION
+#define NEED_ETH_HW_ADDR_SET
+#else /* >=5.17.0*/
+#define HAVE_XDP_DO_FLUSH
+#define HAVE_ETHTOOL_EXTENDED_RINGPARAMS
+#endif /* 5.17.0 */
 
 #endif /* _KCOMPAT_STD_DEFS_H_ */

@@ -141,6 +141,11 @@
 #define HAVE_FLOW_INDR_BLOCK_LOCK
 #endif /* 5.3.8-2 */
 
+#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,16,2))
+#else /* >= 5.3.16-2 */
+#define HAVE_DEVLINK_HEALTH_OPS_EXTACK
+#endif /* 5.3.16-2 */
+
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,18,26))
 #else /* >= 5.3.18-26 */
 #undef NEED_CPU_LATENCY_QOS_RENAME
@@ -153,6 +158,7 @@
 #else /* >= 5.3.18-34 */
 #undef NEED_DEVLINK_REGION_CREATE_OPS
 #undef NEED_DEVLINK_PORT_ATTRS_SET_STRUCT
+#define HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
 #endif /* 5.3.18-34 */
 
 /*****************************************************************************/

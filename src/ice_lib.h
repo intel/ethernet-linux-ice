@@ -55,8 +55,8 @@ int ice_vsi_cfg_rss_lut_key(struct ice_vsi *vsi);
 
 struct ice_vsi *
 ice_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi,
-	      enum ice_vsi_type vsi_type, u16 vf_id, struct ice_channel *ch,
-	      u8 tc);
+	      enum ice_vsi_type vsi_type, struct ice_vf *vf,
+	      struct ice_channel *ch, u8 tc);
 
 void ice_napi_del(struct ice_vsi *vsi);
 

@@ -253,7 +253,7 @@ int ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	struct ice_hw *hw;
 	u64 entry_h = 0;
 	int act_cnt;
-	int ret;
+	int ret = 0;
 
 	if (!vsi || !cmd)
 		return -EINVAL;
@@ -276,6 +276,13 @@ int ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	ret = ice_ntuple_set_input_set(vsi, ICE_BLK_ACL, fsp, input);
 	if (ret)
 		goto free_input;
+
+	mutex_lock(&hw->fdir_fltr_lock);
+	if (ice_fdir_is_dup_fltr(hw, input)) {
+		ret = -EINVAL;
+		goto release_lock;
+	}
+	mutex_unlock(&hw->fdir_fltr_lock);
 
 	memset(&acts, 0, sizeof(acts));
 	act_cnt = 1;
@@ -310,12 +317,14 @@ int ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 
 	input->acl_fltr = true;
 	/* input struct is added to the HW filter list */
+	mutex_lock(&hw->fdir_fltr_lock);
 	ice_ntuple_update_list_entry(pf, input, fsp->location);
 
-	return 0;
-
+release_lock:
+	mutex_unlock(&hw->fdir_fltr_lock);
 free_input:
-	devm_kfree(dev, input);
+	if (ret)
+		devm_kfree(dev, input);
 
 	return ret;
 }

@@ -18,7 +18,7 @@ static const struct auxiliary_device_id *auxiliary_match_id(const struct auxilia
 {
 	for (; id->name[0]; id++) {
 		const char *p = strrchr(dev_name(&auxdev->dev), '.');
-		int match_size;
+		size_t match_size;
 
 		if (!p)
 			continue;

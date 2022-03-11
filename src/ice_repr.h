@@ -3,7 +3,6 @@
 
 #ifndef _ICE_REPR_H_
 #define _ICE_REPR_H_
-#include "ice.h"
 
 struct ice_repr {
 	struct ice_vsi *src_vsi;

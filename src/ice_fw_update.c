@@ -22,11 +22,17 @@ struct ice_fwu_priv {
 	/* Track which NVM banks to activate at the end of the update */
 	u8 activate_flags;
 
-	/* Track the firmware response of reset level required */
+	/* Track the firmware response of the required reset to complete the
+	 * flash update.
+	 *
+	 * 0 - ICE_AQC_NVM_POR_FLAG - A full power on is required
+	 * 1 - ICE_AQC_NVM_PERST_FLAG - A cold PCIe reset is required
+	 * 2 - ICE_AQC_NVM_EMPR_FLAG - An EMP reset is required
+	 */
 	u8 reset_level;
 
 	/* Track if EMP reset is available */
-	u8 empr_available;
+	u8 emp_reset_available;
 };
 
 /**
@@ -278,6 +284,13 @@ ice_send_component_table(struct pldmfw *context, struct pldmfw_component *compon
  * response message from firmware.
  *
  * Note this function assumes the caller has acquired the NVM resource.
+ *
+ * On successful return, reset level indicates the device reset required to
+ * complete the update.
+ *
+ *   0 - ICE_AQC_NVM_POR_FLAG - A full power on is required
+ *   1 - ICE_AQC_NVM_PERST_FLAG - A cold PCIe reset is required
+ *   2 - ICE_AQC_NVM_EMPR_FLAG - An EMP reset is required
  *
  * Returns: zero on success, or a negative error code on failure.
  */
@@ -545,7 +558,7 @@ out_notify_devlink:
  * ice_switch_flash_banks - Tell firmware to switch NVM banks
  * @pf: Pointer to the PF data structure
  * @activate_flags: flags used for the activation command
- * @empr_available: on return, indicates of EMP reset is available
+ * @emp_reset_available: on return, indicates if EMP reset is available
  * @extack: netlink extended ACK structure
  *
  * Notify firmware to activate the newly written flash banks, and wait for the
@@ -555,7 +568,7 @@ out_notify_devlink:
  */
 static int
 ice_switch_flash_banks(struct ice_pf *pf, u8 activate_flags,
-		       u8 *empr_available, struct netlink_ext_ack *extack)
+		       u8 *emp_reset_available, struct netlink_ext_ack *extack)
 {
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_rq_event_info event;
@@ -580,14 +593,15 @@ ice_switch_flash_banks(struct ice_pf *pf, u8 activate_flags,
 	 * reset to reload firmware is available. For older firmware, EMP
 	 * reset is always available.
 	 */
-	if (empr_available) {
+	if (emp_reset_available) {
 		if (hw->dev_caps.common_cap.reset_restrict_support) {
-			*empr_available = response_flags & ICE_AQC_NVM_EMPR_ENA;
+			*emp_reset_available =
+				response_flags & ICE_AQC_NVM_EMPR_ENA;
 			dev_dbg(dev, "Firmware indicated that EMP reset is %s\n",
-				*empr_available ?
+				*emp_reset_available ?
 				"available" : "not available");
 		} else {
-			*empr_available = ICE_AQC_NVM_EMPR_ENA;
+			*emp_reset_available = ICE_AQC_NVM_EMPR_ENA;
 			dev_dbg(dev, "Firmware does not support restricting EMP reset availability\n");
 		}
 	}
@@ -703,7 +717,7 @@ static int ice_finalize_update(struct pldmfw *context)
 
 	/* Finally, notify firmware to activate the written NVM banks */
 	err = ice_switch_flash_banks(pf, priv->activate_flags,
-				     &priv->empr_available, extack);
+				     &priv->emp_reset_available, extack);
 	if (err)
 		return err;
 
@@ -713,7 +727,7 @@ static int ice_finalize_update(struct pldmfw *context)
 	 * a reboot is required instead.
 	 */
 	if (priv->reset_level == ICE_AQC_NVM_EMPR_FLAG &&
-	    !priv->empr_available) {
+	    !priv->emp_reset_available) {
 		dev_dbg(ice_pf_to_dev(pf), "Firmware indicated EMP reset as sufficient, but EMP reset is disabled\n");
 		priv->reset_level = ICE_AQC_NVM_PERST_FLAG;
 	}
@@ -737,13 +751,100 @@ static int ice_finalize_update(struct pldmfw *context)
 		break;
 	}
 
-	pf->fw_empr_disabled = !priv->empr_available;
+	pf->fw_emp_reset_disabled = !priv->emp_reset_available;
 
 	return 0;
 }
 
-static const struct pldmfw_ops ice_fwu_ops = {
+/* these are u32 so that we can store PCI_ANY_ID */
+struct ice_pldm_pci_record_id {
+	int vendor;
+	int device;
+	int subsystem_vendor;
+	int subsystem_device;
+};
+
+/**
+ * ice_op_pci_match_record - Check if a PCI device matches the record
+ * @context: PLDM fw update structure
+ * @record: list of records extracted from the PLDM image
+ *
+ * Determine if the PCI device associated with this device matches the record
+ * data provided.
+ *
+ * Searches the descriptor TLVs and extracts the relevant descriptor data into
+ * a pldm_pci_record_id. This is then compared against the PCI device ID
+ * information.
+ *
+ * Returns: true if the device matches the record, false otherwise.
+ */
+static bool ice_op_pci_match_record(struct pldmfw *context,
+				    struct pldmfw_record *record)
+{
+	struct pci_dev *pdev = to_pci_dev(context->dev);
+	struct ice_pldm_pci_record_id id = {
+		.vendor = PCI_ANY_ID,
+		.device = PCI_ANY_ID,
+		.subsystem_vendor = PCI_ANY_ID,
+		.subsystem_device = PCI_ANY_ID,
+	};
+	struct pldmfw_desc_tlv *desc;
+
+	list_for_each_entry(desc, &record->descs, entry) {
+		u16 value;
+		int *ptr;
+
+		switch (desc->type) {
+		case PLDM_DESC_ID_PCI_VENDOR_ID:
+			ptr = &id.vendor;
+			break;
+		case PLDM_DESC_ID_PCI_DEVICE_ID:
+			ptr = &id.device;
+			break;
+		case PLDM_DESC_ID_PCI_SUBVENDOR_ID:
+			ptr = &id.subsystem_vendor;
+			break;
+		case PLDM_DESC_ID_PCI_SUBDEV_ID:
+			ptr = &id.subsystem_device;
+			break;
+		default:
+			/* Skip unrelated TLVs */
+			continue;
+		}
+
+		value = get_unaligned_le16(desc->data);
+		/* A value of zero for one of the descriptors is sometimes
+		 * used when the record should ignore this field when matching
+		 * device. For example if the record applies to any subsystem
+		 * device or vendor.
+		 */
+		if (value)
+			*ptr = (int)value;
+		else
+			*ptr = PCI_ANY_ID;
+	}
+
+	/* the E822 device can have a generic device ID so check for that */
+	if ((id.vendor == PCI_ANY_ID || id.vendor == pdev->vendor) &&
+	    (id.device == PCI_ANY_ID || id.device == pdev->device ||
+	    id.device == ICE_DEV_ID_E822_SI_DFLT) &&
+	    (id.subsystem_vendor == PCI_ANY_ID || id.subsystem_vendor == pdev->subsystem_vendor) &&
+	    (id.subsystem_device == PCI_ANY_ID || id.subsystem_device == pdev->subsystem_device))
+		return true;
+	else
+		return false;
+}
+
+static const struct pldmfw_ops ice_fwu_ops_e810 = {
 	.match_record = &pldmfw_op_pci_match_record,
+	.send_package_data = &ice_send_package_data,
+	.send_component_table = &ice_send_component_table,
+	.flash_component = &ice_flash_component,
+	.finalize_update = &ice_finalize_update,
+};
+
+static const struct pldmfw_ops ice_fwu_ops_e822 = {
+	.match_record = &ice_op_pci_match_record,
 	.send_package_data = &ice_send_package_data,
 	.send_component_table = &ice_send_component_table,
 	.flash_component = &ice_flash_component,
@@ -874,7 +975,7 @@ ice_cancel_pending_update(struct ice_pf *pf, const char *component,
 	/* Since we've canceled the pending update, we no longer know if EMP
 	 * reset is restricted.
 	 */
-	pf->fw_empr_disabled = false;
+	pf->fw_emp_reset_disabled = false;
 
 	return err;
 }
@@ -946,7 +1047,11 @@ int ice_flash_pldm_image(struct devlink *devlink,
 
 	memset(&priv, 0, sizeof(priv));
 
-	priv.context.ops = &ice_fwu_ops;
+	/* the E822 device needs a slightly different ops */
+	if (hw->mac_type == ICE_MAC_GENERIC)
+		priv.context.ops = &ice_fwu_ops_e822;
+	else
+		priv.context.ops = &ice_fwu_ops_e810;
 	priv.context.dev = dev;
 	priv.extack = extack;
 	priv.pf = pf;

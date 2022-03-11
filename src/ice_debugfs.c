@@ -36,7 +36,7 @@ static void ice_dump_pf(struct ice_pf *pf)
 		 ice_get_valid_res_count(pf->irq_tracker));
 	dev_info(dev, "\tnum_avail_sw_msix = %d\n", pf->num_avail_sw_msix);
 	dev_info(dev, "\tsriov_base_vector = %d\n", pf->sriov_base_vector);
-	dev_info(dev, "\tnum_alloc_vfs = %d\n", pf->vfs.num_alloc);
+	dev_info(dev, "\tnum_alloc_vfs = %d\n", ice_get_num_vfs(pf));
 	dev_info(dev, "\tnum_qps_per_vf = %d\n", pf->vfs.num_qps_per);
 	dev_info(dev, "\tnum_msix_per_vf = %d\n", pf->vfs.num_msix_per);
 }
@@ -57,7 +57,7 @@ static void ice_dump_pf_vsi_list(struct ice_pf *pf)
 		dev_info(dev, "\tvsi_num = %d\n", vsi->vsi_num);
 		dev_info(dev, "\ttype = %s\n", ice_vsi_type_str(vsi->type));
 		if (vsi->type == ICE_VSI_VF)
-			dev_info(dev, "\tvf_id = %d\n", vsi->vf_id);
+			dev_info(dev, "\tvf_id = %d\n", vsi->vf->vf_id);
 		dev_info(dev, "\tback = %p\n", vsi->back);
 		dev_info(dev, "\tnetdev = %p\n", vsi->netdev);
 		dev_info(dev, "\tmax_frame = %d\n", vsi->max_frame);
@@ -131,24 +131,31 @@ static void ice_dump_pf_fdir(struct ice_pf *pf)
 static void ice_dump_rclk_status(struct ice_pf *pf)
 {
 	struct device *dev = ice_pf_to_dev(pf);
-	u8 pin;
+	u8 phy, phy_pin, pin;
 
-	for (pin = ICE_C827_RCLKA_PIN; pin < ICE_C827_RCLK_PINS_NUM; pin++) {
+	for (phy_pin = 0; phy_pin < ICE_C827_RCLK_PINS_NUM; phy_pin++) {
 		const char *pin_name, *pin_state;
+		enum ice_status status;
 		u8 port_num, flags;
 		u32 freq;
 
 		port_num = ICE_AQC_SET_PHY_REC_CLK_OUT_CURR_PORT;
-		if (ice_aq_get_phy_rec_clk_out(&pf->hw, pin, &port_num,
+		if (ice_aq_get_phy_rec_clk_out(&pf->hw, phy_pin, &port_num,
 					       &flags, &freq))
 			return;
-		pin_name = pin == ICE_C827_RCLKA_PIN ? "C827_0-RCLKA" :
-			   "C827_0-RCLKB";
+
+		status = ice_get_pf_c827_idx(&pf->hw, &phy);
+		if (status) {
+			dev_err(dev, "Could not find PF C827 PHY, status=%s\n",
+				ice_stat_str(status));
+			return;
+		}
+		pin = E810T_CGU_INPUT_C827(phy, phy_pin);
+		pin_name = ice_zl_pin_idx_to_name_e810t(pin);
 		pin_state = flags & ICE_AQC_SET_PHY_REC_CLK_OUT_OUT_EN ?
 			    "Enabled" : "Disabled";
 
-		dev_info(dev, "State for port %d, %s: %s\n", port_num,
-			 pin_name, pin_state);
+		dev_info(dev, "State for pin %s: %s\n", pin_name, pin_state);
 	}
 }
 
@@ -278,12 +285,10 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 	struct ice_aqc_get_cgu_input_config cfg = {0};
 	struct device *dev = ice_pf_to_dev(pf);
 	u32 cgu_id, cgu_cfg_ver, cgu_fw_ver;
-	enum ice_e810t_cgu_state cgu_state;
 	size_t bytes_left = *buff_size;
 	struct ice_hw *hw = &pf->hw;
 	char pin_name[MAX_PIN_NAME];
 	enum ice_status status;
-	s64 phase_offset;
 	int cnt = 0;
 
 	memset(&abilities, 0, sizeof(struct ice_aqc_get_cgu_abilities));
@@ -322,13 +327,15 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 
 	cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nCGU Input status:\n");
 	cnt += snprintf(&buff[cnt], bytes_left - cnt,
-			"                   |            |      priority     |\n"
-			"      input (idx)  |    state   | EEC (%d) | PPS (%d) |\n",
+			"                   |            |      priority     |            |\n"
+			"      input (idx)  |    state   | EEC (%d) | PPS (%d) | ESync fail |\n",
 			abilities.synce_dpll_idx, abilities.pps_dpll_idx);
 	cnt += snprintf(&buff[cnt], bytes_left - cnt,
-			"  ---------------------------------------------------\n");
+			"  ----------------------------------------------------------------\n");
 
 	for (pin = 0; pin < abilities.num_inputs; pin++) {
+		u8 esync_fail = 0;
+		u8 esync_en = 0;
 		char *pin_state;
 		u8 data;
 
@@ -350,47 +357,54 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 			ptp_prio = ICE_E810T_NEVER_USE_PIN;
 
 		/* if all flags are set, the pin is invalid */
-		if (data == PIN_FAIL_FLAGS)
+		if (data == PIN_FAIL_FLAGS) {
 			pin_state = "invalid";
 		/* if some flags are set, the pin is validating */
-		else if (data)
+		} else if (data) {
 			pin_state = "validating";
 		/* if all flags are cleared, the pin is valid */
-		else
+		} else {
 			pin_state = "valid";
+			esync_en = !!(cfg.flags2 &
+				      ICE_AQC_GET_CGU_IN_CFG_FLG2_ESYNC_EN);
+			esync_fail = !!(cfg.status &
+				      ICE_AQC_GET_CGU_IN_CFG_STATUS_ESYNC_FAIL);
+		}
 
 		cnt += snprintf(&buff[cnt], bytes_left - cnt,
-				"  %12s (%d) | %10s |     %3d |     %3d |\n",
-				pin_name, pin, pin_state, synce_prio, ptp_prio);
+				"  %12s (%d) | %10s |     %3d |     %3d |    %4s    |\n",
+				pin_name, pin, pin_state, synce_prio, ptp_prio,
+				esync_en ? esync_fail ?
+				"true" : "false" : "N/A");
 	}
 
-	cgu_state = ice_get_zl_state_e810t(hw, abilities.synce_dpll_idx, &pin,
-					   NULL);
-	/* SYNCE DPLL status */
-	ice_dpll_pin_idx_to_name(pf, pin, pin_name);
-	cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nEEC DPLL:\n");
-	cnt += snprintf(&buff[cnt], bytes_left - cnt,
-			"\tCurrent reference:\t%s\n", pin_name);
-
-	cnt += snprintf(&buff[cnt], bytes_left - cnt,
-			"\tStatus:\t\t\t%s\n",
-			ice_cgu_state_to_name(cgu_state));
-
-	cgu_state = ice_get_zl_state_e810t(hw, abilities.pps_dpll_idx, &pin,
-					   &phase_offset);
-	/* PTP DPLL status */
-	ice_dpll_pin_idx_to_name(pf, pin, pin_name);
-	cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nPPS DPLL:\n");
-	cnt += snprintf(&buff[cnt], bytes_left - cnt,
-			"\tCurrent reference:\t%s\n", pin_name);
-	cnt += snprintf(&buff[cnt], bytes_left - cnt,
-			"\tStatus:\t\t\t%s\n",
-			ice_cgu_state_to_name(cgu_state));
-
-	if (cgu_state != ICE_CGU_STATE_INVALID)
+	if (!test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags)) {
 		cnt += snprintf(&buff[cnt], bytes_left - cnt,
-				"\tPhase offset:\t\t\t%lld\n",
-				phase_offset);
+				"\nDPLL Monitoring disabled\n");
+	} else {
+		/* SYNCE DPLL status */
+		ice_dpll_pin_idx_to_name(pf, pf->synce_ref_pin, pin_name);
+		cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nEEC DPLL:\n");
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"\tCurrent reference:\t%s\n", pin_name);
+
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"\tStatus:\t\t\t%s\n",
+				ice_cgu_state_to_name(pf->synce_dpll_state));
+
+		ice_dpll_pin_idx_to_name(pf, pf->ptp_ref_pin, pin_name);
+		cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nPPS DPLL:\n");
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"\tCurrent reference:\t%s\n", pin_name);
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"\tStatus:\t\t\t%s\n",
+				ice_cgu_state_to_name(pf->ptp_dpll_state));
+
+		if (pf->ptp_dpll_state != ICE_CGU_STATE_INVALID)
+			cnt += snprintf(&buff[cnt], bytes_left - cnt,
+					"\tPhase offset [ns]:\t\t\t%lld\n",
+					pf->ptp_dpll_phase_offset);
+	}
 
 	*buff_size = cnt;
 	return 0;
@@ -435,41 +449,11 @@ err:
 	return err;
 }
 
-#define DEBUGFS_CGU_STATE_BUFF_SIZE	3
-/**
- * ice_debugfs_cgu_state_read - debugfs interface for reading SyncE DPLL status
- * @filp: the opened file
- * @user_buf: where to find the user's data
- * @count: the length of the user's data
- * @ppos: file position offset
- *
- * Return: number of bytes read
- */
-static ssize_t ice_debugfs_cgu_state_read(struct file *filp,
-					  char __user *user_buf, size_t count,
-					  loff_t *ppos)
-{
-	size_t cnt, buffer_size = DEBUGFS_CGU_STATE_BUFF_SIZE;
-	char kbuff[DEBUGFS_CGU_STATE_BUFF_SIZE] = {0};
-	struct ice_pf *pf = filp->private_data;
-
-	cnt = snprintf(kbuff, buffer_size, "%d\n", pf->synce_dpll_state);
-
-	return simple_read_from_buffer(user_buf, count, ppos, kbuff, cnt);
-}
-
 static const struct file_operations ice_debugfs_cgu_fops = {
 	.owner = THIS_MODULE,
 	.llseek = default_llseek,
 	.open  = simple_open,
 	.read  = ice_debugfs_cgu_read,
-};
-
-static const struct file_operations ice_debugfs_cgu_state_fops = {
-	.owner = THIS_MODULE,
-	.llseek = default_llseek,
-	.open  = simple_open,
-	.read  = ice_debugfs_cgu_state_read,
 };
 
 static const char *module_id_to_name(u16 module_id)
@@ -895,9 +879,6 @@ void ice_debugfs_pf_init(struct ice_pf *pf)
 	if (ice_is_feature_supported(pf, ICE_F_CGU)) {
 		if (!debugfs_create_file("cgu", 0400, pf->ice_debugfs_pf, pf,
 					 &ice_debugfs_cgu_fops))
-			goto create_failed;
-		if (!debugfs_create_file("cgu_state", 0400, pf->ice_debugfs_pf,
-					 pf, &ice_debugfs_cgu_state_fops))
 			goto create_failed;
 	}
 

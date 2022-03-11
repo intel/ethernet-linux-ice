@@ -101,6 +101,289 @@ u64 ice_ptp_read_src_incval(struct ice_hw *hw)
 }
 
 /**
+ * ice_read_cgu_reg_e822 - Read a CGU register
+ * @hw: pointer to the HW struct
+ * @addr: Register address to read
+ * @val: storage for register value read
+ *
+ * Read the contents of a register of the Clock Generation Unit. Only
+ * applicable to E822 devices.
+ */
+static enum ice_status
+ice_read_cgu_reg_e822(struct ice_hw *hw, u16 addr, u32 *val)
+{
+	struct ice_sbq_msg_input cgu_msg;
+	enum ice_status status;
+
+	cgu_msg.opcode = ice_sbq_msg_rd;
+	cgu_msg.dest_dev = cgu;
+	cgu_msg.msg_addr_low = addr;
+	cgu_msg.msg_addr_high = 0x0;
+
+	status = ice_sbq_rw_reg_lp(hw, &cgu_msg, true);
+	if (status) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to read CGU register 0x%04x, status %d\n",
+			  addr, status);
+		return status;
+	}
+
+	*val = cgu_msg.data;
+
+	return 0;
+}
+
+/**
+ * ice_write_cgu_reg_e822 - Write a CGU register
+ * @hw: pointer to the HW struct
+ * @addr: Register address to write
+ * @val: value to write into the register
+ *
+ * Write the specified value to a register of the Clock Generation Unit. Only
+ * applicable to E822 devices.
+ */
+static enum ice_status
+ice_write_cgu_reg_e822(struct ice_hw *hw, u16 addr, u32 val)
+{
+	struct ice_sbq_msg_input cgu_msg;
+	enum ice_status status;
+
+	cgu_msg.opcode = ice_sbq_msg_wr;
+	cgu_msg.dest_dev = cgu;
+	cgu_msg.msg_addr_low = addr;
+	cgu_msg.msg_addr_high = 0x0;
+	cgu_msg.data = val;
+
+	status = ice_sbq_rw_reg_lp(hw, &cgu_msg, true);
+	if (status) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to write CGU register 0x%04x, status %d\n",
+			  addr, status);
+		return status;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_clk_freq_str - Convert time_ref_freq to string
+ * @clk_freq: Clock frequency
+ *
+ * Convert the specified TIME_REF clock frequency to a string.
+ */
+static const char *ice_clk_freq_str(u8 clk_freq)
+{
+	switch ((enum ice_time_ref_freq)clk_freq) {
+	case ICE_TIME_REF_FREQ_25_000:
+		return "25 MHz";
+	case ICE_TIME_REF_FREQ_122_880:
+		return "122.88 MHz";
+	case ICE_TIME_REF_FREQ_125_000:
+		return "125 MHz";
+	case ICE_TIME_REF_FREQ_153_600:
+		return "153.6 MHz";
+	case ICE_TIME_REF_FREQ_156_250:
+		return "156.25 MHz";
+	case ICE_TIME_REF_FREQ_245_760:
+		return "245.76 MHz";
+	default:
+		return "Unknown";
+	}
+}
+
+/**
+ * ice_clk_src_str - Convert time_ref_src to string
+ * @clk_src: Clock source
+ *
+ * Convert the specified clock source to its string name.
+ */
+static const char *ice_clk_src_str(u8 clk_src)
+{
+	switch ((enum ice_clk_src)clk_src) {
+	case ICE_CLK_SRC_TCX0:
+		return "TCX0";
+	case ICE_CLK_SRC_TIME_REF:
+		return "TIME_REF";
+	default:
+		return "Unknown";
+	}
+}
+
+/**
+ * ice_cfg_cgu_pll_e822 - Configure the Clock Generation Unit
+ * @hw: pointer to the HW struct
+ * @clk_freq: Clock frequency to program
+ * @clk_src: Clock source to select (TIME_REF, or TCX0)
+ *
+ * Configure the Clock Generation Unit with the desired clock frequency and
+ * time reference, enabling the PLL which drives the PTP hardware clock.
+ */
+enum ice_status
+ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq clk_freq,
+		     enum ice_clk_src clk_src)
+{
+	union tspll_ro_bwm_lf bwm_lf;
+	union nac_cgu_dword19 dw19;
+	union nac_cgu_dword22 dw22;
+	union nac_cgu_dword24 dw24;
+	union nac_cgu_dword9 dw9;
+	enum ice_status status;
+
+	if (clk_freq >= NUM_ICE_TIME_REF_FREQ) {
+		dev_warn(ice_hw_to_dev(hw), "Invalid TIME_REF frequency %u\n",
+			 clk_freq);
+		return ICE_ERR_PARAM;
+	}
+
+	if (clk_src >= NUM_ICE_CLK_SRC) {
+		dev_warn(ice_hw_to_dev(hw), "Invalid clock source %u\n",
+			 clk_src);
+		return ICE_ERR_PARAM;
+	}
+
+	if (clk_src == ICE_CLK_SRC_TCX0 &&
+	    clk_freq != ICE_TIME_REF_FREQ_25_000) {
+		dev_warn(ice_hw_to_dev(hw),
+			 "TCX0 only supports 25 MHz frequency\n");
+		return ICE_ERR_PARAM;
+	}
+
+	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD9, &dw9.val);
+	if (status)
+		return status;
+
+	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD24, &dw24.val);
+	if (status)
+		return status;
+
+	status = ice_read_cgu_reg_e822(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
+	if (status)
+		return status;
+
+	/* Log the current clock configuration */
+	ice_debug(hw, ICE_DBG_PTP, "Current CGU configuration -- %s, clk_src %s, clk_freq %s, PLL %s\n",
+		  dw24.field.ts_pll_enable ? "enabled" : "disabled",
+		  ice_clk_src_str(dw24.field.time_ref_sel),
+		  ice_clk_freq_str(dw9.field.time_ref_freq_sel),
+		  bwm_lf.field.plllock_true_lock_cri ? "locked" : "unlocked");
+
+	/* Disable the PLL before changing the clock source or frequency */
+	if (dw24.field.ts_pll_enable) {
+		dw24.field.ts_pll_enable = 0;
+
+		status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
+		if (status)
+			return status;
+	}
+
+	/* Set the frequency */
+	dw9.field.time_ref_freq_sel = clk_freq;
+	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD9, dw9.val);
+	if (status)
+		return status;
+
+	/* Configure the TS PLL feedback divisor */
+	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD19, &dw19.val);
+	if (status)
+		return status;
+
+	dw19.field.tspll_fbdiv_intgr = e822_cgu_params[clk_freq].feedback_div;
+	dw19.field.tspll_ndivratio = 1;
+
+	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD19, dw19.val);
+	if (status)
+		return status;
+
+	/* Configure the TS PLL post divisor */
+	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD22, &dw22.val);
+	if (status)
+		return status;
+
+	dw22.field.time1588clk_div = e822_cgu_params[clk_freq].post_pll_div;
+	dw22.field.time1588clk_sel_div2 = 0;
+
+	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD22, dw22.val);
+	if (status)
+		return status;
+
+	/* Configure the TS PLL pre divisor and clock source */
+	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD24, &dw24.val);
+	if (status)
+		return status;
+
+	dw24.field.ref1588_ck_div = e822_cgu_params[clk_freq].refclk_pre_div;
+	dw24.field.tspll_fbdiv_frac = e822_cgu_params[clk_freq].frac_n_div;
+	dw24.field.time_ref_sel = clk_src;
+
+	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
+	if (status)
+		return status;
+
+	/* Finally, enable the PLL */
+	dw24.field.ts_pll_enable = 1;
+
+	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
+	if (status)
+		return status;
+
+	/* Wait to verify if the PLL locks */
+	msleep(1);
+
+	status = ice_read_cgu_reg_e822(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
+	if (status)
+		return status;
+
+	if (!bwm_lf.field.plllock_true_lock_cri) {
+		dev_warn(ice_hw_to_dev(hw), "CGU PLL failed to lock\n");
+		return ICE_ERR_NOT_READY;
+	}
+
+	/* Log the current clock configuration */
+	ice_debug(hw, ICE_DBG_PTP, "New CGU configuration -- %s, clk_src %s, clk_freq %s, PLL %s\n",
+		  dw24.field.ts_pll_enable ? "enabled" : "disabled",
+		  ice_clk_src_str(dw24.field.time_ref_sel),
+		  ice_clk_freq_str(dw9.field.time_ref_freq_sel),
+		  bwm_lf.field.plllock_true_lock_cri ? "locked" : "unlocked");
+
+	return 0;
+}
+
+/**
+ * ice_init_cgu_e822 - Initialize CGU with settings from firmware
+ * @hw: pointer to the HW structure
+ *
+ * Initialize the Clock Generation Unit of the E822 device.
+ */
+static enum ice_status ice_init_cgu_e822(struct ice_hw *hw)
+{
+	struct ice_ts_func_info *ts_info = &hw->func_caps.ts_func_info;
+	union tspll_cntr_bist_settings cntr_bist;
+	enum ice_status status;
+
+	status = ice_read_cgu_reg_e822(hw, TSPLL_CNTR_BIST_SETTINGS,
+				       &cntr_bist.val);
+	if (status)
+		return status;
+
+	/* Disable sticky lock detection so lock status reported is accurate */
+	cntr_bist.field.i_plllock_sel_0 = 0;
+	cntr_bist.field.i_plllock_sel_1 = 0;
+
+	status = ice_write_cgu_reg_e822(hw, TSPLL_CNTR_BIST_SETTINGS,
+					cntr_bist.val);
+	if (status)
+		return status;
+
+	/* Configure the CGU PLL using the parameters from the function
+	 * capabilities.
+	 */
+	status = ice_cfg_cgu_pll_e822(hw, ts_info->time_ref,
+				      (enum ice_clk_src)ts_info->clk_src);
+	if (status)
+		return status;
+
+	return 0;
+}
+
+/**
  * ice_ptp_exec_tmr_cmd - Execute all prepared timer commands
  * @hw: pointer to HW struct
  *
@@ -114,7 +397,25 @@ static void ice_ptp_exec_tmr_cmd(struct ice_hw *hw)
 	ice_flush(hw);
 }
 
-/* E822 family functions
+/**
+ * ice_ptp_init_phy_cfg - Get the current TX timestamp status
+ * mask. Returns the mask of ports where TX timestamps are available
+ * @hw: pointer to the HW struct
+ */
+enum ice_status
+ice_ptp_init_phy_cfg(struct ice_hw *hw)
+{
+
+	if (ice_is_e810(hw))
+		hw->phy_cfg = ICE_PHY_E810;
+	else
+		hw->phy_cfg = ICE_PHY_E822;
+
+	return 0;
+}
+
+/* ----------------------------------------------------------------------------
+ * E822 family functions
  *
  * The following functions operate on the E822 family of devices.
  */
@@ -699,289 +1000,6 @@ ice_clear_phy_tstamp_e822(struct ice_hw *hw, u8 quad, u8 idx)
 }
 
 /**
- * ice_read_cgu_reg_e822 - Read a CGU register
- * @hw: pointer to the HW struct
- * @addr: Register address to read
- * @val: storage for register value read
- *
- * Read the contents of a register of the Clock Generation Unit. Only
- * applicable to E822 devices.
- */
-static enum ice_status
-ice_read_cgu_reg_e822(struct ice_hw *hw, u16 addr, u32 *val)
-{
-	struct ice_sbq_msg_input cgu_msg;
-	enum ice_status status;
-
-	cgu_msg.opcode = ice_sbq_msg_rd;
-	cgu_msg.dest_dev = cgu;
-	cgu_msg.msg_addr_low = addr;
-	cgu_msg.msg_addr_high = 0x0;
-
-	status = ice_sbq_rw_reg_lp(hw, &cgu_msg, true);
-	if (status) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to read CGU register 0x%04x, status %d\n",
-			  addr, status);
-		return status;
-	}
-
-	*val = cgu_msg.data;
-
-	return status;
-}
-
-/**
- * ice_write_cgu_reg_e822 - Write a CGU register
- * @hw: pointer to the HW struct
- * @addr: Register address to write
- * @val: value to write into the register
- *
- * Write the specified value to a register of the Clock Generation Unit. Only
- * applicable to E822 devices.
- */
-static enum ice_status
-ice_write_cgu_reg_e822(struct ice_hw *hw, u16 addr, u32 val)
-{
-	struct ice_sbq_msg_input cgu_msg;
-	enum ice_status status;
-
-	cgu_msg.opcode = ice_sbq_msg_wr;
-	cgu_msg.dest_dev = cgu;
-	cgu_msg.msg_addr_low = addr;
-	cgu_msg.msg_addr_high = 0x0;
-	cgu_msg.data = val;
-
-	status = ice_sbq_rw_reg_lp(hw, &cgu_msg, true);
-	if (status) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to write CGU register 0x%04x, status %d\n",
-			  addr, status);
-		return status;
-	}
-
-	return status;
-}
-
-/**
- * ice_clk_freq_str - Convert time_ref_freq to string
- * @clk_freq: Clock frequency
- *
- * Convert the specified TIME_REF clock frequency to a string.
- */
-static const char *ice_clk_freq_str(u8 clk_freq)
-{
-	switch ((enum ice_time_ref_freq)clk_freq) {
-	case ICE_TIME_REF_FREQ_25_000:
-		return "25 MHz";
-	case ICE_TIME_REF_FREQ_122_880:
-		return "122.88 MHz";
-	case ICE_TIME_REF_FREQ_125_000:
-		return "125 MHz";
-	case ICE_TIME_REF_FREQ_153_600:
-		return "153.6 MHz";
-	case ICE_TIME_REF_FREQ_156_250:
-		return "156.25 MHz";
-	case ICE_TIME_REF_FREQ_245_760:
-		return "245.76 MHz";
-	default:
-		return "Unknown";
-	}
-}
-
-/**
- * ice_clk_src_str - Convert time_ref_src to string
- * @clk_src: Clock source
- *
- * Convert the specified clock source to its string name.
- */
-static const char *ice_clk_src_str(u8 clk_src)
-{
-	switch ((enum ice_clk_src)clk_src) {
-	case ICE_CLK_SRC_TCX0:
-		return "TCX0";
-	case ICE_CLK_SRC_TIME_REF:
-		return "TIME_REF";
-	default:
-		return "Unknown";
-	}
-}
-
-/**
- * ice_cfg_cgu_pll_e822 - Configure the Clock Generation Unit
- * @hw: pointer to the HW struct
- * @clk_freq: Clock frequency to program
- * @clk_src: Clock source to select (TIME_REF, or TCX0)
- *
- * Configure the Clock Generation Unit with the desired clock frequency and
- * time reference, enabling the PLL which drives the PTP hardware clock.
- */
-enum ice_status
-ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq clk_freq,
-		     enum ice_clk_src clk_src)
-{
-	union tspll_ro_bwm_lf bwm_lf;
-	union nac_cgu_dword19 dw19;
-	union nac_cgu_dword22 dw22;
-	union nac_cgu_dword24 dw24;
-	union nac_cgu_dword9 dw9;
-	enum ice_status status;
-
-	if (clk_freq >= NUM_ICE_TIME_REF_FREQ) {
-		dev_warn(ice_hw_to_dev(hw), "Invalid TIME_REF frequency %u\n",
-			 clk_freq);
-		return ICE_ERR_PARAM;
-	}
-
-	if (clk_src >= NUM_ICE_CLK_SRC) {
-		dev_warn(ice_hw_to_dev(hw), "Invalid clock source %u\n",
-			 clk_src);
-		return ICE_ERR_PARAM;
-	}
-
-	if (clk_src == ICE_CLK_SRC_TCX0 &&
-	    clk_freq != ICE_TIME_REF_FREQ_25_000) {
-		dev_warn(ice_hw_to_dev(hw),
-			 "TCX0 only supports 25 MHz frequency\n");
-		return ICE_ERR_PARAM;
-	}
-
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD9, &dw9.val);
-	if (status)
-		return status;
-
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD24, &dw24.val);
-	if (status)
-		return status;
-
-	status = ice_read_cgu_reg_e822(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
-	if (status)
-		return status;
-
-	/* Log the current clock configuration */
-	ice_debug(hw, ICE_DBG_PTP, "Current CGU configuration -- %s, clk_src %s, clk_freq %s, PLL %s\n",
-		  dw24.field.ts_pll_enable ? "enabled" : "disabled",
-		  ice_clk_src_str(dw24.field.time_ref_sel),
-		  ice_clk_freq_str(dw9.field.time_ref_freq_sel),
-		  bwm_lf.field.plllock_true_lock_cri ? "locked" : "unlocked");
-
-	/* Disable the PLL before changing the clock source or frequency */
-	if (dw24.field.ts_pll_enable) {
-		dw24.field.ts_pll_enable = 0;
-
-		status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
-		if (status)
-			return status;
-	}
-
-	/* Set the frequency */
-	dw9.field.time_ref_freq_sel = clk_freq;
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD9, dw9.val);
-	if (status)
-		return status;
-
-	/* Configure the TS PLL feedback divisor */
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD19, &dw19.val);
-	if (status)
-		return status;
-
-	dw19.field.tspll_fbdiv_intgr = e822_cgu_params[clk_freq].feedback_div;
-	dw19.field.tspll_ndivratio = 1;
-
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD19, dw19.val);
-	if (status)
-		return status;
-
-	/* Configure the TS PLL post divisor */
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD22, &dw22.val);
-	if (status)
-		return status;
-
-	dw22.field.time1588clk_div = e822_cgu_params[clk_freq].post_pll_div;
-	dw22.field.time1588clk_sel_div2 = 0;
-
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD22, dw22.val);
-	if (status)
-		return status;
-
-	/* Configure the TS PLL pre divisor and clock source */
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD24, &dw24.val);
-	if (status)
-		return status;
-
-	dw24.field.ref1588_ck_div = e822_cgu_params[clk_freq].refclk_pre_div;
-	dw24.field.tspll_fbdiv_frac = e822_cgu_params[clk_freq].frac_n_div;
-	dw24.field.time_ref_sel = clk_src;
-
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
-	if (status)
-		return status;
-
-	/* Finally, enable the PLL */
-	dw24.field.ts_pll_enable = 1;
-
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
-	if (status)
-		return status;
-
-	/* Wait to verify if the PLL locks */
-	msleep(1);
-
-	status = ice_read_cgu_reg_e822(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
-	if (status)
-		return status;
-
-	if (!bwm_lf.field.plllock_true_lock_cri) {
-		dev_warn(ice_hw_to_dev(hw), "CGU PLL failed to lock\n");
-		return ICE_ERR_NOT_READY;
-	}
-
-	/* Log the current clock configuration */
-	ice_debug(hw, ICE_DBG_PTP, "New CGU configuration -- %s, clk_src %s, clk_freq %s, PLL %s\n",
-		  dw24.field.ts_pll_enable ? "enabled" : "disabled",
-		  ice_clk_src_str(dw24.field.time_ref_sel),
-		  ice_clk_freq_str(dw9.field.time_ref_freq_sel),
-		  bwm_lf.field.plllock_true_lock_cri ? "locked" : "unlocked");
-
-	return 0;
-}
-
-/**
- * ice_init_cgu_e822 - Initialize CGU with settings from firmware
- * @hw: pointer to the HW structure
- *
- * Initialize the Clock Generation Unit of the E822 device.
- */
-static enum ice_status ice_init_cgu_e822(struct ice_hw *hw)
-{
-	struct ice_ts_func_info *ts_info = &hw->func_caps.ts_func_info;
-	union tspll_cntr_bist_settings cntr_bist;
-	enum ice_status status;
-
-	status = ice_read_cgu_reg_e822(hw, TSPLL_CNTR_BIST_SETTINGS,
-				       &cntr_bist.val);
-	if (status)
-		return status;
-
-	/* Disable sticky lock detection so lock status reported is accurate */
-	cntr_bist.field.i_plllock_sel_0 = 0;
-	cntr_bist.field.i_plllock_sel_1 = 0;
-
-	status = ice_write_cgu_reg_e822(hw, TSPLL_CNTR_BIST_SETTINGS,
-					cntr_bist.val);
-	if (status)
-		return status;
-
-	/* Configure the CGU PLL using the parameters from the function
-	 * capabilities.
-	 */
-	status = ice_cfg_cgu_pll_e822(hw, ts_info->time_ref,
-				      (enum ice_clk_src)ts_info->clk_src);
-	if (status)
-		return status;
-
-	return 0;
-}
-
-/**
  * ice_ptp_init_phc_e822 - Perform E822 specific PHC initialization
  * @hw: pointer to HW struct
  *
@@ -1269,7 +1287,7 @@ exit_err:
 }
 
 /**
- * ice_ptp_read_port_capture - Read a port's local time capture
+ * ice_ptp_read_port_capture_e822 - Read a port's local time capture
  * @hw: pointer to HW struct
  * @port: Port number to read
  * @tx_ts: on return, the Tx port time capture
@@ -1280,7 +1298,8 @@ exit_err:
  * Note this has no equivalent for the E810 devices.
  */
 enum ice_status
-ice_ptp_read_port_capture(struct ice_hw *hw, u8 port, u64 *tx_ts, u64 *rx_ts)
+ice_ptp_read_port_capture_e822(struct ice_hw *hw, u8 port, u64 *tx_ts,
+			       u64 *rx_ts)
 {
 	enum ice_status status;
 
@@ -1310,7 +1329,7 @@ ice_ptp_read_port_capture(struct ice_hw *hw, u8 port, u64 *tx_ts, u64 *rx_ts)
 }
 
 /**
- * ice_ptp_one_port_cmd - Prepare a single PHY port for a timer command
+ * ice_ptp_one_port_cmd_e822 - Prepare a single PHY port for a timer command
  * @hw: pointer to HW struct
  * @port: Port to which cmd has to be sent
  * @cmd: Command to be sent to the port
@@ -1322,8 +1341,8 @@ ice_ptp_read_port_capture(struct ice_hw *hw, u8 port, u64 *tx_ts, u64 *rx_ts)
  * always handles all external PHYs internally.
  */
 enum ice_status
-ice_ptp_one_port_cmd(struct ice_hw *hw, u8 port, enum ice_ptp_tmr_cmd cmd,
-		     bool lock_sbq)
+ice_ptp_one_port_cmd_e822(struct ice_hw *hw, u8 port, enum ice_ptp_tmr_cmd cmd,
+			  bool lock_sbq)
 {
 	enum ice_status status;
 	u32 cmd_val, val;
@@ -1417,7 +1436,7 @@ ice_ptp_port_cmd_e822(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
 	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
 		enum ice_status status;
 
-		status = ice_ptp_one_port_cmd(hw, port, cmd, lock_sbq);
+		status = ice_ptp_one_port_cmd_e822(hw, port, cmd, lock_sbq);
 		if (status)
 			return status;
 	}
@@ -2319,7 +2338,7 @@ ice_read_phy_and_phc_time_e822(struct ice_hw *hw, u8 port, u64 *phy_time,
 	ice_ptp_src_cmd(hw, READ_TIME);
 
 	/* Prepare the PHY timer for a READ_TIME capture command */
-	status = ice_ptp_one_port_cmd(hw, port, READ_TIME, true);
+	status = ice_ptp_one_port_cmd_e822(hw, port, READ_TIME, true);
 	if (status)
 		return status;
 
@@ -2332,7 +2351,7 @@ ice_read_phy_and_phc_time_e822(struct ice_hw *hw, u8 port, u64 *phy_time,
 	*phc_time = (u64)lo << 32 | zo;
 
 	/* Read the captured PHY time from the PHY shadow registers */
-	status = ice_ptp_read_port_capture(hw, port, &tx_time, &rx_time);
+	status = ice_ptp_read_port_capture_e822(hw, port, &tx_time, &rx_time);
 	if (status)
 		return status;
 
@@ -2390,7 +2409,7 @@ static enum ice_status ice_sync_phy_timer_e822(struct ice_hw *hw, u8 port)
 	if (status)
 		goto err_unlock;
 
-	status = ice_ptp_one_port_cmd(hw, port, ADJ_TIME, true);
+	status = ice_ptp_one_port_cmd_e822(hw, port, ADJ_TIME, true);
 	if (status)
 		goto err_unlock;
 
@@ -2516,7 +2535,7 @@ ice_start_phy_timer_e822(struct ice_hw *hw, u8 port, bool bypass)
 	if (status)
 		return status;
 
-	status = ice_ptp_one_port_cmd(hw, port, INIT_INCVAL, true);
+	status = ice_ptp_one_port_cmd_e822(hw, port, INIT_INCVAL, true);
 	if (status)
 		return status;
 
@@ -2541,7 +2560,7 @@ ice_start_phy_timer_e822(struct ice_hw *hw, u8 port, bool bypass)
 	if (status)
 		return status;
 
-	status = ice_ptp_one_port_cmd(hw, port, INIT_INCVAL, true);
+	status = ice_ptp_one_port_cmd_e822(hw, port, INIT_INCVAL, true);
 	if (status)
 		return status;
 
@@ -3121,7 +3140,7 @@ ice_ptp_port_cmd_e810(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
  * will return cached value
  */
 static enum ice_status
-ice_get_pca9575_handle(struct ice_hw *hw, __le16 *pca9575_handle)
+ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle)
 {
 	struct ice_aqc_get_link_topo cmd;
 	u8 node_part_number, idx;
@@ -3182,7 +3201,7 @@ ice_get_pca9575_handle(struct ice_hw *hw, __le16 *pca9575_handle)
 bool ice_is_phy_rclk_present_e810t(struct ice_hw *hw)
 {
 	if (ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL,
-				  ICE_ACQ_GET_LINK_TOPO_NODE_NR_PKVL, NULL))
+				  ICE_ACQ_GET_LINK_TOPO_NODE_NR_C827, NULL))
 		return false;
 
 	return true;
@@ -3229,6 +3248,49 @@ bool ice_is_clock_mux_present_e810t(struct ice_hw *hw)
 }
 
 /**
+ * ice_get_pf_c827_idx - find and return the C827 index for the current pf
+ * @hw: pointer to the hw struct
+ * @idx: index of the found C827 PHY
+ */
+enum ice_status ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx)
+{
+	struct ice_aqc_get_link_topo cmd;
+	enum ice_status status;
+	u8 node_part_number;
+	u16 node_handle;
+	u8 ctx;
+
+	if (hw->mac_type != ICE_MAC_E810)
+		return ICE_ERR_DEVICE_NOT_SUPPORTED;
+
+	if (hw->device_id != ICE_DEV_ID_E810C_QSFP) {
+		*idx = C827_0;
+		return 0;
+	}
+
+	memset(&cmd, 0, sizeof(cmd));
+
+	ctx = ICE_AQC_LINK_TOPO_NODE_TYPE_PHY << ICE_AQC_LINK_TOPO_NODE_TYPE_S;
+	ctx |= ICE_AQC_LINK_TOPO_NODE_CTX_PORT << ICE_AQC_LINK_TOPO_NODE_CTX_S;
+	cmd.addr.topo_params.node_type_ctx = ctx;
+	cmd.addr.topo_params.index = 0;
+
+	status = ice_aq_get_netlist_node(hw, &cmd, &node_part_number,
+					 &node_handle);
+	if (status || node_part_number != ICE_ACQ_GET_LINK_TOPO_NODE_NR_C827)
+		return ICE_ERR_DOES_NOT_EXIST;
+
+	if (node_handle == E810C_QSFP_C827_0_HANDLE)
+		*idx = C827_0;
+	else if (node_handle == E810C_QSFP_C827_1_HANDLE)
+		*idx = C827_1;
+	else
+		return ICE_ERR_OUT_OF_RANGE;
+
+	return 0;
+}
+
+/**
  * ice_is_gps_present_e810t
  * @hw: pointer to the hw struct
  *
@@ -3257,13 +3319,15 @@ ice_read_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 *data)
 	struct ice_aqc_link_topo_addr link_topo;
 	enum ice_status status;
 	__le16 addr;
+	u16 handle;
 
 	memset(&link_topo, 0, sizeof(link_topo));
 
-	status = ice_get_pca9575_handle(hw, &link_topo.handle);
+	status = ice_get_pca9575_handle(hw, &handle);
 	if (status)
 		return status;
 
+	link_topo.handle = cpu_to_le16(handle);
 	link_topo.topo_params.node_type_ctx =
 		(ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED <<
 		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
@@ -3287,13 +3351,15 @@ ice_write_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 data)
 	struct ice_aqc_link_topo_addr link_topo;
 	enum ice_status status;
 	__le16 addr;
+	u16 handle;
 
 	memset(&link_topo, 0, sizeof(link_topo));
 
-	status = ice_get_pca9575_handle(hw, &link_topo.handle);
+	status = ice_get_pca9575_handle(hw, &handle);
 	if (status)
 		return status;
 
+	link_topo.handle = cpu_to_le16(handle);
 	link_topo.topo_params.node_type_ctx =
 		(ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED <<
 		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
@@ -3374,7 +3440,7 @@ enum ice_status ice_write_sma_ctrl_e810t(struct ice_hw *hw, u8 data)
 bool ice_is_pca9575_present_e810t(struct ice_hw *hw)
 {
 	enum ice_status status;
-	__le16 handle = 0;
+	u16 handle = 0;
 
 	if (!ice_is_e810t(hw))
 		return false;
@@ -3386,7 +3452,7 @@ bool ice_is_pca9575_present_e810t(struct ice_hw *hw)
 	return false;
 }
 
-const struct ice_cgu_state_desc ice_cgu_states[] = {
+static const struct ice_cgu_state_desc ice_cgu_states[] = {
 	/* name			idx */
 	{ "invalid",		ICE_CGU_STATE_INVALID },
 	{ "freerun",		ICE_CGU_STATE_FREERUN },
@@ -3410,7 +3476,7 @@ const char *ice_cgu_state_to_name(u8 state)
 	return "unknown";
 }
 
-const struct ice_e810t_cgu_pin_desc ice_e810t_cgu_inputs[] = {
+static const struct ice_e810t_cgu_pin_desc ice_e810t_cgu_inputs[] = {
 	/* name		  idx */
 	{ "CVL-SDP22",    REF0P },
 	{ "CVL-SDP20",    REF0N },
@@ -3444,6 +3510,7 @@ const char *ice_zl_pin_idx_to_name_e810t(u8 pin)
  * @dpll_idx: Index of internal DPLL unit
  * @pin: pointer to a buffer for returning currently active pin
  * @phase_offset: pointer to a buffer for returning phase offset
+ * @last_dpll_state: last known state of DPLL
  *
  * This function will read the state of the DPLL(dpll_idx). Non-null
  * 'pin' and 'phase_offset' parameters are used to retrieve currently
@@ -3453,7 +3520,8 @@ const char *ice_zl_pin_idx_to_name_e810t(u8 pin)
  */
 enum ice_e810t_cgu_state
 ice_get_zl_state_e810t(struct ice_hw *hw, u8 dpll_idx, u8 *pin,
-		       s64 *phase_offset)
+		       s64 *phase_offset,
+		       enum ice_e810t_cgu_state last_dpll_state)
 {
 	enum ice_status status;
 	u16 dpll_state;
@@ -3485,10 +3553,18 @@ ice_get_zl_state_e810t(struct ice_hw *hw, u8 dpll_idx, u8 *pin,
 			return ICE_CGU_STATE_LOCKED_HO_ACQ;
 		else
 			return ICE_CGU_STATE_LOCKED;
-	} else if ((dpll_state & ICE_AQC_GET_CGU_DPLL_STATUS_STATE_HO) &&
-		   (dpll_state & ICE_AQC_GET_CGU_DPLL_STATUS_STATE_HO_READY)) {
-		return ICE_CGU_STATE_HOLDOVER;
 	}
+
+	/* According to ZL DPLL documentation once it goes to LOCKED_HO_ACQ it
+	 * never return to FREERUN. This aligns to ITU-T G.781 Recommendation.
+	 * But we cannot report HOLDOVER while HO memory is cleared while
+	 * switching to another reference (so in LOCKED without HO_ACQ) or
+	 * holdover timeouts (not implemented yet) - in those two situations
+	 * (only!) we actually back to FREERUN.
+	 */
+	if (last_dpll_state == ICE_CGU_STATE_LOCKED_HO_ACQ ||
+	    last_dpll_state == ICE_CGU_STATE_HOLDOVER)
+		return ICE_CGU_STATE_HOLDOVER;
 
 	return ICE_CGU_STATE_FREERUN;
 }
@@ -3608,10 +3684,16 @@ ice_ptp_tmr_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd, bool lock_sbq)
 	ice_ptp_src_cmd(hw, cmd);
 
 	/* Next, prepare the ports */
-	if (ice_is_e810(hw))
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
 		status = ice_ptp_port_cmd_e810(hw, cmd, lock_sbq);
-	else
+		break;
+	case ICE_PHY_E822:
 		status = ice_ptp_port_cmd_e822(hw, cmd, lock_sbq);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
 	if (status) {
 		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY ports for timer command %u, status %d\n",
 			  cmd, status);
@@ -3653,10 +3735,17 @@ enum ice_status ice_ptp_init_time(struct ice_hw *hw, u64 time)
 
 	/* PHY Clks */
 	/* Fill Rx and Tx ports and send msg to PHY */
-	if (ice_is_e810(hw))
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
 		status = ice_ptp_prep_phy_time_e810(hw, time & 0xFFFFFFFF);
-	else
+		break;
+	case ICE_PHY_E822:
 		status = ice_ptp_prep_phy_time_e822(hw, time & 0xFFFFFFFF);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
 	if (status)
 		return status;
 
@@ -3688,10 +3777,17 @@ enum ice_status ice_ptp_write_incval(struct ice_hw *hw, u64 incval)
 	wr32(hw, GLTSYN_SHADJ_L(tmr_idx), lower_32_bits(incval));
 	wr32(hw, GLTSYN_SHADJ_H(tmr_idx), upper_32_bits(incval));
 
-	if (ice_is_e810(hw))
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
 		status = ice_ptp_prep_phy_incval_e810(hw, incval);
-	else
+		break;
+	case ICE_PHY_E822:
 		status = ice_ptp_prep_phy_incval_e822(hw, incval);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
 	if (status)
 		return status;
 
@@ -3749,10 +3845,17 @@ enum ice_status ice_ptp_adj_clock(struct ice_hw *hw, s32 adj, bool lock_sbq)
 	wr32(hw, GLTSYN_SHADJ_L(tmr_idx), 0);
 	wr32(hw, GLTSYN_SHADJ_H(tmr_idx), adj);
 
-	if (ice_is_e810(hw))
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
 		status = ice_ptp_prep_phy_adj_e810(hw, adj, lock_sbq);
-	else
+		break;
+	case ICE_PHY_E822:
 		status = ice_ptp_prep_phy_adj_e822(hw, adj, lock_sbq);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
 	if (status)
 		return status;
 
@@ -3799,18 +3902,32 @@ ice_ptp_adj_clock_at_time(struct ice_hw *hw, u64 at_time, s32 adj)
 	wr32(hw, GLTSYN_SHTIME_H(tmr_idx), time_hi);
 
 	/* Prepare PHY port adjustments */
-	if (ice_is_e810(hw))
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
 		status = ice_ptp_prep_phy_adj_e810(hw, adj, true);
-	else
+		break;
+	case ICE_PHY_E822:
 		status = ice_ptp_prep_phy_adj_e822(hw, adj, true);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
 	if (status)
 		return status;
 
 	/* Set target time for each PHY port */
-	if (ice_is_e810(hw))
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
 		status = ice_ptp_prep_phy_adj_target_e810(hw, time_lo);
-	else
+		break;
+	case ICE_PHY_E822:
 		status = ice_ptp_prep_phy_adj_target_e822(hw, time_lo);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
 	if (status)
 		return status;
 
@@ -3818,9 +3935,9 @@ ice_ptp_adj_clock_at_time(struct ice_hw *hw, u64 at_time, s32 adj)
 }
 
 /**
- * ice_read_phy_tstamp - Read a PHY timestamp from the timestamo block
+ * ice_read_phy_tstamp - Read a PHY timestamp from the timestamp block
  * @hw: pointer to the HW struct
- * @block: the block to read from
+ * @block: the block/port to read from
  * @idx: the timestamp index to read
  * @tstamp: on return, the 40bit timestamp value
  *
@@ -3831,10 +3948,20 @@ ice_ptp_adj_clock_at_time(struct ice_hw *hw, u64 at_time, s32 adj)
 enum ice_status
 ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp)
 {
-	if (ice_is_e810(hw))
-		return ice_read_phy_tstamp_e810(hw, block, idx, tstamp);
-	else
-		return ice_read_phy_tstamp_e822(hw, block, idx, tstamp);
+	enum ice_status status;
+
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
+		status = ice_read_phy_tstamp_e810(hw, block, idx, tstamp);
+		break;
+	case ICE_PHY_E822:
+		status = ice_read_phy_tstamp_e822(hw, block, idx, tstamp);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
+	return status;
 }
 
 /**
@@ -3850,10 +3977,20 @@ ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp)
 enum ice_status
 ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx)
 {
-	if (ice_is_e810(hw))
-		return ice_clear_phy_tstamp_e810(hw, block, idx);
-	else
-		return ice_clear_phy_tstamp_e822(hw, block, idx);
+	enum ice_status status;
+
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
+		status = ice_clear_phy_tstamp_e810(hw, block, idx);
+		break;
+	case ICE_PHY_E822:
+		status = ice_clear_phy_tstamp_e822(hw, block, idx);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
+	return status;
 }
 
 /**
@@ -3864,6 +4001,7 @@ ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx)
  */
 enum ice_status ice_ptp_init_phc(struct ice_hw *hw)
 {
+	enum ice_status status;
 	u8 src_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 
 	/* Enable source clocks */
@@ -3872,8 +4010,16 @@ enum ice_status ice_ptp_init_phc(struct ice_hw *hw)
 	/* Clear event status indications for auxiliary pins */
 	(void)rd32(hw, GLTSYN_STAT(src_idx));
 
-	if (ice_is_e810(hw))
-		return ice_ptp_init_phc_e810(hw);
-	else
-		return ice_ptp_init_phc_e822(hw);
+	switch (hw->phy_cfg) {
+	case ICE_PHY_E810:
+		status = ice_ptp_init_phc_e810(hw);
+		break;
+	case ICE_PHY_E822:
+		status = ice_ptp_init_phc_e822(hw);
+		break;
+	default:
+		status = ICE_ERR_NOT_SUPPORTED;
+	}
+
+	return status;
 }

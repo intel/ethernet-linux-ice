@@ -2824,7 +2824,6 @@ void _kc_ethtool_intersect_link_masks(struct ethtool_link_ksettings *dst,
 				      struct ethtool_link_ksettings *src);
 #define ethtool_intersect_link_masks _kc_ethtool_intersect_link_masks
 #else /* >= 4.15 */
-#define HAVE_NDO_BPF
 #define HAVE_XDP_BUFF_DATA_META
 #define HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 #define HAVE_TCF_BLOCK
@@ -2884,10 +2883,14 @@ static inline unsigned long _kc_array_index_mask_nospec(unsigned long index,
 #ifndef sizeof_field
 #define sizeof_field(TYPE, MEMBER) (sizeof((((TYPE *)0)->MEMBER)))
 #endif /* sizeof_field */
+/* add a check for the Oracle UEK 4.14.35 kernel as
+ * it backported a version of this bitmap function
+ */
 #if !(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)) && \
-     !(SLE_VERSION_CODE >= SLE_VERSION(12,5,0) && \
-       SLE_VERSION_CODE < SLE_VERSION(15,0,0) || \
-       SLE_VERSION_CODE >= SLE_VERSION(15,1,0))
+    !(SLE_VERSION_CODE >= SLE_VERSION(12,5,0) && \
+      SLE_VERSION_CODE < SLE_VERSION(15,0,0) || \
+      SLE_VERSION_CODE >= SLE_VERSION(15,1,0)) && \
+    !(LINUX_VERSION_CODE == KERNEL_VERSION(4,14,35))
 /*
  * Copy bitmap and clear tail bits in last word.
  */
@@ -2951,10 +2954,6 @@ void _kc_pcie_print_link_status(struct pci_dev *dev);
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0))
-#if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)) && \
-    (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(8,2)))
-#define HAVE_DEVLINK_REGIONS
-#endif /* RHEL >= 8.0 && RHEL <= 8.2 */
 #define bitmap_alloc(nbits, flags) \
 	kmalloc_array(BITS_TO_LONGS(nbits), sizeof(unsigned long), flags)
 #define bitmap_zalloc(nbits, flags) bitmap_alloc(nbits, ((flags) | __GFP_ZERO))
@@ -2990,7 +2989,6 @@ static inline void __kc_metadata_dst_free(void *md_dst)
 #define HAVE_NETDEV_SB_DEV
 #define HAVE_TCF_VLAN_TPID
 #define HAVE_RHASHTABLE_TYPES
-#define HAVE_DEVLINK_REGIONS
 #define HAVE_DEVLINK_PARAMS
 #endif /* 4.19.0 */
 
@@ -3343,9 +3341,13 @@ static inline void _kc_bitmap_set_value8(unsigned long *map,
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,7,0))
 u64 _kc_pci_get_dsn(struct pci_dev *dev);
 #define pci_get_dsn(dev) _kc_pci_get_dsn(dev)
+/* add a check for the Oracle UEK 5.4.17 kernel which
+ * backported the rename of the aer functions
+ */
 #if !(SLE_VERSION_CODE > SLE_VERSION(15,2,0)) && \
     !((LINUX_VERSION_CODE == KERNEL_VERSION(5,3,18)) && \
       (SLE_LOCALVERSION_CODE >= KERNEL_VERSION(14,0,0))) && \
+    !(LINUX_VERSION_CODE == KERNEL_VERSION(5,4,17)) && \
     !(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,3)))
 #define pci_aer_clear_nonfatal_status	pci_cleanup_aer_uncorrect_error_status
 #endif
@@ -3354,7 +3356,6 @@ u64 _kc_pci_get_dsn(struct pci_dev *dev);
 #define DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID "fw.bundle_id"
 #endif
 #else /* >= 5.7.0 */
-#define HAVE_DEVLINK_REGION_OPS_SNAPSHOT
 #define HAVE_ETHTOOL_COALESCE_PARAMS_SUPPORT
 #endif /* 5.7.0 */
 

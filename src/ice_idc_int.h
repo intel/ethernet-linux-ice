@@ -4,7 +4,6 @@
 #ifndef _ICE_IDC_INT_H_
 #define _ICE_IDC_INT_H_
 
-#include "ice.h"
 #include "iidc.h"
 
 #define ICE_MAX_NUM_AUX		4

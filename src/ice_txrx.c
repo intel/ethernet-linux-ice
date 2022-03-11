@@ -642,7 +642,7 @@ ice_run_xdp(struct ice_ring *rx_ring, struct xdp_buff *xdp,
 #endif
 		break;
 	default:
-		bpf_warn_invalid_xdp_action(act);
+		bpf_warn_invalid_xdp_action(rx_ring->netdev, xdp_prog, act);
 		fallthrough; /* not supported action */
 
 	case XDP_ABORTED:
@@ -1400,19 +1400,10 @@ ice_rx_queue_override(struct sk_buff *skb, struct ice_ring *rx_ring,
 	if (flags & ICE_RX_FLEXI_FLAGS_ACK)
 		return;
 
-	/* proceed only when filter type for channel is of type dest
-	 * port or src+dest port or tunnel
-	 */
-	if (!(ch->fltr_type == ICE_CHNL_FLTR_TYPE_DEST_PORT ||
-	      ch->fltr_type == ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT ||
-	      ch->fltr_type == ICE_CHNL_FLTR_TYPE_TENANT_ID))
-		return;
-
 	/* make sure channel VSI is FD capable and enabled for
 	 * inline flow-director usage
 	 */
-	if (!ice_vsi_fd_ena(ch->ch_vsi) ||
-	    !ice_vsi_inline_fd_ena(ch->ch_vsi))
+	if (!ice_vsi_fd_ena(ch->ch_vsi) || !ch->inline_fd)
 		return;
 
 	/* Detection logic to check if HW table is about to get full,
@@ -1526,7 +1517,7 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 			struct ice_vsi *ctrl_vsi = rx_ring->vsi;
 
 			if (rx_desc->wb.rxdid == FDIR_DESC_RXDID &&
-			    ctrl_vsi->vf_id != ICE_INVAL_VFID)
+			    ctrl_vsi->vf)
 				ice_vc_fdir_irq_handler(ctrl_vsi, rx_desc);
 			ice_put_rx_buf(rx_ring, NULL);
 			cleaned_count++;
@@ -3260,8 +3251,7 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 	/* make sure channel VSI is FD capable and enabled for
 	 * inline flow-director usage
 	 */
-	if (!ice_vsi_fd_ena(ch->ch_vsi) ||
-	    !ice_vsi_inline_fd_ena(ch->ch_vsi))
+	if (!ice_vsi_fd_ena(ch->ch_vsi) || !ch->inline_fd)
 		return;
 
 	/* snag network header to get L4 type and address */
@@ -3355,17 +3345,6 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 	vsi_num = ch->ch_vsi->vsi_num;
 
 	if (th->syn && th->ack) {
-		/* server side connection establishment, hence SYN+ACK.
-		 * proceed only when filter type for channel is of type dest
-		 * port or src+dest port. This is to handle server (target)
-		 * side use case where server side filter is either
-		 * based on dest port or src+dest port
-		 */
-		if (!(ch->fltr_type == ICE_CHNL_FLTR_TYPE_DEST_PORT ||
-		      ch->fltr_type == ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT ||
-		      ch->fltr_type == ICE_CHNL_FLTR_TYPE_TENANT_ID))
-			return;
-
 		if (atomic_dec_if_positive(&qv->inline_fd_cnt) < 0) {
 			/* bailout */
 #ifdef ADQ_PERF_COUNTERS
@@ -3379,19 +3358,6 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 	} else if (th->syn) {
 #ifdef ADQ_PERF_COUNTERS
 		struct ice_ring *ch_tx_ring;
-#endif /* ADQ_PERF_COUNTERS */
-		/* client side doing active connect, hence SYN.
-		 * proceed only when filter type for channel is of type src
-		 * port or src+dest port. This is to handle client (initiator)
-		 * side, where filter type would be either based on
-		 * src port or src+dest port.
-		 */
-		if (!(ch->fltr_type == ICE_CHNL_FLTR_TYPE_SRC_PORT ||
-		      ch->fltr_type == ICE_CHNL_FLTR_TYPE_TENANT_ID ||
-		      ch->fltr_type == ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT))
-			return;
-
-#ifdef ADQ_PERF_COUNTERS
 		ch_tx_ring = qv->vsi->tx_rings[q_index + ch->base_q];
 		if (ch_tx_ring)
 			ch_tx_ring->ch_q_stats.tx.num_atr_setup++;
@@ -3401,17 +3367,6 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 		tx_ring->ch_q_stats.tx.num_atr_evict++;
 #endif /* ADQ_PERF_COUNTERS */
 	} else {
-		/* This case is due to skb-mark, no need to check again,
-		 * It is handled previously
-		 */
-
-		/* filter type must be valid, SO_MARK based FD programming
-		 * is agnostic to client/server type connection, hence
-		 * not checking specific type of filter
-		 */
-		if (ch->fltr_type == ICE_CHNL_FLTR_TYPE_INVALID ||
-		    ch->fltr_type == ICE_CHNL_FLTR_TYPE_LAST)
-			return;
 #ifdef ADQ_PERF_COUNTERS
 		{
 		struct ice_ring *ch_tx_ring;

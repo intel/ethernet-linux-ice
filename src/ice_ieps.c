@@ -7,7 +7,7 @@
 #include "ice.h"
 #include "ice_lib.h"
 
-struct ieps_peer_api_version ice_ieps_version = {
+static struct ieps_peer_api_version ice_ieps_version = {
 	.major    = IEPS_VERSION_PEER_MAJOR,
 	.minor    = IEPS_VERSION_PEER_MINOR,
 };
@@ -34,8 +34,8 @@ ice_ieps_i2c_fill(struct ice_pf *pf, struct ieps_peer_i2c *rw,
 		params |= ICE_AQC_I2C_ADDR_TYPE_7BIT;
 
 	cmd->i2c_params = params;
-	cmd->i2c_bus_addr = rw->dev_addr;
-	cmd->i2c_addr = rw->reg_addr;
+	cmd->i2c_bus_addr = cpu_to_le16(rw->dev_addr);
+	cmd->i2c_addr = cpu_to_le16(rw->reg_addr);
 
 	tparams = &cmd->topo_addr.topo_params;
 	tparams->index = rw->bus;
@@ -86,8 +86,8 @@ ice_ieps_i2c_write(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 		i2c->i2c_params &= ~ICE_AQC_I2C_DATA_SIZE_M;
 		i2c->i2c_params |= (wrlen << ICE_AQC_I2C_DATA_SIZE_S);
 
-		i2c->i2c_addr = rw->reg_addr + i;
-		status = ice_aq_send_cmd(hw, &desc, NULL, 0, 0);
+		i2c->i2c_addr = cpu_to_le16(rw->reg_addr + i);
+		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
 			dev_dbg(ice_pf_to_dev(pf), "ERROR: i2c_wr status=%s\n",
 				ice_stat_str(status));
@@ -132,8 +132,8 @@ ice_ieps_i2c_read(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 		i2c->i2c_params &= ~ICE_AQC_I2C_DATA_SIZE_M;
 		i2c->i2c_params |= (rdlen << ICE_AQC_I2C_DATA_SIZE_S);
 
-		i2c->i2c_addr = rw->reg_addr + i;
-		status = ice_aq_send_cmd(hw, &desc, NULL, 0, 0);
+		i2c->i2c_addr = cpu_to_le16(rw->reg_addr + i);
+		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
 			dev_dbg(ice_pf_to_dev(pf), "ERROR: i2c_rd status=%s\n",
 				ice_stat_str(status));
@@ -225,14 +225,14 @@ ice_ieps_mdio_read(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 		if (pstatus)
 			return pstatus;
 
-		desc.params.read_mdio.offset = rw->reg_addr + i;
+		desc.params.read_mdio.offset = cpu_to_le16(rw->reg_addr + i);
 		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
 			dev_dbg(ice_pf_to_dev(pf), "ERROR: mdio_rd status=%s\n",
 				ice_stat_str(status));
 			return IEPS_PEER_FW_ERROR;
 		}
-		rw->data[i] = desc.params.read_mdio.data;
+		rw->data[i] = le16_to_cpu(desc.params.read_mdio.data);
 	}
 
 	dev_dbg(ice_pf_to_dev(pf),
@@ -268,8 +268,8 @@ ice_ieps_mdio_write(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 		if (pstatus)
 			return pstatus;
 
-		desc.params.read_mdio.offset = rw->reg_addr + i;
-		desc.params.read_mdio.data = rw->data[i];
+		desc.params.read_mdio.offset = cpu_to_le16(rw->reg_addr + i);
+		desc.params.read_mdio.data = cpu_to_le16(rw->data[i]);
 		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
 			dev_err(ice_pf_to_dev(pf), "ERROR: mdio_wr status=%s\n",
@@ -435,8 +435,8 @@ ice_ieps_get_phy_caps(struct ice_pf *pf, u8 report_mode,
 		goto err_exit;
 	}
 
-	pcaps->phy_type_low = aq_pcaps->phy_type_low;
-	pcaps->phy_type_high = aq_pcaps->phy_type_high;
+	pcaps->phy_type_low = le64_to_cpu(aq_pcaps->phy_type_low);
+	pcaps->phy_type_high = le64_to_cpu(aq_pcaps->phy_type_high);
 
 	pcaps->en_tx_pause = !!(aq_pcaps->caps & ICE_AQC_PHY_EN_TX_LINK_PAUSE);
 	pcaps->en_rx_pause = !!(aq_pcaps->caps & ICE_AQC_PHY_EN_RX_LINK_PAUSE);
@@ -494,8 +494,8 @@ ice_ieps_get_phy_status(struct ice_pf *pf, struct ieps_peer_phy_link_status *st)
 	st->an_capable        = !!(link->an_info & ICE_AQ_LP_AN_ABILITY);
 	st->los               = !(link->link_info & ICE_AQ_SIGNAL_DETECT);
 
-	st->phy_type_low      = link->phy_type_low;
-	st->phy_type_high     = link->phy_type_high;
+	st->phy_type_low      = cpu_to_le64(link->phy_type_low);
+	st->phy_type_high     = cpu_to_le64(link->phy_type_high);
 	st->lse_on            = link->lse_ena;
 
 err_exit:
@@ -582,11 +582,13 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 
 	if (phy_cfg->phy_type_low) {
 		for (i = 0; i <= ICE_PHY_TYPE_LOW_MAX_INDEX; i++) {
-			if (phy_cfg->phy_type_low & BIT_ULL(i)) {
+			u64 type_low = le64_to_cpu(phy_cfg->phy_type_low);
+
+			if (type_low & BIT_ULL(i)) {
 				*phy_type = i;
 				phy_type_found = true;
 
-				if (phy_cfg->phy_type_low >> (i + 1))
+				if (type_low >> (i + 1))
 					phy_type_multi = true;
 
 				break;
@@ -599,11 +601,13 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 
 	if (!phy_type_multi && phy_cfg->phy_type_high) {
 		for (i = 0; i < ICE_PHY_TYPE_HIGH_MAX_INDEX; i++) {
-			if (phy_cfg->phy_type_high & BIT_ULL(i)) {
+			u64 type_high = le64_to_cpu(phy_cfg->phy_type_high);
+
+			if (type_high & BIT_ULL(i)) {
 				*phy_type = ICE_PHY_TYPE_LOW_MAX_INDEX + 1 + i;
 				phy_type_found = true;
 
-				if (phy_cfg->phy_type_high >> (i + 1))
+				if (type_high >> (i + 1))
 					phy_type_multi = true;
 
 				break;
@@ -654,15 +658,19 @@ ice_ieps_phy_type_setget(struct ice_pf *pf, bool op_set,
 		goto rel_mem_exit;
 
 	if (attr_data->cfg.phy_type >= 64) {
-		phy_cfg->phy_type_high = 1ULL << (attr_data->cfg.phy_type - 64);
+		u64 type_high = 1ULL << (attr_data->cfg.phy_type - 64);
 
-		if (!(phy_cfg->phy_type_high & pcaps->phy_type_high))
+		if (!(type_high & pcaps->phy_type_high))
 			pstatus = IEPS_PEER_PHY_TYPE_NOTSUP;
+
+		phy_cfg->phy_type_high = cpu_to_le64(type_high);
 	} else {
-		phy_cfg->phy_type_low = 1ULL << attr_data->cfg.phy_type;
+		u64 type_low = 1ULL << attr_data->cfg.phy_type;
 
-		if (!(phy_cfg->phy_type_low & pcaps->phy_type_low))
+		if (!(type_low & pcaps->phy_type_low))
 			pstatus = IEPS_PEER_PHY_TYPE_NOTSUP;
+
+		phy_cfg->phy_type_low = cpu_to_le64(type_low);
 	}
 
 rel_mem_exit:
@@ -839,6 +847,46 @@ release_exit:
 }
 
 /**
+ * ice_ieps_phy_reg_rw - Perform RMN0 reg rd/wr over SBQ
+ * @pf: ptr to pf
+ * @rw: ptr to PHY reg read/write data structure
+ */
+static enum ieps_peer_status
+ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
+{
+	struct ice_sbq_msg_input sbq_msg = {0};
+	struct ice_hw *hw = &pf->hw;
+	enum ice_status status;
+
+#define ICE_IEPS_SBQ_ADDR_HIGH_S 16
+#define ICE_IEPS_SBQ_ADDR_HIGH_M 0xFFFFFFFF
+#define ICE_IEPS_SBQ_ADDR_LOW_M  0xFFFF
+
+	sbq_msg.dest_dev = rmn_0;
+	sbq_msg.msg_addr_low = rw->reg & ICE_IEPS_SBQ_ADDR_LOW_M;
+	sbq_msg.msg_addr_high = (rw->reg >> ICE_IEPS_SBQ_ADDR_HIGH_S) &
+				ICE_IEPS_SBQ_ADDR_HIGH_M;
+	if (rw->is_write) {
+		sbq_msg.opcode = ice_sbq_msg_wr;
+		sbq_msg.data   = rw->data;
+	} else {
+		sbq_msg.opcode = ice_sbq_msg_rd;
+	}
+
+	status = ice_sbq_rw_reg(hw, &sbq_msg);
+	if (status) {
+		dev_dbg(ice_pf_to_dev(pf), "ERROR: sbq_rw_reg status=%s\n",
+			ice_stat_str(status));
+		return IEPS_PEER_FW_ERROR;
+	}
+
+	if (!rw->is_write)
+		rw->data = sbq_msg.data;
+
+	return IEPS_PEER_SUCCESS;
+}
+
+/**
  * ice_ieps_entry - Request FW to perform GPIO set operations
  * @obj: ptr to IDC peer device data object
  * @vptr_arg: ptr to peer arg structure containing cmd and cmd specific data
@@ -908,6 +956,10 @@ int ice_ieps_entry(struct iidc_core_dev_info *obj, void *vptr_arg)
 	case IEPS_PEER_CMD_PORT_GET_ATTR:
 		return ice_ieps_set_get_attr(pf, false,
 				(struct ieps_peer_port_attr_data *)vptr);
+
+	case IEPS_PEER_CMD_INTPHY_REG_RW:
+		return ice_ieps_phy_reg_rw(pf,
+				(struct ieps_peer_intphy_reg_rw *)vptr);
 
 	default:
 		return IEPS_PEER_INVALID_CMD;

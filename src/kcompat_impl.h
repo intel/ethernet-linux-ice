@@ -784,4 +784,66 @@ cpu_latency_qos_remove_request(struct pm_qos_request *req)
 	extern struct static_key_false name
 #endif /* NEED_DECLARE_STATIC_KEY_FALSE */
 
+#ifdef NEED_DEFINE_STATIC_KEY_FALSE
+/* NEED_DEFINE_STATIC_KEY_FALSE
+ *
+ * DEFINE_STATIC_KEY_FALSE was added by upstream commit
+ * 11276d5306b8 ("locking/static_keys: Add a new
+ * static_key interface")
+ *
+ * The definition is now necessary to handle
+ * the xdpdrv work with more than 64 cpus
+ */
+#define DECLARE_STATIC_KEY_FALSE(name) extern struct static_key name
+
+#define DEFINE_STATIC_KEY_FALSE(name) \
+	struct static_key name = STATIC_KEY_INIT_FALSE
+#endif /* NEED_DEFINE_STATIC_KEY_FALSE */
+
+#ifdef NEED_STATIC_BRANCH
+/* NEED_STATIC_BRANCH
+ *
+ * static_branch_likely, static_branch_unlikely,
+ * static_branch_inc, static_branch_dec was added by upstream commit
+ * 11276d5306b8 ("locking/static_keys: Add a new
+ * static_key interface")
+ *
+ * The definition is now necessary to handle
+ * the xdpdrv work with more than 64 cpus
+ */
+#define static_branch_likely(x)		likely(static_key_enabled(x))
+#define static_branch_unlikely(x)	unlikely(static_key_enabled(x))
+
+#define static_branch_inc(x)		static_key_slow_inc(x)
+#define static_branch_dec(x)		static_key_slow_dec(x)
+
+#endif /* NEED_STATIC_BRANCH */
+
+#ifdef NEED_NETDEV_XDP_STRUCT
+#define netdev_bpf netdev_xdp
+#endif /* NEED_NETDEV_XDP_STRUCT */
+
+#ifdef NEED_NO_NETDEV_PROG_XDP_WARN_ACTION
+#ifdef HAVE_XDP_SUPPORT
+#include <linux/filter.h>
+static inline void
+_kc_bpf_warn_invalid_xdp_action(__maybe_unused struct net_device *dev,
+				__maybe_unused struct bpf_prog *prog, u32 act)
+{
+	bpf_warn_invalid_xdp_action(act);
+}
+
+#define bpf_warn_invalid_xdp_action(dev, prog, act) \
+	_kc_bpf_warn_invalid_xdp_action(dev, prog, act)
+#endif /* HAVE_XDP_SUPPORT */
+#endif /* HAVE_NETDEV_PROG_XDP_WARN_ACTION */
+
+#ifdef NEED_ETH_HW_ADDR_SET
+void _kc_eth_hw_addr_set(struct net_device *dev, const void *addr);
+#ifndef eth_hw_addr_set
+#define eth_hw_addr_set(dev, addr) \
+	_kc_eth_hw_addr_set(dev, addr)
+#endif /* eth_hw_addr_set */
+#endif /* NEED_ETH_HW_ADDR_SET */
+
 #endif /* _KCOMPAT_IMPL_H_ */

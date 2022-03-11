@@ -237,8 +237,6 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 #endif /* !ETHTOOL_GFECPARAM */
 	ICE_PRIV_FLAG("fw-lldp-agent", ICE_FLAG_FW_LLDP_AGENT),
 #ifdef NETIF_F_HW_TC
-	ICE_PRIV_FLAG("channel-inline-flow-director",
-		      ICE_FLAG_CHNL_INLINE_FD_ENA),
 	ICE_PRIV_FLAG("channel-inline-fd-mark",
 		      ICE_FLAG_CHNL_INLINE_FD_MARK_ENA),
 	ICE_PRIV_FLAG("channel-pkt-inspect-optimize",
@@ -282,22 +280,6 @@ __ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo,
 	snprintf(drvinfo->fw_version, sizeof(drvinfo->fw_version),
 		 "%x.%02x 0x%x %d.%d.%d", nvm->major, nvm->minor,
 		 nvm->eetrack, orom->major, orom->build, orom->patch);
-
-	/* When called via 'ethtool -i|--driver <iface>', log the above with
-	 * additional Netlist version information as a kernel message since it
-	 * will not all fit in the 32-byte fixed-length buffer.
-	 */
-	if (!strncmp(current->comm, "ethtool", 7)) {
-		struct ice_netlist_info *netlist = &hw->flash.netlist;
-
-		/* The netlist versions are stored in packed BCD format */
-		netdev_info(netdev, "NVM version details - %x.%02x, 0x%x, %x.%x.%x-%x.%x.%x.%08x, %d.%d.%d\n",
-			    nvm->major, nvm->minor, nvm->eetrack,
-			    netlist->major, netlist->minor,
-			    netlist->type >> 16, netlist->type & 0xffff,
-			    netlist->rev, netlist->cust_ver, netlist->hash,
-			    orom->major, orom->build, orom->patch);
-	}
 }
 
 static void
@@ -503,14 +485,20 @@ ice_set_eeprom(struct net_device *netdev, struct ethtool_eeprom *eeprom,
  */
 static bool ice_active_vfs(struct ice_pf *pf)
 {
+	bool active = false;
 	struct ice_vf *vf;
 	unsigned int bkt;
 
-	ice_for_each_vf(pf, bkt, vf)
-		if (test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
-			return true;
+	rcu_read_lock();
+	ice_for_each_vf_rcu(pf, bkt, vf) {
+		if (test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
+			active = true;
+			break;
+		}
+	}
+	rcu_read_unlock();
 
-	return false;
+	return active;
 }
 
 /**
@@ -674,7 +662,7 @@ static int ice_lbtest_prepare_rings(struct ice_vsi *vsi)
 	if (status)
 		goto err_start_rx_ring;
 
-	return status;
+	return 0;
 
 err_start_rx_ring:
 	ice_vsi_free_rx_rings(vsi);
@@ -2080,12 +2068,6 @@ static void ice_recfg_chnl_vsis(struct ice_pf *pf, struct ice_vsi *vsi)
 		/* set/clear inline flow-director bits for ADQ (aka channel)
 		 * VSIs based on PF level private flags
 		 */
-		if (test_bit(ICE_FLAG_CHNL_INLINE_FD_ENA, pf->flags))
-			set_bit(ICE_CHNL_FEATURE_INLINE_FD_ENA,
-				ch_vsi->features);
-		else
-			clear_bit(ICE_CHNL_FEATURE_INLINE_FD_ENA,
-				  ch_vsi->features);
 		if (test_bit(ICE_FLAG_CHNL_INLINE_FD_MARK_ENA, pf->flags))
 			set_bit(ICE_CHNL_FEATURE_INLINE_FD_MARK_ENA,
 				ch_vsi->features);
@@ -2321,8 +2303,10 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 	}
 	if (test_bit(ICE_FLAG_LEGACY_RX, change_flags)) {
 		/* down and up VSI so that changes of Rx cfg are reflected. */
-		ice_down(vsi);
-		ice_up(vsi);
+		if (!test_and_set_bit(ICE_VSI_DOWN, vsi->state)) {
+			ice_down(vsi);
+			ice_up(vsi);
+		}
 	}
 	/* don't allow modification of this flag when a single VF is in
 	 * promiscuous mode because it's not supported
@@ -2336,7 +2320,7 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 	}
 
 	if (test_bit(ICE_FLAG_VF_VLAN_PRUNING, change_flags) &&
-	    pf->vfs.num_alloc) {
+	    ice_has_vfs(pf)) {
 		dev_err(dev, "vf-vlan-pruning: VLAN pruning cannot be changed while VFs are active.\n");
 		/* toggle bit back to previous state */
 		change_bit(ICE_FLAG_VF_VLAN_PRUNING, pf->flags);
@@ -2349,8 +2333,17 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 	}
 	if (test_bit(ICE_FLAG_DPLL_FAST_LOCK, change_flags)) {
 		u8 ref_state, eec_mode, config;
+		bool fast_lock_enabled;
 		u64 phase_offset;
 		u16 dpll_state;
+
+		if (!ice_is_feature_supported(pf, ICE_F_CGU)) {
+			dev_err(dev, "cgu-fast-lock: not supported\n");
+			/* toggle bit back to previous state */
+			change_bit(ICE_FLAG_DPLL_FAST_LOCK, pf->flags);
+			ret = -EOPNOTSUPP;
+			goto ethtool_exit;
+		}
 
 		status = ice_aq_get_cgu_dpll_status(&pf->hw, ICE_CGU_DPLL_PTP,
 						    &ref_state, &dpll_state,
@@ -2366,7 +2359,8 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			 (ICE_AQC_GET_CGU_DPLL_STATUS_STATE_MODE |
 			  ICE_AQC_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SEL)
 			 >> ICE_AQC_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SHIFT;
-		if (test_bit(ICE_FLAG_DPLL_FAST_LOCK, pf->flags))
+		fast_lock_enabled = test_bit(ICE_FLAG_DPLL_FAST_LOCK, pf->flags);
+		if (fast_lock_enabled)
 			ref_state |= ICE_AQC_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN;
 		else
 			ref_state &= !ICE_AQC_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN;
@@ -2380,7 +2374,8 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			goto ethtool_exit;
 		}
 
-		dev_info(dev, "cgu-fast-lock: enabled FAST LOCK for PPS DPLL");
+		dev_info(dev, "cgu-fast-lock: %s FAST LOCK for PPS DPLL",
+			 fast_lock_enabled ? "enabled" : "disabled");
 	}
 ethtool_exit:
 	clear_bit(ICE_FLAG_ETHTOOL_CTXT, pf->flags);
@@ -5337,6 +5332,7 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 	struct ice_pf *pf = vsi->back;
 	int new_rx = 0, new_tx = 0;
 	u32 curr_combined;
+	int err;
 
 	/* do not support changing channels in Safe Mode */
 	if (ice_is_safe_mode(pf)) {
@@ -5398,7 +5394,9 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 		return -EINVAL;
 	}
 
-	ice_vsi_recfg_qs(vsi, new_rx, new_tx);
+	err = ice_vsi_recfg_qs(vsi, new_rx, new_tx);
+	if (err)
+		return err;
 
 #ifdef IFF_RXFH_CONFIGURED
 	if (!netif_is_rxfh_configured(dev))

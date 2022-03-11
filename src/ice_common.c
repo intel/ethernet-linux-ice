@@ -448,7 +448,7 @@ ice_aq_get_netlist_node(struct ice_hw *hw, struct ice_aqc_get_link_topo *cmd,
  *
  * Find and return the node handle for a given node type and part number in the
  * netlist. When found ICE_SUCCESS is returned, ICE_ERR_DOES_NOT_EXIST
- * otherwise. If @node_handle provided, it would be set to found node handle.
+ * otherwise. If node_handle provided, it would be set to found node handle.
  */
 enum ice_status
 ice_find_netlist_node(struct ice_hw *hw, u8 node_type_ctx, u8 node_part_number,
@@ -549,7 +549,6 @@ static enum ice_media_type ice_get_media_type(struct ice_port_info *pi)
 		case ICE_PHY_TYPE_LOW_1000BASE_LX:
 		case ICE_PHY_TYPE_LOW_10GBASE_SR:
 		case ICE_PHY_TYPE_LOW_10GBASE_LR:
-		case ICE_PHY_TYPE_LOW_10G_SFI_C2C:
 		case ICE_PHY_TYPE_LOW_25GBASE_SR:
 		case ICE_PHY_TYPE_LOW_25GBASE_LR:
 		case ICE_PHY_TYPE_LOW_40GBASE_SR4:
@@ -606,6 +605,7 @@ static enum ice_media_type ice_get_media_type(struct ice_port_info *pi)
 		case ICE_PHY_TYPE_LOW_2500BASE_X:
 		case ICE_PHY_TYPE_LOW_5GBASE_KR:
 		case ICE_PHY_TYPE_LOW_10GBASE_KR_CR1:
+		case ICE_PHY_TYPE_LOW_10G_SFI_C2C:
 		case ICE_PHY_TYPE_LOW_25GBASE_KR:
 		case ICE_PHY_TYPE_LOW_25GBASE_KR1:
 		case ICE_PHY_TYPE_LOW_25GBASE_KR_S:
@@ -2736,6 +2736,8 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 	struct ice_ts_func_info *info = &func_p->ts_func_info;
 	u32 number = le32_to_cpu(cap->number);
 
+	ice_debug(hw, ICE_DBG_INIT, "1588 func caps: raw value %x\n", number);
+
 	info->ena = ((number & ICE_TS_FUNC_ENA_M) != 0);
 	func_p->common_cap.ieee_1588 = info->ena;
 
@@ -4241,7 +4243,7 @@ ice_aq_read_topo_dev_nvm(struct ice_hw *hw,
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_read_topo_dev_nvm);
 
-	desc.datalen = data_size;
+	desc.datalen = cpu_to_le16(data_size);
 	memcpy(&cmd->topo_params, topo_params, sizeof(*topo_params));
 	cmd->start_address = cpu_to_le32(start_address);
 
@@ -6684,7 +6686,7 @@ ice_aq_set_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx, bool value,
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_gpio);
 	cmd = &desc.params.read_write_gpio;
-	cmd->gpio_ctrl_handle = gpio_ctrl_handle;
+	cmd->gpio_ctrl_handle = cpu_to_le16(gpio_ctrl_handle);
 	cmd->gpio_num = pin_idx;
 	cmd->gpio_val = value ? 1 : 0;
 
@@ -6712,7 +6714,7 @@ ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_gpio);
 	cmd = &desc.params.read_write_gpio;
-	cmd->gpio_ctrl_handle = gpio_ctrl_handle;
+	cmd->gpio_ctrl_handle = cpu_to_le16(gpio_ctrl_handle);
 	cmd->gpio_num = pin_idx;
 
 	status = ice_aq_send_cmd(hw, &desc, NULL, 0, cd);

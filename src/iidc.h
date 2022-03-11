@@ -21,7 +21,7 @@
  * an appropriate message.
  */
 #define IIDC_MAJOR_VER		10
-#define IIDC_MINOR_VER		0
+#define IIDC_MINOR_VER		1
 
 enum iidc_event_type {
 	IIDC_EVENT_BEFORE_MTU_CHANGE,
@@ -239,6 +239,7 @@ struct iidc_core_dev_info {
 	 * by core PCI driver and called by auxiliary driver
 	 */
 	const struct iidc_core_ops *ops;
+	u8 pf_id;
 };
 
 struct iidc_auxiliary_dev {

@@ -445,11 +445,6 @@ ice_devlink_minsrev_get(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct ice_minsrev_info minsrevs = {};
 	enum ice_status status;
 
-#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
-	if (!pf->devlink_params_published)
-		return -ENODEV;
-#endif
-
 	if (id != ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV &&
 	    id != ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV)
 		return -EINVAL;
@@ -505,11 +500,6 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct ice_minsrev_info minsrevs = {};
 	enum ice_status status;
 
-#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
-	if (!pf->devlink_params_published)
-		return -ENODEV;
-#endif
-
 	switch (id) {
 	case ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV:
 		minsrevs.nvm_valid = true;
@@ -555,13 +545,6 @@ ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_para
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
 	enum ice_status status;
-
-#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
-	if (!pf->devlink_params_published) {
-		NL_SET_ERR_MSG_MOD(extack, "Driver has not published parameters");
-		return -ENODEV;
-	}
-#endif
 
 	if (id != ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV &&
 	    id != ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV)
@@ -670,7 +653,10 @@ static int
 ice_devlink_flash_update_params_compat(struct devlink *devlink, const char *file_name,
 				       const char *component, struct netlink_ext_ack *extack)
 {
+	struct ice_pf *pf = devlink_priv(devlink);
 	struct devlink_flash_update_params params = {};
+	struct device *dev = ice_pf_to_dev(pf);
+	int ret = 0;
 
 	/* individual component update is not yet supported, and older kernels
 	 * did not check this for us.
@@ -681,31 +667,45 @@ ice_devlink_flash_update_params_compat(struct devlink *devlink, const char *file
 	params.file_name = file_name;
 
 #ifdef HAVE_DEVLINK_FLASH_UPDATE_BEGIN_END_NOTIFY
-	return ice_devlink_flash_update_notify_compat(devlink, &params, extack);
+	ret = ice_devlink_flash_update_notify_compat(devlink, &params, extack);
+
+	if (ret)
+		dev_dbg(dev, "ice_devlink_flash_update_notify_compat() returned %d\n",
+			ret);
 #else
-	err = ice_flash_pldm_image(devlink, params, extack);
+	ret = ice_flash_pldm_image(devlink, params, extack);
+
+	if (ret)
+		dev_dbg(dev, "ice_flash_pldm_image() returned %d\n", ret);
 #endif
+	return ret;
 }
 #endif /* !HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
 #endif /* HAVE_DEVLINK_FLASH_UPDATE */
 
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
 /**
- * ice_devlink_reload_down - Start reload
+ * ice_devlink_reload_empr_start - Start EMP reset to activate new firmware
  * @devlink: pointer to the devlink instance to reload
  * @netns_change: if true, the network namespace is changing
  * @action: the action to perform. Must be DEVLINK_RELOAD_ACTION_FW_ACTIVATE
  * @limit: limits on what reload should do, such as not resetting
  * @extack: netlink extended ACK structure
  *
- * Command issued by devlink core to perform a reload. This driver only
- * supports firmware activation.
+ * Allow user to activate new Embedded Management Processor firmware by
+ * issuing device specific EMP reset. Called in response to
+ * a DEVLINK_CMD_RELOAD with the DEVLINK_RELOAD_ACTION_FW_ACTIVATE.
+ *
+ * Note that teardown and rebuild of the driver state happens automatically as
+ * part of an interrupt and watchdog task. This is because all physical
+ * functions on the device must be able to reset when an EMP reset occurs from
+ * any source.
  */
 static int
-ice_devlink_reload_down(struct devlink *devlink, bool netns_change,
-			enum devlink_reload_action action,
-			enum devlink_reload_limit limit,
-			struct netlink_ext_ack *extack)
+ice_devlink_reload_empr_start(struct devlink *devlink, bool netns_change,
+			      enum devlink_reload_action action,
+			      enum devlink_reload_limit limit,
+			      struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
@@ -718,12 +718,17 @@ ice_devlink_reload_down(struct devlink *devlink, bool netns_change,
 	if (err)
 		return err;
 
+	/* pending is a bitmask of which flash banks have a pending update,
+	 * including the main NVM bank, the Option ROM bank, and the netlist
+	 * bank. If any of these bits are set, then there is a pending update
+	 * waiting to be activated.
+	 */
 	if (!pending) {
 		NL_SET_ERR_MSG_MOD(extack, "No pending firmware update");
 		return -ECANCELED;
 	}
 
-	if (pf->fw_empr_disabled) {
+	if (pf->fw_emp_reset_disabled) {
 		NL_SET_ERR_MSG_MOD(extack, "EMP reset is not available. To activate firmware, a reboot or power cycle is needed\n");
 		return -ECANCELED;
 	}
@@ -743,38 +748,37 @@ ice_devlink_reload_down(struct devlink *devlink, bool netns_change,
 }
 
 /**
- * ice_devlink_reload_up - Finish reload
+ * ice_devlink_reload_empr_finish - Wait for EMP reset to finish
  * @devlink: pointer to the devlink instance reloading
  * @action: the action requested
  * @limit: limits imposed by userspace, such as not resetting
  * @actions_performed: on return, indicate what actions actually performed
  * @extack: netlink extended ACK structure
  *
- * Complete a reload, such as waiting for the driver to come back up. The ice
- * driver only supports firmware activation, which requires a device reset.
+ * Wait for driver to finish rebuilding after EMP reset is completed. This
+ * includes time to wait for both the actual device reset as well as the time
+ * for the driver's rebuild to complete.
  */
 static int
-ice_devlink_reload_up(struct devlink *devlink,
-		      enum devlink_reload_action action,
-		      enum devlink_reload_limit limit,
-		      u32 *actions_performed,
-		      struct netlink_ext_ack *extack)
+ice_devlink_reload_empr_finish(struct devlink *devlink,
+			       enum devlink_reload_action action,
+			       enum devlink_reload_limit limit,
+			       u32 *actions_performed,
+			       struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	int err;
 
 	*actions_performed = BIT(DEVLINK_RELOAD_ACTION_FW_ACTIVATE);
 
-	err = ice_wait_for_reset(pf, 20 * HZ);
+	/* It can take a while for the device and driver to complete the reset
+	 * and rebuild process.
+	 */
+	err = ice_wait_for_reset(pf, 60 * HZ);
 	if (err) {
-		NL_SET_ERR_MSG_MOD(extack, "Device still resetting");
+		NL_SET_ERR_MSG_MOD(extack, "Device still resetting after 1 minute");
 		return err;
 	}
-
-	/* After a device reset is complete, we no longer know whether the EMP
-	 * reset is restricted.
-	 */
-	pf->fw_empr_disabled = false;
 
 	return 0;
 }
@@ -786,8 +790,9 @@ static const struct devlink_ops ice_devlink_ops = {
 #endif /* HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
 	.reload_actions = BIT(DEVLINK_RELOAD_ACTION_FW_ACTIVATE),
-	.reload_down = ice_devlink_reload_down,
-	.reload_up = ice_devlink_reload_up,
+	/* The ice driver currently does not support driver reinit */
+	.reload_down = ice_devlink_reload_empr_start,
+	.reload_up = ice_devlink_reload_empr_finish,
 #endif
 	.eswitch_mode_get = ice_eswitch_mode_get,
 	.eswitch_mode_set = ice_eswitch_mode_set,
@@ -843,35 +848,24 @@ struct ice_pf *ice_allocate_pf(struct device *dev)
  *
  * Return: zero on success or an error code on failure.
  */
-int ice_devlink_register(struct ice_pf *pf)
+void ice_devlink_register(struct ice_pf *pf)
 {
 	struct devlink *devlink = priv_to_devlink(pf);
-	struct device *dev = ice_pf_to_dev(pf);
-#ifdef HAVE_DEVLINK_PARAMS
-	int err;
-#endif /* HAVE_DEVLINK_PARAMS */
 
+#ifdef HAVE_DEVLINK_SET_FEATURES
+	devlink_set_features(devlink, DEVLINK_F_RELOAD);
+#endif /* HAVE_DEVLINK_SET_FEATURES */
 #ifdef HAVE_DEVLINK_REGISTER_SETS_DEV
-	devlink_register(devlink, dev);
+	devlink_register(devlink, ice_pf_to_dev(pf));
 #else
 	devlink_register(devlink);
 #endif
 
-#ifdef HAVE_DEVLINK_PARAMS
-	err = devlink_params_register(devlink, ice_devlink_params,
-				      ARRAY_SIZE(ice_devlink_params));
-	if (err) {
-		ice_dev_err_errno(dev, err,
-				  "devlink params registration failed");
-		return err;
-	}
-#endif /* HAVE_DEVLINK_PARAMS */
-
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+#ifndef HAVE_DEVLINK_SET_FEATURES
 	devlink_reload_enable(devlink);
+#endif /* !HAVE_DEVLINK_SET_FEATURES */
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
-
-	return 0;
 }
 
 /**
@@ -885,43 +879,64 @@ void ice_devlink_unregister(struct ice_pf *pf)
 	struct devlink *devlink = priv_to_devlink(pf);
 
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+#ifndef HAVE_DEVLINK_SET_FEATURES
 	devlink_reload_disable(devlink);
+#endif /* !HAVE_DEVLINK_SET_FEATURES */
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 
-#ifdef HAVE_DEVLINK_PARAMS
-	devlink_params_unregister(devlink, ice_devlink_params,
-				  ARRAY_SIZE(ice_devlink_params));
-#endif /* HAVE_DEVLINK_PARAMS */
 	devlink_unregister(devlink);
 }
 
 /**
- * ice_devlink_params_publish - Publish parameters to allow user access.
- * @pf: the PF structure pointer
+ * ice_devlink_register_params - Register devlink parameters for this PF
+ * @pf: the PF structure to register
+ *
+ * Registers the parameters associated with this PF.
  */
-void ice_devlink_params_publish(struct ice_pf __maybe_unused *pf)
+int ice_devlink_register_params(struct ice_pf *pf)
 {
 #ifdef HAVE_DEVLINK_PARAMS
+	struct devlink *devlink = priv_to_devlink(pf);
+	struct device *dev = ice_pf_to_dev(pf);
+	int err;
+
+	err = devlink_params_register(devlink, ice_devlink_params,
+				      ARRAY_SIZE(ice_devlink_params));
+	if (err) {
+		ice_dev_err_errno(dev, err,
+				  "devlink params registration failed");
+		return err;
+	}
+
+#ifndef HAVE_DEVLINK_NOTIFY_REGISTER
 #ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 	devlink_params_publish(priv_to_devlink(pf));
-#else
-	pf->devlink_params_published = 1;
-#endif
+#endif /* HAVE_DEVLINK_PARAMS_PUBLISH */
+#endif /* !HAVE_DEVLINK_NOTIFY_REGISTER */
+
 #endif /* HAVE_DEVLINK_PARAMS */
+	return 0;
 }
 
 /**
- * ice_devlink_params_unpublish - Unpublish parameters to prevent user access.
- * @pf: the PF structure pointer
+ * ice_devlink_unregister_params - Unregister devlink parameters for this PF
+ * @pf: the PF structure to cleanup
+ *
+ * Removes the main devlink parameters associated with this PF.
  */
-void ice_devlink_params_unpublish(struct ice_pf __maybe_unused *pf)
+void ice_devlink_unregister_params(struct ice_pf *pf)
 {
 #ifdef HAVE_DEVLINK_PARAMS
+	struct devlink *devlink = priv_to_devlink(pf);
+
+#ifndef HAVE_DEVLINK_NOTIFY_REGISTER
 #ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 	devlink_params_unpublish(priv_to_devlink(pf));
-#else
-	pf->devlink_params_published = 0;
-#endif
+#endif /* HAVE_DEVLINK_PARAMS_PUBLISH */
+#endif /* !HAVE_DEVLINK_NOTIFY_REGISTER */
+
+	devlink_params_unregister(devlink, ice_devlink_params,
+				  ARRAY_SIZE(ice_devlink_params));
 #endif /* HAVE_DEVLINK_PARAMS */
 }
 
@@ -1349,3 +1364,391 @@ void ice_devlink_destroy_regions(struct ice_pf *pf)
 		devlink_region_destroy(pf->devcaps_region);
 }
 #endif /* HAVE_DEVLINK_REGIONS */
+
+#ifdef HAVE_DEVLINK_HEALTH
+
+#define ICE_MDD_SRC_TO_STR(_src) \
+	((_src) == ICE_MDD_SRC_NONE ? "none"		\
+	 : (_src) == ICE_MDD_SRC_TX_PQM ? "tx_pqm"	\
+	 : (_src) == ICE_MDD_SRC_TX_TCLAN ? "tx_tclan"	\
+	 : (_src) == ICE_MDD_SRC_TX_TDPU ? "tx_tdpu"	\
+	 : (_src) == ICE_MDD_SRC_RX ? "rx"		\
+	 : "invalid")
+
+static int
+#ifndef HAVE_DEVLINK_HEALTH_OPS_EXTACK
+ice_mdd_reporter_dump(struct devlink_health_reporter *reporter,
+		      struct devlink_fmsg *fmsg, void *priv_ctx)
+#else
+ice_mdd_reporter_dump(struct devlink_health_reporter *reporter,
+		      struct devlink_fmsg *fmsg, void *priv_ctx,
+		      struct netlink_ext_ack __always_unused *extack)
+#endif /* HAVE_DEVLINK_HEALTH_OPS_EXTACK */
+{
+	struct ice_pf *pf = devlink_health_reporter_priv(reporter);
+	struct ice_mdd_reporter *mdd_reporter = &pf->mdd_reporter;
+	struct ice_mdd_event *mdd_event;
+	int err;
+
+	err = devlink_fmsg_u32_pair_put(fmsg, "count",
+					mdd_reporter->count);
+	if (err)
+		return err;
+
+	list_for_each_entry(mdd_event, &mdd_reporter->event_list, list) {
+		char *src;
+
+		err = devlink_fmsg_obj_nest_start(fmsg);
+		if (err)
+			return err;
+
+		src = ICE_MDD_SRC_TO_STR(mdd_event->src);
+
+		err = devlink_fmsg_string_pair_put(fmsg, "src", src);
+		if (err)
+			return err;
+
+		err = devlink_fmsg_u8_pair_put(fmsg, "pf_num",
+					       mdd_event->pf_num);
+		if (err)
+			return err;
+
+		err = devlink_fmsg_u32_pair_put(fmsg, "mdd_vf_num",
+						mdd_event->vf_num);
+		if (err)
+			return err;
+
+		err = devlink_fmsg_u8_pair_put(fmsg, "mdd_event",
+					       mdd_event->event);
+		if (err)
+			return err;
+
+		err = devlink_fmsg_u32_pair_put(fmsg, "mdd_queue",
+						mdd_event->queue);
+		if (err)
+			return err;
+
+		err = devlink_fmsg_obj_nest_end(fmsg);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
+static const struct devlink_health_reporter_ops ice_mdd_reporter_ops = {
+	.name = "mdd",
+	.dump = ice_mdd_reporter_dump,
+};
+
+/**
+ * ice_devlink_init_mdd_reporter - Initialize MDD devlink health reporter
+ * @pf: the PF device structure
+ *
+ * Create devlink health reporter used to handle MDD events.
+ */
+void ice_devlink_init_mdd_reporter(struct ice_pf *pf)
+{
+	struct devlink *devlink = priv_to_devlink(pf);
+	struct device *dev = ice_pf_to_dev(pf);
+
+	INIT_LIST_HEAD(&pf->mdd_reporter.event_list);
+
+	pf->mdd_reporter.reporter =
+		devlink_health_reporter_create(devlink,
+					       &ice_mdd_reporter_ops,
+					       0, /* graceful period */
+#ifndef HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
+					       false, /* auto recover */
+#endif /* HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER */
+					       pf); /* private data */
+
+	if (IS_ERR(pf->mdd_reporter.reporter)) {
+		ice_dev_err_errno(dev, PTR_ERR(pf->mdd_reporter.reporter),
+				  "failed to create devlink MDD health reporter");
+	}
+}
+
+/**
+ * ice_devlink_destroy_mdd_reporter - Destroy MDD devlink health reporter
+ * @pf: the PF device structure
+ *
+ * Remove previously created MDD health reporter for this PF.
+ */
+void ice_devlink_destroy_mdd_reporter(struct ice_pf *pf)
+{
+	if (pf->mdd_reporter.reporter)
+		devlink_health_reporter_destroy(pf->mdd_reporter.reporter);
+}
+
+/**
+ * ice_devlink_report_mdd_event - Report an MDD event through devlink health
+ * @pf: the PF device structure
+ * @src: the HW block that was the source of this MDD event
+ * @pf_num: the pf_num on which the MDD event occurred
+ * @vf_num: the vf_num on which the MDD event occurred
+ * @event: the event type of the MDD event
+ * @queue: the queue on which the MDD event occurred
+ *
+ * Report an MDD event that has occurred on this PF.
+ */
+void
+ice_devlink_report_mdd_event(struct ice_pf *pf, enum ice_mdd_src src,
+			     u8 pf_num, u16 vf_num, u8 event, u16 queue)
+{
+	struct ice_mdd_reporter *mdd_reporter = &pf->mdd_reporter;
+	struct ice_mdd_event *mdd_event;
+	int err;
+
+	if (!mdd_reporter->reporter)
+		return;
+
+	mdd_reporter->count++;
+
+	mdd_event = devm_kzalloc(ice_pf_to_dev(pf), sizeof(*mdd_event),
+				 GFP_KERNEL);
+	if (!mdd_event)
+		return;
+
+	mdd_event->src = src;
+	mdd_event->pf_num = pf_num;
+	mdd_event->vf_num = vf_num;
+	mdd_event->event = event;
+	mdd_event->queue = queue;
+
+	list_add_tail(&mdd_event->list, &mdd_reporter->event_list);
+
+	err = devlink_health_report(mdd_reporter->reporter,
+				    "Malicious Driver Detection event\n",
+				    pf);
+	if (err)
+		dev_err(ice_pf_to_dev(pf),
+			"failed to report MDD via devlink health\n");
+}
+
+/**
+ * ice_devlink_clear_after_reset - clear devlink health issues after a reset
+ * @pf: the PF device structure
+ *
+ * Mark the PF in healthy state again after a reset has completed.
+ */
+void ice_devlink_clear_after_reset(struct ice_pf *pf)
+{
+	struct ice_mdd_reporter *mdd_reporter = &pf->mdd_reporter;
+	enum devlink_health_reporter_state new_state =
+		DEVLINK_HEALTH_REPORTER_STATE_HEALTHY;
+	struct ice_mdd_event *mdd_event, *tmp;
+
+	if (!mdd_reporter->reporter)
+		return;
+
+	devlink_health_reporter_state_update(mdd_reporter->reporter,
+					     new_state);
+	pf->mdd_reporter.count = 0;
+
+	list_for_each_entry_safe(mdd_event, tmp, &mdd_reporter->event_list,
+				 list) {
+		list_del(&mdd_event->list);
+	}
+}
+
+#endif /* HAVE_DEVLINK_HEALTH */
+
+#ifdef HAVE_DEVLINK_PARAMS
+#define ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD	101
+#define ICE_DEVLINK_PARAM_ID_TC2_INLINE_FD	102
+#define ICE_DEVLINK_PARAM_ID_TC3_INLINE_FD	103
+#define ICE_DEVLINK_PARAM_ID_TC4_INLINE_FD	104
+#define ICE_DEVLINK_PARAM_ID_TC5_INLINE_FD	105
+#define ICE_DEVLINK_PARAM_ID_TC6_INLINE_FD	106
+#define ICE_DEVLINK_PARAM_ID_TC7_INLINE_FD	107
+#define ICE_DEVLINK_PARAM_ID_TC8_INLINE_FD	108
+#define ICE_DEVLINK_PARAM_ID_TC9_INLINE_FD	109
+#define ICE_DEVLINK_PARAM_ID_TC10_INLINE_FD	110
+#define ICE_DEVLINK_PARAM_ID_TC11_INLINE_FD	111
+#define ICE_DEVLINK_PARAM_ID_TC12_INLINE_FD	112
+#define ICE_DEVLINK_PARAM_ID_TC13_INLINE_FD	113
+#define ICE_DEVLINK_PARAM_ID_TC14_INLINE_FD	114
+#define ICE_DEVLINK_PARAM_ID_TC15_INLINE_FD	115
+
+/**
+ * ice_validate_tc_params_id - Validate devlink tc param id
+ * @id: the parameter ID to validate
+ * @start_id: start param id
+ * @num_params: number of valid params
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int
+ice_validate_tc_params_id(u32 id, u32 start_id, u8 num_params)
+{
+	if (id < start_id || id >= start_id + num_params)
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
+ * ice_devlink_tc_inline_fd_get - Get poller timeout value
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to get
+ * @ctx: context to return the parameter value
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int
+ice_devlink_tc_inline_fd_get(struct devlink *devlink, u32 id,
+			     struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *vsi = pf->vsi[0];
+	struct ice_vsi *ch_vsi;
+	int err = 0;
+
+	err = ice_validate_tc_params_id(id, ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD,
+					vsi->num_tc_devlink_params);
+	if (err)
+		return err;
+
+	ch_vsi = vsi->tc_map_vsi[id - ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD + 1];
+	if (!ch_vsi || !ch_vsi->ch)
+		return -EINVAL;
+
+	ctx->val.vbool = ch_vsi->ch->inline_fd;
+
+	return 0;
+}
+
+/**
+ * ice_devlink_tc_inline_fd_validate - Validate inline_fd setting
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to validate
+ * @val: value to be validated
+ * @extack: netlink extended ACK structure
+ *
+ * Validate inline fd
+ * Returns: zero on success, or an error code on failure and extack with a
+ * reason for failure.
+ */
+static int
+ice_devlink_tc_inline_fd_validate(struct devlink *devlink, u32 id,
+				  union devlink_param_value val,
+				  struct netlink_ext_ack *extack)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *vsi = pf->vsi[0];
+	struct ice_vsi *ch_vsi;
+	int err = 0;
+
+	err = ice_validate_tc_params_id(id, ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD,
+					vsi->num_tc_devlink_params);
+	if (err)
+		return err;
+
+	ch_vsi = vsi->tc_map_vsi[id - ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD + 1];
+	if (!ch_vsi || !ch_vsi->ch)
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
+ * ice_devlink_tc_inline_fd_set - Enable/Disable inline flow director
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to return the parameter value
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int
+ice_devlink_tc_inline_fd_set(struct devlink *devlink, u32 id,
+			     struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *vsi = pf->vsi[0];
+	struct ice_vsi *ch_vsi;
+
+	ch_vsi = vsi->tc_map_vsi[id - ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD + 1];
+	ch_vsi->ch->inline_fd = ctx->val.vbool;
+
+	return 0;
+}
+
+#define ICE_DEVLINK_TC_INLINE_FD_PARAM(_id, _name)			\
+	DEVLINK_PARAM_DRIVER(_id, _name, DEVLINK_PARAM_TYPE_BOOL,	\
+			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),		\
+			     ice_devlink_tc_inline_fd_get,         \
+			     ice_devlink_tc_inline_fd_set,         \
+			     ice_devlink_tc_inline_fd_validate)    \
+
+static const struct devlink_param ice_devlink_inline_fd_params[] = {
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD,
+				       "tc1_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC2_INLINE_FD,
+				       "tc2_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC3_INLINE_FD,
+				       "tc3_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC4_INLINE_FD,
+				       "tc4_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC5_INLINE_FD,
+				       "tc5_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC6_INLINE_FD,
+				       "tc6_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC7_INLINE_FD,
+				       "tc7_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC8_INLINE_FD,
+				       "tc8_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC9_INLINE_FD,
+				       "tc9_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC10_INLINE_FD,
+				       "tc10_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC11_INLINE_FD,
+				       "tc11_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC12_INLINE_FD,
+				       "tc12_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC13_INLINE_FD,
+				       "tc13_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC14_INLINE_FD,
+				       "tc14_inline_fd"),
+	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC15_INLINE_FD,
+				       "tc15_inline_fd"),
+};
+
+int ice_devlink_tc_params_register(struct ice_vsi *vsi)
+{
+	struct devlink *devlink = priv_to_devlink(vsi->back);
+	struct device *dev = ice_pf_to_dev(vsi->back);
+	int err = 0;
+
+	if (vsi->all_numtc > 1) {
+		vsi->num_tc_devlink_params = vsi->all_numtc - 1;
+		err = devlink_params_register(devlink,
+					      ice_devlink_inline_fd_params,
+					      vsi->num_tc_devlink_params);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "devlink inline_fd params registration failed");
+			return err;
+		}
+
+#ifndef HAVE_DEVLINK_NOTIFY_REGISTER
+#ifdef HAVE_DEVLINK_PARAMS_PUBLISH
+		devlink_params_publish(devlink);
+#endif /* HAVE_DEVLINK_PARAMS_PUBLISH */
+#endif /* !HAVE_DEVLINK_NOTIFY_REGISTER */
+	}
+
+	return err;
+}
+
+void ice_devlink_tc_params_unregister(struct ice_vsi *vsi)
+{
+	struct devlink *devlink = priv_to_devlink(vsi->back);
+
+	if (vsi->num_tc_devlink_params) {
+		devlink_params_unregister(devlink, ice_devlink_inline_fd_params,
+					  vsi->num_tc_devlink_params);
+		vsi->num_tc_devlink_params = 0;
+	}
+}
+#endif /* HAVE_DEVLINK_PARAMS */

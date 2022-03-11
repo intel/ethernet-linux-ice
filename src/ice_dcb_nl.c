@@ -762,7 +762,6 @@ static int ice_dcbnl_setapp(struct net_device *netdev, struct dcb_app *app)
 		return -EINVAL;
 	}
 
-
 	/* grab TC mutex */
 	mutex_lock(&pf->tc_mutex);
 

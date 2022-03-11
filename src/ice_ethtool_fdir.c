@@ -1951,6 +1951,9 @@ ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 	else
 		return -EINVAL;
 
+	/* zero input so filter comparisions are safer */
+	memset(input, 0, sizeof(struct ice_fdir_fltr));
+
 	pf = vsi->back;
 	hw = &pf->hw;
 

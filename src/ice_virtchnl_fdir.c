@@ -1407,6 +1407,20 @@ void ice_vc_fdir_rem_prof_all(struct ice_vf *vf)
 }
 
 /**
+ * ice_vc_fdir_reset_cnt_all - reset all FDIR counters for this VF FDIR
+ * @fdir: pointer to the VF FDIR structure
+ */
+static void ice_vc_fdir_reset_cnt_all(struct ice_vf_fdir *fdir)
+{
+	enum ice_fltr_ptype flow = ICE_FLTR_PTYPE_NONF_NONE;
+
+	for (; flow < ICE_FLTR_PTYPE_MAX; flow++) {
+		fdir->fdir_fltr_cnt[flow][0] = 0;
+		fdir->fdir_fltr_cnt[flow][1] = 0;
+	}
+}
+
+/**
  * ice_vc_fdir_write_flow_prof
  * @vf: pointer to the VF structure
  * @flow: filter flow type
@@ -2620,30 +2634,7 @@ ice_vc_fdir_comp_rules(struct virtchnl_fdir_fltr_conf *conf_a,
 
 	if (conf_a->ttype != conf_b->ttype)
 		return false;
-	if (a->flow_type != b->flow_type)
-		return false;
-	if (memcmp(&a->ip, &b->ip, sizeof(a->ip)))
-		return false;
-	if (memcmp(&a->mask, &b->mask, sizeof(a->mask)))
-		return false;
-	if (memcmp(&a->gtpu_data, &b->gtpu_data, sizeof(a->gtpu_data)))
-		return false;
-	if (memcmp(&a->gtpu_mask, &b->gtpu_mask, sizeof(a->gtpu_mask)))
-		return false;
-	if (memcmp(&a->l2tpv3_data, &b->l2tpv3_data, sizeof(a->l2tpv3_data)))
-		return false;
-	if (memcmp(&a->l2tpv3_mask, &b->l2tpv3_mask, sizeof(a->l2tpv3_mask)))
-		return false;
-	if (memcmp(&a->ext_data, &b->ext_data, sizeof(a->ext_data)))
-		return false;
-	if (memcmp(&a->ext_mask, &b->ext_mask, sizeof(a->ext_mask)))
-		return false;
-	if (memcmp(&a->ecpri_data, &b->ecpri_data, sizeof(a->ecpri_data)))
-		return false;
-	if (memcmp(&a->ecpri_mask, &b->ecpri_mask, sizeof(a->ecpri_mask)))
-		return false;
-
-	return true;
+	return ice_fdir_comp_rules_extended(a, b);
 }
 
 /**
@@ -2861,15 +2852,16 @@ ice_vc_fdir_irq_handler(struct ice_vsi *ctrl_vsi,
 			union ice_32b_rx_flex_desc *rx_desc)
 {
 	struct ice_pf *pf = ctrl_vsi->back;
+	struct ice_vf *vf = ctrl_vsi->vf;
 	struct ice_vf_fdir_ctx *ctx_done;
 	struct ice_vf_fdir_ctx *ctx_irq;
 	struct ice_vf_fdir *fdir;
 	unsigned long flags;
 	struct device *dev;
-	struct ice_vf *vf;
 	int ret;
 
-	vf = ice_get_vf(pf, ctrl_vsi->vf_id);
+	if (WARN_ON(!vf))
+		return;
 
 	fdir = &vf->fdir;
 	ctx_done = &fdir->ctx_done;
@@ -3162,6 +3154,7 @@ void ice_flush_fdir_ctx(struct ice_pf *pf)
 	if (!test_and_clear_bit(ICE_FD_VF_FLUSH_CTX, pf->state))
 		return;
 
+	mutex_lock(&pf->vfs.table_lock);
 	ice_for_each_vf(pf, bkt, vf) {
 		struct device *dev = ice_pf_to_dev(pf);
 		enum virtchnl_fdir_prgm_status status;
@@ -3218,6 +3211,7 @@ err_exit:
 		ctx->flags &= ~ICE_VF_FDIR_CTX_VALID;
 		spin_unlock_irqrestore(&vf->fdir.ctx_lock, flags);
 	}
+	mutex_unlock(&pf->vfs.table_lock);
 }
 
 /**
@@ -3515,6 +3509,7 @@ void ice_vf_fdir_init(struct ice_vf *vf)
 	spin_lock_init(&fdir->ctx_lock);
 	fdir->ctx_irq.flags = 0;
 	fdir->ctx_done.flags = 0;
+	ice_vc_fdir_reset_cnt_all(fdir);
 }
 
 /**

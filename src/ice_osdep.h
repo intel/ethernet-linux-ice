@@ -5,9 +5,14 @@
 #define _ICE_OSDEP_H_
 
 #include <linux/types.h>
+#include <linux/ctype.h>
+#include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/bitops.h>
+#include <linux/ethtool.h>
+#include <linux/etherdevice.h>
 #include <linux/if_ether.h>
+#include <linux/pci_ids.h>
 #include "kcompat.h"
 
 #define wr32(a, reg, value)	writel((value), ((a)->hw_addr + (reg)))
@@ -25,8 +30,8 @@ struct ice_dma_mem {
 	size_t size;
 };
 
-#define ice_hw_to_dev(ptr)	\
-	(&(container_of((ptr), struct ice_pf, hw))->pdev->dev)
+struct ice_hw;
+struct device *ice_hw_to_dev(struct ice_hw *hw);
 
 #define ice_info_fwlog(hw, rowsize, groupsize, buf, len)	\
 	print_hex_dump(KERN_INFO, " FWLOG: ",			\

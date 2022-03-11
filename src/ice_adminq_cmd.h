@@ -506,6 +506,7 @@ struct ice_aqc_vsi_props {
 #define ICE_AQ_VSI_SW_FLAG_RX_PRUNE_EN_S	0
 #define ICE_AQ_VSI_SW_FLAG_RX_PRUNE_EN_M	(0xF << ICE_AQ_VSI_SW_FLAG_RX_PRUNE_EN_S)
 #define ICE_AQ_VSI_SW_FLAG_RX_VLAN_PRUNE_ENA	BIT(0)
+#define ICE_AQ_VSI_SW_FLAG_RX_PASS_PRUNE_ENA	BIT(3)
 #define ICE_AQ_VSI_SW_FLAG_LAN_ENA		BIT(4)
 	u8 veb_stat_id;
 #define ICE_AQ_VSI_SW_VEB_STAT_ID_S		0
@@ -885,6 +886,8 @@ struct ice_sw_rule_lkup_rx_tx {
 #define ICE_SINGLE_ACT_PTR		0x2
 #define ICE_SINGLE_ACT_PTR_VAL_S	4
 #define ICE_SINGLE_ACT_PTR_VAL_M	(0x1FFF << ICE_SINGLE_ACT_PTR_VAL_S)
+	/* Bit 17 should be set if pointed action includes a FWD cmd */
+#define ICE_SINGLE_ACT_PTR_HAS_FWD	BIT(17)
 	/* Bit 18 should be set to 1 */
 #define ICE_SINGLE_ACT_PTR_BIT		BIT(18)
 
@@ -1212,6 +1215,17 @@ struct ice_aqc_rl_profile_elem {
 	__le16 rl_multiply;
 	__le16 wake_up_calc;
 	__le16 rl_encode;
+};
+
+/*
+ * Configure Node Max Children (direct 0x0417)
+ * Query Node Max Children (direct 0x0418)
+ */
+struct ice_aqc_cfg_query_node_max_children {
+	__le32 node_teid;
+	__le16 max_children;
+	__le16 children_level;
+	u8 reserved[8];
 };
 
 /* Configure L2 Node CGD (indirect 0x0414)
@@ -1668,9 +1682,9 @@ struct ice_aqc_set_mac_lb {
 struct ice_aqc_set_phy_rec_clk_out {
 	u8 phy_output;
 	u8 port_num;
+#define ICE_AQC_SET_PHY_REC_CLK_OUT_CURR_PORT	0xFF
 	u8 flags;
 #define ICE_AQC_SET_PHY_REC_CLK_OUT_OUT_EN	BIT(0)
-#define ICE_AQC_SET_PHY_REC_CLK_OUT_CURR_PORT	0xFF
 	u8 rsvd;
 	__le32 freq;
 	u8 rsvd2[6];
@@ -1681,6 +1695,7 @@ struct ice_aqc_set_phy_rec_clk_out {
 struct ice_aqc_get_phy_rec_clk_out {
 	u8 phy_output;
 	u8 port_num;
+#define ICE_AQC_GET_PHY_REC_CLK_OUT_CURR_PORT	0xFF
 	u8 flags;
 #define ICE_AQC_GET_PHY_REC_CLK_OUT_OUT_EN	BIT(0)
 	u8 rsvd;
@@ -1907,7 +1922,7 @@ struct ice_aqc_get_link_topo {
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_PCA9575			0x21
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032		0x24
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5384			0x25
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_PKVL			0x31
+#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_C827			0x31
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX		0x47
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_GPS			0x48
 	u8 rsvd[9];
@@ -3366,8 +3381,12 @@ struct ice_aqc_get_cgu_output_config {
 #define ICE_AQC_GET_CGU_OUT_CFG_ESYNC_EN	BIT(1)
 #define ICE_AQC_GET_CGU_OUT_CFG_ESYNC_ABILITY	BIT(2)
 	u8 src_sel;
-#define ICE_AQC_GET_CGU_OUT_CFG_DPLL_SRC_SEL	ICE_M(0x1F, 0)
-#define ICE_AQC_GET_CGU_OUT_CFG_DPLL_MODE	ICE_M(0x7, 5)
+#define ICE_AQC_GET_CGU_OUT_CFG_DPLL_SRC_SEL_SHIFT	0
+#define ICE_AQC_GET_CGU_OUT_CFG_DPLL_SRC_SEL \
+	ICE_M(0x1F, ICE_AQC_GET_CGU_OUT_CFG_DPLL_SRC_SEL_SHIFT)
+#define ICE_AQC_GET_CGU_OUT_CFG_DPLL_MODE_SHIFT		5
+#define ICE_AQC_GET_CGU_OUT_CFG_DPLL_MODE \
+	ICE_M(0x7, ICE_AQC_GET_CGU_OUT_CFG_DPLL_MODE_SHIFT)
 	u8 rsvd;
 	__le32 freq;
 	__le32 src_freq;
@@ -3401,6 +3420,9 @@ struct ice_aqc_get_cgu_dpll_status {
 	__le32 phase_offset_h;
 	__le32 phase_offset_l;
 	u8 eec_mode;
+#define ICE_AQC_GET_CGU_DPLL_STATUS_EEC_MODE_1		0xA
+#define ICE_AQC_GET_CGU_DPLL_STATUS_EEC_MODE_2		0xB
+#define ICE_AQC_GET_CGU_DPLL_STATUS_EEC_MODE_UNKNOWN	0xF
 	u8 rsvd[1];
 	__le16 node_handle;
 };
@@ -3770,6 +3792,8 @@ struct ice_aq_desc {
 		struct ice_aqc_cfg_l2_node_cgd cfg_l2_node_cgd;
 		struct ice_aqc_query_port_ets port_ets;
 		struct ice_aqc_rl_profile rl_profile;
+		struct ice_aqc_cfg_query_node_max_children
+			cfg_query_node_max_children;
 		struct ice_aqc_nvm nvm;
 		struct ice_aqc_nvm_cfg nvm_cfg;
 		struct ice_aqc_nvm_checksum nvm_checksum;
@@ -4005,6 +4029,8 @@ enum ice_adminq_opc {
 	ice_aqc_opc_query_node_to_root			= 0x0413,
 	ice_aqc_opc_cfg_l2_node_cgd			= 0x0414,
 	ice_aqc_opc_remove_rl_profiles			= 0x0415,
+	ice_aqc_opc_cfg_node_max_children		= 0x0417,
+	ice_aqc_opc_query_node_max_children		= 0x0418,
 
 	/* PHY commands */
 	ice_aqc_opc_get_phy_caps			= 0x0600,

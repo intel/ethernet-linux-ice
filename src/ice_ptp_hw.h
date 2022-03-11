@@ -158,6 +158,13 @@ enum ice_e810t_cgu_pins {
 	NUM_E810T_CGU_PINS
 };
 
+#define E810C_QSFP_C827_0_HANDLE 2
+#define E810C_QSFP_C827_1_HANDLE 3
+enum ice_e810_c827_idx {
+	C827_0,
+	C827_1
+};
+
 /* Table of constants related to possible TIME_REF sources */
 extern const struct ice_time_ref_info_e822 e822_time_ref[NUM_ICE_TIME_REF_FREQ];
 
@@ -202,10 +209,11 @@ ice_ptp_prep_port_adj_e822(struct ice_hw *hw, u8 port, s64 time,
 enum ice_status
 ice_ptp_read_phy_incval_e822(struct ice_hw *hw, u8 port, u64 *incval);
 enum ice_status
-ice_ptp_read_port_capture(struct ice_hw *hw, u8 port, u64 *tx_ts, u64 *rx_ts);
+ice_ptp_read_port_capture_e822(struct ice_hw *hw, u8 port,
+			       u64 *tx_ts, u64 *rx_ts);
 enum ice_status
-ice_ptp_one_port_cmd(struct ice_hw *hw, u8 port, enum ice_ptp_tmr_cmd cmd,
-		     bool lock_sbq);
+ice_ptp_one_port_cmd_e822(struct ice_hw *hw, u8 port,
+			  enum ice_ptp_tmr_cmd cmd, bool lock_sbq);
 enum ice_status
 ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq clk_freq,
 		     enum ice_clk_src clk_src);
@@ -270,6 +278,7 @@ enum ice_status ice_ptp_cgu_err_reporting_e810t(struct ice_hw *hw, bool enable);
 bool ice_is_phy_rclk_present_e810t(struct ice_hw *hw);
 bool ice_is_cgu_present_e810t(struct ice_hw *hw);
 bool ice_is_clock_mux_present_e810t(struct ice_hw *hw);
+enum ice_status ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx);
 bool ice_is_gps_present_e810t(struct ice_hw *hw);
 enum ice_status ice_ptp_init_phy_e810(struct ice_hw *hw);
 enum ice_status
@@ -282,12 +291,11 @@ bool ice_is_pca9575_present_e810t(struct ice_hw *hw);
 const char *ice_cgu_state_to_name(u8 state);
 enum ice_e810t_cgu_state
 ice_get_zl_state_e810t(struct ice_hw *hw, u8 dpll_idx, u8 *pin,
-		       s64 *phase_offset);
+		       s64 *phase_offset,
+		       enum ice_e810t_cgu_state last_dpll_state);
 const char *ice_zl_pin_idx_to_name_e810t(u8 pin);
-enum ice_status
-ice_ptp_e810t_set_10mhz_out(struct ice_hw *hw, u8 pin, bool ena);
-enum ice_status
-ice_ptp_e810t_set_10mhz_in(struct ice_hw *hw, u8 pin, bool ena);
+
+enum ice_status ice_ptp_init_phy_cfg(struct ice_hw *hw);
 
 #define PFTSYN_SEM_BYTES	4
 

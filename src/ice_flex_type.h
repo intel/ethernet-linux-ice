@@ -20,6 +20,69 @@ struct ice_fv {
 	struct ice_fv_word ew[ICE_MAX_FV_WORDS];
 };
 
+enum ice_ddp_state {
+	/* Indicates that this call to ice_init_pkg
+	 * successfully loaded the requested DDP package
+	 */
+	ICE_DDP_PKG_SUCCESS				= 0,
+
+	/* Generic error for already loaded errors, it is mapped later to
+	 * the more specific one (one of the next 3)
+	 */
+	ICE_DDP_PKG_ALREADY_LOADED			= -1,
+
+	/* Indicates that a DDP package of the same version has already been
+	 * loaded onto the device by a previous call or by another PF
+	 */
+	ICE_DDP_PKG_SAME_VERSION_ALREADY_LOADED		= -2,
+
+	/* The device has a DDP package that is not supported by the driver */
+	ICE_DDP_PKG_ALREADY_LOADED_NOT_SUPPORTED	= -3,
+
+	/* The device has a compatible package
+	 * (but different from the request) already loaded
+	 */
+	ICE_DDP_PKG_COMPATIBLE_ALREADY_LOADED		= -4,
+
+	/* The firmware loaded on the device is not compatible with
+	 * the DDP package loaded
+	 */
+	ICE_DDP_PKG_FW_MISMATCH				= -5,
+
+	/* The DDP package file is invalid */
+	ICE_DDP_PKG_INVALID_FILE			= -6,
+
+	/* The version of the DDP package provided is higher than
+	 * the driver supports
+	 */
+	ICE_DDP_PKG_FILE_VERSION_TOO_HIGH		= -7,
+
+	/* The version of the DDP package provided is lower than the
+	 * driver supports
+	 */
+	ICE_DDP_PKG_FILE_VERSION_TOO_LOW		= -8,
+
+	/* Missing security manifest in DDP pkg */
+	ICE_DDP_PKG_NO_SEC_MANIFEST			= -9,
+
+	/* The RSA signature of the DDP package file provided is invalid */
+	ICE_DDP_PKG_FILE_SIGNATURE_INVALID		= -10,
+
+	/* The DDP package file security revision is too low and not
+	 * supported by firmware
+	 */
+	ICE_DDP_PKG_SECURE_VERSION_NBR_TOO_LOW		= -11,
+
+	/* Manifest hash mismatch */
+	ICE_DDP_PKG_MANIFEST_INVALID			= -12,
+
+	/* Buffer hash mismatches manifest */
+	ICE_DDP_PKG_BUFFER_INVALID			= -13,
+
+	/* Other errors */
+	ICE_DDP_PKG_ERR					= -14
+};
+
 /* Package and segment headers and tables */
 struct ice_pkg_hdr {
 	struct ice_pkg_ver pkg_format_ver;

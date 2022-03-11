@@ -46,6 +46,7 @@ int ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf,
 				       ctrl_vsi->rxq_map[vf->vf_id];
 	rule_info.flags_info.act |= ICE_SINGLE_ACT_LB_ENABLE;
 	rule_info.flags_info.act_valid = true;
+	rule_info.tun_type = ICE_SW_TUN_AND_NON_TUN;
 
 	status = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info,
 				  vf->repr->mac_rule);
@@ -216,11 +217,23 @@ ice_eswitch_remap_rings_to_vectors(struct ice_pf *pf)
 	struct ice_vsi *vsi = pf->switchdev.control_vsi;
 	int q_id;
 
+	lockdep_assert_held(&pf->vfs.table_lock);
+
 	ice_for_each_txq(vsi, q_id) {
-		struct ice_repr *repr = ice_get_vf(pf, q_id)->repr;
-		struct ice_q_vector *q_vector = repr->q_vector;
-		struct ice_ring *tx_ring = vsi->tx_rings[q_id];
-		struct ice_ring *rx_ring = vsi->rx_rings[q_id];
+		struct ice_q_vector *q_vector;
+		struct ice_ring *tx_ring;
+		struct ice_ring *rx_ring;
+		struct ice_repr *repr;
+		struct ice_vf *vf;
+
+		vf = ice_get_vf_by_id(pf, q_id);
+		if (WARN_ON(!vf))
+			continue;
+
+		repr = vf->repr;
+		q_vector = repr->q_vector;
+		tx_ring = vsi->tx_rings[q_id];
+		rx_ring = vsi->rx_rings[q_id];
 
 		q_vector->vsi = vsi;
 		q_vector->reg_idx = vsi->q_vectors[0]->reg_idx;
@@ -236,6 +249,8 @@ ice_eswitch_remap_rings_to_vectors(struct ice_pf *pf)
 		q_vector->num_ring_rx = 1;
 		q_vector->rx.ring = rx_ring;
 		ice_eswitch_remap_ring(rx_ring, q_vector, repr->netdev);
+
+		ice_put_vf(vf);
 	}
 }
 
@@ -249,6 +264,8 @@ static void ice_eswitch_release_reprs(struct ice_pf *pf,
 {
 	struct ice_vf *vf;
 	unsigned int bkt;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	ice_for_each_vf(pf, bkt, vf) {
 		struct ice_vsi *vsi = vf->repr->src_vsi;
@@ -277,6 +294,8 @@ static int ice_eswitch_setup_reprs(struct ice_pf *pf)
 	int max_vsi_num = 0;
 	struct ice_vf *vf;
 	unsigned int bkt;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	ice_for_each_vf(pf, bkt, vf) {
 		struct ice_vsi *vsi = vf->repr->src_vsi;
@@ -355,15 +374,17 @@ void ice_eswitch_update_repr(struct ice_vsi *vsi)
 	if (!ice_is_switchdev_running(pf))
 		return;
 
-	vf = ice_get_vf(pf, vsi->vf_id);
+	vf = vsi->vf;
 	repr = vf->repr;
 	repr->src_vsi = vsi;
 	repr->dst->u.port_info.port_id = vsi->vsi_num;
 
 	ret = ice_vsi_update_security(vsi, ice_vsi_ctx_clear_antispoof);
 	if (ret) {
-		ice_fltr_add_mac_and_broadcast(vsi, vf->hw_lan_addr.addr, ICE_FWD_TO_VSI);
-		dev_err(ice_pf_to_dev(pf), "Failed to update VF %d port representor", vsi->vf_id);
+		ice_fltr_add_mac_and_broadcast(vsi, vf->hw_lan_addr.addr,
+					       ICE_FWD_TO_VSI);
+		dev_err(ice_pf_to_dev(pf), "Failed to update VF %d port representor",
+			vf->vf_id);
 		return;
 	}
 }
@@ -451,7 +472,7 @@ ice_eswitch_port_start_xmit(struct sk_buff __always_unused *skb,
 static struct ice_vsi *
 ice_eswitch_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 {
-	return ice_vsi_setup(pf, pi, ICE_VSI_SWITCHDEV_CTRL, ICE_INVAL_VFID, NULL, 0);
+	return ice_vsi_setup(pf, pi, ICE_VSI_SWITCHDEV_CTRL, NULL, NULL, 0);
 }
 
 /**
@@ -462,6 +483,8 @@ static void ice_eswitch_napi_del(struct ice_pf *pf)
 {
 	struct ice_vf *vf;
 	unsigned int bkt;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	ice_for_each_vf(pf, bkt, vf)
 		netif_napi_del(&vf->repr->q_vector->napi);
@@ -476,6 +499,8 @@ static void ice_eswitch_napi_enable(struct ice_pf *pf)
 	struct ice_vf *vf;
 	unsigned int bkt;
 
+	lockdep_assert_held(&pf->vfs.table_lock);
+
 	ice_for_each_vf(pf, bkt, vf)
 		napi_enable(&vf->repr->q_vector->napi);
 }
@@ -489,6 +514,8 @@ static void ice_eswitch_napi_disable(struct ice_pf *pf)
 	struct ice_vf *vf;
 	unsigned int bkt;
 
+	lockdep_assert_held(&pf->vfs.table_lock);
+
 	ice_for_each_vf(pf, bkt, vf)
 		napi_disable(&vf->repr->q_vector->napi);
 }
@@ -501,6 +528,8 @@ static int
 ice_eswitch_enable_switchdev(struct ice_pf *pf)
 {
 	struct ice_vsi *ctrl_vsi;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	pf->switchdev.control_vsi = ice_eswitch_vsi_setup(pf, pf->hw.port_info);
 	if (!pf->switchdev.control_vsi)
@@ -546,11 +575,13 @@ static void ice_eswitch_disable_switchdev(struct ice_pf *pf)
 {
 	struct ice_vsi *ctrl_vsi = pf->switchdev.control_vsi;
 
+	lockdep_assert_held(&pf->vfs.table_lock);
+
 	ice_eswitch_napi_disable(pf);
 	ice_eswitch_release_env(pf);
 	ice_rem_adv_rule_for_vsi(&pf->hw, ctrl_vsi->idx);
-	ice_vsi_release(ctrl_vsi);
 	ice_eswitch_release_reprs(pf, ctrl_vsi);
+	ice_vsi_release(ctrl_vsi);
 	ice_repr_rem_from_all_vfs(pf);
 }
 
@@ -573,7 +604,7 @@ int ice_eswitch_mode_set(struct devlink *devlink, u16 mode)
 	if (pf->eswitch_mode == mode)
 		return 0;
 
-	if (pf->vfs.num_alloc) {
+	if (ice_has_vfs(pf)) {
 		dev_info(ice_pf_to_dev(pf),
 			 "Changing eswitch mode is allowed only if there is no VFs created");
 		return -EOPNOTSUPP;
@@ -648,6 +679,8 @@ bool ice_is_eswitch_mode_switchdev(struct ice_pf *pf)
  */
 void ice_eswitch_release(struct ice_pf *pf)
 {
+	lockdep_assert_held(&pf->vfs.table_lock);
+
 	if (pf->eswitch_mode == DEVLINK_ESWITCH_MODE_LEGACY)
 		return;
 
@@ -662,6 +695,8 @@ void ice_eswitch_release(struct ice_pf *pf)
 int ice_eswitch_configure(struct ice_pf *pf)
 {
 	int status;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	if (pf->eswitch_mode == DEVLINK_ESWITCH_MODE_LEGACY || pf->switchdev.is_running)
 		return 0;
@@ -683,6 +718,8 @@ static void ice_eswitch_start_all_tx_queues(struct ice_pf *pf)
 	struct ice_vf *vf;
 	unsigned int bkt;
 
+	lockdep_assert_held(&pf->vfs.table_lock);
+
 	if (test_bit(ICE_DOWN, pf->state))
 		return;
 
@@ -699,6 +736,8 @@ void ice_eswitch_stop_all_tx_queues(struct ice_pf *pf)
 {
 	struct ice_vf *vf;
 	unsigned int bkt;
+
+	lockdep_assert_held(&pf->vfs.table_lock);
 
 	if (test_bit(ICE_DOWN, pf->state))
 		return;

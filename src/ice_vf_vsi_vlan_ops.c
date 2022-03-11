@@ -6,7 +6,7 @@
 #include "ice_vlan_mode.h"
 #include "ice.h"
 #include "ice_vf_vsi_vlan_ops.h"
-#include "ice_virtchnl_pf.h"
+#include "ice_sriov.h"
 #include "ice_lib.h"
 
 static int
@@ -35,9 +35,10 @@ void ice_vf_vsi_init_vlan_ops(struct ice_vsi *vsi)
 {
 	struct ice_vsi_vlan_ops *vlan_ops;
 	struct ice_pf *pf = vsi->back;
-	struct ice_vf *vf;
+	struct ice_vf *vf = vsi->vf;
 
-	vf = ice_get_vf(pf, vsi->vf_id);
+	if (WARN_ON(!vf))
+		return;
 
 	if (ice_is_dvm_ena(&pf->hw)) {
 		vlan_ops = &vsi->outer_vlan_ops;
@@ -140,9 +141,14 @@ void ice_vf_vsi_init_vlan_ops(struct ice_vsi *vsi)
  */
 void ice_vf_vsi_cfg_dvm_legacy_vlan_mode(struct ice_vsi *vsi)
 {
-	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
 	struct ice_vsi_vlan_ops *vlan_ops;
-	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_vf *vf = vsi->vf;
+	struct device *dev;
+
+	if (WARN_ON(!vf))
+		return;
+
+	dev = ice_pf_to_dev(vf->pf);
 
 	if (!ice_is_dvm_ena(&vsi->back->hw) || ice_vf_is_port_vlan_ena(vf))
 		return;
@@ -206,7 +212,10 @@ void ice_vf_vsi_cfg_dvm_legacy_vlan_mode(struct ice_vsi *vsi)
  */
 void ice_vf_vsi_cfg_svm_legacy_vlan_mode(struct ice_vsi *vsi)
 {
-	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
+	struct ice_vf *vf = vsi->vf;
+
+	if (WARN_ON(!vf))
+		return;
 
 	if (ice_is_dvm_ena(&vsi->back->hw) || ice_vf_is_port_vlan_ena(vf))
 		return;
@@ -222,8 +231,11 @@ void ice_vf_vsi_cfg_svm_legacy_vlan_mode(struct ice_vsi *vsi)
  */
 int ice_vf_vsi_dcf_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
-	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
+	struct ice_vf *vf = vsi->vf;
 	int err;
+
+	if (WARN_ON(!vf))
+		return -EINVAL;
 
 	if (!ice_is_dvm_ena(&vsi->back->hw) || ice_vf_is_port_vlan_ena(vf))
 		return -EOPNOTSUPP;
@@ -248,8 +260,11 @@ int ice_vf_vsi_dcf_set_outer_port_vlan(struct ice_vsi *vsi, struct ice_vlan *vla
  */
 int ice_vf_vsi_dcf_ena_outer_vlan_stripping(struct ice_vsi *vsi, u16 tpid)
 {
-	struct ice_vf *vf = ice_get_vf(vsi->back, vsi->vf_id);
+	struct ice_vf *vf = vsi->vf;
 	int err;
+
+	if (WARN_ON(!vf))
+		return -EINVAL;
 
 	if (!ice_is_dvm_ena(&vsi->back->hw) || ice_vf_is_port_vlan_ena(vf))
 		return -EOPNOTSUPP;

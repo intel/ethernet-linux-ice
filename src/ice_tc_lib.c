@@ -8,332 +8,6 @@
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 /**
- * ice_detect_filter_conflict - detect filter conflict across TC
- * @pf: Pointer to PF structure
- * @tc_fltr: Pointer to TC flower filter structure
- *
- * This function detects filter mismatch type but using same port_number
- * across TC and allow/deny desired filter combination. Example is,
- * filter 1, dest_ip + dest_port (80) -> action is forward to TC 1
- * filter 2: dest_ip + src_port (80) -> action is forward to TC 2
- *
- * We do not want to support such config, to avoid situation where
- * packets are getting duplicated across both the TCs if incoming Rx
- * packet has same dest_ip + src_port (80) + dst_port (80).
- * Due to both filter being same high prio filter in HW, both rule
- * can match (whereas that is not expectation) and cause unexpected
- * packet mirroring.
- */
-static int
-ice_detect_filter_conflict(struct ice_pf *pf,
-			   struct ice_tc_flower_fltr *tc_fltr)
-{
-	struct ice_tc_flower_lyr_2_4_hdrs *headers;
-	struct device *dev = ice_pf_to_dev(pf);
-	struct ice_tc_flower_fltr *fltr;
-	struct ice_tc_l4_hdr *l4_key;
-	u16 sport = 0, dport = 0;
-
-	/* header = outer header for non-tunnel filter,
-	 * otherwise inner_headers
-	 */
-	headers = &tc_fltr->outer_headers;
-	if (tc_fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID)
-		headers = &tc_fltr->inner_headers;
-
-	l4_key = &headers->l4_key;
-	if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)
-		sport = be16_to_cpu(l4_key->src_port);
-	if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT)
-		dport = be16_to_cpu(l4_key->dst_port);
-
-	hlist_for_each_entry(fltr, &pf->tc_flower_fltr_list, tc_flower_node) {
-		struct ice_tc_flower_lyr_2_4_hdrs *fltr_headers;
-		struct ice_tc_l4_hdr *fltr_l4_key;
-		u16 dst_port = 0, src_port = 0;
-
-		/* if tc_class is same, skip, no check needed */
-		if (fltr->action.tc_class == tc_fltr->action.tc_class)
-			continue;
-
-		/* if only either of them are set, skip it */
-		if ((fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID) ^
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID))
-			continue;
-
-		/* if this is tunnel filter, make sure tunnel ID is not same */
-		if ((fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID)) {
-			if (fltr->tenant_id && tc_fltr->tenant_id &&
-			    fltr->tenant_id == tc_fltr->tenant_id) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same tunnel key for other TC(see dmesg log)");
-				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same tunnel key (%u)\n",
-					fltr->action.tc_class,
-					be32_to_cpu(fltr->tenant_id));
-				return -EOPNOTSUPP;
-			}
-		}
-
-		fltr_headers = &fltr->outer_headers;
-		if (fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID)
-			fltr_headers = &fltr->inner_headers;
-
-		/* access L4 params */
-		fltr_l4_key = &fltr_headers->l4_key;
-		if (fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT)
-			dst_port = be16_to_cpu(fltr_l4_key->dst_port);
-		if (fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)
-			src_port = be16_to_cpu(fltr_l4_key->src_port);
-
-		/* proceed only if tc_class is different and filter types
-		 * are different but actual value(s) of say port number are
-		 * same, flag warning to user.
-		 * e.g if filter one is like dest port = 80 -> tc_class(1)
-		 * and second filter is like, src_port = 80 -> tc_class(2)
-		 * Invariably packet can match both the filter and user
-		 * will get expected packet mirroring to both the destination
-		 * (means tc_class(1) and tc_class(2)). To avoid such
-		 * behavior, block user from adding such conficting filter
-		 */
-		if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) {
-			if (dport && dst_port && dport == dst_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same destination port for other TC, as destination port based filter(see dmesg log)");
-				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as destination port based filter. This is to avoid unexpected packet mirroring.\n",
-					fltr->action.tc_class, dst_port);
-				return -EOPNOTSUPP;
-			}
-			if (dport && src_port && dport == src_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same destination port for other TC, as source port based filter(see dmesg log)");
-				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as source port based filter. This is to avoid unexpected packet mirroring.\n",
-					fltr->action.tc_class, src_port);
-				return -EOPNOTSUPP;
-			}
-		}
-
-		if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)  {
-			if (sport && dst_port && sport == dst_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same source port for other TC, as destination port based filter (see dmesg log)");
-				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as destination port based filter. This is to avoid unexpected packet mirroring.\n",
-					fltr->action.tc_class, dst_port);
-				return -EOPNOTSUPP;
-			}
-			if (sport && src_port && sport == src_port) {
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported filter combination across TC, filter exist with same source port for other TC, as source port based filter (see dmesg log)");
-				dev_err(dev, "Unsupported filter combination across TC, TC %d has filter using same port number (%u) as source port based filter. This is to avoid unexpected packet mirroring.\n",
-					fltr->action.tc_class, src_port);
-				return -EOPNOTSUPP;
-			}
-		}
-	}
-
-	return 0;
-}
-
-/**
- * ice_chnl_fltr_type_chk - filter type check
- * @pf: Pointer to PF
- * @tc_fltr: Pointer to TC flower filter structure
- * @final_fltr_type: Ptr to filter type (dest/src/dest+src port)
- *
- * This function is used to determine if given filter (based on input params)
- * should be allowed or not. For a given channel (aka ADQ VSI), supported
- * filter types are src port, dest port , src+dest port. SO this function
- * checks if any filter exist for specified channel (if so, channel specific
- * filter_type will be set), and see if it matches with the filter being added.
- * It returns 0 (upon success) or POSIX error code
- */
-static int
-ice_chnl_fltr_type_chk(struct ice_pf *pf, struct ice_tc_flower_fltr *tc_fltr,
-		       enum ice_channel_fltr_type *final_fltr_type)
-{
-	enum ice_channel_fltr_type fltr_type = *final_fltr_type;
-	struct device *dev = ice_pf_to_dev(pf);
-
-	if (fltr_type == ICE_CHNL_FLTR_TYPE_INVALID) {
-		/* L4 based filter, more granular, hence should be checked
-		 * beore L3
-		 */
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT))
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT;
-		else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT)
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_PORT;
-		else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_PORT;
-		/* L3 (IPv4) based filter check */
-		else if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4) &&
-			 (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4))
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV4;
-		else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4)
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_IPV4;
-		else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4)
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_IPV4;
-		/* L3 (IPv6) based filter check */
-		else if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6) &&
-			 (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6))
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV6;
-		else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6)
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_IPV6;
-		else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6)
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_IPV6;
-		/* Tunnel filter check, inner criteria is open:
-		 * any combination of inner L3 and/or L4
-		 */
-		else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID)
-			fltr_type = ICE_CHNL_FLTR_TYPE_TENANT_ID;
-		else
-			return -EOPNOTSUPP;
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_SRC_PORT) {
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)) {
-			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC_PORT to SRC + DEST_PORT\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT;
-		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) {
-			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC_PORT to DEST_PORT\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_PORT;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_DEST_PORT) {
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)) {
-			dev_dbg(dev, "Changing filter type for action (tc_class %d) from DEST_PORT to SRC + DEST_PORT\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT;
-		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT) {
-			dev_dbg(dev, "Changing filter type for action (tc_class %d) from DEST_PORT to SRC_PORT\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_PORT;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_SRC_DEST_PORT) {
-		/* must to have src/dest/src+dest port as part of filter
-		 * criteria
-		 */
-		if ((!(tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT)) &&
-		    (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT)))
-			return -EOPNOTSUPP;
-
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) &&
-		    (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT))) {
-			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC+DEST_PORT to DEST_PORT\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_PORT;
-		} else if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT) &&
-			   (!(tc_fltr->flags &
-			      ICE_TC_FLWR_FIELD_DEST_L4_PORT))) {
-			dev_dbg(dev, "Changing filter type for action (tc_class %d) from SRC+DEST_PORT to SRC_PORT\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_PORT;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_TENANT_ID) {
-		/* Now only allow filters which has VNI */
-		if (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID))
-			return -EOPNOTSUPP;
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV4) {
-		/* must to have src/dest/src+dest IPv4 addr as part of filter
-		 * criteria
-		 */
-		if ((!(tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4)) &&
-		    (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4)))
-			return -EOPNOTSUPP;
-
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4) &&
-		    (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4))) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC+DEST IPv4 addr to DEST IPv4 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_IPV4;
-		} else if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4) &&
-			   (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4))) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC+DEST IPv4 to SRC IPv4 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_IPV4;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_DEST_IPV4) {
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4)) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from DEST IPv4 addr to SRC + DEST IPv4 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV4;
-		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from DEST IPv4 addr to SRC IPv4 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_IPV4;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_SRC_IPV4) {
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV4)) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC IPv4 addr to SRC + DEST IPv4 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV4;
-		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV4) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC IPv4 addr to DEST IPv4 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_IPV4;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV6) {
-		/* must to have src/dest/src+dest IPv6 addr as part of filter
-		 * criteria
-		 */
-		if ((!(tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6)) &&
-		    (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6)))
-			return -EOPNOTSUPP;
-
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6) &&
-		    (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6))) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC+DEST IPv6 addr to DEST IPv6 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_IPV6;
-		} else if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6) &&
-			   (!(tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6))) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC+DEST IPv6 to SRC IPv6 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_IPV6;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_DEST_IPV6) {
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6)) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from DEST IPv6 addr to SRC + DEST IPv6 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV6;
-		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from DEST IPv6 addr to SRC IPv6 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_IPV6;
-		}
-	} else if (fltr_type == ICE_CHNL_FLTR_TYPE_SRC_IPV6) {
-		if ((tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6) &&
-		    (tc_fltr->flags & ICE_TC_FLWR_FIELD_SRC_IPV6)) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC IPv6 addr to SRC + DEST IPv6 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_SRC_DEST_IPV6;
-		} else if (tc_fltr->flags & ICE_TC_FLWR_FIELD_DEST_IPV6) {
-			dev_dbg(dev,
-				"Changing filter type for action (tc_class %d) from SRC IPv6 addr to DEST IPv6 addr\n",
-				tc_fltr->action.tc_class);
-			fltr_type = ICE_CHNL_FLTR_TYPE_DEST_IPV6;
-		}
-	} else {
-		return -EINVAL; /* unsupported filter type */
-	}
-
-	/* return the selected fltr_type */
-	*final_fltr_type = fltr_type;
-
-	return 0;
-}
-
-/**
  * ice_determine_gtp_tun_type - determine TUN type based on user params
  * @pf: Pointer to PF
  * @l4_proto : vale of L4 protocol type
@@ -536,7 +210,7 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 	/* copy L2 (MAC) fields, Outer UDP (in case of tunnel) port info */
 	if (ice_is_tunnel_fltr(tc_fltr)) {
-		u32 tenant_id = tc_fltr->tenant_id;
+		__be32 tenant_id = tc_fltr->tenant_id;
 
 		/* copy L2 (MAC) fields if specified, For tunnel outer DMAC
 		 * is needed and supported and is part of outer_headers.dst_mac
@@ -576,9 +250,9 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 			if (tc_fltr->tunnel_type == TNL_VXLAN ||
 			    tc_fltr->tunnel_type == TNL_GENEVE) {
-				tenant_id = be32_to_cpu(tenant_id) << 8;
-				list[i].h_u.tnl_hdr.vni =
-					cpu_to_be32(tenant_id);
+				u32 vni = be32_to_cpu(tenant_id) << 8;
+
+				list[i].h_u.tnl_hdr.vni = cpu_to_be32(vni);
 				/* 24bit tunnel key mask "\xff\xff\xff\x00" */
 				memcpy(&list[i].m_u.tnl_hdr.vni,
 				       "\xff\xff\xff\x00", 4);
@@ -863,6 +537,209 @@ exit:
 }
 
 /**
+ * ice_locate_vsi_using_queue - locate VSI using queue (forward to queue)
+ * @vsi: Pointer to VSI
+ * @tc_fltr: Pointer to tc_flower_filter
+ *
+ * Locate the VSI using specified "queue" (which is part of tc_fltr). When ADQ
+ * is not enabled, always return input VSI, otherwise locate corresponding
+ * VSI based on per channel "offset" and "qcount"
+ */
+static struct ice_vsi *
+ice_locate_vsi_using_queue(struct ice_vsi *vsi,
+			   struct ice_tc_flower_fltr *tc_fltr)
+{
+#ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
+	int num_tc, tc;
+	int queue;
+#endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
+
+	/* verify action is forward to queue */
+	if (tc_fltr->action.fltr_act != ICE_FWD_TO_Q)
+		return NULL;
+
+	/* if ADQ is not active, passed VSI is the candidate VSI */
+	if (!ice_is_adq_active(vsi->back))
+		return vsi;
+
+#ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
+	/* now locate the VSI (it could still be main PF VSI or CHNL_VSI
+	 * depending upon "queue number")
+	 */
+	num_tc = vsi->mqprio_qopt.qopt.num_tc;
+	queue = (int)tc_fltr->action.fwd.q.queue;
+
+	for (tc = 0; tc < num_tc; tc++) {
+		int qcount = vsi->mqprio_qopt.qopt.count[tc];
+		int offset = vsi->mqprio_qopt.qopt.offset[tc];
+
+		if (queue >= offset && (queue < offset + qcount)) {
+			/* for non-ADQ TCs, passed VSI is the candidate VSI */
+			if (tc < ICE_CHNL_START_TC)
+				return vsi;
+			else
+				return vsi->tc_map_vsi[tc];
+		}
+	}
+#endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
+	return NULL;
+}
+
+static struct ice_ring *
+ice_locate_rx_ring_using_queue(struct ice_vsi *vsi,
+			       struct ice_tc_flower_fltr *tc_fltr)
+{
+	u32 queue = tc_fltr->action.fwd.q.queue;
+	struct ice_pf *pf = vsi->back;
+	struct device *dev;
+	struct ice_vf *vf;
+	int tc;
+
+	dev = ice_pf_to_dev(pf);
+	vf = vsi->vf;
+
+	if (vsi->type != ICE_VSI_VF || vf->num_tc <= ICE_VF_CHNL_START_TC)
+		return (queue < vsi->num_rxq) ? vsi->rx_rings[queue] : NULL;
+
+	/* now locate the corresponding Rx rings */
+	for (tc = 0; tc < vf->num_tc; tc++) {
+		u16 num_qps, offset;
+
+		offset = vf->ch[tc].offset;
+		num_qps = vf->ch[tc].num_qps;
+
+		if (queue >= offset &&
+		    (queue < (offset + num_qps))) {
+			struct ice_vsi *tc_vsi;
+
+			tc_vsi = pf->vsi[vf->ch[tc].vsi_idx];
+			if (!tc_vsi) {
+				dev_err(dev, "VF %d: VF ADQ VSI is not valid\n",
+					vf->vf_id);
+				return NULL;
+			}
+			if ((queue - offset) >= vsi->num_rxq) {
+				dev_err(dev, "VF %d: forward to queue (%u) not in range, offset:%u, num_qps %u, num_rxq      %u\n",
+					vf->vf_id, queue, offset,
+					num_qps, tc_vsi->num_rxq);
+				return NULL;
+			}
+			return tc_vsi->rx_rings[queue - offset];
+		}
+	}
+	return NULL;
+}
+
+/**
+ * ice_tc_forward_action - Determine destination VSI and queue for the action
+ * @vsi: Pointer to VSI
+ * @tc_fltr: Pointer to TC flower filter structure
+ * @rx_ring: Pointer to ring ptr
+ * @dest_vsi: Pointer to VSI ptr
+ *
+ * Validates the tc forward action and determines the destination VSI and queue
+ * for the forward action.
+ */
+static int
+ice_tc_forward_action(struct ice_vsi *vsi, struct ice_tc_flower_fltr *tc_fltr,
+		      struct ice_ring **rx_ring, struct ice_vsi **dest_vsi)
+{
+	struct ice_channel_vf *vf_ch = NULL;
+	struct ice_vsi *ch_vsi = NULL;
+	struct ice_pf *pf = vsi->back;
+	struct ice_ring *ring = NULL;
+	struct ice_vf *vf = NULL;
+	struct device *dev;
+	u16 tc_class = 0;
+
+	dev = ice_pf_to_dev(pf);
+	*rx_ring = NULL;
+	*dest_vsi = NULL;
+
+	/* validate VSI types */
+	if (vsi->type == ICE_VSI_VF) {
+		vf = vsi->vf;
+		if (!vf) {
+			dev_err(dev, "VF is NULL for VF VSI, vsi_num %d\n",
+				vsi->vsi_num);
+			return -EINVAL;
+		}
+		if (!tc_fltr->dest_vsi) {
+			dev_err(dev,
+				"Needs valid destination VSI if main VSI type is ICE_VSI_VF\n");
+			return -EINVAL;
+		}
+		if (tc_fltr->dest_vsi->type != ICE_VSI_VF) {
+			dev_err(dev,
+				"Unexpected destination VSI type when input VSI type is ICE_VSI_VF\n");
+			return -EINVAL;
+		}
+	}
+
+	/* Get the destination VSI and/or destination queue and validate them */
+	tc_class = tc_fltr->action.fwd.tc.tc_class;
+	if (tc_class && tc_fltr->action.fltr_act == ICE_FWD_TO_VSI) {
+		/* Select the destination VSI */
+		if (tc_class < ICE_CHNL_START_TC) {
+			NL_SET_ERR_MSG_MOD(tc_fltr->extack,
+					   "Unable to add filter because of unsupported destination");
+			return -EOPNOTSUPP;
+		}
+		if (vsi->type == ICE_VSI_VF) {
+			ch_vsi = tc_fltr->dest_vsi;
+			/* For VF ADQ, locate channel based on tc_class */
+			vf_ch = &vf->ch[tc_class];
+			if (!vf_ch) {
+				dev_err(dev, "Unable to add filter because TC specific param are invalid\n");
+				return -EINVAL;
+			}
+		} else {
+			/* Locate ADQ VSI depending on hw_tc number */
+			ch_vsi = vsi->tc_map_vsi[tc_class];
+		}
+	} else if (tc_fltr->action.fltr_act == ICE_FWD_TO_Q) {
+		/* Locate the Rx queue using "action.fwd.q.queue" */
+		ring = ice_locate_rx_ring_using_queue(vsi, tc_fltr);
+		if (!ring) {
+			dev_err(dev,
+				"Unable to locate Rx queue for action fwd_to_queue: %u\n",
+				tc_fltr->action.fwd.q.queue);
+			return -EINVAL;
+		}
+		/* Determine destination VSI even though forward action is
+		 * FWD_TO_QUEUE, because QUEUE is associated with VSI
+		 */
+		if (vsi->type == ICE_VSI_VF) {
+			ch_vsi = tc_fltr->dest_vsi;
+			/* Locate channel which corresponds to TC0 */
+			vf_ch = &vf->ch[0];
+			if (!vf_ch) {
+				dev_err(dev, "Unable to add filter because TC specific param are invalid\n");
+				return -EINVAL;
+			}
+		} else {
+			ch_vsi = ice_locate_vsi_using_queue(vsi, tc_fltr);
+		}
+	} else {
+		dev_err(dev,
+			"Unable to add filter because of unsupported action %u (supported actions: fwd to tc, fwd to queue)\n",
+			tc_fltr->action.fltr_act);
+		return -EINVAL;
+	}
+
+	/* Must have valid "ch_vsi" (it could be main VSI or ADQ VSI */
+	if (!ch_vsi) {
+		dev_err(dev,
+			"Unable to add filter because specified destination VSI doesn't exist\n");
+		return -EINVAL;
+	}
+
+	*rx_ring = ring;
+	*dest_vsi = ch_vsi;
+	return 0;
+}
+
+/**
  * ice_add_tc_flower_adv_fltr - add appropriate filter rules
  * @vsi: Pointer to VSI
  * @tc_fltr: Pointer to TC flower filter structure
@@ -875,10 +752,9 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			   struct ice_tc_flower_fltr *tc_fltr)
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
-	enum ice_channel_fltr_type fltr_type = ICE_CHNL_FLTR_TYPE_INVALID;
 	struct ice_adv_rule_info rule_info = {0};
 	struct ice_rule_query_data rule_added;
-	struct ice_channel_vf *vf_ch = NULL;
+	struct ice_ring *rx_ring = NULL;
 	struct ice_adv_lkup_elem *list;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
@@ -886,7 +762,6 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	enum ice_status status;
 	struct ice_vsi *ch_vsi;
 	struct device *dev;
-	struct ice_vf *vf;
 	u16 lkups_cnt = 0;
 	u16 l4_proto = 0;
 	int ret = 0;
@@ -907,11 +782,10 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		return -EOPNOTSUPP;
 	}
 
-	/* get the channel (aka ADQ VSI) */
-	if (tc_fltr->dest_vsi)
-		ch_vsi = tc_fltr->dest_vsi;
-	else
-		ch_vsi = vsi->tc_map_vsi[tc_fltr->action.tc_class];
+	/* validate forwarding action VSI and queue */
+	ret = ice_tc_forward_action(vsi, tc_fltr, &rx_ring, &ch_vsi);
+	if (ret)
+		return ret;
 
 	lkups_cnt = ice_tc_count_lkups(flags, headers, tc_fltr);
 	list = kcalloc(lkups_cnt, sizeof(*list), GFP_ATOMIC);
@@ -936,7 +810,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 						&rule_info)) {
 			if (vsi->type == ICE_VSI_VF)
 				dev_err(dev, "Unable to add filter because could not determine tun type, VSI %u, vf_id:%u\n",
-					vsi->vsi_num, vsi->vf_id);
+					vsi->vsi_num, vsi->vf->vf_id);
 			else
 				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because could not determine TUN type. ");
 			ret = -EINVAL;
@@ -945,85 +819,37 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	}
 
 	rule_info.sw_act.fltr_act = tc_fltr->action.fltr_act;
-	if (tc_fltr->action.tc_class >= ICE_CHNL_START_TC) {
-		if (!ch_vsi) {
-			NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because specified destination doesn't exist");
-			ret = -EINVAL;
-			goto exit;
-		}
 
-		/* dest_vsi is preset, means it is from virtchnl message */
-		if (tc_fltr->dest_vsi) {
-			if (vsi->type != ICE_VSI_VF ||
-			    tc_fltr->dest_vsi->type != ICE_VSI_VF) {
-				dev_err(dev, "Unexpected VSI(vf_id:%u) type: %u\n",
-					vsi->vf_id, vsi->type);
-				ret = -EINVAL;
-				goto exit;
-			}
-			vf = ice_get_vf(pf, vsi->vf_id);
-			if (!vf) {
-				dev_err(dev, "VF is NULL for VSI->type: ICE_VF_VSI and vf_id %d\n",
-					vsi->vf_id);
-				ret = -EINVAL;
-				goto exit;
-			}
-			vf_ch = &vf->ch[tc_fltr->action.tc_class];
-
-			fltr_type = (enum ice_channel_fltr_type)
-				    vf_ch->fltr_type;
-		} else if (ch_vsi->ch) {
-			fltr_type = ch_vsi->ch->fltr_type;
-		} else {
-			dev_err(dev, "Can't add switch rule, neither dest_vsi is valid now VSI channel but tc_class sepcified is %u\n",
-				tc_fltr->action.tc_class);
-			ret = -EINVAL;
-			goto exit;
-		}
-
-		/* perform fltr_type check for channel (aka ADQ) VSI */
-		ret = ice_chnl_fltr_type_chk(pf, tc_fltr, &fltr_type);
-		if (ret) {
-			NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because filter type check failed");
-			dev_err(dev, "Unable to add filter because filter type check failed");
-			ret = -EINVAL;
-			goto exit;
-		}
-
-		/* Code is applicable only for PF ADQ, for VF ADQ - such
-		 * checks to be handled by VF driver
-		 */
-		if (ch_vsi && (ch_vsi->type == ICE_VSI_PF ||
-			       ch_vsi->type == ICE_VSI_CHNL)) {
-			ret = ice_detect_filter_conflict(pf, tc_fltr);
-			if (ret)
-				goto exit;
-		}
-
-		if (tc_fltr->dest_vsi) {
-			if (vf_ch && !fltr_type)
-				vf_ch->fltr_type = fltr_type;
-		} else if (ch_vsi->ch) {
-			ch_vsi->ch->fltr_type = fltr_type;
-		}
-
+	if (tc_fltr->action.fltr_act == ICE_FWD_TO_VSI) {
 		rule_info.sw_act.fltr_act = ICE_FWD_TO_VSI;
-#ifdef __CHECKER__
-		/* cppcheck-suppress nullPointerRedundantCheck */
-#endif /* _CHECKER__ */
 		rule_info.sw_act.vsi_handle = ch_vsi->idx;
-		rule_info.priority = 7;
+		rule_info.priority = ICE_SWITCH_FLTR_PRIO_VSI;
 
 		rule_info.sw_act.src = hw->pf_id;
 		rule_info.rx = true;
 
 		dev_dbg(dev, "add switch rule for TC:%u vsi_idx:%u, lkups_cnt:%u\n",
-			tc_fltr->action.tc_class,
+			tc_fltr->action.fwd.tc.tc_class,
 			rule_info.sw_act.vsi_handle, lkups_cnt);
+	} else if (tc_fltr->action.fltr_act == ICE_FWD_TO_Q) {
+		rule_info.sw_act.fltr_act = ICE_FWD_TO_Q;
+		/* HW queue number in global space */
+		rule_info.sw_act.fwd_id.q_id = tc_fltr->action.fwd.q.hw_queue;
+		rule_info.sw_act.vsi_handle = ch_vsi->idx;
+		rule_info.priority = ICE_SWITCH_FLTR_PRIO_QUEUE;
+		rule_info.sw_act.src = hw->pf_id;
+		rule_info.rx = true;
+		dev_dbg(dev, "add switch rule action to forward to queue:%u (HW queue %u), lkups_cnt:%u\n",
+			tc_fltr->action.fwd.q.queue,
+			tc_fltr->action.fwd.q.hw_queue,
+			lkups_cnt);
 	} else {
 		rule_info.sw_act.flag |= ICE_FLTR_TX;
-		rule_info.sw_act.src = vsi->idx;
+		/* In case of Tx (LOOKUP_TX), src needs to be src VSI */
+		rule_info.sw_act.src = ch_vsi->idx;
+		/* 'Rx' is false, direction of rule(LOOKUPTRX) */
 		rule_info.rx = false;
+		rule_info.priority = ICE_SWITCH_FLTR_PRIO_VSI;
 	}
 
 	/* specify the cookie as filter_rule_id */
@@ -1045,19 +871,14 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	 */
 	tc_fltr->rid = rule_added.rid;
 	tc_fltr->rule_id = rule_added.rule_id;
-	if (tc_fltr->action.tc_class > 0 && ch_vsi) {
-		/* For PF ADQ, VSI type is set as ICE_VSI_CHNL, and
-		 * for PF ADQ filter, it is not yet set in tc_fltr,
-		 * hence store the dest_vsi ptr in tc_fltr
-		 */
-		if (ch_vsi->type == ICE_VSI_CHNL)
-			tc_fltr->dest_vsi = ch_vsi;
+	if (tc_fltr->action.fltr_act == ICE_FWD_TO_VSI ||
+	    tc_fltr->action.fltr_act == ICE_FWD_TO_Q) {
+		tc_fltr->dest_vsi_handle = rule_added.vsi_handle;
+		tc_fltr->dest_vsi = ch_vsi;
 		/* keep track of advanced switch filter for
-		 * destination VSI (channel VSI)
+		 * destination VSI
 		 */
 		ch_vsi->num_chnl_fltr++;
-		/* in this case, dest_id is VSI handle (sw handle) */
-		tc_fltr->dest_id = rule_added.vsi_handle;
 
 		/* keeps track of channel filters for PF VSI */
 		if (vsi->type == ICE_VSI_PF &&
@@ -1065,10 +886,17 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			      ICE_TC_FLWR_FIELD_ENC_DST_MAC)))
 			pf->num_dmac_chnl_fltrs++;
 	}
-	dev_dbg(dev, "added switch rule (lkups_cnt %u, flags 0x%x) for TC %u, rid %u, rule_id %u, vsi_idx %u\n",
-		lkups_cnt, flags,
-		tc_fltr->action.tc_class, rule_added.rid,
-		rule_added.rule_id, rule_added.vsi_handle);
+	if (tc_fltr->action.fltr_act == ICE_FWD_TO_VSI) {
+		dev_dbg(dev, "added switch rule (lkups_cnt %u, flags 0x%x) for TC %u, rid %u, rule_id %u, vsi_idx %u\n",
+			lkups_cnt, flags,
+			tc_fltr->action.fwd.tc.tc_class, rule_added.rid,
+			rule_added.rule_id, rule_added.vsi_handle);
+	} else if (tc_fltr->action.fltr_act == ICE_FWD_TO_Q) {
+		dev_dbg(dev, "added switch rule (lkups_cnt %u, flags 0x%x), action is forward to queue: %u (HW queue %u)     , rid %u, rule_id %u\n",
+			lkups_cnt, flags, tc_fltr->action.fwd.q.queue,
+			tc_fltr->action.fwd.q.hw_queue, rule_added.rid,
+			rule_added.rule_id);
+	}
 exit:
 	kfree(list);
 	return ret;
@@ -1782,39 +1610,70 @@ ice_add_switch_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 /**
- * ice_handle_tclass_action - Support directing to a traffic class
+ * ice_handle_tclass_action - Support directing to a traffic class or queue
  * @vsi: Pointer to VSI
  * @cls_flower: Pointer to TC flower offload structure
  * @fltr: Pointer to TC flower filter structure
  *
- * Support directing traffic to a traffic class
+ * Support directing traffic to a traffic class or queue
  */
 static int
 ice_handle_tclass_action(struct ice_vsi *vsi,
 			 struct flow_cls_offload *cls_flower,
 			 struct ice_tc_flower_fltr *fltr)
 {
-	int tc = tc_classid_to_hwtc(vsi->netdev, cls_flower->classid);
-	struct ice_vsi *main_vsi;
+	unsigned int nrx = TC_H_MIN(cls_flower->classid);
+	int tc;
+	u32 num_tc;
 
-	if (tc < 0) {
-		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because specified destination is invalid");
-		return -EINVAL;
-	}
-	if (!tc) {
-		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because of invalid destination");
-		return -EINVAL;
-	}
+	num_tc = (u32)netdev_get_num_tc(vsi->netdev);
 
-	if (!(vsi->all_enatc & BIT(tc))) {
-		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because of non-existence destination");
-		return -EINVAL;
-	}
+	/* There are two regions which will have valid "classid" values:
+	 * 1. The first region will have a classid value of 1 through
+	 * num_tx_queues (i.e forward to queue).
+	 * 2. The second region represents the hardware traffic classes. These
+	 * are represented by classid values of TC_H_MIN_PRIORITY through
+	 * TC_H_MIN_PRIORITY + netdev_get_num_tc - 1. (i.e forward to TC)
+	 */
+	if (nrx < TC_H_MIN_PRIORITY) {
+		u32 queue = 0;
+		/* user specified queue, hence action is forward to queue */
+		if (nrx > vsi->num_rxq) {
+			NL_SET_ERR_MSG_MOD(fltr->extack,
+					   "Unable to add filter because specified queue is invalid");
+			return -ENXIO;
+		}
+		/* since nrx is 1 based */
+		queue = nrx - 1;
 
-	/* Redirect to a TC class or Queue Group */
-	main_vsi = ice_get_main_vsi(vsi->back);
-	if (!main_vsi || !main_vsi->netdev) {
-		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because of invalid netdevice");
+		/* forward to queue */
+		fltr->action.fltr_act = ICE_FWD_TO_Q;
+		fltr->action.fwd.q.queue = queue;
+
+		/* determine corresponding HW queue */
+		fltr->action.fwd.q.hw_queue = vsi->rxq_map[queue];
+	} else if ((nrx - TC_H_MIN_PRIORITY) < num_tc) {
+		/* user specified hw_tc (it must be non-zero for ADQ TC, hence
+		 * action is forward to "hw_tc (aka ADQ channel number)"
+		 */
+		tc = nrx - TC_H_MIN_PRIORITY;
+		if (tc < ICE_CHNL_START_TC) {
+			NL_SET_ERR_MSG_MOD(fltr->extack,
+					   "Unable to add filter because of unsupported destination");
+			return -EOPNOTSUPP;
+		}
+
+		if (!(vsi->all_enatc & BIT(tc))) {
+			NL_SET_ERR_MSG_MOD(fltr->extack,
+					   "Unable to add filter because of non-existence destination");
+			return -EINVAL;
+		}
+		/* forward to hw_tc (aka ADQ VSI) */
+		fltr->action.fltr_act = ICE_FWD_TO_VSI;
+		fltr->action.fwd.tc.tc_class = tc;
+	} else {
+		NL_SET_ERR_MSG_MOD(fltr->extack,
+				   "Unable to add filter because user specified neither queue nor hw_tc as forward action");
 		return -EINVAL;
 	}
 
@@ -1841,13 +1700,13 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	if (ice_is_tunnel_fltr(fltr)) {
 		if (!(fltr->flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC)) {
 			ether_addr_copy(fltr->outer_headers.l2_key.dst_mac,
-					main_vsi->netdev->dev_addr);
+					vsi->netdev->dev_addr);
 			eth_broadcast_addr(fltr->outer_headers.l2_mask.dst_mac);
 			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_DST_MAC;
 		}
 	} else if (!(fltr->flags & ICE_TC_FLWR_FIELD_DST_MAC)) {
 		ether_addr_copy(fltr->outer_headers.l2_key.dst_mac,
-				main_vsi->netdev->dev_addr);
+				vsi->netdev->dev_addr);
 		eth_broadcast_addr(fltr->outer_headers.l2_mask.dst_mac);
 		fltr->flags |= ICE_TC_FLWR_FIELD_DST_MAC;
 	}
@@ -1856,9 +1715,8 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	 * lower netdev or any of non-offloaded MACVLAN. Non-offloaded MACVLANs
 	 * MAC address are added as unicast MAC filter destined to main VSI.
 	 */
-	if (!ice_mac_fltr_exist(&main_vsi->back->hw,
-				fltr->outer_headers.l2_key.dst_mac,
-				main_vsi->idx)) {
+	if (!ice_mac_fltr_exist(&vsi->back->hw,
+				fltr->outer_headers.l2_key.dst_mac, vsi->idx)) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because legacy MAC filter for specified destination doesn't exist");
 		return -EINVAL;
 	}
@@ -1869,14 +1727,11 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	if (fltr->flags & ICE_TC_FLWR_FIELD_VLAN) {
 		u16 vlan_id = be16_to_cpu(fltr->outer_headers.vlan_hdr.vlan_id);
 
-		if (!ice_vlan_fltr_exist(&main_vsi->back->hw, vlan_id,
-					 main_vsi->idx)) {
+		if (!ice_vlan_fltr_exist(&vsi->back->hw, vlan_id, vsi->idx)) {
 			NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because legacy VLAN filter for specified destination doesn't exist");
 			return -EINVAL;
 		}
 	}
-	fltr->action.fltr_act = ICE_FWD_TO_VSI;
-	fltr->action.tc_class = tc;
 
 	return 0;
 }
@@ -1985,7 +1840,7 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 
 		rule_rem.rid = fltr->rid;
 		rule_rem.rule_id = fltr->rule_id;
-		rule_rem.vsi_handle = fltr->dest_id;
+		rule_rem.vsi_handle = fltr->dest_vsi_handle;
 		err = ice_rem_adv_rule_by_id(&pf->hw, &rule_rem);
 	}
 
@@ -2003,15 +1858,7 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	 */
 	if (fltr->dest_vsi) {
 		if (fltr->dest_vsi->type == ICE_VSI_CHNL) {
-			struct ice_channel *ch = fltr->dest_vsi->ch;
-
 			fltr->dest_vsi->num_chnl_fltr--;
-
-			/* reset filter type for channel if channel filter
-			 * count reaches zero
-			 */
-			if (!fltr->dest_vsi->num_chnl_fltr && ch)
-				ch->fltr_type = ICE_CHNL_FLTR_TYPE_INVALID;
 
 			/* keeps track of channel filters for PF VSI */
 			if (vsi->type == ICE_VSI_PF &&

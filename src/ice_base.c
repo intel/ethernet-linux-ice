@@ -4,7 +4,7 @@
 #include "ice_base.h"
 #include "ice_lib.h"
 #include "ice_dcb_lib.h"
-#include "ice_virtchnl_pf.h"
+#include "ice_sriov.h"
 
 /**
  * __ice_vsi_get_qs_contig - Assign a contiguous chunk of queues to VSI
@@ -322,7 +322,7 @@ ice_setup_tx_ctx(struct ice_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 		break;
 	case ICE_VSI_VF:
 		/* Firmware expects vmvf_num to be absolute VF ID */
-		tlan_ctx->vmvf_num = hw->func_caps.vf_base_id + vsi->vf_id;
+		tlan_ctx->vmvf_num = hw->func_caps.vf_base_id + vsi->vf->vf_id;
 		tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VF;
 		break;
 	case ICE_VSI_OFFLOAD_MACVLAN:
@@ -412,14 +412,25 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	 * be stripped in L2TAG1 of the Rx descriptor, which is where VFs will
 	 * check for the tag
 	 */
-	if (ice_is_dvm_ena(hw))
-		if (vsi->type == ICE_VSI_VF &&
-		    ice_vf_is_port_vlan_ena(ice_get_vf(vsi->back, vsi->vf_id)))
-			rlan_ctx.l2tsel = 1;
-		else
+	if (ice_is_dvm_ena(hw)) {
+		if (vsi->type == ICE_VSI_VF) {
+			struct ice_vf *vf = vsi->vf;
+
+			if (vf && ice_vf_is_port_vlan_ena(vf)) {
+				rlan_ctx.l2tsel = 1;
+			} else if (!vf) {
+				WARN(1, "VF VSI %u has NULL VF pointer",
+				     vsi->vsi_num);
+				rlan_ctx.l2tsel = 0;
+			} else {
+				rlan_ctx.l2tsel = 0;
+			}
+		} else {
 			rlan_ctx.l2tsel = 0;
-	else
+		}
+	} else {
 		rlan_ctx.l2tsel = 1;
+	}
 
 	rlan_ctx.dtype = ICE_RX_DTYPE_NO_SPLIT;
 	rlan_ctx.hsplit_0 = ICE_RLAN_RX_HSPLIT_0_NO_SPLIT;
@@ -454,11 +465,14 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	 * setting to 0x03 to ensure profile is programming if prev context is
 	 * of same priority
 	 */
-	if (vsi->type != ICE_VSI_VF)
-		ice_write_qrxflxp_cntxt(hw, pf_q, rxdid, 0x3, true);
-	else
+	switch (vsi->type) {
+	case ICE_VSI_VF:
 		ice_write_qrxflxp_cntxt(hw, pf_q, ICE_RXDID_LEGACY_1, 0x3,
 					false);
+		break;
+	default:
+		ice_write_qrxflxp_cntxt(hw, pf_q, rxdid, 0x3, true);
+	}
 
 	/* Absolute queue number out of 2K needs to be passed */
 	err = ice_write_rxq_ctx(hw, &rlan_ctx, pf_q);

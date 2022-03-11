@@ -1158,6 +1158,13 @@ struct ice_mbx_data {
 	u16 async_watermark_val;
 };
 
+/* PHY configuration */
+enum ice_phy_cfg {
+	ICE_PHY_E810 = 1,
+	ICE_PHY_E822,
+	ICE_PHY_ETH56G,
+};
+
 /* Port hardware description */
 struct ice_hw {
 	u8 __iomem *hw_addr;
@@ -1182,6 +1189,7 @@ struct ice_hw {
 	u8 revision_id;
 
 	u8 pf_id;		/* device profile info */
+	enum ice_phy_cfg phy_cfg;
 	u8 logical_pf_id;
 
 	u16 max_burst_size;	/* driver sets this value */
@@ -1263,8 +1271,6 @@ struct ice_hw {
 	u8 active_pkg_name[ICE_PKG_NAME_SIZE];
 	u8 active_pkg_in_nvm;
 
-	enum ice_aq_err pkg_dwnld_status;
-
 	/* Driver's package ver - (from the Ice Metadata section) */
 	struct ice_pkg_ver pkg_ver;
 	u8 pkg_name[ICE_PKG_NAME_SIZE];
@@ -1313,7 +1319,7 @@ struct ice_hw {
 	struct ice_mbx_snapshot mbx_snapshot;
 	DECLARE_BITMAP(hw_ptype, ICE_FLOW_PTYPE_MAX);
 	u8 dvm_ena;
-	__le16 io_expander_handle;
+	u16 io_expander_handle;
 	u8 cgu_part_number;
 };
 

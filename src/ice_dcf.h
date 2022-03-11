@@ -6,6 +6,7 @@
 
 struct ice_vf;
 struct ice_pf;
+struct ice_hw;
 
 #define ICE_DCF_VFID	0
 

@@ -90,6 +90,29 @@ else
 endif
 endif
 
+SCRIPT_PATH := ${KSRC}/scripts
+info_signed_modules =
+
+ifeq (,${SCRIPT_PATH})
+  info_signed_modules += echo "*** Could not find sign-file script. Cannot sign driver." ;
+else
+  SIGN_FILE_EXISTS := $(or $(and $(wildcard $(SCRIPT_PATH)/sign-file),1),)
+  PRIV_KEY_EXISTS := $(or $(and $(wildcard intel-linux-key.key),1),)
+  PUB_KEY_EXISTS := $(or $(and $(wildcard intel-linux-key.crt),1),)
+ifneq ($(and $(SIGN_FILE_EXISTS),$(PRIV_KEY_EXISTS),$(PUB_KEY_EXISTS)),)
+  info_signed_modules += \
+    echo "*** Is sign-file present: ${SIGN_FILE_EXISTS}" ; \
+    echo "*** Is private key present: ${PRIV_KEY_EXISTS}" ; \
+    echo "*** Is public key present: ${PUB_KEY_EXISTS}" ;
+  info_signed_modules += echo "*** All files are present, signing driver." ;
+  sign_driver = $(shell ${SCRIPT_PATH}/sign-file sha256 intel-linux-key.key \
+                        intel-linux-key.crt i40e.ko)
+else
+  info_signed_modules += echo "*** Files are missing, cannot sign driver." ;
+  sign_driver =
+endif
+endif
+
 # Version file Search Path
 VSP :=  ${KOBJ}/include/generated/utsrelease.h \
         ${KOBJ}/include/linux/utsrelease.h \
@@ -104,6 +127,7 @@ CSP :=  ${KOBJ}/include/generated/autoconf.h \
 
 # System.map Search Path (for depmod)
 MSP := ${KSRC}/System.map \
+       /usr/lib/debug/boot/System.map-${BUILD_KERNEL} \
        /boot/System.map-${BUILD_KERNEL}
 
 # prune the lists down to only files that exist
@@ -211,6 +235,8 @@ endif
 # additional versioning information (up to 3 numbers), a possible abbreviated
 # git SHA1 commit id and a kernel type, e.g. CONFIG_LOCALVERSION=-1.2.3-default
 # or CONFIG_LOCALVERSION=-999.gdeadbee-default
+# SLE >= 15SP3 added additional information about version and service pack
+# to their kernel version e.g CONFIG_LOCALVERSION=-150300.59.43.1-default
 #
 # SLE_LOCALVERSION_CODE is also exported to support legacy kcompat.h
 # definitions.
@@ -222,12 +248,24 @@ ifneq (10,$(call get_config_value,CONFIG_SLE_VERSION))
   LOCALVERSION := $(shell echo ${CONFIG_LOCALVERSION} | \
                     cut -d'-' -f2 | sed 's/\.g[[:xdigit:]]\{7\}//')
   LOCALVER_A := $(shell echo ${LOCALVERSION} | cut -d'.' -f1)
+ifeq ($(shell test ${LOCALVER_A} -gt 65535; echo $$?),0)
+  LOCAL_VER_MAJOR := $(shell echo ${LOCALVER_A:0:3})
+  LOCAL_VER_MINOR := $(shell echo ${LOCALVER_A:3:3})
+  LOCALVER_B := $(shell echo ${LOCALVERSION} | cut -s -d'.' -f2)
+  LOCALVER_C := $(shell echo ${LOCALVERSION} | cut -s -d'.' -f3)
+  LOCALVER_D := $(shell echo ${LOCALVERSION} | cut -s -d'.' -f4)
+  SLE_LOCALVERSION_CODE := $(shell expr ${LOCALVER_B} \* 65536 + \
+                                        0${LOCALVER_C} \* 256 + 0${LOCALVER_D})
+  EXTRA_CFLAGS += -DSLE_LOCALVERSION_CODE=${SLE_LOCALVERSION_CODE}
+  EXTRA_CFLAGS += -DSLE_KERNEL_REVISION=${LOCALVER_B}
+else
   LOCALVER_B := $(shell echo ${LOCALVERSION} | cut -s -d'.' -f2)
   LOCALVER_C := $(shell echo ${LOCALVERSION} | cut -s -d'.' -f3)
   SLE_LOCALVERSION_CODE := $(shell expr ${LOCALVER_A} \* 65536 + \
                                         0${LOCALVER_B} \* 256 + 0${LOCALVER_C})
   EXTRA_CFLAGS += -DSLE_LOCALVERSION_CODE=${SLE_LOCALVERSION_CODE}
   EXTRA_CFLAGS += -DSLE_KERNEL_REVISION=${LOCALVER_A}
+endif
 endif
 endif
 
