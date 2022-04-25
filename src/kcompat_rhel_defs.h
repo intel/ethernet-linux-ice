@@ -69,6 +69,7 @@
 /* 7.7 undefs it due to a backport in 7.7+, but 8.0 needs it still */
 #define NEED_NETDEV_TX_SENT_QUEUE
 #define HAVE_DEVLINK_REGIONS
+#define HAVE_DEVLINK_PARAMS
 #endif /* 8.0 */
 
 /*****************************************************************************/

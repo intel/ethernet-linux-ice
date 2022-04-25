@@ -2989,7 +2989,6 @@ static inline void __kc_metadata_dst_free(void *md_dst)
 #define HAVE_NETDEV_SB_DEV
 #define HAVE_TCF_VLAN_TPID
 #define HAVE_RHASHTABLE_TYPES
-#define HAVE_DEVLINK_PARAMS
 #endif /* 4.19.0 */
 
 /*****************************************************************************/

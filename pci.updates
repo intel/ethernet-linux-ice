@@ -28,6 +28,7 @@
 		8086 000d  Ethernet Network Adapter E810-L-Q2 for OCP3.0
 		8086 000e  Ethernet Network Adapter E810-2C-Q2
 		8086 000f  Ethernet Network Adapter E810-C-Q2T
+		8086 0010  Ethernet 100G 2P E810-C-stg Adapter
 		8086 0011  Ethernet Network Adapter E810-C-Q1 for OCP3.0
 	1593  Ethernet Controller E810-C for SFP
 		1137 02c3  E810XXVDA4 4x25/10 GbE SFP28 PCIe NIC

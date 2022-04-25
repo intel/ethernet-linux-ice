@@ -887,6 +887,65 @@ ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
 }
 
 /**
+ * ice_ieps_set_lm_config - request FW to disable LESM
+ * @pf: ptr to pf
+ * @en_lesm: set true to enable LESM else disable LESM
+ */
+static enum ieps_peer_status
+ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
+{
+	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
+	struct ice_aqc_set_phy_cfg_data *phy_cfg;
+	struct ice_aqc_get_phy_caps_data *pcaps;
+	enum ice_status status = 0;
+	struct ice_hw *hw = &pf->hw;
+
+	phy_cfg = kzalloc(sizeof(*phy_cfg), GFP_KERNEL);
+	if (!phy_cfg)
+		return IEPS_PEER_NO_MEMORY;
+
+	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
+	if (!pcaps) {
+		kfree(phy_cfg);
+		return IEPS_PEER_NO_MEMORY;
+	}
+
+	status = ice_aq_get_phy_caps(hw->port_info, false,
+				     ICE_AQC_REPORT_ACTIVE_CFG, pcaps, NULL);
+	if (status) {
+		dev_dbg(ice_pf_to_dev(pf), "ERROR:get_phy_caps status=%s\n",
+			ice_stat_str(status));
+		pstatus = IEPS_PEER_FW_ERROR;
+		goto release_exit;
+	}
+
+	phy_cfg->phy_type_low      = pcaps->phy_type_low;
+	phy_cfg->phy_type_high     = pcaps->phy_type_high;
+	phy_cfg->low_power_ctrl_an = pcaps->low_power_ctrl_an;
+	phy_cfg->link_fec_opt      = pcaps->link_fec_options;
+	phy_cfg->eee_cap           = pcaps->eee_cap;
+	phy_cfg->caps              = pcaps->caps;
+
+	if (en_lesm)
+		phy_cfg->caps |= ICE_AQ_PHY_ENA_LESM;
+	else
+		phy_cfg->caps &= ~ICE_AQ_PHY_ENA_LESM;
+
+	status = ice_aq_set_phy_cfg(hw, hw->port_info, phy_cfg, NULL);
+	if (status) {
+		dev_err(ice_pf_to_dev(pf), "ERROR: lm port config status=%s\n",
+			ice_stat_str(status));
+		pstatus = IEPS_PEER_FW_ERROR;
+	}
+
+release_exit:
+	kfree(pcaps);
+	kfree(phy_cfg);
+
+	return pstatus;
+}
+
+/**
  * ice_ieps_entry - Request FW to perform GPIO set operations
  * @obj: ptr to IDC peer device data object
  * @vptr_arg: ptr to peer arg structure containing cmd and cmd specific data
@@ -960,6 +1019,9 @@ int ice_ieps_entry(struct iidc_core_dev_info *obj, void *vptr_arg)
 	case IEPS_PEER_CMD_INTPHY_REG_RW:
 		return ice_ieps_phy_reg_rw(pf,
 				(struct ieps_peer_intphy_reg_rw *)vptr);
+
+	case IEPS_PEER_CMD_SET_LM_CONFIG:
+		return ice_ieps_set_lm_config(pf, *(bool *)vptr);
 
 	default:
 		return IEPS_PEER_INVALID_CMD;

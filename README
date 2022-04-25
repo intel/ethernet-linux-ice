@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ===============================================================================
 
-December 10, 2021
+March 29, 2022
 
 ===============================================================================
 
@@ -46,6 +46,10 @@ Identifying Your Adapter
 The driver is compatible with devices based on the following:
   * Intel(R) Ethernet Controller E810-C
   * Intel(R) Ethernet Controller E810-XXV
+  * Intel(R) Ethernet Connection E822-C
+  * Intel(R) Ethernet Connection E822-L
+  * Intel(R) Ethernet Connection E823-C
+  * Intel(R) Ethernet Connection E823-L
 
 For information on how to identify your adapter, and for the latest Intel
 network drivers, refer to the Intel Support website:
@@ -493,11 +497,37 @@ Example output:
    Private flags for p1p1:
    link-down-on-close : off
    fw-lldp-agent : off
-   channel-inline-flow-director : off
-   channel-pkt-inspect-optimize : on
+
+
+Using ADQ to filter GTP
+-----------------------
+You must have a DDP package that supports GTP; the default OS package does not.
+Download the appropriate package from your hardware vendor and load it on your
+device. Use the tc command to add a GTP filter. For example:
+
+# tc filter add dev <ethX> protocol ip parent ffff: prio 1 flower src_ip
+16.0.0.0/16 ip_proto udp dst_port 5678 enc_dst_port 2152 skip_sw hw_tc 1
+
+Where:
+  prio: Priority
+  flower: Flow-based traffic control filter
+  src_ip/dst_ip: inner Source/Dest IP start (16.0.0.0/16)
+  dst_port: inner destination port of application (5678)
+  enc_dst_port: outer destination port (for GTP user data tunnelling occurs on
+UDP port 2152)
+  enc_key_id: tunnel id (vxlan id)
+  skip_sw: Flag to add the rule only in hardware
+  hw_tc: Route incoming traffic flow to hardware TC number provided (here TC1)
+
+
+Creating traffic classes
+------------------------
+Run all TC commands from the ../iproute2/tc/ directory.
+If you set max_rate to less than 50Mbps, then max_rate is rounded up to 50Mbps
+and a warning is logged in dmesg.
 
 To create traffic classes (TCs) on the interface:
-NOTE: Run all TC commands from the ../iproute2/tc/ directory.
+
 1. Use the tc command to create traffic classes. You can create a maximum of
    16 TCs per interface.
 
@@ -612,27 +642,6 @@ For example:
 
   # tc filter add dev <ethX> protocol ip ingress prio 1 flower ip_proto
      tcp dst_port 5555 skip_sw hw_tc 1
-
-
-Using ADQ to filter GTP
------------------------
-You must have a DDP package that supports GTP; the default OS package does not.
-Download the appropriate package from your hardware vendor and load it on your
-device. Use the tc command to add a GTP filter. For example:
-
-# tc filter add dev <ethX> protocol ip parent ffff: prio 1 flower src_ip
-16.0.0.0/16 ip_proto udp dst_port 5678 enc_dst_port 2152 skip_sw hw_tc 1
-
-Where:
-  prio: Priority
-  flower: Flow-based traffic control filter
-  src_ip/dst_ip: inner Source/Dest IP start (16.0.0.0/16)
-  dst_port: inner destination port of application (5678)
-  enc_dst_port: outer destination port (for GTP user data tunnelling occurs on
-UDP port 2152)
-  enc_key_id: tunnel id (vxlan id)
-  skip_sw: Flag to add the rule only in hardware
-  hw_tc: Route incoming traffic flow to hardware TC number provided (here TC1)
 
 
 Intel(R) Ethernet Flow Director
@@ -1549,6 +1558,13 @@ the device.
 NOTE: You can only change the state of the Clock Generation Unit (CGU) Fast
 Lock flag (cgu-fast-lock) on PF0.
 
+Some devices support hardware-generated timestamps. The ice driver uses these
+timestamps to synchronize clocks on the platform and report precise timestamps
+on packets. Use the following hwstamp_ctl command, which is available in the
+linuxptp utility, to enable this setting:
+
+# hwstamp_ctl -i <ethX> -t 1 -r 1
+
 
 SyncE Support
 -------------
@@ -2068,7 +2084,7 @@ St - Fifth Floor, Boston, MA 02110-1301 USA.
 The full GNU General Public License is included in this distribution in the
 file called "COPYING".
 
-Copyright(c) 2017 - 2021 Intel Corporation.
+Copyright(c) 2017 - 2022 Intel Corporation.
 
 
 Trademarks

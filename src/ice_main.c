@@ -27,9 +27,9 @@
 
 #define DRV_VERSION_MAJOR 1
 #define DRV_VERSION_MINOR 8
-#define DRV_VERSION_BUILD 3
+#define DRV_VERSION_BUILD 8
 
-#define DRV_VERSION	"1.8.3"
+#define DRV_VERSION	"1.8.8"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -3213,9 +3213,24 @@ static void ice_service_task(struct work_struct *work)
 		return;
 	}
 
+	if (test_and_clear_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags)) {
+		ice_plug_aux_devs(pf);
+	}
+
 	/* If we are in FW recovery mode, need to exit service tasks here */
 	if (test_bit(ICE_RECOVERY_MODE, pf->state))
 		return;
+
+	if (test_and_clear_bit(ICE_FLAG_MTU_CHANGED, pf->flags)) {
+		struct iidc_event *event;
+
+		event = kzalloc(sizeof(*event), GFP_KERNEL);
+		if (event) {
+			set_bit(IIDC_EVENT_AFTER_MTU_CHANGE, event->type);
+			ice_send_event_to_auxs(pf, event);
+			kfree(event);
+		}
+	}
 
 	ice_clean_adminq_subtask(pf);
 	ice_check_media_subtask(pf);
@@ -8914,7 +8929,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 #ifdef HAVE_DEVLINK_HEALTH
 	ice_devlink_clear_after_reset(pf);
 #endif /* HAVE_DEVLINK_HEALTH */
-	ice_plug_aux_devs(pf);
+	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
 	return;
 
 err_vsi_rebuild:
@@ -8956,7 +8971,6 @@ static int ice_change_mtu(struct net_device *netdev, int new_mtu)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
-	struct iidc_event *event;
 	u8 count = 0;
 	int err = 0;
 
@@ -8997,14 +9011,6 @@ static int ice_change_mtu(struct net_device *netdev, int new_mtu)
 		return -EBUSY;
 	}
 
-	event = kzalloc(sizeof(*event), GFP_KERNEL);
-	if (!event)
-		return -ENOMEM;
-
-	set_bit(IIDC_EVENT_BEFORE_MTU_CHANGE, event->type);
-	ice_send_event_to_auxs(pf, event);
-	clear_bit(IIDC_EVENT_BEFORE_MTU_CHANGE, event->type);
-
 	netdev->mtu = (unsigned int)new_mtu;
 
 	/* if VSI is up, bring it down and then back up */
@@ -9012,21 +9018,18 @@ static int ice_change_mtu(struct net_device *netdev, int new_mtu)
 		err = ice_down(vsi);
 		if (err) {
 			netdev_err(netdev, "change MTU if_down err %d\n", err);
-			goto free_event;
+			return err;
 		}
 
 		err = ice_up(vsi);
 		if (err) {
 			netdev_err(netdev, "change MTU if_up err %d\n", err);
-			goto free_event;
+			return err;
 		}
 	}
 
 	netdev_dbg(netdev, "changed MTU to %d\n", new_mtu);
-free_event:
-	set_bit(IIDC_EVENT_AFTER_MTU_CHANGE, event->type);
-	ice_send_event_to_auxs(pf, event);
-	kfree(event);
+	set_bit(ICE_FLAG_MTU_CHANGED, pf->flags);
 
 	return err;
 }

@@ -180,7 +180,6 @@ ice_lag_unlink(struct ice_lag *lag,
 	       struct netdev_notifier_changeupper_info *info)
 {
 	struct net_device *netdev_tmp, *upper = info->upper_dev;
-	struct iidc_core_dev_info *cdev_info;
 	struct ice_pf *pf = lag->pf;
 	bool found = false;
 
@@ -213,17 +212,7 @@ ice_lag_unlink(struct ice_lag *lag,
 
 	ice_set_sriov_cap(pf);
 	ice_set_rdma_cap(pf);
-	cdev_info = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
-	if (cdev_info) {
-		char *name;
-
-		if (cdev_info->rdma_protocol == IIDC_RDMA_PROTOCOL_IWARP)
-			name = IIDC_RDMA_IWARP_NAME;
-		else
-			name = IIDC_RDMA_ROCE_NAME;
-
-		ice_plug_aux_dev(cdev_info, name);
-	}
+	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
 	lag->bonded = false;
 	lag->role = ICE_LAG_NONE;
 }

@@ -762,6 +762,7 @@ enum ice_pf_flags {
 	ICE_FLAG_MACVLAN_ENA,
 #endif /* HAVE_NETDEV_SB_DEV */
 	ICE_FLAG_IWARP_ENA,
+	ICE_FLAG_PLUG_AUX_DEV,
 	ICE_FLAG_RSS_ENA,
 	ICE_FLAG_SRIOV_ENA,
 	ICE_FLAG_SRIOV_CAPABLE,
@@ -801,6 +802,7 @@ enum ice_pf_flags {
 	ICE_FLAG_DPLL_MONITOR,
 	ICE_FLAG_EXTTS_FILTER,
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
+	ICE_FLAG_MTU_CHANGED,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
 

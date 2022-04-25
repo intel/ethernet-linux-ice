@@ -128,6 +128,7 @@
 /* SLES 15-SP1 base */
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(4,12,14,195))
 #else /* >= 4.12.14-195 */
+#define HAVE_DEVLINK_PARAMS
 #undef NEED_NETDEV_TX_SENT_QUEUE
 #endif /* 4.12.14-195 */
 

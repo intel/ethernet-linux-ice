@@ -807,12 +807,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 		cdev_info->msix_entries = entry;
 	}
 
-	err = ice_plug_aux_devs(pf);
-	if (err) {
-		ice_unplug_aux_devs(pf);
-		ice_for_each_aux(pf, NULL, ice_unroll_cdev_info);
-		ida_simple_remove(&ice_cdev_info_ida, pf->aux_idx);
-	}
+	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
 
 	return err;
 }

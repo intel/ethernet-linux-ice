@@ -110,6 +110,8 @@
 #undef HAVE_TCF_EXTS_TO_LIST
 #define HAVE_TCF_EXTS_FOR_EACH_ACTION
 #define HAVE_DEVLINK_REGIONS
+#define HAVE_TC_ETF_QOPT_OFFLOAD
+#define HAVE_DEVLINK_PARAMS
 #endif /* 4,19,0 */
 
 /*****************************************************************************/

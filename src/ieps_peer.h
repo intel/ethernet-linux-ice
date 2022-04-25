@@ -247,6 +247,8 @@ enum ieps_peer_cmd {
 	/* DFX */
 	IEPS_PEER_CMD_INTPHY_REG_RW,
 
+	IEPS_PEER_CMD_SET_LM_CONFIG,
+
 	/* Must be last */
 	NUM_IEPS_PEER_CMD
 };
