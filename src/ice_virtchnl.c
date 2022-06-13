@@ -3287,7 +3287,8 @@ static int ice_vc_cfg_irq_map_msg(struct ice_vf *vf, u8 *msg)
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto error_param;
 		}
-		q_vector = vf->vf_ops->get_q_vector(vf, vector_id_ch);
+		q_vector = vf->vf_ops->get_q_vector(vf, vsi, vector_id_ch);
+
 		if (!q_vector) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto error_param;
@@ -5748,7 +5749,8 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 		struct ice_q_vector *q_vector;
 		u16 msix_id;
 
-		q_vector = vf->vf_ops->get_q_vector(vf, qv_map->vector_id);
+		q_vector = vf->vf_ops->get_q_vector(vf, vsi,
+						    qv_map->vector_id);
 		if (!q_vector) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto error_param;

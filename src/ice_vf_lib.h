@@ -122,7 +122,9 @@ struct ice_vf_ops {
 	void (*clear_reset_trigger)(struct ice_vf *vf);
 	int (*vsi_rebuild)(struct ice_vf *vf);
 	void (*post_vsi_rebuild)(struct ice_vf *vf);
-	struct ice_q_vector* (*get_q_vector)(struct ice_vf *vf, u16 vector_id);
+	struct ice_q_vector* (*get_q_vector)(struct ice_vf *vf,
+					     struct ice_vsi *vsi,
+					     u16 vector_id);
 	void (*cfg_rdma_irq_map)(struct ice_vf *vf,
 				 struct virtchnl_rdma_qv_info *qv_info);
 	void (*clear_rdma_irq_map)(struct ice_vf *vf);

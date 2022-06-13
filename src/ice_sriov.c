@@ -919,11 +919,10 @@ static bool ice_sriov_poll_reset_status(struct ice_vf *vf)
 	return false;
 }
 
-static struct ice_q_vector *ice_sriov_get_q_vector(struct ice_vf *vf, u16 vector_id)
+static struct ice_q_vector *ice_sriov_get_q_vector(struct ice_vf *vf,
+						   struct ice_vsi *vsi,
+						   u16 vector_id)
 {
-	struct ice_vsi *vsi;
-
-	vsi = ice_get_vf_vsi(vf);
 	if (!vsi || !vsi->q_vectors)
 		return NULL;
 

@@ -1523,6 +1523,7 @@ static int ice_get_vf_ctrl_res(struct ice_pf *pf, struct ice_vsi *vsi)
 /**
  * ice_vsi_setup_vector_base - Set up the base vector for the given VSI
  * @vsi: ptr to the VSI
+ * @tc: traffic class. Used for VF ADQ
  *
  * This should only be called after ice_vsi_alloc() which allocates the
  * corresponding SW VSI structure and initializes num_queue_pairs for the
@@ -1530,7 +1531,7 @@ static int ice_get_vf_ctrl_res(struct ice_pf *pf, struct ice_vsi *vsi)
  *
  * Returns 0 on success or negative on failure
  */
-static int ice_vsi_setup_vector_base(struct ice_vsi *vsi)
+static int ice_vsi_setup_vector_base(struct ice_vsi *vsi, u8 __maybe_unused tc)
 {
 	struct ice_pf *pf = vsi->back;
 	struct device *dev;
@@ -1539,8 +1540,17 @@ static int ice_vsi_setup_vector_base(struct ice_vsi *vsi)
 
 	dev = ice_pf_to_dev(pf);
 	/* SRIOV doesn't grab irq_tracker entries for each VSI */
-	if (vsi->type == ICE_VSI_VF)
+	if (vsi->type == ICE_VSI_VF) {
+		/* Assign the base_vector to allow determining the vector
+		 * index. Note that VF VSIs MSI-X index is relative to the VF
+		 * space and does not get tracked individually in the software
+		 * IRQ tracker.
+		 */
+		vsi->base_vector = ICE_NONQ_VECS_VF;
+		/* Adjust base_vector for VSIs corresponding to non-zero TC */
+		vsi->base_vector += vsi->vf->ch[tc].offset;
 		return 0;
+	}
 	if (vsi->type == ICE_VSI_CHNL)
 		return 0;
 
@@ -2686,7 +2696,7 @@ ice_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi,
 		if (ret)
 			goto unroll_vsi_init;
 
-		ret = ice_vsi_setup_vector_base(vsi);
+		ret = ice_vsi_setup_vector_base(vsi, 0);
 		if (ret)
 			goto unroll_alloc_q_vector;
 
@@ -2734,12 +2744,9 @@ ice_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi,
 		if (ret)
 			goto unroll_alloc_q_vector;
 
-		/* Assign the base_vector to allow determining the vector
-		 * index. Note that VF VSIs MSI-X index is relative to the VF
-		 * space and does not get tracked individually in the software
-		 * IRQ tracker.
-		 */
-		vsi->base_vector = ICE_NONQ_VECS_VF;
+		ret = ice_vsi_setup_vector_base(vsi, tc);
+		if (ret)
+			goto unroll_alloc_q_vector;
 
 		ret = ice_vsi_set_q_vectors_reg_idx(vsi, tc);
 		if (ret)
@@ -3443,7 +3450,7 @@ int ice_vsi_rebuild(struct ice_vsi *vsi, bool init_vsi)
 		if (ret)
 			goto err_rings;
 
-		ret = ice_vsi_setup_vector_base(vsi);
+		ret = ice_vsi_setup_vector_base(vsi, 0);
 		if (ret)
 			goto err_vectors;
 

@@ -357,8 +357,6 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		ipv6_mask = &list[i].m_u.ipv6_hdr;
 		l3_key = &headers->l3_key;
 		l3_mask = &headers->l3_mask;
-		ipv6_hdr->next_hdr = l3_key->ip_proto;
-		ipv6_mask->next_hdr = l3_mask->ip_proto;
 
 		if (flags & ICE_TC_FLWR_FIELD_DEST_IPV6) {
 			memcpy(&ipv6_hdr->dst_addr, &l3_key->dst_ipv6_addr,
