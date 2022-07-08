@@ -114,6 +114,7 @@ static const u32 fdir_pf_allowlist_opcodes[] = {
 /* VIRTCHNL_VF_OFFLOAD_QoS */
 static const u32 tc_allowlist_opcodes[] = {
 	VIRTCHNL_OP_GET_QOS_CAPS, VIRTCHNL_OP_CONFIG_QUEUE_TC_MAP,
+	VIRTCHNL_OP_CONFIG_QUEUE_BW, VIRTCHNL_OP_CONFIG_QUANTA,
 };
 
 static const u32 large_num_qpairs_allowlist_opcodes[] = {

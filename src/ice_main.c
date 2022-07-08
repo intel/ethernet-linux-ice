@@ -26,10 +26,10 @@
 #include "ice_irq.h"
 
 #define DRV_VERSION_MAJOR 1
-#define DRV_VERSION_MINOR 8
-#define DRV_VERSION_BUILD 9
+#define DRV_VERSION_MINOR 9
+#define DRV_VERSION_BUILD 7
 
-#define DRV_VERSION	"1.8.9"
+#define DRV_VERSION	"1.9.7"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -119,7 +119,7 @@ struct device *ice_hw_to_dev(struct ice_hw *hw)
 	return &pf->pdev->dev;
 }
 
-static struct workqueue_struct *ice_wq;
+struct workqueue_struct *ice_wq;
 
 static const struct net_device_ops ice_netdev_recovery_ops;
 static const struct net_device_ops ice_netdev_safe_mode_ops;
@@ -138,10 +138,10 @@ bool netif_is_ice(struct net_device *dev)
 	return dev && (dev->netdev_ops == &ice_netdev_ops);
 }
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 static void ice_deinit_macvlan(struct ice_vsi *vsi);
 
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 #ifdef HAVE_TC_INDIR_BLOCK
 #if defined(HAVE_TC_FLOW_INDIR_DEV) && defined(HAVE_FLOW_INDIR_BLOCK_QDISC)
 static int
@@ -577,7 +577,7 @@ static int ice_set_promisc(struct ice_vsi *vsi, u8 promisc_m)
 		status = ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m, 0,
 						  vsi->port_info->lport);
 
-	if (status)
+	if (status && status != ICE_ERR_ALREADY_EXISTS)
 		return -EIO;
 
 	return 0;
@@ -745,8 +745,8 @@ static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 		clear_bit(ICE_VSI_PROMISC_CHANGED, vsi->state);
 		if (vsi->current_netdev_flags & IFF_PROMISC) {
 			/* Apply Rx filter rule to get traffic from wire */
-			if (!ice_is_dflt_vsi_in_use(pf->first_sw)) {
-				err = ice_set_dflt_vsi(pf->first_sw, vsi);
+			if (!ice_is_dflt_vsi_in_use(vsi->port_info)) {
+				err = ice_set_dflt_vsi(vsi);
 				if (err && err != -EEXIST) {
 					netdev_err(netdev, "Error %d setting default VSI %i Rx rule\n",
 						   err, vsi->vsi_num);
@@ -758,8 +758,8 @@ static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 			}
 		} else {
 			/* Clear Rx filter to remove traffic from wire */
-			if (ice_is_vsi_dflt_vsi(pf->first_sw, vsi)) {
-				err = ice_clear_dflt_vsi(pf->first_sw);
+			if (ice_is_vsi_dflt_vsi(vsi)) {
+				err = ice_clear_dflt_vsi(vsi);
 				if (err) {
 					netdev_err(netdev, "Error %d clearing default VSI %i Rx rule\n",
 						   err, vsi->vsi_num);
@@ -829,11 +829,54 @@ static void ice_pf_dis_all_vsi(struct ice_pf *pf, bool locked)
 	for (node = 0; node < ICE_MAX_VF_AGG_NODES; node++)
 		pf->vf_agg_node[node].num_vsis = 0;
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	for (node = 0; node < ICE_MAX_MACVLAN_AGG_NODES; node++)
 		pf->macvlan_agg_node[node].num_vsis = 0;
 #endif
 }
+
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+static int ice_udp_tunnel_add(struct net_device *netdev, unsigned int table,
+			      unsigned int idx, struct udp_tunnel_info *ti);
+static int ice_udp_tunnel_del(struct net_device *netdev, unsigned int table,
+			      unsigned int idx, struct udp_tunnel_info *ti);
+
+static void ice_udp_tunnel_prepare(struct ice_pf *pf)
+{
+	int vxlan_cnt = 0, geneve_cnt = 0, i;
+	struct ice_hw *hw;
+
+	hw = &pf->hw;
+	for (i = 0; i < hw->tnl.count; i++) {
+		if (hw->tnl.tbl[i].boost_entry) {
+			if (hw->tnl.tbl[i].type == TNL_VXLAN)
+				vxlan_cnt++;
+			else if (hw->tnl.tbl[i].type == TNL_GENEVE)
+				geneve_cnt++;
+		}
+	}
+
+	pf->udp_tunnel_nic.set_port = ice_udp_tunnel_add;
+	pf->udp_tunnel_nic.unset_port = ice_udp_tunnel_del;
+	pf->udp_tunnel_nic.flags = UDP_TUNNEL_NIC_INFO_MAY_SLEEP;
+#ifdef HAVE_UDP_TUNNEL_NIC_SHARED
+	pf->udp_tunnel_nic.shared = &pf->udp_tunnel_shared;
+#endif /* HAVE_UDP_TUNNEL_NIC_SHARED */
+	i = 0;
+	if (vxlan_cnt) {
+		pf->udp_tunnel_nic.tables[i].n_entries = vxlan_cnt;
+		pf->udp_tunnel_nic.tables[i].tunnel_types =
+			UDP_TUNNEL_TYPE_VXLAN;
+		i++;
+	}
+	if (geneve_cnt) {
+		pf->udp_tunnel_nic.tables[i].n_entries =
+			geneve_cnt;
+		pf->udp_tunnel_nic.tables[i].tunnel_types =
+			UDP_TUNNEL_TYPE_GENEVE;
+	}
+}
+#endif /* HAVE_UDP_TUNNEL_NIC_INFO */
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 /**
@@ -932,10 +975,14 @@ ice_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (ice_check_sq_alive(hw, &hw->mailboxq))
 		ice_vc_notify_reset(pf);
 
-	/* Disable VFs until reset is completed */
 	mutex_lock(&pf->vfs.table_lock);
-	ice_for_each_vf(pf, bkt, vf)
+	ice_for_each_vf(pf, bkt, vf) {
+		/* Disable VFs until reset is completed */
 		ice_set_vf_state_qs_dis(vf);
+
+		if (vf->vf_ops->clear_reset_state)
+			vf->vf_ops->clear_reset_state(vf);
+	}
 	mutex_unlock(&pf->vfs.table_lock);
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
@@ -944,7 +991,7 @@ ice_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (!vsi)
 		goto skip;
 
-	/* to be on safer size, reset orig_rss_size so that normal flow
+	/* to be on safe side, reset orig_rss_size so that normal flow
 	 * of deciding rss_size can take precedence
 	 */
 	vsi->orig_rss_size = 0;
@@ -956,8 +1003,8 @@ ice_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 		} else {
 			ice_remove_q_channels(vsi, true);
 
-			/* for other reset type, do not support "rebuild
-			 * of channel, hence reset needed info
+			/* for other reset type, do not support channel rebuild
+			 * hence reset needed info
 			 */
 			vsi->old_ena_tc = 0;
 			vsi->all_enatc = 0;
@@ -1427,8 +1474,7 @@ done:
  * @vsi: the VSI on which the link event occurred
  * @link_up: whether or not the VSI needs to be set up or down
  */
-static
-void ice_vsi_link_event(struct ice_vsi *vsi, bool link_up)
+static void ice_vsi_link_event(struct ice_vsi *vsi, bool link_up)
 {
 	if (!vsi)
 		return;
@@ -2633,7 +2679,7 @@ static void ice_handle_mdd_event(struct ice_pf *pf)
 				 * reset, so print the event prior to reset.
 				 */
 				ice_print_vf_rx_mdd_event(vf);
-				ice_reset_vf(vf, 0);
+				ice_reset_vf(vf, ICE_VF_RESET_LOCK);
 			}
 		}
 	}
@@ -2996,8 +3042,12 @@ static int ice_configure_phy(struct ice_vsi *vsi)
 	/* FEC */
 	ice_cfg_phy_fec(pi, cfg, phy->curr_user_fec_req);
 
-	/* Can't provide what was requested; use PHY capabilities */
-	if (cfg->link_fec_opt !=
+	/* Can't provide what was requested; use PHY capabilities.
+	 * The user can force FEC disabled Auto mode via ethtool private
+	 * flag allow-no-fec-modules-in-auto, so allow ICE_FEC_DIS_AUTO.
+	 */
+	if (phy->curr_user_fec_req != ICE_FEC_DIS_AUTO &&
+	    cfg->link_fec_opt !=
 	    (cfg->link_fec_opt & pcaps->link_fec_options)) {
 		cfg->caps |= pcaps->caps & ICE_AQC_PHY_EN_AUTO_FEC;
 		cfg->link_fec_opt = pcaps->link_fec_options;
@@ -3213,14 +3263,6 @@ static void ice_service_task(struct work_struct *work)
 		return;
 	}
 
-	if (test_and_clear_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags)) {
-		ice_plug_aux_devs(pf);
-	}
-
-	/* If we are in FW recovery mode, need to exit service tasks here */
-	if (test_bit(ICE_RECOVERY_MODE, pf->state))
-		return;
-
 	if (test_and_clear_bit(ICE_FLAG_MTU_CHANGED, pf->flags)) {
 		struct iidc_event *event;
 
@@ -3231,6 +3273,17 @@ static void ice_service_task(struct work_struct *work)
 			kfree(event);
 		}
 	}
+
+	if (test_and_clear_bit(ICE_FLAG_UNPLUG_AUX_DEV, pf->flags))
+		ice_unplug_aux_devs(pf);
+
+	if (test_and_clear_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags)) {
+		ice_plug_aux_devs(pf);
+	}
+
+	/* If we are in FW recovery mode, need to exit service tasks here */
+	if (test_bit(ICE_RECOVERY_MODE, pf->state))
+		return;
 
 	ice_clean_adminq_subtask(pf);
 	ice_check_media_subtask(pf);
@@ -3396,9 +3449,22 @@ static int ice_vsi_req_irq_msix(struct ice_vsi *vsi, char *basename)
 		irq_num = ice_get_irq_num(pf, base + vector);
 
 		if (q_vector->tx.ring && q_vector->rx.ring) {
-			snprintf(q_vector->name, sizeof(q_vector->name) - 1,
-				 "%s-%s-%d", basename, "TxRx", rx_int_idx++);
-			tx_int_idx++;
+			if (q_vector->num_ring_rx == 1) {
+				snprintf(q_vector->name,
+					 sizeof(q_vector->name) - 1,
+					 "%s-%s-%d", basename, "TxRx",
+					 rx_int_idx++);
+					 tx_int_idx++;
+			} else {
+				int num_rx = q_vector->num_ring_rx;
+
+				snprintf(q_vector->name,
+					 sizeof(q_vector->name) - 1,
+					 "%s-%s-%d-%d", basename, "TxRx",
+					 rx_int_idx, rx_int_idx + num_rx - 1);
+					 rx_int_idx = rx_int_idx + num_rx;
+					 tx_int_idx = rx_int_idx;
+			}
 		} else if (q_vector->rx.ring) {
 			snprintf(q_vector->name, sizeof(q_vector->name) - 1,
 				 "%s-%s-%d", basename, "rx", rx_int_idx++);
@@ -3535,6 +3601,120 @@ static void ice_clear_xdp_stats(struct ice_vsi *vsi)
 #endif /* HAVE_XDP_SUPPORT */
 
 /**
+ * ice_ch_vsi_map_xdp_rings_to_vecs - map channel VSIs q_vectors to
+ * xdp rings based on qps_per_poller settings.
+ * @vsi: VSI to operate on
+ */
+static void ice_ch_vsi_map_xdp_rings_to_vecs(struct ice_vsi *vsi)
+{
+	struct ice_channel *ch;
+	u8 qps_per_poller;
+
+	list_for_each_entry(ch, &vsi->ch_list, list) {
+		struct ice_q_vector *ch_q_vector = NULL;
+		struct ice_vsi *ch_vsi = ch->ch_vsi;
+		u16 num_qps = ch_vsi->num_txq;
+		int i;
+
+		ch_vsi->num_xdp_txq = num_qps;
+
+		qps_per_poller = ch->qps_per_poller;
+		if (qps_per_poller <= 1)
+			continue;
+
+		for (i = 0; i < num_qps; i++) {
+			struct ice_ring *xdp_ring;
+
+			xdp_ring = vsi->xdp_rings[ch->base_q + i];
+			if (!xdp_ring || !xdp_ring->q_vector)
+				continue;
+
+			if (!ch_q_vector || (i % qps_per_poller == 0)) {
+				ch_q_vector = xdp_ring->q_vector;
+				continue;
+			}
+
+			xdp_ring->q_vector = ch_q_vector;
+			xdp_ring->next = ch_q_vector->tx.ring;
+			ch_q_vector->tx.ring = xdp_ring;
+		}
+	}
+}
+
+/**
+ * ice_ch_vsi_map_rings_to_vecs - map channel VSIs q_vectors to
+ * tx/rx rings based on the qps_per_poller settings.
+ * @vsi: VSI to operate on
+ */
+static void ice_ch_vsi_map_rings_to_vecs(struct ice_vsi *vsi)
+{
+	struct ice_channel *ch;
+	u8 qps_per_poller;
+
+	list_for_each_entry(ch, &vsi->ch_list, list) {
+		struct ice_q_vector *ch_q_vector = NULL;
+		struct ice_vsi *ch_vsi;
+		u16 num_qps, base_q;
+		int i;
+
+		ch_vsi = ch->ch_vsi;
+		num_qps = ch_vsi->num_rxq;
+
+		qps_per_poller = ch->qps_per_poller;
+		if (qps_per_poller <= 1)
+			continue;
+
+		base_q = ch->base_q;
+
+		for (i = 0; i < num_qps; i++) {
+			struct ice_ring *tx_ring, *rx_ring;
+			struct ice_q_vector *q_vector;
+
+			tx_ring = vsi->tx_rings[base_q + i];
+			rx_ring = vsi->rx_rings[base_q + i];
+			if (!tx_ring || !tx_ring->q_vector || !rx_ring)
+				continue;
+
+			if (!ch_q_vector || (i % qps_per_poller == 0)) {
+				ch_q_vector = tx_ring->q_vector;
+				continue;
+			}
+
+			q_vector = tx_ring->q_vector;
+			q_vector->num_ring_tx = 0;
+			q_vector->num_ring_rx = 0;
+			q_vector->tx.ring = NULL;
+			q_vector->rx.ring = NULL;
+
+			tx_ring->q_vector = ch_q_vector;
+			tx_ring->next = ch_q_vector->tx.ring;
+			ch_q_vector->tx.ring = tx_ring;
+			ch_q_vector->num_ring_tx++;
+
+			rx_ring->q_vector = ch_q_vector;
+			rx_ring->next = ch_q_vector->rx.ring;
+			ch_q_vector->rx.ring = rx_ring;
+			ch_q_vector->num_ring_rx++;
+		}
+	}
+}
+
+/**
+ * ice_ch_vsi_update_ring_vecs - update channel VSIs q_vectors to
+ * ring mappings.
+ * @vsi: VSI to operate on
+ */
+void ice_ch_vsi_update_ring_vecs(struct ice_vsi *vsi)
+{
+	rtnl_lock();
+	ice_dis_vsi(vsi, true);
+	ice_vsi_map_rings_to_vectors(vsi);
+	ice_ch_vsi_map_rings_to_vecs(vsi);
+	ice_ena_vsi(vsi, true);
+	rtnl_unlock();
+}
+
+/**
  * ice_prepare_xdp_rings - Allocate, configure and setup Tx rings for XDP
  * @vsi: VSI to bring up Tx rings used by XDP
  * @prog: bpf program that will be assigned to VSI
@@ -3592,6 +3772,9 @@ int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog)
 		xdp_rings_rem -= xdp_rings_per_v;
 	}
 
+	if (vsi->all_numtc)
+		ice_ch_vsi_map_xdp_rings_to_vecs(vsi);
+
 	/* omit the scheduler update if in reset path; XDP queues will be
 	 * taken into account at the end of ice_vsi_rebuild, where
 	 * ice_cfg_vsi_lan is being called
@@ -3648,7 +3831,7 @@ int ice_destroy_xdp_rings(struct ice_vsi *vsi)
 	int i, v_idx;
 
 	/* q_vectors are freed in reset path so there's no point in detaching
-	 * rings; in case of rebuild being triggered not from reset reset bits
+	 * rings; in case of rebuild being triggered not from reset bits
 	 * in pf->state won't be set, so additionally check first q_vector
 	 * against NULL
 	 */
@@ -3794,6 +3977,22 @@ static int ice_xdp_safe_mode(struct net_device __always_unused *dev,
 {
 	NL_SET_ERR_MSG_MOD(xdp->extack,
 			   "Please provide working DDP firmware package in order to use XDP. Refer to Documentation/networking/device_drivers/ethernet/intel/ice.rst");
+
+#ifdef HAVE_XDP_QUERY_PROG
+	/* In safe mode, when running kernel that still has XDP_QUERY command
+	 * implemented, driver has to return *success* even if XDP is not
+	 * supported in safe mode. This is because with ndo_bpf implemented
+	 * (to present proper extack message) driver can be occasionally
+	 * called with XDP_QUERY action and would need to return correct values.
+	 */
+	if (xdp->command == XDP_QUERY_PROG) {
+#ifndef NO_NETDEV_BPF_PROG_ATTACHED
+		xdp->prog_attached = false;
+#endif /* !NO_NETDEV_BPF_PROG_ATTACHED */
+		xdp->prog_id = 0;
+		return 0;
+	}
+#endif /* HAVE_XDP_QUERY_PROG */
 	return -EOPNOTSUPP;
 }
 
@@ -4191,6 +4390,9 @@ static void ice_set_ops(struct net_device *netdev)
 		return;
 	}
 	netdev->netdev_ops = &ice_netdev_ops;
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+	netdev->udp_tunnel_nic_info = &pf->udp_tunnel_nic;
+#endif
 	ice_set_ethtool_ops(netdev);
 }
 
@@ -4290,16 +4492,15 @@ static void ice_set_netdev_features(struct net_device *netdev)
 	 * type turns on the other has to be turned off. This is enforced by the
 	 * ice_fix_features() ndo callback.
 	 */
-	if (is_dvm_ena) {
+	if (is_dvm_ena)
 		netdev->hw_features |= NETIF_F_HW_VLAN_STAG_RX |
 			NETIF_F_HW_VLAN_STAG_TX;
-	}
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	/* Enable macvlan offloads */
 	if (test_bit(ICE_FLAG_VMDQ_ENA, pf->flags))
 		netdev->hw_features |= NETIF_F_HW_L2FW_DOFFLOAD;
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 }
 
 /**
@@ -4310,21 +4511,27 @@ static void ice_set_netdev_features(struct net_device *netdev)
  */
 static int ice_cfg_netdev(struct ice_vsi *vsi)
 {
+	int alloc_txq = vsi->alloc_txq;
+	int alloc_rxq = vsi->alloc_rxq;
 	struct ice_netdev_priv *np;
 	struct net_device *netdev;
 	u8 mac_addr[ETH_ALEN];
 
-#ifdef HAVE_NETDEV_SB_DEV
+	if (vsi->type == ICE_VSI_PF) {
+		alloc_txq = vsi->back->max_adq_qps;
+		alloc_rxq = vsi->back->max_adq_qps;
+	}
+
+#ifdef HAVE_NDO_DFWD_OPS
 	/* Inform Kernel beforehand about max number of MACVLAN queues
 	 * supported.
 	 */
 	netdev = alloc_etherdev_mqs(sizeof(*np),
-				    ICE_MAX_MACVLANS + vsi->alloc_txq,
-				    ICE_MAX_MACVLANS + vsi->alloc_rxq);
-#else /* !HAVE_NETDEV_SB_DEV */
-	netdev = alloc_etherdev_mqs(sizeof(*np), vsi->alloc_txq,
-				    vsi->alloc_rxq);
-#endif /* !HAVE_NETDEV_SB_DEV */
+				    ICE_MAX_MACVLANS + alloc_txq,
+				    ICE_MAX_MACVLANS + alloc_rxq);
+#else /* !HAVE_NDO_DFWD_OPS */
+	netdev = alloc_etherdev_mqs(sizeof(*np), alloc_txq, alloc_rxq);
+#endif /* !HAVE_NDO_DFWD_OPS */
 	if (!netdev)
 		return -ENOMEM;
 
@@ -4340,7 +4547,7 @@ static int ice_cfg_netdev(struct ice_vsi *vsi)
 	if (vsi->type == ICE_VSI_PF) {
 		SET_NETDEV_DEV(netdev, ice_pf_to_dev(vsi->back));
 		ether_addr_copy(mac_addr, vsi->port_info->mac.perm_addr);
-		ether_addr_copy(netdev->dev_addr, mac_addr);
+		eth_hw_addr_set(netdev, mac_addr);
 		ether_addr_copy(netdev->perm_addr, mac_addr);
 	}
 
@@ -4402,7 +4609,7 @@ ice_chnl_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi,
 }
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 /**
  * ice_macvlan_vsi_setup - Set up a MACVLAN VSI
  * @pf: board private structure
@@ -4417,7 +4624,7 @@ ice_macvlan_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 	return ice_vsi_setup(pf, pi, ICE_VSI_OFFLOAD_MACVLAN, NULL,
 			     NULL, 0);
 }
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 /**
  * ice_ctrl_vsi_setup - Set up a control VSI
@@ -4500,6 +4707,14 @@ ice_vlan_rx_kill_vid(struct net_device *netdev, __be16 proto, u16 vid)
 	if (!vid)
 		return 0;
 
+	ret = ice_clear_vsi_promisc(&vsi->back->hw, vsi->idx,
+				    ICE_MCAST_VLAN_PROMISC_BITS, vid);
+
+	if (ret) {
+		netdev_err(netdev, "Error clearing Multicast promiscuous mode on VSI %i\n",
+			   vsi->vsi_num);
+		vsi->current_netdev_flags |= IFF_ALLMULTI;
+	}
 	vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
 
 	/* Make sure VLAN delete is successful before updating VLAN
@@ -4625,6 +4840,26 @@ static int ice_tc_indir_block_register(struct ice_vsi *vsi)
 #endif /* HAVE_TC_INDIR_BLOCK */
 
 /**
+ * ice_setup_default_rules - Setup default ICE rules
+ * @vsi: VSI struct to set up the default rules for
+ *
+ * Returns 0 on success, negative value on failure
+ */
+static int ice_setup_default_rules(struct ice_vsi *vsi)
+{
+	struct ice_pf *pf = vsi->back;
+	struct device *dev;
+
+	dev = ice_pf_to_dev(pf);
+
+	if (ice_init_mac_fltr(pf)) {
+		dev_err(dev, "error initializing MAC filter\n");
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/**
  * ice_setup_pf_sw - Setup the HW switch on startup or after reset
  * @pf: board private structure
  *
@@ -4632,7 +4867,6 @@ static int ice_tc_indir_block_register(struct ice_vsi *vsi)
  */
 static int ice_setup_pf_sw(struct ice_pf *pf)
 {
-	struct device *dev = ice_pf_to_dev(pf);
 	bool dvm = ice_is_dvm_ena(&pf->hw);
 	struct ice_vsi *vsi;
 	int status = 0;
@@ -4665,7 +4899,7 @@ static int ice_setup_pf_sw(struct ice_pf *pf)
 	/* init indirect block notifications */
 	status = ice_tc_indir_block_register(vsi);
 	if (status) {
-		dev_err(dev, "Failed to register netdev notifier\n");
+		dev_err(ice_pf_to_dev(pf), "Failed to register netdev notifier\n");
 		goto unroll_cfg_netdev;
 	}
 #endif /* HAVE_TC_INDIR_BLOCK */
@@ -4679,13 +4913,14 @@ static int ice_setup_pf_sw(struct ice_pf *pf)
 	 */
 	ice_napi_add(vsi);
 
-	status = ice_init_mac_fltr(pf);
+	status = ice_setup_default_rules(vsi);
+
 	if (status)
 		goto unroll_napi_add;
 
 	status = ice_set_cpu_rx_rmap(vsi);
 	if (status) {
-		ice_dev_err_errno(dev, status,
+		ice_dev_err_errno(ice_pf_to_dev(pf), status,
 				  "Failed to set CPU Rx map VSI %d",
 				  vsi->vsi_num);
 		status = -EINVAL;
@@ -4758,6 +4993,7 @@ u16 ice_get_avail_rxq_count(struct ice_pf *pf)
 static void ice_deinit_pf(struct ice_pf *pf)
 {
 	ice_service_task_stop(pf);
+	mutex_destroy(&pf->adev_mutex);
 	mutex_destroy(&pf->sw_mutex);
 	mutex_destroy(&pf->tc_mutex);
 	mutex_destroy(&pf->avail_q_mutex);
@@ -4771,6 +5007,25 @@ static void ice_deinit_pf(struct ice_pf *pf)
 	if (pf->avail_rxqs) {
 		bitmap_free(pf->avail_rxqs);
 		pf->avail_rxqs = NULL;
+	}
+}
+
+#define ICE_PF_PCI_BAR_0 0
+/**
+ * ice_set_siov_cap - enable S-IOV in PF flags
+ * @pf: PF struct
+ */
+static void ice_set_siov_cap(struct ice_pf *pf)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	u64 size;
+	int pos;
+
+	pos = pci_find_ext_capability(pf->pdev, PCI_EXT_CAP_ID_PASID);
+	size = pci_resource_len(pf->pdev, ICE_PF_PCI_BAR_0);
+	if (pos && size >= SZ_128M) {
+		set_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags);
+		dev_dbg(dev, "Device supports Scalable IOV\n");
 	}
 }
 
@@ -4803,6 +5058,7 @@ static void ice_set_pf_caps(struct ice_pf *pf)
 		pf->vfs.num_supported = min_t(int, func_caps->num_allocd_vfs,
 					      ICE_MAX_SRIOV_VFS);
 	}
+	ice_set_siov_cap(pf);
 	clear_bit(ICE_FLAG_RSS_ENA, pf->flags);
 	if (func_caps->common_cap.rss_table_size)
 		set_bit(ICE_FLAG_RSS_ENA, pf->flags);
@@ -4841,6 +5097,7 @@ static int ice_init_pf(struct ice_pf *pf)
 
 	mutex_init(&pf->sw_mutex);
 	mutex_init(&pf->tc_mutex);
+	mutex_init(&pf->adev_mutex);
 
 	INIT_HLIST_HEAD(&pf->aq_wait_list);
 	spin_lock_init(&pf->aq_wait_lock);
@@ -4928,20 +5185,13 @@ int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx)
 
 	/* set for the next time the netdev is started */
 	if (!netif_running(vsi->netdev)) {
-		mutex_lock(&pf->sw_mutex);
 		ice_vsi_rebuild(vsi, false);
-		mutex_unlock(&pf->sw_mutex);
-
 		dev_dbg(ice_pf_to_dev(pf), "Link is down, queue count change happens when link is brought up\n");
 		goto done;
 	}
 
 	ice_vsi_close(vsi);
-
-	mutex_lock(&pf->sw_mutex);
 	ice_vsi_rebuild(vsi, false);
-	mutex_unlock(&pf->sw_mutex);
-
 	ice_pf_dcb_recfg(pf);
 	ice_vsi_open(vsi);
 done:
@@ -5006,10 +5256,9 @@ static void ice_set_safe_mode_vlan_cfg(struct ice_pf *pf)
 /**
  * ice_log_pkg_init - log result of DDP package load
  * @hw: pointer to hardware info
- * @state: status of package load
+ * @state: state of package load
  */
-static void
-ice_log_pkg_init(struct ice_hw *hw, enum ice_ddp_state state)
+static void ice_log_pkg_init(struct ice_hw *hw, enum ice_ddp_state state)
 {
 	struct ice_pf *pf = hw->back;
 	struct device *dev;
@@ -5169,7 +5418,19 @@ static int ice_prepare_for_safe_mode(struct ice_pf *pf)
 	if (test_bit(ICE_FLAG_SRIOV_ENA, pf->flags))
 		ice_free_vfs(pf);
 
-#ifdef HAVE_NETDEV_SB_DEV
+	if (test_bit(ICE_FLAG_SIOV_ENA, pf->flags)) {
+		u32 reg;
+
+		ice_vdcm_deinit(pf->pdev);
+
+		/* disable PASID mailbox */
+		reg = rd32(&pf->hw, GL_MBX_PASID);
+		reg &= ~GL_MBX_PASID_PASID_MODE_M;
+		wr32(&pf->hw, GL_MBX_PASID, reg);
+		clear_bit(ICE_FLAG_SIOV_ENA, pf->flags);
+	}
+
+#ifdef HAVE_NDO_DFWD_OPS
 	if (test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags)) {
 		int v;
 
@@ -5180,7 +5441,7 @@ static int ice_prepare_for_safe_mode(struct ice_pf *pf)
 				ice_deinit_macvlan(vsi);
 		}
 	}
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 	ice_set_safe_mode_vlan_cfg(pf);
 
@@ -5371,11 +5632,11 @@ static char *ice_get_opt_fw_name(struct ice_pf *pf)
 /**
  * ice_request_fw - Device initialization routine
  * @pf: pointer to the PF instance
+ * @firmware: double pointer to firmware struct
  */
-static void ice_request_fw(struct ice_pf *pf)
+static int ice_request_fw(struct ice_pf *pf, const struct firmware **firmware)
 {
 	char *opt_fw_filename = ice_get_opt_fw_name(pf);
-	const struct firmware *firmware = NULL;
 	struct device *dev = ice_pf_to_dev(pf);
 	int err = 0;
 
@@ -5384,29 +5645,16 @@ static void ice_request_fw(struct ice_pf *pf)
 	 * and warning messages for other errors.
 	 */
 	if (opt_fw_filename) {
-		err = firmware_request_nowarn(&firmware, opt_fw_filename, dev);
-		if (err) {
-			kfree(opt_fw_filename);
-			goto dflt_pkg_load;
-		}
-
-		/* request for firmware was successful. Download to device */
-		ice_load_pkg(firmware, pf);
+		err = firmware_request_nowarn(firmware, opt_fw_filename, dev);
 		kfree(opt_fw_filename);
-		release_firmware(firmware);
-		return;
+		if (!err)
+			return err;
 	}
-
-dflt_pkg_load:
-	err = request_firmware(&firmware, ICE_DDP_PKG_FILE, dev);
-	if (err) {
+	err = request_firmware(firmware, ICE_DDP_PKG_FILE, dev);
+	if (err)
 		dev_err(dev, "The DDP package file was not found or could not be read. Entering Safe Mode\n");
-		return;
-	}
 
-	/* request for firmware was successful. Download to device */
-	ice_load_pkg(firmware, pf);
-	release_firmware(firmware);
+	return err;
 }
 
 /**
@@ -5481,7 +5729,7 @@ ice_config_health_events(struct ice_pf *pf, bool enable)
 			ice_aq_str(pf->hw.adminq.sq_last_status));
 }
 
-/*
+/**
  * ice_register_netdev - register netdev and devlink port
  * @pf: pointer to the PF struct
  */
@@ -5641,6 +5889,83 @@ ice_pf_fwlog_init(struct ice_pf *pf, struct ice_fwlog_user_input *user_input)
 }
 
 /**
+ * ice_init_tx_topology - performs Tx topology initialization
+ * @hw: pointer to the hardware structure
+ * @firmware: pointer to firmware structure
+ */
+static int
+ice_init_tx_topology(struct ice_hw *hw, const struct firmware *firmware)
+{
+	u8 num_tx_sched_layers = hw->num_tx_sched_layers;
+	struct ice_pf *pf = hw->back;
+	enum ice_status status;
+	struct device *dev;
+	u8 *buf_copy;
+	int err = 0;
+
+	dev = ice_pf_to_dev(pf);
+	/* ice_cfg_tx_topo buf argument is not a constant,
+	 * so we have to make a copy
+	 */
+	buf_copy = kmemdup(firmware->data, firmware->size, GFP_KERNEL);
+
+	status = ice_cfg_tx_topo(hw, buf_copy, firmware->size);
+	if (!status) {
+		if (hw->num_tx_sched_layers > num_tx_sched_layers)
+			dev_info(dev, "Transmit balancing feature disabled\n");
+		else
+			dev_info(dev, "Transmit balancing feature enabled\n");
+		/* if there was a change in topology ice_cfg_tx_topo triggered
+		 * a CORER and we need to re-init hw
+		 */
+		ice_deinit_hw(hw);
+		err = ice_init_hw(hw);
+		if (err)
+			err = -EIO;
+
+	} else if (status == ICE_ERR_CFG) {
+		dev_info(dev, "DDP package does not support transmit balancing feature - please update to the latest DDP package and try again\n");
+	}
+
+	kfree(buf_copy);
+
+	return err;
+}
+
+/**
+ * ice_init_ddp_config - DDP related configuration
+ * @hw: pointer to the hardware structure
+ * @pf: pointer to pf structure
+ *
+ * This function loads DDP file from the disk, then initializes Tx
+ * topology. At the end DDP package is loaded on the card.
+ */
+static int ice_init_ddp_config(struct ice_hw *hw, struct ice_pf *pf)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	const struct firmware *firmware = NULL;
+	int err;
+
+	err = ice_request_fw(pf, &firmware);
+	if (err)
+		return err;
+
+	err = ice_init_tx_topology(hw, firmware);
+	if (err) {
+		dev_err(dev, "ice_init_hw during change of tx topology failed: %d\n",
+			err);
+		release_firmware(firmware);
+		return err;
+	}
+
+	/* Download firmware to device */
+	ice_load_pkg(firmware, pf);
+	release_firmware(firmware);
+
+	return err;
+}
+
+/**
  * ice_probe - Device initialization routine
  * @pdev: PCI device information struct
  * @ent: entry in ice_pci_tbl
@@ -5680,8 +6005,6 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 
 	/* set up for high or low DMA */
 	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
-	if (err)
-		err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
 	if (err) {
 		dev_err(dev, "DMA configuration failed: 0x%x\n", err);
 		return err;
@@ -5745,15 +6068,13 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 		goto err_exit_unroll;
 	}
 
-	/* If devlink is available use command - 'devlink dev info' */
-
 	ice_init_feature_support(pf);
 
 	ice_debugfs_pf_init(pf);
 
-	ice_request_fw(pf);
+	ice_init_ddp_config(hw, pf);
 
-	/* if ice_request_fw fails, ICE_FLAG_ADV_FEATURES bit won't be
+	/* if ice_init_ddp_config fails, ICE_FLAG_ADV_FEATURES bit won't be
 	 * set in pf->state, which will cause ice_is_safe_mode to return
 	 * true
 	 */
@@ -5764,6 +6085,9 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 		 * device/function capabilities, override them.
 		 */
 		ice_set_safe_mode_caps(hw);
+		pf->max_qps = 1;
+	} else {
+		pf->max_qps = num_online_cpus();
 	}
 
 	ice_set_umac_shared(hw);
@@ -5797,6 +6121,10 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 #ifdef HAVE_DEVLINK_HEALTH
 	ice_devlink_init_mdd_reporter(pf);
 #endif /* HAVE_DEVLINK_HEALTH */
+
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+	ice_udp_tunnel_prepare(pf);
+#endif /* HAVE_UDP_TUNNEL_NIC_INFO */
 
 	pf->num_alloc_vsi = hw->func_caps.guar_num_vsi;
 	if (!pf->num_alloc_vsi) {
@@ -5993,7 +6321,7 @@ probe_done:
 
 		err = ice_init_aux_devices(pf);
 		if (err) {
-			dev_err(dev, "Failed to initialize aux devs: 0x%x\n",
+			dev_err(dev, "Failed to initialize aux devs: %d\n",
 				err);
 			err = -EIO;
 			goto err_init_aux_unroll;
@@ -6001,6 +6329,9 @@ probe_done:
 	} else {
 		dev_warn(dev, "Aux drivers are not supported on this device\n");
 	}
+
+	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags))
+		ice_initialize_siov_res(pf);
 
 #ifdef HAVE_DEVLINK_NOTIFY_REGISTER
 	ice_devlink_register(pf);
@@ -6016,18 +6347,22 @@ err_init_aux_unroll:
 err_devlink_reg_param:
 	ice_devlink_unregister_params(pf);
 err_netdev_reg:
+	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
+		ice_ptp_release(pf);
 err_send_version_unroll:
 	ice_vsi_release_all(pf);
 err_alloc_sw_unroll:
 	set_bit(ICE_SERVICE_DIS, pf->state);
 	set_bit(ICE_DOWN, pf->state);
 	devm_kfree(dev, pf->first_sw);
+	pf->first_sw = NULL;
 err_msix_misc_unroll:
 	ice_free_irq_msix_misc(pf);
 err_init_interrupt_unroll:
 	ice_clear_interrupt_scheme(pf);
 err_init_vsi_unroll:
 	devm_kfree(dev, pf->vsi);
+	pf->vsi = NULL;
 err_init_pf_unroll:
 	ice_deinit_pf(pf);
 #ifdef HAVE_DEVLINK_HEALTH
@@ -6035,6 +6370,7 @@ err_init_pf_unroll:
 #endif /* HAVE_DEVLINK_HEALTH */
 	ice_devlink_destroy_regions(pf);
 	ice_deinit_hw(hw);
+	hw->hw_addr = NULL;
 err_exit_unroll:
 	ice_debugfs_pf_exit(pf);
 err_rec_mode:
@@ -6116,11 +6452,13 @@ static void ice_remove(struct pci_dev *pdev)
 {
 	struct ice_pf *pf = pci_get_drvdata(pdev);
 	struct device *dev = &pf->pdev->dev;
+	struct ice_hw *hw;
 	int i;
 
 	if (!pf)
 		return;
 
+	hw = &pf->hw;
 	/* ICE_PREPPED_RECOVERY_MODE is set when the up and running
 	 * driver transitions to recovery mode. If this is not set
 	 * it means that the driver went into recovery mode on load.
@@ -6154,6 +6492,17 @@ static void ice_remove(struct pci_dev *pdev)
 		set_bit(ICE_VF_RESETS_DISABLED, pf->state);
 		ice_free_vfs(pf);
 	}
+	if (test_bit(ICE_FLAG_SIOV_ENA, pf->flags)) {
+		u32 val;
+
+		ice_vdcm_deinit(pf->pdev);
+
+		/* disable PASID mailbox */
+		val = rd32(hw, GL_MBX_PASID);
+		val &= ~GL_MBX_PASID_PASID_MODE_M;
+		wr32(hw, GL_MBX_PASID, val);
+		clear_bit(ICE_FLAG_SIOV_ENA, pf->flags);
+	}
 	ice_unplug_aux_devs(pf);
 	ice_for_each_aux(pf, NULL, ice_unroll_cdev_info);
 	devm_kfree(dev, pf->cdev_infos);
@@ -6166,7 +6515,7 @@ static void ice_remove(struct pci_dev *pdev)
 
 	if (test_bit(ICE_FLAG_FD_ENA, pf->flags))
 		ice_deinit_acl(pf);
-	mutex_destroy(&(&pf->hw)->fdir_fltr_lock);
+	mutex_destroy(&hw->fdir_fltr_lock);
 #ifdef HAVE_NETDEV_UPPER_INFO
 	ice_deinit_lag(pf);
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -6191,9 +6540,9 @@ static void ice_remove(struct pci_dev *pdev)
 	ice_devlink_destroy_mdd_reporter(pf);
 #endif /* HAVE_DEVLINK_HEALTH */
 	ice_devlink_destroy_regions(pf);
-	if (ice_fwlog_unregister(&pf->hw))
+	if (ice_fwlog_unregister(hw))
 		dev_dbg(&pdev->dev, "failed to unregister from FW logging\n");
-	ice_deinit_hw(&pf->hw);
+	ice_deinit_hw(hw);
 #ifndef HAVE_DEVLINK_NOTIFY_REGISTER
 	ice_devlink_unregister(pf);
 #endif /* !HAVE_DEVLINK_NOTIFY_REGISTER */
@@ -6202,7 +6551,7 @@ static void ice_remove(struct pci_dev *pdev)
 	 * do it via ice_schedule_reset() since there is no need to rebuild
 	 * and the service task is already stopped.
 	 */
-	ice_reset(&pf->hw, ICE_RESET_PFR);
+	ice_reset(hw, ICE_RESET_PFR);
 	pci_wait_for_pending_transaction(pdev);
 	ice_clear_interrupt_scheme(pf);
 	pci_disable_pcie_error_reporting(pdev);
@@ -6368,6 +6717,7 @@ static int __maybe_unused ice_suspend(struct device *dev)
 			continue;
 		ice_vsi_free_q_vectors(pf->vsi[v]);
 	}
+	ice_free_cpu_rx_rmap(ice_get_main_vsi(pf));
 	ice_clear_interrupt_scheme(pf);
 
 	pci_save_state(pdev);
@@ -6618,6 +6968,10 @@ static const struct pci_device_id ice_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E823L_10G_BASE_T), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E823L_1GBE), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E823L_QSFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E825C_BACKPLANE), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E825C_QSFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E825C_SFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E825C_SGMII), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E822_SI_DFLT), 0 },
 	/* required last entry */
 	{ 0, }
@@ -6761,8 +7115,7 @@ static int ice_set_mac_address(struct net_device *netdev, void *pi)
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 	if (ice_chnl_dmac_fltr_cnt(pf)) {
-		netdev_err(netdev,
-			   "can't set mac %pM. Device has tc-flower filters, delete all of them and try again\n",
+		netdev_err(netdev, "can't set mac %pM. Device has tc-flower filters, delete all of them and try again\n",
 			   mac);
 		return -EAGAIN;
 	}
@@ -6771,7 +7124,7 @@ static int ice_set_mac_address(struct net_device *netdev, void *pi)
 	netif_addr_lock_bh(netdev);
 	ether_addr_copy(old_mac, netdev->dev_addr);
 	/* change the netdev's MAC address */
-	ether_addr_copy(netdev->dev_addr, mac);
+	eth_hw_addr_set(netdev, mac);
 	netif_addr_unlock_bh(netdev);
 
 	/* Clean up old MAC filter. Not an error if old filter doesn't exist */
@@ -6783,23 +7136,25 @@ static int ice_set_mac_address(struct net_device *netdev, void *pi)
 
 	/* Add filter for new MAC. If filter exists, return success */
 	status = ice_fltr_add_mac(vsi, mac, ICE_FWD_TO_VSI);
-	if (status == ICE_ERR_ALREADY_EXISTS)
+	if (status == ICE_ERR_ALREADY_EXISTS) {
 		/* Although this MAC filter is already present in hardware it's
 		 * possible in some cases (e.g. bonding) that dev_addr was
 		 * modified outside of the driver and needs to be restored back
 		 * to this value.
 		 */
 		netdev_dbg(netdev, "filter for MAC %pM already exists\n", mac);
-	else if (status)
+		return 0;
+	} else if (status) {
 		/* error if the new filter addition failed */
 		err = -EADDRNOTAVAIL;
+	}
 
 err_update_filters:
 	if (err) {
 		netdev_err(netdev, "can't set MAC %pM. filter update failed\n",
 			   mac);
 		netif_addr_lock_bh(netdev);
-		ether_addr_copy(netdev->dev_addr, old_mac);
+		eth_hw_addr_set(netdev, old_mac);
 		netif_addr_unlock_bh(netdev);
 		return err;
 	}
@@ -6975,7 +7330,7 @@ ice_fdb_del(struct ndmsg *ndm, __always_unused struct nlattr *tb[],
 	return err;
 }
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 /**
  * ice_vsi_cfg_netdev_tc0 - Setup the netdev TC 0 configuration
  * @vsi: the VSI being configured
@@ -7060,6 +7415,7 @@ ice_fwd_add_macvlan(struct net_device *netdev, struct net_device *vdev)
 	pf->num_macvlan++;
 	offset = parent_vsi->alloc_txq + avail_id;
 
+#ifdef HAVE_NETDEV_SB_DEV
 	ret = netdev_set_sb_channel(vdev, avail_id + 1);
 	if (ret) {
 		netdev_err(netdev, "Error setting netdev_set_sb_channel %d\n",
@@ -7077,6 +7433,7 @@ ice_fwd_add_macvlan(struct net_device *netdev, struct net_device *vdev)
 			   ret);
 		goto bind_sb_channel_err;
 	}
+#endif /* HAVE_NETDEV_SB_DEV */
 
 	vsi->netdev = vdev;
 	/* Set MACVLAN ring in root device Tx rings */
@@ -7125,10 +7482,12 @@ add_mac_err:
 vsi_open_err:
 	ice_napi_del(vsi);
 	vsi->netdev = NULL;
+#ifdef HAVE_NETDEV_SB_DEV
 	netdev_unbind_sb_channel(netdev, vdev);
 bind_sb_channel_err:
 	netdev_set_sb_channel(vdev, 0);
 set_sb_channel_err:
+#endif /* HAVE_NETDEV_SB_DEV */
 	pf->num_macvlan--;
 	ice_vsi_release(vsi);
 	return ERR_PTR(ret);
@@ -7147,8 +7506,10 @@ static void ice_fwd_del_macvlan(struct net_device *netdev, void *accel_priv)
 	struct ice_pf *pf = parent_vsi->back;
 	struct net_device *vdev = mv->vdev;
 
+#ifdef HAVE_NETDEV_SB_DEV
 	netdev_unbind_sb_channel(netdev, vdev);
 	netdev_set_sb_channel(vdev, 0);
+#endif /* HAVE_NETDEV_SB_DEV */
 
 	ice_vsi_release(mv->vsi);
 	parent_vsi->tx_rings[parent_vsi->num_txq + mv->id] = NULL;
@@ -7303,17 +7664,23 @@ static void ice_deinit_macvlan(struct ice_vsi *vsi)
  */
 static void ice_vsi_replay_macvlan(struct ice_pf *pf)
 {
+#ifdef HAVE_NETDEV_SB_DEV
 	struct device *dev = ice_pf_to_dev(pf);
+#endif /* HAVE_NETDEV_SB_DEV */
 	struct ice_macvlan *mv, *mv_temp;
 
 	list_for_each_entry_safe(mv, mv_temp, &pf->macvlan_list, list) {
 		struct ice_vsi *vsi = mv->parent_vsi;
 		int offset = vsi->alloc_txq + mv->id;
-		int ret = 0, i;
+#ifdef HAVE_NETDEV_SB_DEV
+		int ret;
+#endif /* HAVE_NETDEV_SB_DEV */
+		int i;
 
 		ice_for_each_txq(mv->vsi, i)
 			vsi->tx_rings[offset + i] = mv->vsi->tx_rings[i];
 
+#ifdef HAVE_NETDEV_SB_DEV
 		ret = netdev_set_sb_channel(mv->vdev, mv->id + 1);
 		if (ret) {
 			dev_dbg(dev, "Error setting netdev_set_sb_channel %d\n",
@@ -7340,9 +7707,10 @@ static void ice_vsi_replay_macvlan(struct ice_pf *pf)
 			ice_fwd_del_macvlan(mv->parent_vsi->netdev, mv);
 			continue;
 		}
+#endif /* HAVE_NETDEV_SB_DEV */
 	}
 }
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 #define NETIF_VLAN_OFFLOAD_FEATURES	(NETIF_F_HW_VLAN_CTAG_RX | \
 					 NETIF_F_HW_VLAN_CTAG_TX | \
@@ -7404,29 +7772,28 @@ ice_fix_features(struct net_device *netdev, netdev_features_t features)
 	req_ctag = req_vlan_fltr & NETIF_F_HW_VLAN_CTAG_FILTER;
 	req_stag = req_vlan_fltr & NETIF_F_HW_VLAN_STAG_FILTER;
 
-	if (req_vlan_fltr == cur_vlan_fltr)
-		return features;
+	if (req_vlan_fltr != cur_vlan_fltr) {
+		if (ice_is_dvm_ena(&np->vsi->back->hw)) {
+			if (req_ctag && req_stag) {
+				features |= NETIF_VLAN_FILTERING_FEATURES;
+			} else if (!req_ctag && !req_stag) {
+				features &= ~NETIF_VLAN_FILTERING_FEATURES;
+			} else if ((!cur_ctag && req_ctag && !cur_stag) ||
+					(!cur_stag && req_stag && !cur_ctag)) {
+				features |= NETIF_VLAN_FILTERING_FEATURES;
+				netdev_warn(netdev,  "802.1Q and 802.1ad VLAN filtering must be either both on or both off.  VLAN filtering has been enabled for both types.\n");
+			} else if ((cur_ctag && !req_ctag && cur_stag) ||
+					(cur_stag && !req_stag && cur_ctag)) {
+				features &= ~NETIF_VLAN_FILTERING_FEATURES;
+				netdev_warn(netdev,  "802.1Q and 802.1ad VLAN filtering must be either both on or both off.  VLAN filtering has been disabled for both types.\n");
+			}
+		} else {
+			if (req_vlan_fltr & NETIF_F_HW_VLAN_STAG_FILTER)
+				netdev_warn(netdev, "cannot support requested 802.1ad filtering setting in SVM mode\n");
 
-	if (ice_is_dvm_ena(&np->vsi->back->hw)) {
-		if (req_ctag && req_stag) {
-			features |= NETIF_VLAN_FILTERING_FEATURES;
-		} else if (!req_ctag && !req_stag) {
-			features &= ~NETIF_VLAN_FILTERING_FEATURES;
-		} else if ((!cur_ctag && req_ctag && !cur_stag) ||
-				(!cur_stag && req_stag && !cur_ctag)) {
-			features |= NETIF_VLAN_FILTERING_FEATURES;
-			netdev_warn(netdev,  "802.1Q and 802.1ad VLAN filtering must be either both on or both off.  VLAN filtering has been enabled for both types.\n");
-		} else if ((cur_ctag && !req_ctag && cur_stag) ||
-				(cur_stag && !req_stag && cur_ctag)) {
-			features &= ~NETIF_VLAN_FILTERING_FEATURES;
-			netdev_warn(netdev,  "802.1Q and 802.1ad VLAN filtering must be either both on or both off.  VLAN filtering has been disabled for both types.\n");
+			if (req_vlan_fltr & NETIF_F_HW_VLAN_CTAG_FILTER)
+				features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 		}
-	} else {
-		if (req_vlan_fltr & NETIF_F_HW_VLAN_STAG_FILTER)
-			netdev_warn(netdev, "cannot support requested 802.1ad filtering setting in SVM mode\n");
-
-		if (req_vlan_fltr & NETIF_F_HW_VLAN_CTAG_FILTER)
-			features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 	}
 
 	if ((features & (NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_TX)) &&
@@ -7584,7 +7951,7 @@ ice_set_features(struct net_device *netdev, netdev_features_t features)
 	if (ret)
 		return ret;
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 
 	if ((features & NETIF_F_HW_L2FW_DOFFLOAD) &&
 	    !(netdev->features & NETIF_F_HW_L2FW_DOFFLOAD)) {
@@ -7595,7 +7962,7 @@ ice_set_features(struct net_device *netdev, netdev_features_t features)
 		 (netdev->features & NETIF_F_HW_L2FW_DOFFLOAD)) {
 		ice_deinit_macvlan(vsi);
 	}
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 	if ((features & NETIF_F_NTUPLE) &&
 	    !(netdev->features & NETIF_F_NTUPLE)) {
@@ -7640,11 +8007,7 @@ static int ice_vsi_vlan_setup(struct ice_vsi *vsi)
 	if (err)
 		return err;
 
-	err = ice_vsi_add_vlan_zero(vsi);
-	if (err)
-		return err;
-
-	return 0;
+	return ice_vsi_add_vlan_zero(vsi);
 }
 
 /**
@@ -7682,7 +8045,7 @@ int ice_vsi_cfg(struct ice_vsi *vsi)
  * The ice driver hardware works differently than the hardware that DIMLIB was
  * originally made for. ice hardware doesn't have packet count limits that
  * can trigger an interrupt, but it *does* have interrupt rate limit support,
- * which is hard-coded to limit to 250,000 ints/second.
+ * which is hard-coded to a limit of 250,000 ints/second.
  * If not using dynamic moderation, the INTRL value can be modified
  * by ethtool rx-usecs-high.
  */
@@ -7693,8 +8056,8 @@ struct ice_dim {
 	u16 itr;
 };
 
-/* Make a different profile for RX that doesn't allow quite so aggressive
- * moderation at the high end (it maxxes out at 126us or about 8k interrupts a
+/* Make a different profile for Rx that doesn't allow quite so aggressive
+ * moderation at the high end (it maxes out at 126us or about 8k interrupts a
  * second.
  */
 static const struct ice_dim rx_profile[] = {
@@ -7765,7 +8128,8 @@ static void ice_rx_dim_work(struct work_struct *work)
  * Set up interrupt moderation registers, with the intent to do the right thing
  * when called from reset or from probe, and whether or not dynamic moderation
  * is enabled or not. Take special care to write all the registers in both
- * dynamic mode or not in order to make sure hardware is in a known state.
+ * dynamic moderation mode or not in order to make sure hardware is in a known
+ * state.
  */
 static void ice_init_moderation(struct ice_q_vector *q_vector)
 {
@@ -8398,13 +8762,15 @@ int ice_vsi_setup_tx_rings(struct ice_vsi *vsi)
 	}
 
 	ice_for_each_txq(vsi, i) {
-		struct ice_ring *ring = vsi->tx_rings[i];
+		struct ice_ring *tx_ring = vsi->tx_rings[i];
 
-		if (!ring)
+		if (!tx_ring)
 			return -EINVAL;
+
 		if (vsi->netdev)
-			ring->netdev = vsi->netdev;
-		err = ice_setup_tx_ring(ring);
+			tx_ring->netdev = vsi->netdev;
+
+		err = ice_setup_tx_ring(tx_ring);
 		if (err)
 			break;
 	}
@@ -8533,7 +8899,7 @@ int ice_vsi_open(struct ice_vsi *vsi)
 		goto err_setup_rx;
 
 	if (vsi->type == ICE_VSI_PF) {
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 		unsigned int total_qs = vsi->num_txq;
 
 		if (test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags))
@@ -8544,7 +8910,7 @@ int ice_vsi_open(struct ice_vsi *vsi)
 #else
 		/* Notify the stack of the actual queue counts. */
 		err = netif_set_real_num_tx_queues(vsi->netdev, vsi->num_txq);
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 		if (err)
 			goto err_set_qs;
 
@@ -8750,18 +9116,16 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 		}
 	}
 
+	/* Restore necessary config for Scalable IOV */
+	if (test_bit(ICE_FLAG_SIOV_ENA, pf->flags))
+		ice_restore_pasid_config(pf, reset_type);
+
 	ret = ice_clear_pf_cfg(hw);
 	if (ret) {
 		dev_err(dev, "clear PF configuration failed %s\n",
 			ice_stat_str(ret));
 		goto err_init_ctrlq;
 	}
-
-	if (pf->first_sw->dflt_vsi_ena)
-		dev_info(dev, "Clearing default VSI, re-enable after reset completes\n");
-	/* clear the default VSI configuration if it exists */
-	pf->first_sw->dflt_vsi = NULL;
-	pf->first_sw->dflt_vsi_ena = false;
 
 	ice_clear_pxe_mode(hw);
 
@@ -8786,6 +9150,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 
 	dvm = ice_is_dvm_ena(hw);
 
+	pf->max_qps = num_online_cpus();
 	err = ice_aq_set_port_params(pf->hw.port_info, 0, false, false, dvm,
 				     NULL);
 	if (err)
@@ -8849,7 +9214,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	}
 	ice_cdev_info_update_vsi(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID),
 				 vsi);
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	if (test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags)) {
 		err = ice_vsi_rebuild_by_type(pf, ICE_VSI_OFFLOAD_MACVLAN);
 		if (err) {
@@ -8872,7 +9237,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 
 		ice_vsi_replay_macvlan(pf);
 	}
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 	err = ice_vsi_rebuild_by_type(pf, ICE_VSI_SWITCHDEV_CTRL);
 	if (err) {
@@ -9031,7 +9396,7 @@ static int ice_change_mtu(struct net_device *netdev, int new_mtu)
 	netdev_dbg(netdev, "changed MTU to %d\n", new_mtu);
 	set_bit(ICE_FLAG_MTU_CHANGED, pf->flags);
 
-	return err;
+	return 0;
 }
 
 /**
@@ -9609,6 +9974,7 @@ static void ice_tx_timeout(struct net_device *netdev)
 
 }
 
+#ifndef HAVE_UDP_TUNNEL_NIC_INFO
 /**
  * ice_udp_tunnel_add - Get notifications about UDP tunnel ports that come up
  * @netdev: This physical port's netdev
@@ -9616,6 +9982,11 @@ static void ice_tx_timeout(struct net_device *netdev)
  */
 static void __maybe_unused
 ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
+#else /* !HAVE_UDP_TUNNEL_NIC_INFO */
+static int
+ice_udp_tunnel_add(struct net_device *netdev, unsigned int table,
+		   unsigned int idx, struct udp_tunnel_info *ti)
+#endif /* HAVE_UDP_TUNNEL_NIC_INFO */
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_tnl_entry *tnl_entry;
@@ -9627,7 +9998,11 @@ ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
 
 	if (ice_dcf_is_udp_tunnel_capable(&pf->hw)) {
 		netdev_info(netdev, "Cannot config tunnel, the capability is used by DCF\n");
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+		return -EINVAL;
+#else
 		return;
+#endif /* HAVE_UDP_TUNNEL_NIC_INFO */
 	}
 
 	switch (ti->type) {
@@ -9639,14 +10014,22 @@ ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
 		break;
 	default:
 		netdev_err(netdev, "Unknown tunnel type\n");
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+		return -EINVAL;
+#else
 		return;
+#endif
 	}
 
 	status = ice_is_create_tunnel_possible(&pf->hw, tnl_type, port);
 	if (status == ICE_ERR_OUT_OF_RANGE) {
 		netdev_info(netdev, "Max tunneled UDP ports reached, port %d not added\n",
 			    port);
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+		return -EPERM;
+#else
 		return;
+#endif
 	}
 
 	spin_lock(&pf->tnl_lock);
@@ -9661,7 +10044,11 @@ ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
 					 sizeof(*tnl_entry), GFP_ATOMIC);
 		if (!tnl_entry) {
 			spin_unlock(&pf->tnl_lock);
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+			return -ENOMEM;
+#else
 			return;
+#endif
 		}
 		tnl_entry->type = tnl_type;
 		tnl_entry->port = port;
@@ -9674,8 +10061,12 @@ ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
 
 	/* kick the service_task so that it can create the tunnel */
 	ice_service_task_schedule(vsi->back);
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+	return 0;
+#endif
 }
 
+#ifndef HAVE_UDP_TUNNEL_NIC_INFO
 /**
  * ice_udp_tunnel_del - Get notifications about UDP tunnel ports that go away
  * @netdev: This physical port's netdev
@@ -9683,6 +10074,11 @@ ice_udp_tunnel_add(struct net_device *netdev, struct udp_tunnel_info *ti)
  */
 static void __maybe_unused
 ice_udp_tunnel_del(struct net_device *netdev, struct udp_tunnel_info *ti)
+#else /* !HAVE_UDP_TUNNEL_NIC_INFO */
+static int
+ice_udp_tunnel_del(struct net_device *netdev, unsigned int table,
+		   unsigned int idx, struct udp_tunnel_info *ti)
+#endif /* HAVE_UDP_TUNNEL_NIC_INFO */
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
@@ -9690,10 +10086,17 @@ ice_udp_tunnel_del(struct net_device *netdev, struct udp_tunnel_info *ti)
 	enum ice_tunnel_type tnl_type;
 	struct ice_tnl_entry *entry;
 	u16 port = ntohs(ti->port);
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+	int ret = 0;
+#endif
 
 	if (ice_dcf_is_udp_tunnel_capable(&pf->hw)) {
 		netdev_info(netdev, "Cannot config tunnel, the capability is used by DCF\n");
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+		return -EINVAL;
+#else
 		return;
+#endif
 	}
 
 	switch (ti->type) {
@@ -9705,7 +10108,11 @@ ice_udp_tunnel_del(struct net_device *netdev, struct udp_tunnel_info *ti)
 		break;
 	default:
 		netdev_err(netdev, "Unknown tunnel type\n");
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+		return -EINVAL;
+#else
 		return;
+#endif
 	}
 
 	spin_lock(&pf->tnl_lock);
@@ -9723,11 +10130,17 @@ ice_udp_tunnel_del(struct net_device *netdev, struct udp_tunnel_info *ti)
 	} else {
 		netdev_err(netdev, "Unable to find Tunnel, port %u, tnl_type %u\n",
 			   port, tnl_type);
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+		ret = -EINVAL;
+#endif
 	}
 	spin_unlock(&pf->tnl_lock);
 
 	/* kick the service_task so that it can destroy the tunnel */
 	ice_service_task_schedule(vsi->back);
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+	return ret;
+#endif
 }
 
 #if defined(HAVE_VXLAN_RX_OFFLOAD) && !defined(HAVE_UDP_ENC_RX_OFFLOAD)
@@ -9986,10 +10399,7 @@ ice_validate_mqprio_qopt(struct ice_vsi *vsi,
 		    (mqprio_qopt->qopt.offset[i] + qcount))
 			return -EINVAL;
 	}
-	if (vsi->num_rxq <
-	    (mqprio_qopt->qopt.offset[i] + mqprio_qopt->qopt.count[i]))
-		return -EINVAL;
-	if (vsi->num_txq <
+	if (pf->max_adq_qps <
 	    (mqprio_qopt->qopt.offset[i] + mqprio_qopt->qopt.count[i]))
 		return -EINVAL;
 
@@ -10030,7 +10440,6 @@ static int ice_add_vsi_to_fdir(struct ice_pf *pf, struct ice_vsi *vsi)
 	for (flow = 0; flow < ICE_FLTR_PTYPE_MAX; flow++) {
 		enum ice_block blk = ICE_BLK_FD;
 		struct ice_fd_hw_prof *prof;
-		enum ice_status status;
 		u64 entry_h;
 		int tun;
 
@@ -10040,6 +10449,7 @@ static int ice_add_vsi_to_fdir(struct ice_pf *pf, struct ice_vsi *vsi)
 
 		for (tun = 0; tun < ICE_FD_HW_SEG_MAX; tun++) {
 			enum ice_flow_priority prio;
+			enum ice_status status;
 			u64 prof_id;
 
 			/* add this VSI to FDir profile for this flow */
@@ -10326,10 +10736,9 @@ ice_setup_channel(struct ice_pf *pf, struct ice_vsi *vsi,
 
 /**
  * ice_set_bw_limit - setup BW limit for Tx traffic based on max_tx_rate
- * ice_set_min_bw_limit - setup minimum BW limit for Tx based on min_tx_rate
  * @vsi: VSI to be configured
  * @max_tx_rate: max Tx rate in Kbps to be configured as maximum BW limit
- * @min_tx_rate: min Tx rate in Kbps to be configured as mimimum BW limit
+ * @min_tx_rate: min Tx rate in Kbps to be configured as minimum BW limit
  */
 static int
 ice_set_bw_limit(struct ice_vsi *vsi, u64 max_tx_rate, u64 min_tx_rate)
@@ -10340,11 +10749,7 @@ ice_set_bw_limit(struct ice_vsi *vsi, u64 max_tx_rate, u64 min_tx_rate)
 	if (err)
 		return err;
 
-	err = ice_set_max_bw_limit(vsi, max_tx_rate);
-	if (err)
-		return err;
-
-	return 0;
+	return ice_set_max_bw_limit(vsi, max_tx_rate);
 }
 
 /**
@@ -10370,7 +10775,7 @@ static int ice_create_q_channel(struct ice_vsi *vsi, struct ice_channel *ch)
 	}
 
 	if (!vsi->cnt_q_avail || vsi->cnt_q_avail < ch->num_txq) {
-		dev_err(dev, "Error: cnt_q_avail (%u) less than num_queues %d\n",
+		dev_err(dev, "cnt_q_avail (%u) less than num_queues %d\n",
 			vsi->cnt_q_avail, ch->num_txq);
 		return -EINVAL;
 	}
@@ -10428,12 +10833,10 @@ static void ice_rem_all_chnl_fltrs(struct ice_pf *pf)
 		status = ice_rem_adv_rule_by_id(&pf->hw, &rule);
 		if (status) {
 			if (status == ICE_ERR_DOES_NOT_EXIST)
-				dev_dbg(ice_pf_to_dev(pf),
-					"TC flower filter (rule_id %u) does not exist\n",
+				dev_dbg(ice_pf_to_dev(pf), "TC flower filter (rule_id %u) does not exist\n",
 					rule.rule_id);
 			else
-				dev_err(ice_pf_to_dev(pf),
-					"failed to delete TC flower filter, status %d\n",
+				dev_err(ice_pf_to_dev(pf), "failed to delete TC flower filter, status %d\n",
 					status);
 		} else if (fltr->dest_vsi) {
 			/* update advanced switch filter count */
@@ -10518,7 +10921,7 @@ static void ice_remove_q_channels(struct ice_vsi *vsi,
 		/* Release FD resources for the channel VSI */
 		ice_fdir_rem_adq_chnl(&pf->hw, ch->ch_vsi->idx);
 
-		/* clear the VSI from schedular tree */
+		/* clear the VSI from scheduler tree */
 		ice_rm_vsi_lan_cfg(ch->ch_vsi->port_info, ch->ch_vsi->idx);
 
 		/* Delete VSI from FW */
@@ -10615,7 +11018,7 @@ static int ice_rebuild_channels(struct ice_pf *pf)
 		main_vsi->tc_map_vsi[tc_idx++] = vsi;
 	}
 
-	/* ADQ VSI(s) has been rebuild successfully, so setup
+	/* ADQ VSI(s) has been rebuilt successfully, so setup
 	 * channel for main VSI's Tx and Rx rings
 	 */
 	list_for_each_entry(ch, &main_vsi->ch_list, list) {
@@ -10628,7 +11031,7 @@ static int ice_rebuild_channels(struct ice_pf *pf)
 		/* reconfig channel resources */
 		ice_cfg_chnl_all_res(main_vsi, ch);
 
-		/* replay BW rate limit it it is non-zero */
+		/* replay BW rate limit if it is non-zero */
 		if (!ch->max_tx_rate && !ch->min_tx_rate)
 			continue;
 
@@ -10734,6 +11137,7 @@ static int ice_setup_tc_qdisc(struct net_device *netdev, void *type_data)
 	mode = mqprio_qopt->mode;
 	if (!hw) {
 		clear_bit(ICE_FLAG_TC_MQPRIO, pf->flags);
+		pf->max_qps = num_online_cpus();
 		vsi->ch_rss_size = 0;
 		memcpy(&vsi->mqprio_qopt, mqprio_qopt, sizeof(*mqprio_qopt));
 		goto config_tcf;
@@ -10761,6 +11165,7 @@ static int ice_setup_tc_qdisc(struct net_device *netdev, void *type_data)
 		}
 		memcpy(&vsi->mqprio_qopt, mqprio_qopt, sizeof(*mqprio_qopt));
 		set_bit(ICE_FLAG_TC_MQPRIO, pf->flags);
+		pf->max_qps = pf->max_adq_qps;
 		/* don't assume state of hw_tc_offload during driver load
 		 * and set the flag for TC flower filter if hw_tc_offload
 		 * already ON
@@ -10965,13 +11370,13 @@ ice_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 				}
 			}
 		}
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 		if (ice_is_offloaded_macvlan_ena(pf)) {
 			netdev_err(netdev, "TC_SETUP_QDISC_MQPRIO not supported when MACVLAN offloade support is ON. Turn off MACVLAN offload support thru ethtool and try again\n");
 			mutex_unlock(&pf->tc_mutex);
 			return -EOPNOTSUPP;
 		}
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 		if (ice_is_dcf_enabled(pf)) {
 			netdev_err(netdev, "TC_SETUP_QDISC_MQPRIO not supported when Device Control Functionality is enabled.\n");
 			mutex_unlock(&pf->tc_mutex);
@@ -11427,7 +11832,7 @@ ice_features_check(struct sk_buff *skb,
 		goto out_rm_features;
 
 	if (skb->encapsulation) {
-		/* this must work for vxlan frames AND IPIP/SIT frames, and in
+		/* this must work for VXLAN frames AND IPIP/SIT frames, and in
 		 * the case of IPIP frames, the transport header pointer is
 		 * after the inner header! So check to make sure that this
 		 * is a GRE or UDP_TUNNEL frame before doing that math.
@@ -11596,7 +12001,7 @@ static const struct net_device_ops ice_netdev_ops = {
 #endif
 #endif /* HAVE_GENEVE_RX_OFFLOAD */
 #endif /* HAVE_UDP_ENC_RX_OFFLOAD */
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 #ifdef HAVE_RHEL7_NET_DEVICE_OPS_EXT
 	.extended.ndo_dfwd_add_station = ice_fwd_add_macvlan,
 	.extended.ndo_dfwd_del_station = ice_fwd_del_macvlan,
@@ -11604,7 +12009,7 @@ static const struct net_device_ops ice_netdev_ops = {
 	.ndo_dfwd_add_station = ice_fwd_add_macvlan,
 	.ndo_dfwd_del_station = ice_fwd_del_macvlan,
 #endif /* HAVE_RHEL7_NET_DEVICE_OPS_EXT */
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_NDO_GET_DEVLINK_PORT
 	.ndo_get_devlink_port = ice_get_devlink_port,

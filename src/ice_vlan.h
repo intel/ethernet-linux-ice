@@ -14,4 +14,6 @@ struct ice_vlan {
 	enum ice_sw_fwd_act_type fwd_act;
 };
 
+#define ICE_VLAN(tpid, vid, prio, fwd_action)	\
+	((struct ice_vlan){ tpid, vid, prio, fwd_action })
 #endif /* _ICE_VLAN_H_ */

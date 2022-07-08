@@ -118,7 +118,7 @@ enum ice_e810t_cgu_dpll {
 	ICE_CGU_DPLL_MAX
 };
 
-enum ice_e810t_cgu_state {
+enum ice_cgu_state {
 	ICE_CGU_STATE_INVALID = 0,	/* state is not valid */
 	ICE_CGU_STATE_FREERUN,		/* clock is free-running */
 	ICE_CGU_STATE_LOCKED,		/* clock is locked to the reference,
@@ -135,27 +135,39 @@ enum ice_e810t_cgu_state {
 #define MAX_CGU_STATE_NAME_LEN 14
 struct ice_cgu_state_desc {
 	char name[MAX_CGU_STATE_NAME_LEN];
-	enum ice_e810t_cgu_state state;
+	enum ice_cgu_state state;
 };
 
 #define MAX_CGU_PIN_NAME_LEN 16
-struct ice_e810t_cgu_pin_desc {
+struct ice_cgu_pin_desc {
 	char name[MAX_CGU_PIN_NAME_LEN];
 	u8 index;
 };
 
-enum ice_e810t_cgu_pins {
-	REF0P,
-	REF0N,
-	REF1P,
-	REF1N,
-	REF2P,
-	REF2N,
-	REF3P,
-	REF3N,
-	REF4P,
-	REF4N,
-	NUM_E810T_CGU_PINS
+enum ice_zl_cgu_pins {
+	ZL_REF0P = 0,
+	ZL_REF0N,
+	ZL_REF1P,
+	ZL_REF1N,
+	ZL_REF2P,
+	ZL_REF2N,
+	ZL_REF3P,
+	ZL_REF3N,
+	ZL_REF4P,
+	ZL_REF4N,
+	NUM_ZL_CGU_PINS
+};
+
+enum ice_si_cgu_pins {
+	SI_REF0P = 0,
+	SI_REF0N,
+	SI_REF1P,
+	SI_REF1N,
+	SI_REF2P,
+	SI_REF2N,
+	SI_REF3,
+	SI_REF4,
+	NUM_SI_CGU_PINS
 };
 
 #define E810C_QSFP_C827_0_HANDLE 2
@@ -276,7 +288,6 @@ enum ice_status ice_phy_exit_bypass_e822(struct ice_hw *hw, u8 port);
 /* E810 family functions */
 enum ice_status ice_ptp_cgu_err_reporting_e810t(struct ice_hw *hw, bool enable);
 bool ice_is_phy_rclk_present_e810t(struct ice_hw *hw);
-bool ice_is_cgu_present_e810t(struct ice_hw *hw);
 bool ice_is_clock_mux_present_e810t(struct ice_hw *hw);
 enum ice_status ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx);
 bool ice_is_gps_present_e810t(struct ice_hw *hw);
@@ -287,13 +298,14 @@ enum ice_status
 ice_write_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 data);
 enum ice_status ice_read_sma_ctrl_e810t(struct ice_hw *hw, u8 *data);
 enum ice_status ice_write_sma_ctrl_e810t(struct ice_hw *hw, u8 data);
-bool ice_is_pca9575_present_e810t(struct ice_hw *hw);
+bool ice_is_pca9575_present(struct ice_hw *hw);
+bool ice_is_cgu_present(struct ice_hw *hw);
 const char *ice_cgu_state_to_name(u8 state);
-enum ice_e810t_cgu_state
-ice_get_zl_state_e810t(struct ice_hw *hw, u8 dpll_idx, u8 *pin,
-		       s64 *phase_offset,
-		       enum ice_e810t_cgu_state last_dpll_state);
+enum ice_cgu_state
+ice_get_cgu_state(struct ice_hw *hw, u8 dpll_idx, u8 *pin, s64 *phase_offset,
+		  enum ice_cgu_state last_dpll_state);
 const char *ice_zl_pin_idx_to_name_e810t(u8 pin);
+const char *ice_pin_idx_to_name_e823(struct ice_hw *hw, u8 pin);
 
 enum ice_status ice_ptp_init_phy_cfg(struct ice_hw *hw);
 
@@ -505,8 +517,8 @@ enum ice_status ice_ptp_init_phy_cfg(struct ice_hw *hw);
 #define INCVAL_HIGH_M			0xFF
 
 /* Timestamp block macros */
+#define TS_VALID			BIT(0)
 #define TS_LOW_M			0xFFFFFFFF
-#define TS_HIGH_M			0xFF
 #define TS_HIGH_S			32
 
 #define TS_PHY_LOW_M			0xFF
@@ -515,6 +527,16 @@ enum ice_status ice_ptp_init_phy_cfg(struct ice_hw *hw);
 
 #define BYTES_PER_IDX_ADDR_L_U		8
 #define BYTES_PER_IDX_ADDR_L		4
+
+/* Tx timestamp low latency read definitions */
+#define TS_LL_READ_RETRIES		200
+#define TS_LL_READ_TS			BIT(31)
+#define TS_LL_READ_TS_IDX_S		24
+#define TS_LL_READ_TS_IDX_M		ICE_M(0x3F, 0)
+#define TS_LL_READ_TS_IDX(__idx)	(TS_LL_READ_TS | \
+					 (((__idx) & TS_LL_READ_TS_IDX_M) << \
+					  TS_LL_READ_TS_IDX_S))
+#define TS_LL_READ_TS_HIGH_S		16
 
 /* Internal PHY timestamp address */
 #define TS_L(a, idx) ((a) + ((idx) * BYTES_PER_IDX_ADDR_L_U))

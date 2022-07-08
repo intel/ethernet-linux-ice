@@ -8,38 +8,35 @@
 #include "ice_fltr.h"
 #include "ice_dcb_lib.h"
 #include "ice_eswitch.h"
+#include "ice_virtchnl_allowlist.h"
 #include "ice_flex_pipe.h"
 #include "ice_vf_adq.h"
 #include "ice_tc_lib.h"
-#include "ice_virtchnl_allowlist.h"
 
 /**
- * ice_get_vf_vsi - get VF's VSI based on the stored index
- * @vf: VF used to get VSI
+ * ice_free_vf_entries - Free all VF entries from the hash table
+ * @pf: pointer to the PF structure
+ *
+ * Iterate over the VF hash table, removing and releasing all VF entries.
+ * Called during VF teardown or as cleanup during failed VF initialization.
  */
-struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf)
+static void ice_free_vf_entries(struct ice_pf *pf)
 {
-	return vf->pf->vsi[vf->lan_vsi_idx];
-}
+	struct ice_vfs *vfs = &pf->vfs;
+	struct hlist_node *tmp;
+	struct ice_vf *vf;
+	unsigned int bkt;
 
-/**
- * ice_vf_invalidate_vsi - invalidate vsi_idx/vsi_num to remove VSI access
- * @vf: VF to remove access to VSI for
- */
-void ice_vf_invalidate_vsi(struct ice_vf *vf)
-{
-	vf->lan_vsi_idx = ICE_NO_VSI;
-	vf->lan_vsi_num = ICE_NO_VSI;
-}
+	/* Remove all VFs from the hash table and release their main
+	 * reference. Once all references to the VF are dropped, ice_put_vf()
+	 * will call ice_sriov_free_vf which will remove the VF memory.
+	 */
+	lockdep_assert_held(&vfs->table_lock);
 
-/**
- * ice_vf_vsi_release - invalidate the VF's VSI after freeing it
- * @vf: invalidate this VF's VSI after freeing it
- */
-static void ice_vf_vsi_release(struct ice_vf *vf)
-{
-	ice_vsi_release(ice_get_vf_vsi(vf));
-	ice_vf_invalidate_vsi(vf);
+	hash_for_each_safe(vfs->table, bkt, tmp, vf, entry) {
+		hash_del_rcu(&vf->entry);
+		ice_put_vf(vf);
+	}
 }
 
 /**
@@ -98,6 +95,8 @@ static void ice_dis_vf_mappings(struct ice_vf *vf)
 
 	hw = &pf->hw;
 	vsi = ice_get_vf_vsi(vf);
+	if (WARN_ON(!vsi))
+		return;
 
 	dev = ice_pf_to_dev(pf);
 	wr32(hw, VPINT_ALLOC(vf->vf_id), 0);
@@ -155,44 +154,6 @@ static int ice_sriov_free_msix_res(struct ice_pf *pf)
 }
 
 /**
- * ice_set_vf_state_qs_dis - Set VF queues state to disabled
- * @vf: pointer to the VF structure
- */
-void ice_set_vf_state_qs_dis(struct ice_vf *vf)
-{
-	/* Clear Rx/Tx enabled queues flag */
-	bitmap_zero(vf->txq_ena, ICE_MAX_QS_PER_VF);
-	bitmap_zero(vf->rxq_ena, ICE_MAX_QS_PER_VF);
-	clear_bit(ICE_VF_STATE_QS_ENA, vf->vf_states);
-}
-
-/**
- * ice_free_vf_entries - Free all VF entries from the hash table
- * @pf: pointer to the PF structure
- *
- * Iterate over the VF hash table, removing and releasing all VF entries.
- * Called during VF teardown or as cleanup during failed VF initialization.
- */
-static void ice_free_vf_entries(struct ice_pf *pf)
-{
-	struct ice_vfs *vfs = &pf->vfs;
-	struct hlist_node *tmp;
-	struct ice_vf *vf;
-	unsigned int bkt;
-
-	/* Remove all VFs from the hash table and release their main
-	 * reference. Once all references to the VF are dropped, ice_put_vf()
-	 * will call ice_sriov_free_vf which will remove the VF memory.
-	 */
-	lockdep_assert_held(&pf->vfs.table_lock);
-
-	hash_for_each_safe(vfs->table, bkt, tmp, vf, entry) {
-		hash_del_rcu(&vf->entry);
-		ice_put_vf(vf);
-	}
-}
-
-/**
  * ice_free_vfs - Free all VFs
  * @pf: pointer to the PF structure
  */
@@ -204,10 +165,8 @@ void ice_free_vfs(struct ice_pf *pf)
 	struct ice_vf *vf;
 	unsigned int bkt;
 
-	if (hash_empty(vfs->table))
+	if (!ice_has_vfs(pf))
 		return;
-
-	set_bit(ICE_VF_DEINIT_IN_PROGRESS, pf->state);
 
 	while (test_and_set_bit(ICE_VF_DIS, pf->state))
 		usleep_range(1000, 2000);
@@ -221,7 +180,7 @@ void ice_free_vfs(struct ice_pf *pf)
 	else
 		dev_warn(dev, "VFs are assigned - not disabling SR-IOV\n");
 
-	mutex_lock(&pf->vfs.table_lock);
+	mutex_lock(&vfs->table_lock);
 
 	ice_eswitch_release(pf);
 
@@ -231,12 +190,12 @@ void ice_free_vfs(struct ice_pf *pf)
 		pf->dcf.vf = NULL;
 	}
 
-	/* Avoid wait time by stopping all VFs at the same time */
-	ice_for_each_vf(pf, bkt, vf)
-		ice_dis_vf_qs(vf);
-
 	ice_for_each_vf(pf, bkt, vf) {
 		u32 reg_idx, bit_idx;
+
+		mutex_lock(&vf->cfg_lock);
+
+		ice_dis_vf_qs(vf);
 
 		if (test_bit(ICE_VF_STATE_INIT, vf->vf_states)) {
 			u16 abs_vf_id = ice_abs_vf_id(hw, vf->vf_id);
@@ -262,12 +221,12 @@ void ice_free_vfs(struct ice_pf *pf)
 		}
 
 		/* clear malicious info since the VF is getting released */
-		if (ice_mbx_clear_malvf(&hw->mbx_snapshot, pf->vfs.malvfs,
+		if (ice_mbx_clear_malvf(&hw->mbx_snapshot, vfs->malvfs,
 					ICE_MAX_SRIOV_VFS, vf->vf_id))
 			dev_dbg(dev, "failed to clear malicious VF state for VF %u\n",
 				vf->vf_id);
 
-		mutex_destroy(&vf->cfg_lock);
+		mutex_unlock(&vf->cfg_lock);
 	}
 
 	if (ice_sriov_free_msix_res(pf))
@@ -276,10 +235,9 @@ void ice_free_vfs(struct ice_pf *pf)
 	vfs->num_qps_per = 0;
 	ice_free_vf_entries(pf);
 
-	mutex_unlock(&pf->vfs.table_lock);
+	mutex_unlock(&vfs->table_lock);
 
 	clear_bit(ICE_VF_DIS, pf->state);
-	clear_bit(ICE_VF_DEINIT_IN_PROGRESS, pf->state);
 	clear_bit(ICE_FLAG_SRIOV_ENA, pf->flags);
 }
 
@@ -392,6 +350,9 @@ static void ice_ena_vf_q_mappings(struct ice_vf *vf, u16 max_txq, u16 max_rxq)
 	struct ice_hw *hw = &vf->pf->hw;
 	u32 reg;
 
+	if (WARN_ON(!vsi))
+		return;
+
 	/* set regardless of mapping mode */
 	wr32(hw, VPLAN_TXQ_MAPENA(vf->vf_id), VPLAN_TXQ_MAPENA_TX_ENA_M);
 
@@ -437,6 +398,9 @@ static void ice_ena_vf_mappings(struct ice_vf *vf)
 {
 	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
 	u16 max_txq, max_rxq;
+
+	if (WARN_ON(!vsi))
+		return;
 
 	ice_ena_vf_msix_mappings(vf);
 
@@ -647,75 +611,6 @@ static int ice_set_per_vf_res(struct ice_pf *pf, u16 num_vfs)
 }
 
 /**
- * ice_sriov_clear_reset_trigger - enable VF to access hardware
- * @vf: VF to enabled hardware access for
- */
-static void ice_sriov_clear_reset_trigger(struct ice_vf *vf)
-{
-	struct ice_hw *hw = &vf->pf->hw;
-	u32 reg;
-
-	reg = rd32(hw, VPGEN_VFRTRIG(vf->vf_id));
-	reg &= ~VPGEN_VFRTRIG_VFSWR_M;
-	wr32(hw, VPGEN_VFRTRIG(vf->vf_id), reg);
-	ice_flush(hw);
-}
-
-/**
- * ice_sriov_vsi_rebuild - release and rebuild VF's VSI
- * @vf: VF to release and setup the VSI for
- *
- * This is only called when a single VF is being reset (i.e. VFR, VFLR, host VF
- * configuration change, etc.).
- */
-static int ice_sriov_vsi_rebuild(struct ice_vf *vf)
-{
-	struct ice_pf *pf = vf->pf;
-
-	ice_vf_vsi_release(vf);
-	if (!ice_vf_vsi_setup(vf)) {
-		dev_err(ice_pf_to_dev(pf),
-			"Failed to release and setup the VF%u's VSI\n",
-			vf->vf_id);
-		return -ENOMEM;
-	}
-
-	ice_vf_rebuild_adq_vsi_with_release(vf);
-
-	return 0;
-}
-
-/**
- * ice_vf_set_initialized - VF is ready for VIRTCHNL communication
- * @vf: VF to set in initialized state
- *
- * After this function the VF will be ready to receive/handle the
- * VIRTCHNL_OP_GET_VF_RESOURCES message
- */
-void ice_vf_set_initialized(struct ice_vf *vf)
-{
-	ice_set_vf_state_qs_dis(vf);
-	clear_bit(ICE_VF_STATE_MC_PROMISC, vf->vf_states);
-	clear_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states);
-	clear_bit(ICE_VF_STATE_DIS, vf->vf_states);
-	set_bit(ICE_VF_STATE_INIT, vf->vf_states);
-	memset(&vf->vlan_v2_caps, 0, sizeof(vf->vlan_v2_caps));
-}
-
-/**
- * ice_sriov_post_vsi_rebuild - tasks to do after the VF's VSI have been rebuilt
- * @vf: VF to perform tasks on
- */
-static void ice_sriov_post_vsi_rebuild(struct ice_vf *vf)
-{
-	ice_vf_rebuild_host_cfg(vf);
-	ice_vf_rebuild_adq_host_cfg(vf);
-	ice_vf_set_initialized(vf);
-	ice_ena_vf_mappings(vf);
-	wr32(&vf->pf->hw, VFGEN_RSTAT(vf->vf_id), VIRTCHNL_VFR_VFACTIVE);
-}
-
-/**
  * ice_init_vf_vsi_res - initialize/setup VF VSI resources
  * @vf: VF to initialize/setup the VSI for
  *
@@ -724,53 +619,19 @@ static void ice_sriov_post_vsi_rebuild(struct ice_vf *vf)
  */
 static int ice_init_vf_vsi_res(struct ice_vf *vf)
 {
-	struct ice_vsi_vlan_ops *vlan_ops;
 	struct ice_pf *pf = vf->pf;
-	u8 broadcast[ETH_ALEN];
-	enum ice_status status;
 	struct ice_vsi *vsi;
-	struct device *dev;
 	int err;
 
 	vf->first_vector_idx = ice_calc_vf_first_vector_idx(pf, vf);
 
-	dev = ice_pf_to_dev(pf);
 	vsi = ice_vf_vsi_setup(vf);
 	if (!vsi)
 		return -ENOMEM;
 
-	err = ice_vsi_add_vlan_zero(vsi);
-	if (err) {
-		dev_warn(dev, "Failed to add VLAN 0 filter for VF %d\n",
-			 vf->vf_id);
+	err = ice_vf_init_host_cfg(vf, vsi);
+	if (err)
 		goto release_vsi;
-	}
-
-	vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
-	err = vlan_ops->ena_rx_filtering(vsi);
-	if (err) {
-		dev_warn(dev, "Failed to enable Rx VLAN filtering for VF %d\n",
-			 vf->vf_id);
-		goto release_vsi;
-	}
-
-	eth_broadcast_addr(broadcast);
-	status = ice_fltr_add_mac(vsi, broadcast, ICE_FWD_TO_VSI);
-	if (status) {
-		dev_err(dev, "Failed to add broadcast MAC filter for VF %d, status %s\n",
-			vf->vf_id, ice_stat_str(status));
-		err = ice_status_to_errno(status);
-		goto release_vsi;
-	}
-
-	err = ice_vsi_apply_spoofchk(vsi, vf->spoofchk);
-	if (err) {
-		dev_warn(dev, "Failed to initialize spoofchk setting for VF %d\n",
-			 vf->vf_id);
-		goto release_vsi;
-	}
-
-	vf->num_mac = 1;
 
 	return 0;
 
@@ -786,12 +647,13 @@ release_vsi:
 static int ice_start_vfs(struct ice_pf *pf)
 {
 	struct ice_hw *hw = &pf->hw;
+	unsigned int bkt, it_cnt;
 	struct ice_vf *vf;
-	unsigned int bkt;
 	int retval;
 
 	lockdep_assert_held(&pf->vfs.table_lock);
 
+	it_cnt = 0;
 	ice_for_each_vf(pf, bkt, vf) {
 		vf->vf_ops->clear_reset_trigger(vf);
 
@@ -806,6 +668,7 @@ static int ice_start_vfs(struct ice_pf *pf)
 		set_bit(ICE_VF_STATE_INIT, vf->vf_states);
 		ice_ena_vf_mappings(vf);
 		wr32(hw, VFGEN_RSTAT(vf->vf_id), VIRTCHNL_VFR_VFACTIVE);
+		it_cnt++;
 	}
 
 	ice_flush(hw);
@@ -813,8 +676,12 @@ static int ice_start_vfs(struct ice_pf *pf)
 
 teardown:
 	ice_for_each_vf(pf, bkt, vf) {
+		if (it_cnt == 0)
+			break;
+
 		ice_dis_vf_mappings(vf);
 		ice_vf_vsi_release(vf);
+		it_cnt--;
 	}
 
 	return retval;
@@ -829,6 +696,8 @@ teardown:
  */
 static void ice_sriov_free_vf(struct ice_vf *vf)
 {
+	mutex_destroy(&vf->cfg_lock);
+
 	kfree_rcu(vf, rcu);
 }
 
@@ -917,6 +786,51 @@ static bool ice_sriov_poll_reset_status(struct ice_vf *vf)
 		usleep_range(10, 20);
 	}
 	return false;
+}
+
+/**
+ * ice_sriov_clear_reset_trigger - enable VF to access hardware
+ * @vf: VF to enabled hardware access for
+ */
+static void ice_sriov_clear_reset_trigger(struct ice_vf *vf)
+{
+	struct ice_hw *hw = &vf->pf->hw;
+	u32 reg;
+
+	reg = rd32(hw, VPGEN_VFRTRIG(vf->vf_id));
+	reg &= ~VPGEN_VFRTRIG_VFSWR_M;
+	wr32(hw, VPGEN_VFRTRIG(vf->vf_id), reg);
+	ice_flush(hw);
+}
+
+/**
+ * ice_sriov_create_vsi - Create a new VSI for a VF
+ * @vf: VF to create the VSI for
+ *
+ * This is called by ice_vf_recreate_vsi to create the new VSI after the old
+ * VSI has been released.
+ */
+static int ice_sriov_create_vsi(struct ice_vf *vf)
+{
+	struct ice_vsi *vsi;
+
+	vsi = ice_vf_vsi_setup(vf);
+	if (!vsi)
+		return -ENOMEM;
+
+	return 0;
+}
+
+/**
+ * ice_sriov_post_vsi_rebuild - tasks to do after the VF's VSI have been rebuilt
+ * @vf: VF to perform tasks on
+ */
+static void ice_sriov_post_vsi_rebuild(struct ice_vf *vf)
+{
+	ice_vf_rebuild_adq_host_cfg(vf);
+
+	ice_ena_vf_mappings(vf);
+	wr32(&vf->pf->hw, VFGEN_RSTAT(vf->vf_id), VIRTCHNL_VFR_VFACTIVE);
 }
 
 static struct ice_q_vector *ice_sriov_get_q_vector(struct ice_vf *vf,
@@ -1054,7 +968,8 @@ static const struct ice_vf_ops ice_sriov_vf_ops = {
 	.trigger_reset_register = ice_sriov_trigger_reset_register,
 	.poll_reset_status = ice_sriov_poll_reset_status,
 	.clear_reset_trigger = ice_sriov_clear_reset_trigger,
-	.vsi_rebuild = ice_sriov_vsi_rebuild,
+	.irq_close = NULL,
+	.create_vsi = ice_sriov_create_vsi,
 	.post_vsi_rebuild = ice_sriov_post_vsi_rebuild,
 	.get_q_vector = ice_sriov_get_q_vector,
 	.cfg_rdma_irq_map = ice_sriov_cfg_rdma_irq_map,
@@ -1082,7 +997,7 @@ static int ice_create_vf_entries(struct ice_pf *pf, u16 num_vfs)
 	u16 vf_id;
 	int err;
 
-	lockdep_assert_held(&pf->vfs.table_lock);
+	lockdep_assert_held(&vfs->table_lock);
 
 	for (vf_id = 0; vf_id < num_vfs; vf_id++) {
 		vf = kzalloc(sizeof(*vf), GFP_KERNEL);
@@ -1277,8 +1192,8 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 
 	if (!num_vfs) {
 		if (!pci_vfs_assigned(pdev)) {
-			ice_mbx_deinit_snapshot(&pf->hw);
 			ice_free_vfs(pf);
+			ice_mbx_deinit_snapshot(&pf->hw);
 #ifdef HAVE_NETDEV_UPPER_INFO
 			if (pf->lag)
 				ice_enable_lag(pf->lag);
@@ -1322,7 +1237,7 @@ void ice_process_vflr_event(struct ice_pf *pf)
 	u32 reg;
 
 	if (!test_and_clear_bit(ICE_VFLR_EVENT_PENDING, pf->state) ||
-	    hash_empty(pf->vfs.table))
+	    !ice_has_vfs(pf))
 		return;
 
 	mutex_lock(&pf->vfs.table_lock);
@@ -1335,7 +1250,7 @@ void ice_process_vflr_event(struct ice_pf *pf)
 		reg = rd32(hw, GLGEN_VFLRSTAT(reg_idx));
 		if (reg & BIT(bit_idx))
 			/* GLGEN_VFLRSTAT bit will be cleared in ice_reset_vf */
-			ice_reset_vf(vf, ICE_VF_RESET_VFLR);
+			ice_reset_vf(vf, ICE_VF_RESET_VFLR | ICE_VF_RESET_LOCK);
 	}
 	mutex_unlock(&pf->vfs.table_lock);
 }
@@ -1347,26 +1262,38 @@ void ice_process_vflr_event(struct ice_pf *pf)
  *
  * If no VF is found who owns the pfq then return NULL, otherwise return a
  * pointer to the VF who owns the pfq
+ *
+ * If this function returns non-NULL, it acquires a reference count of the VF
+ * structure. The caller is responsible for calling ice_put_vf() to drop this
+ * reference.
  */
 static struct ice_vf *ice_get_vf_from_pfq(struct ice_pf *pf, u16 pfq)
 {
 	struct ice_vf *vf;
 	unsigned int bkt;
 
-	mutex_lock(&pf->vfs.table_lock);
-	ice_for_each_vf(pf, bkt, vf) {
+	rcu_read_lock();
+	ice_for_each_vf_rcu(pf, bkt, vf) {
 		struct ice_vsi *vsi;
 		u16 rxq_idx;
 
 		vsi = ice_get_vf_vsi(vf);
+		if (!vsi)
+			continue;
 
 		ice_for_each_rxq(vsi, rxq_idx)
 			if (vsi->rxq_map[rxq_idx] == pfq) {
-				mutex_unlock(&pf->vfs.table_lock);
-				return vf;
+				struct ice_vf *found;
+
+				if (kref_get_unless_zero(&vf->refcnt))
+					found = vf;
+				else
+					found = NULL;
+				rcu_read_unlock();
+				return found;
 			}
 	}
-	mutex_unlock(&pf->vfs.table_lock);
+	rcu_read_unlock();
 
 	return NULL;
 }
@@ -1407,7 +1334,8 @@ ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event)
 	if (!vf)
 		return;
 
-	ice_reset_vf(vf, ICE_VF_RESET_NOTIFY);
+	ice_reset_vf(vf, ICE_VF_RESET_NOTIFY | ICE_VF_RESET_LOCK);
+	ice_put_vf(vf);
 }
 
 /**
@@ -1614,15 +1542,14 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted)
 	struct ice_vf *vf;
 	int ret;
 
-	if (ice_is_eswitch_mode_switchdev(pf)) {
-		dev_info(ice_pf_to_dev(pf),
-			 "Trusted VF is forbidden in switchdev mode\n");
-		return -EOPNOTSUPP;
-	}
-
 	vf = ice_get_vf_by_id(pf, vf_id);
 	if (!vf)
 		return -EINVAL;
+
+	if (ice_is_eswitch_mode_switchdev(pf)) {
+		dev_info(ice_pf_to_dev(pf), "Trusted VF is forbidden in switchdev mode\n");
+		return -EOPNOTSUPP;
+	}
 
 	ret = ice_check_vf_ready_for_cfg(vf);
 	if (ret)
@@ -1727,7 +1654,7 @@ out_put_vf:
 
 #ifdef HAVE_NDO_SET_VF_MIN_MAX_TX_RATE
 /**
- * ice_calc_all_vfs_min_tx_rate - calculate cummulative min Tx rate on all VFs
+ * ice_calc_all_vfs_min_tx_rate - calculate cumulative min Tx rate on all VFs
  * @pf: PF associated with VFs
  */
 static int ice_calc_all_vfs_min_tx_rate(struct ice_pf *pf)
@@ -1736,10 +1663,10 @@ static int ice_calc_all_vfs_min_tx_rate(struct ice_pf *pf)
 	unsigned int bkt;
 	int rate = 0;
 
-	mutex_lock(&pf->vfs.table_lock);
-	ice_for_each_vf(pf, bkt, vf)
+	rcu_read_lock();
+	ice_for_each_vf_rcu(pf, bkt, vf)
 		rate += vf->min_tx_rate;
-	mutex_unlock(&pf->vfs.table_lock);
+	rcu_read_unlock();
 
 	return rate;
 }
@@ -1759,8 +1686,15 @@ static int ice_calc_all_vfs_min_tx_rate(struct ice_pf *pf)
 static bool
 ice_min_tx_rate_oversubscribed(struct ice_vf *vf, int min_tx_rate)
 {
-	int link_speed_mbps = ice_get_link_speed_mbps(ice_get_vf_vsi(vf));
-	int all_vfs_min_tx_rate = ice_calc_all_vfs_min_tx_rate(vf->pf);
+	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+	int all_vfs_min_tx_rate;
+	int link_speed_mbps;
+
+	if (WARN_ON(!vsi))
+		return false;
+
+	link_speed_mbps = ice_get_link_speed_mbps(vsi);
+	all_vfs_min_tx_rate = ice_calc_all_vfs_min_tx_rate(vf->pf);
 
 	/* this VF's previous rate is being overwritten */
 	all_vfs_min_tx_rate -= vf->min_tx_rate;
@@ -1809,6 +1743,10 @@ int ice_set_vf_bw(struct net_device *netdev, int vf_id, int max_tx_rate)
 		goto out_put_vf;
 
 	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		ret = -EINVAL;
+		goto out_put_vf;
+	}
 
 #ifdef HAVE_NDO_SET_VF_MIN_MAX_TX_RATE
 	/* when max_tx_rate is zero that means no max Tx rate limiting, so only
@@ -2153,7 +2091,6 @@ ice_is_malicious_vf(struct ice_pf *pf, struct ice_rq_event_info *event,
 	if (!vf)
 		return false;
 
-	/* Check if VF is disabled. */
 	if (test_bit(ICE_VF_STATE_DIS, vf->vf_states))
 		goto out_put_vf;
 
@@ -2251,8 +2188,6 @@ static void ice_dump_vf(struct ice_vf *vf)
 #endif
 	dev_info(dev, "\tmax_tx_rate = %d\n", vf->max_tx_rate);
 	dev_info(dev, "\tmin_tx_rate = %d\n", vf->min_tx_rate);
-	dev_info(dev, "\tnum_inval_msgs = %lld\n", vf->num_inval_msgs);
-	dev_info(dev, "\tnum_valid_msgs = %lld\n", vf->num_valid_msgs);
 	dev_info(dev, "\tmdd_rx_events = %u\n", vf->mdd_rx_events.count);
 	dev_info(dev, "\tmdd_tx_events = %u\n", vf->mdd_tx_events.count);
 	dev_info(dev, "\tfirst_vector_idx = %d\n", vf->first_vector_idx);

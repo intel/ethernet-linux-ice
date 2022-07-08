@@ -26,11 +26,7 @@
 
 #define ICE_MAX_VF_RESET_TRIES		40
 #define ICE_MAX_VF_RESET_SLEEP_MS	20
-
-/* VF capabilities */
-enum ice_virtchnl_cap {
-	ICE_VIRTCHNL_VF_CAP_PRIVILEGE = 0,
-};
+#define ICE_MAX_VF_PORT			ICE_MAX_PORT_PER_PCI_DEV
 
 /**
  * ice_vf_chnl_dmac_fltr_cnt - number of dmac based channel filters
@@ -46,16 +42,11 @@ int
 ice_get_vf_port_info(struct ice_pf *pf, u16 vf_id,
 		     struct iidc_vf_port_info *vf_port_info);
 void ice_dump_all_vfs(struct ice_pf *pf);
-struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf);
 void ice_process_vflr_event(struct ice_pf *pf);
 int ice_sriov_configure(struct pci_dev *pdev, int num_vfs);
 int ice_set_vf_mac(struct net_device *netdev, int vf_id, u8 *mac);
 int
 ice_get_vf_cfg(struct net_device *netdev, int vf_id, struct ifla_vf_info *ivi);
-
-struct ice_vsi *ice_find_vsi_from_id(struct ice_pf *pf, u16 id);
-void ice_vf_invalidate_vsi(struct ice_vf *vf);
-void ice_vf_set_initialized(struct ice_vf *vf);
 void ice_free_vfs(struct ice_pf *pf);
 void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event);
 
@@ -95,35 +86,24 @@ int ice_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool ena);
 int ice_calc_vf_reg_idx(struct ice_vf *vf, struct ice_q_vector *q_vector,
 			u8 tc);
 
-void ice_set_vf_state_qs_dis(struct ice_vf *vf);
 #ifdef HAVE_VF_STATS
 int
 ice_get_vf_stats(struct net_device *netdev, int vf_id,
 		 struct ifla_vf_stats *vf_stats);
 #endif /* HAVE_VF_STATS */
-bool ice_is_any_vf_in_promisc(struct ice_pf *pf);
 void
 ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event);
 void ice_print_vfs_mdd_events(struct ice_pf *pf);
 void ice_print_vf_rx_mdd_event(struct ice_vf *vf);
 bool ice_vc_validate_pattern(struct ice_vf *vf,
 			     struct virtchnl_proto_hdrs *proto);
-struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf);
 bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 #else /* CONFIG_PCI_IOV */
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-static inline struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf)
-{
-	return NULL;
-}
-#endif /* CONFIG_NET_DEVLINK */
-
 static inline void ice_dump_all_vfs(struct ice_pf *pf) { }
 static inline void ice_process_vflr_event(struct ice_pf *pf) { }
 static inline void ice_free_vfs(struct ice_pf *pf) { }
 static inline void
 ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event) { }
-static inline void ice_set_vf_state_qs_dis(struct ice_vf *vf) { }
 static inline void
 ice_vf_lan_overflow_event(struct ice_pf *pf,
 			  struct ice_rq_event_info *event) { }
@@ -243,22 +223,6 @@ ice_get_vf_stats(struct net_device __always_unused *netdev,
 	return -EOPNOTSUPP;
 }
 #endif /* HAVE_VF_STATS */
-
-static inline bool ice_is_any_vf_in_promisc(struct ice_pf __always_unused *pf)
-{
-	return false;
-}
-
-static inline struct ice_vsi *
-ice_vf_ctrl_vsi_setup(struct ice_vf __always_unused *vf)
-{
-	return NULL;
-}
-
-static inline bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id)
-{
-	return 0;
-}
 #endif /* CONFIG_PCI_IOV */
 
 static inline u16 ice_abs_vf_id(struct ice_hw *hw, u16 rel_vf_id)

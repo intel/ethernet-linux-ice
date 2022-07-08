@@ -3,6 +3,7 @@
 
 #include "ice_txrx_lib.h"
 #include "ice_eswitch.h"
+#include <net/busy_poll.h>
 
 /**
  * ice_release_rx_desc - Store the new tail and head values
@@ -206,6 +207,7 @@ ice_rx_csum(struct ice_ring *ring, struct sk_buff *skb,
 	case ICE_RX_PTYPE_INNER_PROT_UDP:
 	case ICE_RX_PTYPE_INNER_PROT_SCTP:
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+		break;
 	default:
 		break;
 	}
@@ -240,11 +242,11 @@ ice_process_skb_fields(struct ice_ring *rx_ring,
 	if (rx_ring->ptp_rx)
 		ice_ptp_rx_hwtstamp(rx_ring, rx_desc, skb);
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	if (!netif_is_ice(rx_ring->netdev))
 		macvlan_count_rx((const struct macvlan_dev *)netdev_priv(rx_ring->netdev),
 				 skb->len + ETH_HLEN, true, false);
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 }
 
 /**
@@ -276,6 +278,13 @@ ice_receive_skb(struct ice_ring *rx_ring, struct sk_buff *skb, u16 vlan_tag)
 	else if ((features & NETIF_F_HW_VLAN_STAG_RX) && non_zero_vlan)
 		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), vlan_tag);
 #endif /* ICE_ADD_PROBES */
+
+	if (ice_ring_ch_enabled(rx_ring) && rx_ring->ch->qps_per_poller > 1) {
+		struct napi_struct *napi;
+
+		napi = &rx_ring->vsi->q_vectors[rx_ring->q_index]->napi;
+		skb_mark_napi_id(skb, napi);
+	}
 
 	napi_gro_receive(&rx_ring->q_vector->napi, skb);
 }

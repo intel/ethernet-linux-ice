@@ -62,13 +62,12 @@ static void ice_lag_set_backup(struct ice_lag *lag)
  */
 static void ice_display_lag_info(struct ice_lag *lag)
 {
-	const char *name, *peer, *upper, *role, *bonded, *master;
+	const char *name, *upper, *role, *bonded, *primary;
 	struct device *dev = &lag->pf->pdev->dev;
 
 	name = lag->netdev ? netdev_name(lag->netdev) : "unset";
-	peer = lag->peer_netdev ? netdev_name(lag->peer_netdev) : "unset";
 	upper = lag->upper_netdev ? netdev_name(lag->upper_netdev) : "unset";
-	master = lag->master ? "TRUE" : "FALSE";
+	primary = lag->primary ? "TRUE" : "FALSE";
 	bonded = lag->bonded ? "BONDED" : "UNBONDED";
 
 	switch (lag->role) {
@@ -88,8 +87,8 @@ static void ice_display_lag_info(struct ice_lag *lag)
 		role = "ERROR";
 	}
 
-	dev_dbg(dev, "%s %s, peer:%s, upper:%s, role:%s, master:%s\n", name,
-		bonded, peer, upper, role, master);
+	dev_dbg(dev, "%s %s, upper:%s, role:%s, primary:%s\n", name,
+		bonded, upper, role, primary);
 }
 
 /**
@@ -136,110 +135,52 @@ lag_out:
 /**
  * ice_lag_link - handle LAG link event
  * @lag: LAG info struct
- * @info: info from the netdev notifier
  */
-static void
-ice_lag_link(struct ice_lag *lag, struct netdev_notifier_changeupper_info *info)
+static void ice_lag_link(struct ice_lag *lag)
 {
-	struct net_device *netdev_tmp, *upper = info->upper_dev;
 	struct ice_pf *pf = lag->pf;
-	int peers = 0;
 
 	if (lag->bonded)
 		dev_warn(ice_pf_to_dev(pf), "%s Already part of a bond\n",
 			 netdev_name(lag->netdev));
 
-	rcu_read_lock();
-	for_each_netdev_in_bond_rcu(upper, netdev_tmp)
-		peers++;
-	rcu_read_unlock();
-
-	if (lag->upper_netdev != upper) {
-		dev_hold(upper);
-		lag->upper_netdev = upper;
-	}
-
 	ice_clear_sriov_cap(pf);
-	ice_unplug_aux_dev(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID));
 	ice_clear_rdma_cap(pf);
+	ice_unplug_aux_dev(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID));
 
 	lag->bonded = true;
 	lag->role = ICE_LAG_UNSET;
-
-	/* if this is the first element in an LAG mark as master */
-	lag->master = !!(peers == 1);
 }
 
 /**
  * ice_lag_unlink - handle unlink event
  * @lag: LAG info struct
- * @info: info from netdev notification
  */
-static void
-ice_lag_unlink(struct ice_lag *lag,
-	       struct netdev_notifier_changeupper_info *info)
+static void ice_lag_unlink(struct ice_lag *lag)
 {
-	struct net_device *netdev_tmp, *upper = info->upper_dev;
+	struct iidc_core_dev_info *cdev;
 	struct ice_pf *pf = lag->pf;
-	bool found = false;
 
 	if (!lag->bonded) {
 		netdev_dbg(lag->netdev, "bonding unlink event on non-LAG netdev\n");
 		return;
 	}
 
-	/* determine if we are in the new LAG config or not */
-	rcu_read_lock();
-	for_each_netdev_in_bond_rcu(upper, netdev_tmp) {
-		if (netdev_tmp == lag->netdev) {
-			found = true;
-			break;
-		}
-	}
-	rcu_read_unlock();
-
-	if (found)
-		return;
-
-	if (lag->upper_netdev) {
-		dev_put(lag->upper_netdev);
-		lag->upper_netdev = NULL;
-	}
-
-	if (lag->peer_netdev) {
-		lag->peer_netdev = NULL;
-	}
-
+	lag->bonded = false;
+	lag->role = ICE_LAG_NONE;
+	lag->upper_netdev = NULL;
 	ice_set_sriov_cap(pf);
 	ice_set_rdma_cap(pf);
-	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
-	lag->bonded = false;
-	lag->role = ICE_LAG_NONE;
-}
+	cdev = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+	if (cdev) {
+		const char *name;
 
-/** ice_lag_unregister - handle netdev unregister events
- * @lag: LAG info struct
- * @netdev: netdev reporting the event
- */
-static void ice_lag_unregister(struct ice_lag *lag, struct net_device *netdev)
-{
-	struct ice_pf *pf = lag->pf;
-
-	/* check to see if this event is for this netdev
-	 * check that we are in an aggregate
-	 */
-	if (netdev != lag->netdev || !lag->bonded)
-		return;
-
-	if (lag->upper_netdev) {
-		dev_put(lag->upper_netdev);
-		lag->upper_netdev = NULL;
-		ice_set_sriov_cap(pf);
-		ice_set_rdma_cap(pf);
+		if (cdev->rdma_protocol == IIDC_RDMA_PROTOCOL_IWARP)
+			name = IIDC_RDMA_IWARP_NAME;
+		else
+			name = IIDC_RDMA_ROCE_NAME;
+		ice_plug_aux_dev(cdev, name);
 	}
-	/* perform some cleanup in case we come back */
-	lag->bonded = false;
-	lag->role = ICE_LAG_NONE;
 }
 
 /**
@@ -273,35 +214,78 @@ static void ice_lag_changeupper_event(struct ice_lag *lag, void *ptr)
 		return;
 	}
 
-	if (info->linking)
-		ice_lag_link(lag, info);
-	else
-		ice_lag_unlink(lag, info);
+	if (info->linking) {
+		struct net_device *netdev_tmp;
+		int peers = 0;
+
+		lag->upper_netdev = info->upper_dev;
+		/* If this is the first element in an LAG mark as primary.
+		 * In the case RDMA is supported, this will be the only PCI
+		 * device that will initiate communication and supply resource
+		 * for the RDMA auxiliary driver
+		 */
+		rcu_read_lock();
+		for_each_netdev_in_bond_rcu(lag->upper_netdev, netdev_tmp)
+			peers++;
+		rcu_read_unlock();
+
+		lag->primary = !!(peers == 1);
+
+		ice_lag_link(lag);
+	} else {
+		struct net_device *netdev_tmp;
+		bool found = false;
+
+		rcu_read_lock();
+		for_each_netdev_in_bond_rcu(lag->upper_netdev, netdev_tmp) {
+			if (netdev_tmp == lag->netdev) {
+				found = true;
+				break;
+			}
+		}
+		rcu_read_unlock();
+		if (found)
+			return;
+
+		ice_lag_unlink(lag);
+	}
 
 	ice_display_lag_info(lag);
 }
 
 /**
- * ice_lag_changelower_event - handle LAG changelower event
- * @lag: LAG info struct
- * @ptr: opaque data pointer
- *
- * ptr to be cast to netdev_notifier_changelowerstate_info
+ * ice_lag_process_event - process a task assigned to the lag_wq
+ * @work: pointer to work_struct
  */
-static void ice_lag_changelower_event(struct ice_lag *lag, void *ptr)
+static void ice_lag_process_event(struct work_struct *work)
 {
-	struct net_device *netdev = netdev_notifier_info_to_dev(ptr);
+	struct ice_lag_work *lag_work;
+	struct net_device *netdev;
 
-	if (netdev != lag->netdev)
+	lag_work = container_of(work, struct ice_lag_work, lag_task);
+	if (!lag_work)
 		return;
 
-	netdev_dbg(netdev, "bonding info\n");
-
-	if (!netif_is_lag_port(netdev)) {
-		netdev_dbg(netdev, "CHANGELOWER rcvd, but netdev not in LAG. Bail\n");
-		return;
+	switch (lag_work->event) {
+	case NETDEV_CHANGEUPPER:
+		ice_lag_changeupper_event(lag_work->lag,
+					  &lag_work->info.changeupper_info);
+		break;
+	case NETDEV_BONDING_INFO:
+		ice_lag_info_event(lag_work->lag, &lag_work->info.bonding_info);
+		break;
+	case NETDEV_UNREGISTER:
+		netdev = lag_work->info.bonding_info.info.dev;
+		if (netdev == lag_work->lag->netdev && lag_work->lag->bonded &&
+		    netdev_unregistering(lag_work->lag->upper_netdev))
+			ice_lag_unlink(lag_work->lag);
+		break;
+	default:
+		break;
 	}
 
+	kfree(work);
+	return;
 }
 
 /**
@@ -315,34 +299,32 @@ ice_lag_event_handler(struct notifier_block *notif_blk, unsigned long event,
 		      void *ptr)
 {
 	struct net_device *netdev = netdev_notifier_info_to_dev(ptr);
+	struct ice_lag_work *lag_work;
 	struct ice_lag *lag;
+
+	if (event != NETDEV_CHANGEUPPER && event != NETDEV_BONDING_INFO &&
+	    event != NETDEV_UNREGISTER)
+		return NOTIFY_DONE;
 
 	lag = container_of(notif_blk, struct ice_lag, notif_block);
 
-	if (!lag->netdev)
+	if (!lag->netdev || !netif_is_ice(lag->netdev))
 		return NOTIFY_DONE;
 
 	/* Check that the netdev is in the working namespace */
 	if (!net_eq(dev_net(netdev), &init_net))
 		return NOTIFY_DONE;
 
-	switch (event) {
-	case NETDEV_CHANGEUPPER:
-		ice_lag_changeupper_event(lag, ptr);
-		break;
-	case NETDEV_CHANGELOWERSTATE:
-		ice_lag_changelower_event(lag, ptr);
-		break;
-	case NETDEV_BONDING_INFO:
-		ice_lag_info_event(lag, ptr);
-		break;
-	case NETDEV_UNREGISTER:
-		ice_lag_unregister(lag, netdev);
-		break;
-	default:
-		break;
-	}
+	/* This memory will be freed at the end of ice_lag_process_event */
+	lag_work = kzalloc(sizeof(*lag_work), GFP_KERNEL);
+	if (!lag_work)
+		return -ENOMEM;
 
+	lag_work->lag = lag;
+	lag_work->event = event;
+	memcpy(&lag_work->info, ptr, sizeof(lag_work->info));
+	INIT_WORK(&lag_work->lag_task, ice_lag_process_event);
+	queue_work(lag->lag_wq, &lag_work->lag_task);
 	return NOTIFY_DONE;
 }
 
@@ -404,6 +386,10 @@ int ice_init_lag(struct ice_pf *pf)
 		return -ENOMEM;
 	lag = pf->lag;
 
+	lag->lag_wq = alloc_ordered_workqueue("ice_lag_wq", WQ_MEM_RECLAIM);
+	if (!lag->lag_wq)
+		return -ENOMEM;
+
 	vsi = ice_get_main_vsi(pf);
 	if (!vsi) {
 		dev_err(dev, "couldn't get main vsi, link aggregation init fail\n");
@@ -415,7 +401,6 @@ int ice_init_lag(struct ice_pf *pf)
 	lag->netdev = vsi->netdev;
 	lag->role = ICE_LAG_NONE;
 	lag->bonded = false;
-	lag->peer_netdev = NULL;
 	lag->upper_netdev = NULL;
 	lag->notif_block.notifier_call = NULL;
 
@@ -455,11 +440,7 @@ void ice_deinit_lag(struct ice_pf *pf)
 	if (lag->pf)
 		ice_unregister_lag_handler(lag);
 
-	if (lag->upper_netdev)
-		dev_put(lag->upper_netdev);
-
-	if (lag->peer_netdev)
-		dev_put(lag->peer_netdev);
+	destroy_workqueue(lag->lag_wq);
 
 	kfree(lag);
 

@@ -61,8 +61,8 @@ static void ice_info_fw_api(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	struct ice_hw *hw = &pf->hw;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u",
-		 hw->api_maj_ver, hw->api_min_ver, hw->api_patch);
+	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u", hw->api_maj_ver,
+		 hw->api_min_ver, hw->api_patch);
 }
 
 static void ice_info_fw_build(struct ice_pf *pf, struct ice_info_ctx *ctx)
@@ -427,6 +427,7 @@ enum ice_devlink_param_id {
 	ICE_DEVLINK_PARAM_ID_BASE = DEVLINK_PARAM_GENERIC_ID_MAX,
 	ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV,
 	ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV,
+	ICE_DEVLINK_PARAM_ID_TX_BALANCE,
 };
 
 /**
@@ -498,7 +499,12 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
+	struct ice_rq_event_info event;
 	enum ice_status status;
+	u16 completion_retval;
+	int err;
+
+	memset(&event, 0, sizeof(event));
 
 	switch (id) {
 	case ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV:
@@ -516,6 +522,20 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 	status = ice_update_nvm_minsrevs(&pf->hw, &minsrevs);
 	if (status) {
 		dev_warn(dev, "Failed to update minimum security revision data\n");
+		return -EIO;
+	}
+
+	/* Wait for FW to finish Dumping the Shadow RAM */
+	err = ice_aq_wait_for_event(pf, ice_aqc_opc_nvm_write_activate, 3 * HZ,
+				    &event);
+	if (err) {
+		dev_warn(dev, "Timed out waiting for firmware to dump Shadow RAM\n");
+		return -ETIMEDOUT;
+	}
+
+	completion_retval = le16_to_cpu(event.desc.retval);
+	if (completion_retval) {
+		dev_warn(dev, "Failed to dump Shadow RAM\n");
 		return -EIO;
 	}
 
@@ -592,6 +612,157 @@ ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_para
 	return 0;
 }
 
+/**
+ * ice_get_tx_topo_user_sel - Read user's choice from flash
+ * @pf: pointer to pf structure
+ * @txbalance_ena: value read from flash will be saved here
+ *
+ * Reads user's preference for Tx Scheduler Topology Tree from PFA TLV.
+ *
+ * Returns zero when read was successful, negative values otherwise.
+ */
+static enum ice_status
+ice_get_tx_topo_user_sel(struct ice_pf *pf, bool *txbalance_ena)
+{
+	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
+	struct ice_hw *hw = &pf->hw;
+	enum ice_status status;
+
+	status = ice_acquire_nvm(hw, ICE_RES_READ);
+	if (status)
+		return status;
+
+	status = ice_aq_read_nvm(hw, ICE_AQC_NVM_TX_TOPO_MOD_ID, 0,
+				 sizeof(usr_sel), &usr_sel, true, true, NULL);
+	ice_release_nvm(hw);
+
+	*txbalance_ena = usr_sel.data & ICE_AQC_NVM_TX_TOPO_USER_SEL;
+
+	return status;
+}
+
+/**
+ * ice_update_tx_topo_user_sel - Save user's preference in flash
+ * @pf: pointer to pf structure
+ * @txbalance_ena: value to be saved in flash
+ *
+ * When txbalance_ena is set to true it means user's preference is to use
+ * five layer Tx Scheduler Topology Tree, when it is set to false then it is
+ * nine layer. This choice should be stored in PFA TLV field and should be
+ * picked up by driver, next time during init.
+ *
+ * Returns zero when save was successful, negative values otherwise.
+ */
+static enum ice_status
+ice_update_tx_topo_user_sel(struct ice_pf *pf, bool txbalance_ena)
+{
+	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
+	struct ice_hw *hw = &pf->hw;
+	enum ice_status status;
+	int err;
+
+	status = ice_acquire_nvm(hw, ICE_RES_WRITE);
+	if (status)
+		return status;
+
+	status = ice_aq_read_nvm(hw, ICE_AQC_NVM_TX_TOPO_MOD_ID, 0,
+				 sizeof(usr_sel), &usr_sel, true, true, NULL);
+	if (status)
+		goto exit_release_res;
+
+	if (txbalance_ena)
+		usr_sel.data |= ICE_AQC_NVM_TX_TOPO_USER_SEL;
+	else
+		usr_sel.data &= ~ICE_AQC_NVM_TX_TOPO_USER_SEL;
+
+	err = ice_write_one_nvm_block(pf, ICE_AQC_NVM_TX_TOPO_MOD_ID, 2,
+				      sizeof(usr_sel.data), &usr_sel.data,
+				      true, NULL, NULL);
+	if (err)
+		status = ICE_ERR_NVM;
+
+exit_release_res:
+	ice_release_nvm(hw);
+
+	return status;
+}
+
+/**
+ * ice_devlink_txbalance_get - Get txbalance parameter
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to store the parameter value
+ *
+ * Returns zero on success and negative value on failure.
+ */
+static int ice_devlink_txbalance_get(struct devlink *devlink, u32 id,
+				     struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct device *dev = ice_pf_to_dev(pf);
+	enum ice_status status;
+
+	status = ice_get_tx_topo_user_sel(pf, &ctx->val.vbool);
+	if (status) {
+		dev_warn(dev, "Failed to read Tx Scheduler Tree - User Selection data from flash\n");
+		return -EIO;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_txbalance_set - Set txbalance parameter
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to get the parameter value
+ *
+ * Returns zero on success and negative value on failure.
+ */
+static int ice_devlink_txbalance_set(struct devlink *devlink, u32 id,
+				     struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct device *dev = ice_pf_to_dev(pf);
+	enum ice_status status;
+
+	status = ice_update_tx_topo_user_sel(pf, ctx->val.vbool);
+	if (status)
+		return -EIO;
+
+	dev_warn(dev, "Transmit balancing setting has been changed on this device. You must reboot the system for the change to take effect");
+
+	return 0;
+}
+
+/**
+ * ice_devlink_txbalance_validate - Validate passed txbalance parameter value
+ * @devlink: unused pointer to devlink instance
+ * @id: the parameter ID to validate
+ * @val: value to validate
+ * @extack: netlink extended ACK structure
+ *
+ * Supported values are:
+ * true - five layer, false - nine layer Tx Scheduler Topology Tree
+ *
+ * Returns zero when passed parameter value is supported. Negative value on
+ * error.
+ */
+static int ice_devlink_txbalance_validate(struct devlink *devlink, u32 id,
+					  union devlink_param_value val,
+					  struct netlink_ext_ack *extack)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_hw *hw = &pf->hw;
+
+	if (!hw->func_caps.common_cap.tx_sched_topo_comp_mode_en) {
+		NL_SET_ERR_MSG_MOD(extack, "Error: Requested feature is not supported by the FW on this device. Update the FW and run this command again.");
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
 /* devlink parameters for the ice driver */
 static const struct devlink_param ice_devlink_params[] = {
 	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV,
@@ -608,6 +779,13 @@ static const struct devlink_param ice_devlink_params[] = {
 			     ice_devlink_minsrev_get,
 			     ice_devlink_minsrev_set,
 			     ice_devlink_minsrev_validate),
+	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_TX_BALANCE,
+			     "txbalancing",
+			     DEVLINK_PARAM_TYPE_BOOL,
+			     BIT(DEVLINK_PARAM_CMODE_PERMANENT),
+			     ice_devlink_txbalance_get,
+			     ice_devlink_txbalance_set,
+			     ice_devlink_txbalance_validate),
 };
 #endif /* HAVE_DEVLINK_PARAMS */
 
@@ -729,7 +907,7 @@ ice_devlink_reload_empr_start(struct devlink *devlink, bool netns_change,
 	}
 
 	if (pf->fw_emp_reset_disabled) {
-		NL_SET_ERR_MSG_MOD(extack, "EMP reset is not available. To activate firmware, a reboot or power cycle is needed\n");
+		NL_SET_ERR_MSG_MOD(extack, "EMP reset is not available. To activate firmware, a reboot or power cycle is needed");
 		return -ECANCELED;
 	}
 
@@ -1038,8 +1216,11 @@ int ice_devlink_create_vf_port(struct ice_vf *vf)
 
 	pf = vf->pf;
 	dev = ice_pf_to_dev(pf);
-	vsi = ice_get_vf_vsi(vf);
 	devlink_port = &vf->devlink_port;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -EINVAL;
 
 	attrs.flavour = DEVLINK_PORT_FLAVOUR_PCI_VF;
 	attrs.pci_vf.pf = pf->hw.bus.func;
@@ -1114,7 +1295,6 @@ ice_devlink_nvm_snapshot(struct devlink *devlink,
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
 	u8 *nvm_data, *tmp, i;
 	u32 nvm_size, left;
 	s8 num_blks;
@@ -1136,6 +1316,7 @@ ice_devlink_nvm_snapshot(struct devlink *devlink,
 	 */
 	for (i = 0; i < num_blks; i++) {
 		u32 read_sz = min_t(u32, ICE_DEVLINK_READ_BLK_SIZE, left);
+		enum ice_status status;
 
 		status = ice_acquire_nvm(hw, ICE_RES_READ);
 		if (status) {
@@ -1571,6 +1752,9 @@ void ice_devlink_clear_after_reset(struct ice_pf *pf)
 #define ICE_DEVLINK_PARAM_ID_TC14_INLINE_FD	114
 #define ICE_DEVLINK_PARAM_ID_TC15_INLINE_FD	115
 
+#define ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(num)	(120 + (num))
+#define ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(num)	(140 + (num))
+
 /**
  * ice_validate_tc_params_id - Validate devlink tc param id
  * @id: the parameter ID to validate
@@ -1586,6 +1770,31 @@ ice_validate_tc_params_id(u32 id, u32 start_id, u8 num_params)
 		return -EINVAL;
 
 	return 0;
+}
+
+/**
+ * ice_get_tc_param_ch_vsi - Return channel vsi associated with
+ * tc param id
+ * @pf: pointer to PF instance
+ * @id: the parameter ID to validate
+ * @start_id: start param id
+ *
+ * Returns: ch_vsi on success, or NULL on failure.
+ */
+static struct ice_vsi *
+ice_get_tc_param_ch_vsi(struct ice_pf *pf, u32 id, u32 start_id)
+{
+	struct ice_vsi *vsi = ice_get_main_vsi(pf);
+	struct ice_vsi *ch_vsi;
+
+	if (ice_validate_tc_params_id(id, start_id, vsi->num_tc_devlink_params))
+		return NULL;
+
+	ch_vsi = vsi->tc_map_vsi[id - start_id + 1];
+	if (!ch_vsi || !ch_vsi->ch)
+		return NULL;
+
+	return ch_vsi;
 }
 
 /**
@@ -1674,12 +1883,204 @@ ice_devlink_tc_inline_fd_set(struct devlink *devlink, u32 id,
 	return 0;
 }
 
+/**
+ * ice_devlink_tc_qps_per_poller_get - Get the current number of qps per
+ * poller for a tc.
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to get
+ * @ctx: context to return the parameter value
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int
+ice_devlink_tc_qps_per_poller_get(struct devlink *devlink, u32 id,
+				  struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *ch_vsi;
+
+	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
+					 ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(1));
+	if (!ch_vsi)
+		return -EINVAL;
+
+	ctx->val.vu8 = ch_vsi->ch->qps_per_poller;
+
+	return 0;
+}
+
+/**
+ * ice_devlink_tc_qps_per_poller_validate - Validate the number of qps
+ * per poller.
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to validate
+ * @val: value to be validated
+ * @extack: netlink extended ACK structure
+ *
+ * Check that the value passed is less than the max queues in the TC
+ * Returns: zero on success, or an error code on failure and extack with a
+ * reason for failure.
+ */
+static int
+ice_devlink_tc_qps_per_poller_validate(struct devlink *devlink, u32 id,
+				       union devlink_param_value val,
+				       struct netlink_ext_ack *extack)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *ch_vsi;
+
+	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
+					 ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(1));
+	if (!ch_vsi)
+		return -EINVAL;
+
+	if (val.vu8 > ch_vsi->ch->num_rxq) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Value cannot be greater than number of queues in TC");
+		return -EINVAL;
+	}
+
+	if (ice_is_xdp_ena_vsi(ice_get_main_vsi(pf))) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Cannot change qps_per_poller when xdp is enabled");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_tc_qps_per_poller_set - Set the number of qps per poller
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to return the parameter value
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int
+ice_devlink_tc_qps_per_poller_set(struct devlink *devlink, u32 id,
+				  struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *ch_vsi;
+
+	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
+					 ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(1));
+	if (!ch_vsi)
+		return -EINVAL;
+
+	ch_vsi->ch->qps_per_poller = ctx->val.vu8;
+
+	ice_ch_vsi_update_ring_vecs(ice_get_main_vsi(pf));
+
+	return 0;
+}
+
+/**
+ * ice_devlink_tc_poller_timeout_get - Get poller timeout value
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to get
+ * @ctx: context to return the parameter value
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int
+ice_devlink_tc_poller_timeout_get(struct devlink *devlink, u32 id,
+				  struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *ch_vsi;
+
+	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
+					 ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(1));
+	if (!ch_vsi)
+		return -EINVAL;
+
+	ctx->val.vu32 = ch_vsi->ch->poller_timeout;
+
+	return 0;
+}
+
+#define MAX_POLLER_TIMEOUT 10000
+
+/**
+ * ice_devlink_tc_poller_timeout_validate - Validate the poller timeout
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to validate
+ * @val: value to be validated
+ * @extack: netlink extended ACK structure
+ *
+ * Validate poller timeout value
+ * Returns: zero on success, or an error code on failure and extack with a
+ * reason for failure.
+ */
+static int
+ice_devlink_tc_poller_timeout_validate(struct devlink *devlink, u32 id,
+				       union devlink_param_value val,
+				       struct netlink_ext_ack *extack)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *ch_vsi;
+
+	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
+					 ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(1));
+	if (!ch_vsi)
+		return -EINVAL;
+
+	if (val.vu32 > MAX_POLLER_TIMEOUT) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Value cannot be greater than 10000 jiffies");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_tc_poller_timeout_set - Set the poller timeout
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to return the parameter value
+ *
+ * Returns: zero on success, or an error code on failure.
+ */
+static int
+ice_devlink_tc_poller_timeout_set(struct devlink *devlink, u32 id,
+				  struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *ch_vsi;
+
+	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
+					 ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(1));
+	if (!ch_vsi)
+		return -EINVAL;
+
+	ch_vsi->ch->poller_timeout = ctx->val.vu32;
+
+	return 0;
+}
+
 #define ICE_DEVLINK_TC_INLINE_FD_PARAM(_id, _name)			\
 	DEVLINK_PARAM_DRIVER(_id, _name, DEVLINK_PARAM_TYPE_BOOL,	\
 			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),		\
 			     ice_devlink_tc_inline_fd_get,         \
 			     ice_devlink_tc_inline_fd_set,         \
 			     ice_devlink_tc_inline_fd_validate)    \
+
+#define ICE_DL_TC_QPS_PER_POLLER_PARAM(_id, _name)			\
+	DEVLINK_PARAM_DRIVER(_id, _name, DEVLINK_PARAM_TYPE_U8,		\
+			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),		\
+			     ice_devlink_tc_qps_per_poller_get,		\
+			     ice_devlink_tc_qps_per_poller_set,		\
+			     ice_devlink_tc_qps_per_poller_validate)	\
+
+#define ICE_DL_TC_POLLER_TIMEOUT_PARAM(_id, _name)			\
+	DEVLINK_PARAM_DRIVER(_id, _name, DEVLINK_PARAM_TYPE_U32,	\
+			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),		\
+			     ice_devlink_tc_poller_timeout_get,		\
+			     ice_devlink_tc_poller_timeout_set,		\
+			     ice_devlink_tc_poller_timeout_validate)	\
 
 static const struct devlink_param ice_devlink_inline_fd_params[] = {
 	ICE_DEVLINK_TC_INLINE_FD_PARAM(ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD,
@@ -1714,6 +2115,72 @@ static const struct devlink_param ice_devlink_inline_fd_params[] = {
 				       "tc15_inline_fd"),
 };
 
+static const struct devlink_param ice_devlink_qps_per_poller_params[] = {
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(1),
+				       "tc1_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(2),
+				       "tc2_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(3),
+				       "tc3_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(4),
+				       "tc4_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(5),
+				       "tc5_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(6),
+				       "tc6_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(7),
+				       "tc7_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(8),
+				       "tc8_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(9),
+				       "tc9_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(10),
+				       "tc10_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(11),
+				       "tc11_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(12),
+				       "tc12_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(13),
+				       "tc13_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(14),
+				       "tc14_qps_per_poller"),
+	ICE_DL_TC_QPS_PER_POLLER_PARAM(ICE_DL_PARAM_ID_TC_QPS_PER_POLLER(15),
+				       "tc15_qps_per_poller"),
+};
+
+static const struct devlink_param ice_devlink_poller_timeout_params[] = {
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(1),
+				       "tc1_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(2),
+				       "tc2_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(3),
+				       "tc3_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(4),
+				       "tc4_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(5),
+				       "tc5_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(6),
+				       "tc6_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(7),
+				       "tc7_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(8),
+				       "tc8_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(9),
+				       "tc9_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(10),
+				       "tc10_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(11),
+				       "tc11_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(12),
+				       "tc12_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(13),
+				       "tc13_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(14),
+				       "tc14_poller_timeout"),
+	ICE_DL_TC_POLLER_TIMEOUT_PARAM(ICE_DL_PARAM_ID_TC_POLLER_TIMEOUT(15),
+				       "tc15_poller_timeout"),
+};
+
 int ice_devlink_tc_params_register(struct ice_vsi *vsi)
 {
 	struct devlink *devlink = priv_to_devlink(vsi->back);
@@ -1731,6 +2198,23 @@ int ice_devlink_tc_params_register(struct ice_vsi *vsi)
 			return err;
 		}
 
+		err = devlink_params_register(devlink,
+					      ice_devlink_qps_per_poller_params,
+					      vsi->num_tc_devlink_params);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "devlink qps_per_poller params registration failed");
+			return err;
+		}
+
+		err = devlink_params_register(devlink,
+					      ice_devlink_poller_timeout_params,
+					      vsi->num_tc_devlink_params);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "devlink poller_timeout params registration failed");
+			return err;
+		}
 #ifndef HAVE_DEVLINK_NOTIFY_REGISTER
 #ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 		devlink_params_publish(devlink);
@@ -1747,6 +2231,12 @@ void ice_devlink_tc_params_unregister(struct ice_vsi *vsi)
 
 	if (vsi->num_tc_devlink_params) {
 		devlink_params_unregister(devlink, ice_devlink_inline_fd_params,
+					  vsi->num_tc_devlink_params);
+		devlink_params_unregister(devlink,
+					  ice_devlink_qps_per_poller_params,
+					  vsi->num_tc_devlink_params);
+		devlink_params_unregister(devlink,
+					  ice_devlink_poller_timeout_params,
 					  vsi->num_tc_devlink_params);
 		vsi->num_tc_devlink_params = 0;
 	}

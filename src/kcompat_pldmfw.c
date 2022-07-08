@@ -164,14 +164,26 @@ struct __pldmfw_component_area {
 	((const struct __pldmfw_desc_tlv *)(start))
 
 /**
+ * pldm_desc_tlv_member
+ * @desc: pointer to a descriptor TLV
+ * @member: name of member to give pointer to
+ *
+ * Yields pointer to @member within, possibly unaligned, @desc
+ */
+#define pldm_desc_tlv_member(desc, member)	\
+	((const u8 *)(desc) + offsetof(struct __pldmfw_desc_tlv, member))
+
+/**
  * pldm_next_desc_tlv
  * @desc: pointer to a descriptor TLV
  *
  * Finds the pointer to the next descriptor following a given descriptor
  */
-#define pldm_next_desc_tlv(desc)						\
-	((const struct __pldmfw_desc_tlv *)((desc)->data +			\
-					     get_unaligned_le16(&(desc)->size)))
+#define pldm_next_desc_tlv(desc)			\
+	({ const void *desc_ = (desc);			\
+	((const struct __pldmfw_desc_tlv *)(		\
+		pldm_desc_tlv_member(desc_, data)	\
+		+ get_unaligned_le16(pldm_desc_tlv_member(desc_, size)))); })
 
 /**
  * pldm_for_each_desc_tlv
@@ -517,10 +529,10 @@ pldm_parse_desc_tlvs(struct pldmfw_priv *data, struct pldmfw_record *record, u8 
 		if (err)
 			return err;
 
-		type = get_unaligned_le16(&__desc->type);
+		type = get_unaligned_le16(pldm_desc_tlv_member(__desc, type));
 
 		/* According to DSP0267, this only includes the data field */
-		size = get_unaligned_le16(&__desc->size);
+		size = get_unaligned_le16(pldm_desc_tlv_member(__desc, size));
 
 		err = pldm_check_desc_tlv_len(data, type, size);
 		if (err)
@@ -537,7 +549,7 @@ pldm_parse_desc_tlvs(struct pldmfw_priv *data, struct pldmfw_record *record, u8 
 
 		desc->type = type;
 		desc->size = size;
-		desc->data = __desc->data;
+		desc->data = pldm_desc_tlv_member(__desc, data);
 
 		list_add_tail(&desc->entry, &record->descs);
 	}

@@ -19,7 +19,7 @@ static void print_invalid_tpid(struct ice_vsi *vsi, u16 tpid)
  *
  * Return true if the VLAN TPID is valid or if the VLAN TPID is 0 and the VLAN
  * VID is 0, which allows for non-zero VLAN filters with the specified VLAN TPID
- * and untagged VLAN 0 filtersto be added to the prune list respectively.
+ * and untagged VLAN 0 filters to be added to the prune list respectively.
  */
 static bool validate_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {

@@ -172,9 +172,9 @@ void ice_clean_tx_ring(struct ice_ring *tx_ring)
 		return;
 
 	/* Free all the Tx ring sk_buffs */
-	for (i = 0; i < tx_ring->count; i++)
+	for (i = 0; i < tx_ring->count; i++) {
 		ice_unmap_and_free_tx_buf(tx_ring, &tx_ring->tx_buf[i]);
-
+	}
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 tx_skip_free:
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
@@ -372,7 +372,7 @@ int ice_setup_tx_ring(struct ice_ring *tx_ring)
 	/* warn if we are about to overwrite the pointer */
 	WARN_ON(tx_ring->tx_buf);
 	tx_ring->tx_buf =
-		devm_kzalloc(dev, sizeof(*tx_ring->tx_buf) * tx_ring->count,
+		devm_kcalloc(dev, sizeof(*tx_ring->tx_buf), tx_ring->count,
 			     GFP_KERNEL);
 	if (!tx_ring->tx_buf)
 		return -ENOMEM;
@@ -508,7 +508,7 @@ int ice_setup_rx_ring(struct ice_ring *rx_ring)
 	/* warn if we are about to overwrite the pointer */
 	WARN_ON(rx_ring->rx_buf);
 	rx_ring->rx_buf =
-		devm_kzalloc(dev, sizeof(*rx_ring->rx_buf) * rx_ring->count,
+		devm_kcalloc(dev, sizeof(*rx_ring->rx_buf), rx_ring->count,
 			     GFP_KERNEL);
 	if (!rx_ring->rx_buf)
 		return -ENOMEM;
@@ -1692,7 +1692,7 @@ static void __ice_update_sample(struct ice_q_vector *q_vector,
 
 	/* if dim settings get stale, like when not updated for 1
 	 * second or longer, force it to start again. This addresses the
-	 * freqent case of an idle queue being switched to by the
+	 * frequent case of an idle queue being switched to by the
 	 * scheduler. The 1,000 here means 1,000 milliseconds.
 	 */
 	if (ktime_ms_delta(sample->time, rc->dim.start_sample.time) >= 1000)
@@ -1889,7 +1889,8 @@ state_update:
 
 #ifdef HAVE_NAPI_STATE_IN_BUSY_POLL
 	/* update current state of vector */
-	if (test_bit(NAPI_STATE_IN_BUSY_POLL, &napi->state))
+	if (test_bit(NAPI_STATE_IN_BUSY_POLL, &napi->state) ||
+	    ice_vector_ind_poller(q_vector))
 		q_vector->state_flags |= ICE_CHNL_IN_BP;
 	else
 		q_vector->state_flags &= ~ICE_CHNL_IN_BP;
@@ -1996,6 +1997,11 @@ ice_handle_chnl_vector(struct ice_q_vector *q_vector, bool unlikely_cb_bp)
 		stats->once_bp_false++;
 #endif /* ADQ_PERF_COUNTERS */
 		ice_enable_interrupt(q_vector);
+	} else if (ice_vector_ind_poller(q_vector) &&
+		   !q_vector->last_wd_jiffy) {
+		q_vector->state_flags &= ~ICE_CHNL_IN_BP;
+		q_vector->state_flags &= ~ICE_CHNL_ONCE_IN_BP;
+		ice_irq_dynamic_ena(&vsi->back->hw, vsi, q_vector);
 	}
 }
 
@@ -2297,12 +2303,14 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 	} /* end for ice_for_each_ring */
 
 #ifdef HAVE_NAPI_STATE_IN_BUSY_POLL
-	if (ch_enabled &&
+	if (ch_enabled && !ice_vector_ind_poller(q_vector) &&
 	    (!test_bit(NAPI_STATE_IN_BUSY_POLL, &napi->state))) {
 		if (ice_chnl_vector_bypass_clean_complete(napi, budget,
 							  work_done))
 			goto bypass;
 	}
+	if (ice_vector_ind_poller(q_vector) && work_done)
+		q_vector->last_wd_jiffy = get_jiffies_64();
 
 #endif /* HAVE_NAPI_STATE_IN_BUSY_POLL */
 	/* If work not completed, return budget and polling will return */
@@ -2315,6 +2323,12 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 		return budget;
 	}
 
+	if (ice_vector_ind_poller(q_vector)) {
+		if (time_is_after_jiffies64(q_vector->last_wd_jiffy +
+					  q_vector->ch->poller_timeout + 1))
+			return budget;
+		q_vector->last_wd_jiffy = 0;
+	}
 bypass:
 	/* reset the counter if code flow reached here because this function
 	 * determined that it is not going to return budget and will
@@ -3589,8 +3603,7 @@ netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev)
  *
  * This function is to only be called when the PF is in L3 DSCP PFC mode
  */
-static inline
-u8 ice_get_dscp_up(struct ice_dcbx_cfg *dcbcfg, struct sk_buff *skb)
+static u8 ice_get_dscp_up(struct ice_dcbx_cfg *dcbcfg, struct sk_buff *skb)
 {
 	u8 dscp = 0;
 
@@ -3605,24 +3618,27 @@ u8 ice_get_dscp_up(struct ice_dcbx_cfg *dcbcfg, struct sk_buff *skb)
 #ifndef HAVE_NDO_SELECT_QUEUE_SB_DEV
 #if defined(HAVE_NDO_SELECT_QUEUE_ACCEL) || defined(HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK)
 #ifndef HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
-u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
-		     void __always_unused *accel_priv,
-		     select_queue_fallback_t fallback)
+u16
+ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		 void __always_unused *accel_priv,
+		 select_queue_fallback_t fallback)
 #else /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
-u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
-		     void __always_unused *accel_priv);
+u16
+ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		 void __always_unused *accel_priv);
 #endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
 #else /* HAVE_NDO_SELECT_QUEUE_ACCEL || HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK */
 u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb)
 #endif /*HAVE_NDO_SELECT_QUEUE_ACCEL || HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK */
 #else /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
 #ifdef HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
-u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
-		     struct net_device *sb_dev)
+u16
+ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		 struct net_device *sb_dev)
 #else /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
-u16 ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
-		     struct net_device *sb_dev,
-		     select_queue_fallback_t fallback)
+u16
+ice_select_queue(struct net_device *netdev, struct sk_buff *skb,
+		 struct net_device *sb_dev,  select_queue_fallback_t fallback)
 #endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
 #endif /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
 {

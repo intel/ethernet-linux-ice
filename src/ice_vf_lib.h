@@ -21,7 +21,7 @@
 #include "ice_dcf.h"
 #include "ice_vsi_vlan_ops.h"
 
-#define ICE_MAX_SRIOV_VFS	256
+#define ICE_MAX_SRIOV_VFS		256
 
 /* VF resource constraints */
 #define ICE_MAX_QS_PER_VF	256
@@ -29,6 +29,11 @@
 struct ice_pf;
 struct ice_vf;
 struct ice_virtchnl_ops;
+
+/* VF capabilities */
+enum ice_virtchnl_cap {
+	ICE_VIRTCHNL_VF_CAP_PRIVILEGE = 0,
+};
 
 /* Specific VF states */
 enum ice_vf_states {
@@ -116,11 +121,13 @@ struct ice_dcf_vlan_info {
 struct ice_vf_ops {
 	enum ice_disq_rst_src reset_type;
 	void (*free)(struct ice_vf *vf);
+	void (*clear_reset_state)(struct ice_vf *vf);
 	void (*clear_mbx_register)(struct ice_vf *vf);
 	void (*trigger_reset_register)(struct ice_vf *vf, bool is_vflr);
 	bool (*poll_reset_status)(struct ice_vf *vf);
 	void (*clear_reset_trigger)(struct ice_vf *vf);
-	int (*vsi_rebuild)(struct ice_vf *vf);
+	void (*irq_close)(struct ice_vf *vf);
+	int (*create_vsi)(struct ice_vf *vf);
 	void (*post_vsi_rebuild)(struct ice_vf *vf);
 	struct ice_q_vector* (*get_q_vector)(struct ice_vf *vf,
 					     struct ice_vsi *vsi,
@@ -137,8 +144,15 @@ struct ice_vfs {
 	u16 num_supported;		/* max supported VFs on this PF */
 	u16 num_qps_per;		/* number of queue pairs per VF */
 	u16 num_msix_per;		/* number of MSI-X vectors per VF */
-	unsigned long last_printed_mdd_jiffies; /* MDD message rate limit */
+	unsigned long last_printed_mdd_jiffies;	/* MDD message rate limit */
 	DECLARE_BITMAP(malvfs, ICE_MAX_SRIOV_VFS); /* malicious VF indicator */
+};
+
+struct ice_vf_qs_bw {
+	u16 queue_id;
+	u32 committed;
+	u32 peak;
+	u8 tc;
 };
 
 /* VF information structure */
@@ -158,6 +172,7 @@ struct ice_vf {
 	u16 ctrl_vsi_idx;
 	struct ice_vf_fdir fdir;
 	struct ice_vf_hash_ctx hash_ctx;
+	struct ice_vf_qs_bw qs_bw[ICE_MAX_QS_PER_VF];
 	/* first vector index of this VF in the PF space */
 	int first_vector_idx;
 	struct ice_sw *vf_sw_id;	/* switch ID the VF VSIs connect to */
@@ -188,8 +203,6 @@ struct ice_vf {
 	unsigned int max_tx_rate;	/* Maximum Tx bandwidth limit in Mbps */
 	DECLARE_BITMAP(vf_states, ICE_VF_STATES_NBITS);	/* VF runtime states */
 
-	u64 num_inval_msgs;		/* number of continuous invalid msgs */
-	u64 num_valid_msgs;		/* number of valid msgs detected */
 	unsigned long vf_caps;		/* VF's adv. capabilities */
 	u16 num_req_qs;			/* num of queue pairs requested by VF */
 	u16 num_mac;
@@ -206,8 +219,9 @@ struct ice_vf {
 	struct hlist_head tc_flower_fltr_list;
 	struct ice_mdd_vf_events mdd_rx_events;
 	struct ice_mdd_vf_events mdd_tx_events;
-	struct ice_repr *repr;
 	DECLARE_BITMAP(opcodes_allowlist, VIRTCHNL_OP_MAX);
+
+	struct ice_repr *repr;
 	const struct ice_virtchnl_ops *virtchnl_ops;
 	const struct ice_vf_ops *vf_ops;
 
@@ -219,8 +233,9 @@ struct ice_vf {
 
 /* Flags for controlling behavior of ice_reset_vf */
 enum ice_vf_reset_flags {
-	ICE_VF_RESET_VFLR = BIT(0), /* Indicates a VFLR reset */
+	ICE_VF_RESET_VFLR = BIT(0), /* Indicate a VFLR reset */
 	ICE_VF_RESET_NOTIFY = BIT(1), /* Notify VF prior to reset */
+	ICE_VF_RESET_LOCK = BIT(2), /* Acquire the VF cfg_lock */
 };
 
 static inline u16 ice_vf_get_port_vlan_id(struct ice_vf *vf)
@@ -297,10 +312,19 @@ void ice_put_vf(struct ice_vf *vf);
 bool ice_is_valid_vf_id(struct ice_pf *pf, u32 vf_id);
 bool ice_has_vfs(struct ice_pf *pf);
 u16 ice_get_num_vfs(struct ice_pf *pf);
+struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf);
 bool ice_is_vf_disabled(struct ice_vf *vf);
 int ice_check_vf_ready_for_cfg(struct ice_vf *vf);
-void ice_reset_all_vfs(struct ice_pf *pf);
+void ice_set_vf_state_qs_dis(struct ice_vf *vf);
+bool ice_is_any_vf_in_unicast_promisc(struct ice_pf *pf);
+void ice_vf_get_promisc_masks(struct ice_vf *vf, struct ice_vsi *vsi,
+			      u8 *ucast_m, u8 *mcast_m);
+int
+ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m);
+int
+ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m);
 int ice_reset_vf(struct ice_vf *vf, u32 flags);
+void ice_reset_all_vfs(struct ice_pf *pf);
 #else /* CONFIG_PCI_IOV */
 static inline struct ice_vf *ice_get_vf_by_id(struct ice_pf *pf, u32 vf_id)
 {
@@ -326,9 +350,14 @@ static inline u16 ice_get_num_vfs(struct ice_pf *pf)
 	return 0;
 }
 
+static inline struct ice_vsi *ice_get_vf_vsi(struct ice_vf *vf)
+{
+	return NULL;
+}
+
 static inline bool ice_is_vf_disabled(struct ice_vf *vf)
 {
-	return false;
+	return true;
 }
 
 static inline int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
@@ -336,8 +365,25 @@ static inline int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
 	return -EOPNOTSUPP;
 }
 
-static inline void ice_reset_all_vfs(struct ice_pf *pf)
+static inline void ice_set_vf_state_qs_dis(struct ice_vf *vf)
 {
+}
+
+static inline bool ice_is_any_vf_in_unicast_promisc(struct ice_pf *pf)
+{
+	return false;
+}
+
+static inline int
+ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int
+ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline int ice_reset_vf(struct ice_vf *vf, bool is_vflr)
@@ -345,6 +391,9 @@ static inline int ice_reset_vf(struct ice_vf *vf, bool is_vflr)
 	return 0;
 }
 
+static inline void ice_reset_all_vfs(struct ice_pf *pf)
+{
+}
 #endif /* !CONFIG_PCI_IOV */
 
 #endif /* _ICE_VF_LIB_H_ */

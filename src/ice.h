@@ -17,9 +17,9 @@
 #include <linux/cpumask.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_vlan.h>
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 #include <linux/if_macvlan.h>
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 #include <linux/dma-mapping.h>
 #include <linux/pci.h>
 #include <linux/workqueue.h>
@@ -56,6 +56,7 @@
 #else
 #include "kcompat_dim.h"
 #endif
+#include "ice_ddp.h"
 #include "ice_devids.h"
 #include "ice_type.h"
 #include "ice_txrx.h"
@@ -72,6 +73,8 @@
 #include "ice_vf_mbx.h"
 #include "ice_ptp.h"
 #include "ice_fdir.h"
+#include "ice_vdcm.h"
+#include "ice_siov.h"
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 #include "ice_xsk.h"
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
@@ -130,9 +133,10 @@ extern const char ice_drv_ver[];
 #define ICE_MAX_NUM_VMDQ_VSI	16
 #define ICE_MAX_TXQ_VMDQ_VSI	4
 #define ICE_MAX_RXQ_VMDQ_VSI	4
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 #define ICE_MAX_MACVLANS	64
 #endif
+#define ICE_MAX_SCALABLE	100
 #define ICE_DFLT_TRAFFIC_CLASS	BIT(0)
 #define ICE_INT_NAME_STR_LEN	(IFNAMSIZ + 16)
 #define ICE_AQ_LEN		192
@@ -297,6 +301,8 @@ struct ice_channel {
 	/* packets services thru' inline-FD filter */
 	u64 fd_pkt_cnt;
 	u8 inline_fd:1;
+	u8 qps_per_poller;
+	u32 poller_timeout;
 	struct ice_vsi *ch_vsi;
 };
 
@@ -304,6 +310,8 @@ struct ice_channel {
 /* To convert BPS BW parameter into Mbps*/
 #define ICE_BW_MBIT_PS_DIVISOR	125000 /* rate / (1000000 / 8) Mbps */
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
+
+#define ICE_ADQ_MAX_QPS	256
 
 struct ice_txq_meta {
 	u32 q_teid;	/* Tx-scheduler element identifier */
@@ -347,8 +355,6 @@ struct ice_sw {
 	struct ice_pf *pf;
 	u16 sw_id;		/* switch ID for this switch */
 	u16 bridge_mode;	/* VEB/VEPA/Port Virtualizer */
-	struct ice_vsi *dflt_vsi;	/* default VSI for this switch */
-	u8 dflt_vsi_ena:1;	/* true if above dflt_vsi is enabled */
 };
 
 enum ice_pf_state {
@@ -383,7 +389,6 @@ enum ice_pf_state {
 	ICE_VFLR_EVENT_PENDING,
 	ICE_FLTR_OVERFLOW_PROMISC,
 	ICE_VF_DIS,
-	ICE_VF_DEINIT_IN_PROGRESS,
 	ICE_CFG_BUSY,
 	ICE_SERVICE_SCHED,
 	ICE_SERVICE_DIS,
@@ -449,10 +454,10 @@ struct ice_vsi {
 	struct ice_port_info *port_info; /* back pointer to port_info */
 	struct ice_ring **rx_rings;	 /* Rx ring array */
 	struct ice_ring **tx_rings;	 /* Tx ring array */
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	/* Initial VSI tx_rings array when L2 offload is off */
 	struct ice_ring **base_tx_rings;
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 	struct ice_q_vector **q_vectors; /* q_vector array */
 
 	irqreturn_t (*irq_handler)(int irq, void *data);
@@ -753,25 +758,30 @@ struct ice_q_vector {
 #ifdef ADQ_PERF_COUNTERS
 	struct ice_q_vector_ch_stats ch_stats;
 #endif /* ADQ_PERF_COUNTERS */
+	u64 last_wd_jiffy;
 } ____cacheline_internodealigned_in_smp;
 
 enum ice_pf_flags {
 	ICE_FLAG_FLTR_SYNC,
 	ICE_FLAG_VMDQ_ENA,
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	ICE_FLAG_MACVLAN_ENA,
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 	ICE_FLAG_IWARP_ENA,
-	ICE_FLAG_PLUG_AUX_DEV,
 	ICE_FLAG_RSS_ENA,
 	ICE_FLAG_SRIOV_ENA,
 	ICE_FLAG_SRIOV_CAPABLE,
+	ICE_FLAG_SIOV_ENA,
+	ICE_FLAG_SIOV_CAPABLE,
 	ICE_FLAG_DCB_CAPABLE,
 	ICE_FLAG_DCB_ENA,
 	ICE_FLAG_FD_ENA,
 	ICE_FLAG_PTP_SUPPORTED,		/* NVM PTP support */
 	ICE_FLAG_PTP,			/* PTP successfully initialized */
 	ICE_FLAG_AUX_ENA,
+	ICE_FLAG_PLUG_AUX_DEV,
+	ICE_FLAG_UNPLUG_AUX_DEV,
+	ICE_FLAG_MTU_CHANGED,
 	ICE_FLAG_ADV_FEATURES,
 #ifdef NETIF_F_HW_TC
 	ICE_FLAG_TC_MQPRIO,		/* support for Multi queue TC */
@@ -802,11 +812,11 @@ enum ice_pf_flags {
 	ICE_FLAG_DPLL_MONITOR,
 	ICE_FLAG_EXTTS_FILTER,
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
-	ICE_FLAG_MTU_CHANGED,
+	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 struct ice_macvlan {
 	struct list_head list;
 	int id;
@@ -815,7 +825,7 @@ struct ice_macvlan {
 	struct ice_vsi *vsi;
 	u8 mac[ETH_ALEN];
 };
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 struct ice_switchdev_info {
 	struct ice_vsi *control_vsi;
@@ -919,20 +929,21 @@ struct ice_pf {
 	struct mutex avail_q_mutex;	/* protects access to avail_[rx|tx]qs */
 	struct mutex sw_mutex;		/* lock for protecting VSI alloc flow */
 	struct mutex tc_mutex;		/* lock to protect TC changes */
+	struct mutex adev_mutex;	/* lock to protect aux device access */
 	u32 msg_enable;
 	struct ice_ptp ptp;
 	struct tty_driver *ice_gnss_tty_driver;
-	struct tty_port gnss_tty_port[ICE_GNSS_TTY_MINOR_DEVICES];
+	struct tty_port *gnss_tty_port[ICE_GNSS_TTY_MINOR_DEVICES];
 	struct gnss_serial *gnss_serial[ICE_GNSS_TTY_MINOR_DEVICES];
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	/* MACVLAN specific variables */
 	DECLARE_BITMAP(avail_macvlan, ICE_MAX_MACVLANS);
 	struct list_head macvlan_list;
 	u16 num_macvlan;
 	u16 max_num_macvlan;
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 	/* spinlock to protect the AdminQ wait list */
 	spinlock_t aq_wait_lock;
@@ -1001,6 +1012,9 @@ struct ice_pf {
 	struct hlist_head tc_flower_fltr_list;
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
 
+	u16 max_qps;
+	u16 max_adq_qps;
+
 	struct ice_dcf dcf;
 	__le64 nvm_phy_type_lo; /* NVM PHY type low */
 	__le64 nvm_phy_type_hi; /* NVM PHY type high */
@@ -1015,13 +1029,19 @@ struct ice_pf {
 	 */
 	spinlock_t tnl_lock;
 	struct list_head tnl_list;
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO
+#ifdef HAVE_UDP_TUNNEL_NIC_SHARED
+	struct udp_tunnel_nic_shared udp_tunnel_shared;
+#endif /* HAVE_UDP_TUNNEL_NIC_SHARED */
+	struct udp_tunnel_nic_info udp_tunnel_nic;
+#endif /* HAVE_UDP_TUNNEL_NIC_INFO */
 	struct ice_switchdev_info switchdev;
 
 #define ICE_INVALID_AGG_NODE_ID		0
 #define ICE_PF_AGG_NODE_ID_START	1
 #define ICE_MAX_PF_AGG_NODES		32
 	struct ice_agg_node pf_agg_node[ICE_MAX_PF_AGG_NODES];
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 #define ICE_MACVLAN_AGG_NODE_ID_START	(ICE_PF_AGG_NODE_ID_START + \
 					 ICE_MAX_PF_AGG_NODES)
 #define ICE_MAX_MACVLAN_AGG_NODES	32
@@ -1030,12 +1050,15 @@ struct ice_pf {
 #define ICE_VF_AGG_NODE_ID_START	65
 #define ICE_MAX_VF_AGG_NODES		32
 	struct ice_agg_node vf_agg_node[ICE_MAX_VF_AGG_NODES];
-	enum ice_e810t_cgu_state synce_dpll_state;
+	enum ice_cgu_state synce_dpll_state;
 	u8 synce_ref_pin;
-	enum ice_e810t_cgu_state ptp_dpll_state;
+	enum ice_cgu_state ptp_dpll_state;
 	u8 ptp_ref_pin;
 	s64 ptp_dpll_phase_offset;
+	u8 n_quanta_prof_used;
 };
+
+extern struct workqueue_struct *ice_wq;
 
 struct ice_netdev_priv {
 	struct ice_vsi *vsi;
@@ -1067,6 +1090,19 @@ struct ice_netdev_priv {
 static inline bool ice_vector_ch_enabled(struct ice_q_vector *qv)
 {
 	return !!qv->ch; /* Enable it to run with TC */
+}
+
+/**
+ * ice_vector_ind_poller
+ * @qv: pointer to q_vector
+ *
+ * This function returns true if vector is channel enabled and
+ * independent pollers are enabled on the associated channel.
+ */
+static inline bool ice_vector_ind_poller(struct ice_q_vector *qv)
+{
+	return (ice_vector_ch_enabled(qv) && qv->ch->qps_per_poller &&
+		qv->ch->poller_timeout);
 }
 
 /**
@@ -1275,6 +1311,21 @@ static inline struct ice_vsi *ice_get_ctrl_vsi(struct ice_pf *pf)
 }
 
 /**
+ * ice_find_vsi - Find the VSI from VSI ID
+ * @pf: The PF pointer to search in
+ * @vsi_num: The VSI ID to search for
+ */
+static inline struct ice_vsi *ice_find_vsi(struct ice_pf *pf, u16 vsi_num)
+{
+	int i;
+
+	ice_for_each_vsi(pf, i)
+		if (pf->vsi[i] && pf->vsi[i]->vsi_num == vsi_num)
+			return  pf->vsi[i];
+	return NULL;
+}
+
+/**
  * ice_find_first_vsi_by_type - Find and return first VSI of a given type
  * @pf: PF to search for VSI
  * @vsi_type: VSI type we are looking for
@@ -1465,12 +1516,12 @@ static inline bool ice_active_vmdqs(struct ice_pf *pf)
 	return !!ice_find_first_vsi_by_type(pf, ICE_VSI_VMDQ2);
 }
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 static inline bool ice_is_offloaded_macvlan_ena(struct ice_pf *pf)
 {
 	return test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags);
 }
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 #ifdef CONFIG_DEBUG_FS
 void ice_debugfs_pf_init(struct ice_pf *pf);
@@ -1503,9 +1554,9 @@ void ice_fetch_u64_stats_per_ring(struct ice_ring *ring, u64 *pkts, u64 *bytes);
 int ice_down(struct ice_vsi *vsi);
 int ice_vsi_cfg(struct ice_vsi *vsi);
 struct ice_vsi *ice_lb_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi);
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 int ice_vsi_cfg_netdev_tc0(struct ice_vsi *vsi);
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 #ifdef HAVE_XDP_SUPPORT
 int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog);
 int ice_destroy_xdp_rings(struct ice_vsi *vsi);
@@ -1579,6 +1630,14 @@ static inline void ice_clear_rdma_cap(struct ice_pf *pf)
 }
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
+/** ice_chk_rdma_cap - check the status of RDMA if PF flags
+ * @pf: PF struct
+ */
+static inline bool ice_chk_rdma_cap(struct ice_pf *pf)
+{
+	return test_bit(ICE_FLAG_IWARP_ENA, pf->flags);
+}
+
 const char *ice_stat_str(enum ice_status stat_err);
 const char *ice_aq_str(enum ice_aq_err aq_err);
 bool ice_is_wol_supported(struct ice_hw *hw);
@@ -1616,6 +1675,7 @@ int
 ice_ntuple_update_list_entry(struct ice_pf *pf, struct ice_fdir_fltr *input,
 			     int fltr_idx);
 void ice_update_ring_dest_vsi(struct ice_vsi *vsi, u16 *dest_vsi, u32 *ring);
+void ice_ch_vsi_update_ring_vecs(struct ice_vsi *vsi);
 int ice_open(struct net_device *netdev);
 int ice_open_internal(struct net_device *netdev);
 int ice_stop(struct net_device *netdev);

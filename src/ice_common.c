@@ -167,6 +167,12 @@ static enum ice_status ice_set_mac_type(struct ice_hw *hw)
 	case ICE_DEV_ID_E823C_SGMII:
 		hw->mac_type = ICE_MAC_GENERIC;
 		break;
+	case ICE_DEV_ID_E825C_BACKPLANE:
+	case ICE_DEV_ID_E825C_QSFP:
+	case ICE_DEV_ID_E825C_SFP:
+	case ICE_DEV_ID_E825C_SGMII:
+		hw->mac_type = ICE_MAC_GENERIC;
+		break;
 	default:
 		hw->mac_type = ICE_MAC_UNKNOWN;
 		break;
@@ -208,19 +214,53 @@ bool ice_is_e810t(struct ice_hw *hw)
 {
 	switch (hw->device_id) {
 	case ICE_DEV_ID_E810C_SFP:
-		if (hw->subsystem_device_id == ICE_SUBDEV_ID_E810T ||
-		    hw->subsystem_device_id == ICE_SUBDEV_ID_E810T2)
+		switch (hw->subsystem_device_id) {
+		case ICE_SUBDEV_ID_E810T:
+		case ICE_SUBDEV_ID_E810T2:
+		case ICE_SUBDEV_ID_E810T3:
+		case ICE_SUBDEV_ID_E810T4:
+		case ICE_SUBDEV_ID_E810T5:
 			return true;
+		}
 		break;
 	case ICE_DEV_ID_E810C_QSFP:
-		if (hw->subsystem_device_id == ICE_SUBDEV_ID_E810T2)
+		switch (hw->subsystem_device_id) {
+		case ICE_SUBDEV_ID_E810T2:
+		case ICE_SUBDEV_ID_E810T5:
+		case ICE_SUBDEV_ID_E810T6:
 			return true;
+		}
 		break;
 	default:
 		break;
 	}
 
 	return false;
+}
+
+/**
+ * ice_is_e823
+ * @hw: pointer to the hardware structure
+ *
+ * returns true if the device is E823-L or E823-C based, false if not.
+ */
+bool ice_is_e823(struct ice_hw *hw)
+{
+	switch (hw->device_id) {
+	case ICE_DEV_ID_E823L_BACKPLANE:
+	case ICE_DEV_ID_E823L_SFP:
+	case ICE_DEV_ID_E823L_10G_BASE_T:
+	case ICE_DEV_ID_E823L_1GBE:
+	case ICE_DEV_ID_E823L_QSFP:
+	case ICE_DEV_ID_E823C_BACKPLANE:
+	case ICE_DEV_ID_E823C_QSFP:
+	case ICE_DEV_ID_E823C_SFP:
+	case ICE_DEV_ID_E823C_10G_BASE_T:
+	case ICE_DEV_ID_E823C_SGMII:
+		return true;
+	default:
+		return false;
+	}
 }
 
 /**
@@ -334,6 +374,7 @@ ice_aq_get_phy_caps(struct ice_port_info *pi, bool qual_mods, u8 report_mode,
 		cmd->param0 |= cpu_to_le16(ICE_AQC_GET_PHY_RQM);
 
 	cmd->param0 |= cpu_to_le16(report_mode);
+
 	status = ice_aq_send_cmd(hw, &desc, pcaps, pcaps_size, cd);
 
 	ice_debug(hw, ICE_DBG_LINK, "get phy caps dump\n");
@@ -456,11 +497,12 @@ ice_find_netlist_node(struct ice_hw *hw, u8 node_type_ctx, u8 node_part_number,
 {
 	struct ice_aqc_get_link_topo cmd;
 	u8 rec_node_part_number;
-	enum ice_status status;
 	u16 rec_node_handle;
 	u8 idx;
 
 	for (idx = 0; idx < MAX_NETLIST_SIZE; idx++) {
+		enum ice_status status;
+
 		memset(&cmd, 0, sizeof(cmd));
 
 		cmd.addr.topo_params.node_type_ctx =
@@ -633,6 +675,8 @@ static enum ice_media_type ice_get_media_type(struct ice_port_info *pi)
 	return ICE_MEDIA_UNKNOWN;
 }
 
+#define ice_get_link_status_datalen(hw)	ICE_GET_LINK_STATUS_DATALEN_V1
+
 /**
  * ice_aq_get_link_info
  * @pi: port information structure
@@ -672,8 +716,8 @@ ice_aq_get_link_info(struct ice_port_info *pi, bool ena_lse,
 	resp->cmd_flags = cpu_to_le16(cmd_flags);
 	resp->lport_num = pi->lport;
 
-	status = ice_aq_send_cmd(hw, &desc, &link_data, sizeof(link_data), cd);
-
+	status = ice_aq_send_cmd(hw, &desc, &link_data,
+				 ice_get_link_status_datalen(hw), cd);
 	if (status)
 		return status;
 
@@ -1265,7 +1309,7 @@ static enum ice_status ice_pf_reset(struct ice_hw *hw)
 	 * that is occurring during a download package operation.
 	 */
 	for (cnt = 0; cnt < ICE_GLOBAL_CFG_LOCK_TIMEOUT +
-	     ICE_PF_RESET_WAIT_COUNT; cnt++) {
+		ICE_PF_RESET_WAIT_COUNT; cnt++) {
 		reg = rd32(hw, PFGEN_CTRL);
 		if (!(reg & PFGEN_CTRL_PFSWR_M))
 			break;
@@ -1893,6 +1937,8 @@ ice_aq_send_cmd(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf,
 	case ice_aqc_opc_set_port_params:
 	case ice_aqc_opc_get_vlan_mode_parameters:
 	case ice_aqc_opc_set_vlan_mode_parameters:
+	case ice_aqc_opc_set_tx_topo:
+	case ice_aqc_opc_get_tx_topo:
 	case ice_aqc_opc_add_recipe:
 	case ice_aqc_opc_recipe_to_profile:
 	case ice_aqc_opc_get_recipe:
@@ -2604,7 +2650,7 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 	case ICE_AQC_CAPS_EXT_TOPO_DEV_IMG2:
 	case ICE_AQC_CAPS_EXT_TOPO_DEV_IMG3:
 	{
-		u8 index = cap - ICE_AQC_CAPS_EXT_TOPO_DEV_IMG0;
+		u8 index = (u8)(cap - ICE_AQC_CAPS_EXT_TOPO_DEV_IMG0);
 
 		caps->ext_topo_dev_img_ver_high[index] = number;
 		caps->ext_topo_dev_img_ver_low[index] = logical_id;
@@ -2637,6 +2683,14 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 			  caps->ext_topo_dev_img_prog_en[index]);
 		break;
 	}
+	case ICE_AQC_CAPS_TX_SCHED_TOPO_COMP_MODE:
+		caps->tx_sched_topo_comp_mode_en = (number == 1);
+		break;
+	case ICE_AQC_CAPS_DYN_FLATTENING:
+		caps->dyn_flattening_en = (number == 1);
+		ice_debug(hw, ICE_DBG_INIT, "%s: dyn_flattening_en = %d\n",
+			  prefix, caps->dyn_flattening_en);
+		break;
 	default:
 		/* Not one of the recognized common capabilities */
 		found = false;
@@ -2746,7 +2800,8 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 	info->tmr_index_owned = ((number & ICE_TS_TMR_IDX_OWND_M) != 0);
 	info->tmr_index_assoc = ((number & ICE_TS_TMR_IDX_ASSOC_M) != 0);
 
-	info->clk_freq = (number & ICE_TS_CLK_FREQ_M) >> ICE_TS_CLK_FREQ_S;
+	info->clk_freq =
+		(u8)((number & ICE_TS_CLK_FREQ_M) >> ICE_TS_CLK_FREQ_S);
 	info->clk_src = ((number & ICE_TS_CLK_SRC_M) != 0);
 
 	if (info->clk_freq < NUM_ICE_TIME_REF_FREQ) {
@@ -2968,6 +3023,8 @@ ice_parse_1588_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_p,
 	info->tmr1_owned = ((number & ICE_TS_TMR1_OWND_M) != 0);
 	info->tmr1_ena = ((number & ICE_TS_TMR1_ENA_M) != 0);
 
+	info->ts_ll_read = ((number & ICE_TS_LL_TX_TS_READ_M) != 0);
+
 	info->ena_ports = logical_id;
 	info->tmr_own_map = phys_id;
 
@@ -2985,6 +3042,8 @@ ice_parse_1588_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_p,
 		  info->tmr1_owned);
 	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr1_ena = %u\n",
 		  info->tmr1_ena);
+	ice_debug(hw, ICE_DBG_INIT, "dev caps: ts_ll_read = %u\n",
+		  info->ts_ll_read);
 	ice_debug(hw, ICE_DBG_INIT, "dev caps: ieee_1588 ena_ports = %u\n",
 		  info->ena_ports);
 	ice_debug(hw, ICE_DBG_INIT, "dev caps: tmr_own_map = %u\n",
@@ -3715,8 +3774,12 @@ enum ice_fc_mode ice_caps_to_fc_mode(u8 caps)
  */
 enum ice_fec_mode ice_caps_to_fec_mode(u8 caps, u8 fec_options)
 {
-	if (caps & ICE_AQC_PHY_EN_AUTO_FEC)
-		return ICE_FEC_AUTO;
+	if (caps & ICE_AQC_PHY_EN_AUTO_FEC) {
+		if (fec_options & ICE_AQC_PHY_FEC_DIS)
+			return ICE_FEC_DIS_AUTO;
+		else
+			return ICE_FEC_AUTO;
+	}
 
 	if (fec_options & (ICE_AQC_PHY_FEC_10G_KR_40G_KR4_EN |
 			   ICE_AQC_PHY_FEC_10G_KR_40G_KR4_REQ |
@@ -3976,6 +4039,12 @@ ice_cfg_phy_fec(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
 		/* Clear all FEC option bits. */
 		cfg->link_fec_opt &= ~ICE_AQC_PHY_FEC_MASK;
 		break;
+	case ICE_FEC_DIS_AUTO:
+		/* Set No FEC and auto FEC */
+		if (!ice_fw_supports_fec_dis_auto(hw))
+			return ICE_ERR_NOT_SUPPORTED;
+		cfg->link_fec_opt |= ICE_AQC_PHY_FEC_DIS;
+		fallthrough;
 	case ICE_FEC_AUTO:
 		/* AND auto FEC bit, and all caps bits. */
 		cfg->caps &= ICE_AQC_PHY_CAPS_MASK;
@@ -5021,7 +5090,7 @@ ice_print_sched_elem(struct ice_hw *hw, int elem,
 	struct ice_aqc_txsched_elem *d = &data->data;
 	unsigned long valid_sec = d->valid_sections;
 	char str[128];
-	int i;
+	u16 i;
 
 	dev_info(ice_hw_to_dev(hw), "\t\telement %d\n", elem);
 	dev_info(ice_hw_to_dev(hw), "\t\t\tparent TEID %d\n",
@@ -5357,6 +5426,8 @@ void ice_dump_ptp_dev_caps(struct ice_hw *hw)
 		 ptpdev->tmr0_ena);
 	dev_info(ice_hw_to_dev(hw), "PTP dev cap: tmr1_ena = %d\n",
 		 ptpdev->tmr1_ena);
+	dev_info(ice_hw_to_dev(hw), "PTP dev cap: ts_ll_read = %d\n",
+		 ptpdev->ts_ll_read);
 	dev_info(ice_hw_to_dev(hw), "PTP dev cap: ena_ports(bitmap) = %d\n",
 		 ptpdev->ena_ports);
 	dev_info(ice_hw_to_dev(hw), "PTP dev cap: tmr_own_map = %d\n",
@@ -5382,10 +5453,6 @@ void ice_dump_port_info(struct ice_port_info *pi)
 	dev_info(ice_hw_to_dev(pi->hw), "\tvirt_port = %d\n", pi->lport);
 
 	dev_info(ice_hw_to_dev(pi->hw), "\tswid = %d\n", pi->sw_id);
-	dev_info(ice_hw_to_dev(pi->hw), "\tdflt_tx_vsi = %d\n",
-		 pi->dflt_tx_vsi_num);
-	dev_info(ice_hw_to_dev(pi->hw), "\tdflt_rx_vsi = %d\n",
-		 pi->dflt_rx_vsi_num);
 	dev_info(ice_hw_to_dev(pi->hw), "\t%s_num = %d\n",
 		 (pi->is_vf ? "vf" : "pf"), pi->pf_vf_num);
 	dev_info(ice_hw_to_dev(pi->hw), "\tlast_node_teid = %d\n",
@@ -6622,7 +6689,7 @@ ice_aq_set_driver_param(struct ice_hw *hw, enum ice_aqc_driver_params idx,
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_driver_shared_params);
 
 	cmd->set_or_get_op = ICE_AQC_DRIVER_PARAM_SET;
-	cmd->param_indx = idx;
+	cmd->param_indx = (u8)idx;
 	cmd->param_val = cpu_to_le32(value);
 
 	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
@@ -6656,7 +6723,7 @@ ice_aq_get_driver_param(struct ice_hw *hw, enum ice_aqc_driver_params idx,
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_driver_shared_params);
 
 	cmd->set_or_get_op = ICE_AQC_DRIVER_PARAM_GET;
-	cmd->param_indx = idx;
+	cmd->param_indx = (u8)idx;
 
 	status = ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
 	if (status)
@@ -6726,6 +6793,29 @@ ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
 }
 
 /**
+ * ice_is_fw_min_ver
+ * @hw: pointer to the hardware structure
+ * @maj: major version
+ * @min: minor version
+ * @patch: patch version
+ *
+ * Checks if the firmware is minimum version
+ */
+static bool ice_is_fw_min_ver(struct ice_hw *hw, u8 maj, u8 min, u8 patch)
+{
+	if (hw->api_maj_ver == maj) {
+		if (hw->api_min_ver > min)
+			return true;
+		if (hw->api_min_ver == min && hw->api_patch >= patch)
+			return true;
+	} else if (hw->api_maj_ver > maj) {
+		return true;
+	}
+
+	return false;
+}
+
+/**
  * ice_fw_supports_link_override
  * @hw: pointer to the hardware structure
  *
@@ -6733,17 +6823,9 @@ ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
  */
 bool ice_fw_supports_link_override(struct ice_hw *hw)
 {
-	if (hw->api_maj_ver == ICE_FW_API_LINK_OVERRIDE_MAJ) {
-		if (hw->api_min_ver > ICE_FW_API_LINK_OVERRIDE_MIN)
-			return true;
-		if (hw->api_min_ver == ICE_FW_API_LINK_OVERRIDE_MIN &&
-		    hw->api_patch >= ICE_FW_API_LINK_OVERRIDE_PATCH)
-			return true;
-	} else if (hw->api_maj_ver > ICE_FW_API_LINK_OVERRIDE_MAJ) {
-		return true;
-	}
-
-	return false;
+	return ice_is_fw_min_ver(hw, ICE_FW_API_LINK_OVERRIDE_MAJ,
+				 ICE_FW_API_LINK_OVERRIDE_MIN,
+				 ICE_FW_API_LINK_OVERRIDE_PATCH);
 }
 
 /**
@@ -7009,16 +7091,9 @@ bool ice_fw_supports_lldp_fltr_ctrl(struct ice_hw *hw)
 	if (hw->mac_type != ICE_MAC_E810)
 		return false;
 
-	if (hw->api_maj_ver == ICE_FW_API_LLDP_FLTR_MAJ) {
-		if (hw->api_min_ver > ICE_FW_API_LLDP_FLTR_MIN)
-			return true;
-		if (hw->api_min_ver == ICE_FW_API_LLDP_FLTR_MIN &&
-		    hw->api_patch >= ICE_FW_API_LLDP_FLTR_PATCH)
-			return true;
-	} else if (hw->api_maj_ver > ICE_FW_API_LLDP_FLTR_MAJ) {
-		return true;
-	}
-	return false;
+	return ice_is_fw_min_ver(hw, ICE_FW_API_LLDP_FLTR_MAJ,
+				 ICE_FW_API_LLDP_FLTR_MIN,
+				 ICE_FW_API_LLDP_FLTR_PATCH);
 }
 
 /**
@@ -7055,18 +7130,23 @@ ice_lldp_fltr_add_remove(struct ice_hw *hw, u16 vsi_num, bool add)
  */
 bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw)
 {
-	if (hw->api_maj_ver == ICE_FW_API_REPORT_DFLT_CFG_MAJ) {
-		if (hw->api_min_ver > ICE_FW_API_REPORT_DFLT_CFG_MIN)
-			return true;
-		if (hw->api_min_ver == ICE_FW_API_REPORT_DFLT_CFG_MIN &&
-		    hw->api_patch >= ICE_FW_API_REPORT_DFLT_CFG_PATCH)
-			return true;
-	} else if (hw->api_maj_ver > ICE_FW_API_REPORT_DFLT_CFG_MAJ) {
-		return true;
-	}
-	return false;
+	return ice_is_fw_min_ver(hw, ICE_FW_API_REPORT_DFLT_CFG_MAJ,
+			ICE_FW_API_REPORT_DFLT_CFG_MIN,
+			ICE_FW_API_REPORT_DFLT_CFG_PATCH);
 }
 
+/**
+ * ice_fw_supports_fec_dis_auto
+ * @hw: pointer to the hardware structure
+ *
+ * Checks if the firmware supports FEC disable in Auto FEC mode
+ */
+bool ice_fw_supports_fec_dis_auto(struct ice_hw *hw)
+{
+	return ice_is_fw_min_ver(hw, ICE_FW_API_FEC_DIS_AUTO_MAJ,
+				 ICE_FW_API_FEC_DIS_AUTO_MIN,
+				 ICE_FW_API_FEC_DIS_AUTO_PATCH);
+}
 /**
  * ice_is_fw_auto_drop_supported
  * @hw: pointer to the hardware structure
@@ -7080,3 +7160,4 @@ bool ice_is_fw_auto_drop_supported(struct ice_hw *hw)
 		return true;
 	return false;
 }
+

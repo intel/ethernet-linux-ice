@@ -325,6 +325,7 @@ ice_setup_tx_ctx(struct ice_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 		tlan_ctx->vmvf_num = hw->func_caps.vf_base_id + vsi->vf->vf_id;
 		tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VF;
 		break;
+	case ICE_VSI_ADI:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
 	case ICE_VSI_SWITCHDEV_CTRL:
@@ -349,6 +350,7 @@ ice_setup_tx_ctx(struct ice_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 		break;
 	}
 
+	tlan_ctx->quanta_prof_idx = ring->quanta_prof_id;
 	tlan_ctx->tso_ena = ICE_TX_LEGACY;
 	tlan_ctx->tso_qnum = pf_q;
 
@@ -466,6 +468,7 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	 * of same priority
 	 */
 	switch (vsi->type) {
+	case ICE_VSI_ADI:
 	case ICE_VSI_VF:
 		ice_write_qrxflxp_cntxt(hw, pf_q, ICE_RXDID_LEGACY_1, 0x3,
 					false);
@@ -477,13 +480,12 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	/* Absolute queue number out of 2K needs to be passed */
 	err = ice_write_rxq_ctx(hw, &rlan_ctx, pf_q);
 	if (err) {
-		dev_err(ice_pf_to_dev(vsi->back),
-			"Failed to set LAN Rx queue context for absolute Rx queue %d error: %d\n",
+		dev_err(ice_pf_to_dev(vsi->back), "Failed to set LAN Rx queue context for absolute Rx queue %d error: %d\n",
 			pf_q, err);
 		return -EIO;
 	}
 
-	if (vsi->type == ICE_VSI_VF)
+	if (vsi->type == ICE_VSI_VF || vsi->type == ICE_VSI_ADI)
 		return 0;
 
 	/* configure Rx buffer alignment */
@@ -822,17 +824,17 @@ void ice_vsi_free_q_vectors(struct ice_vsi *vsi)
 /**
  * ice_vsi_cfg_txq - Configure single Tx queue
  * @vsi: the VSI that queue belongs to
- * @ring: Tx ring to be configured
+ * @tx_ring: Tx ring to be configured
  * @qg_buf: queue group buffer
  */
 int
-ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *ring,
+ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *tx_ring,
 		struct ice_aqc_add_tx_qgrp *qg_buf)
 {
 	u8 buf_len = struct_size(qg_buf, txqs, 1);
 	struct ice_tlan_ctx tlan_ctx = { 0 };
+	struct ice_channel *ch = tx_ring->ch;
 	struct ice_aqc_add_txqs_perq *txq;
-	struct ice_channel *ch = ring->ch;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	enum ice_status status;
@@ -840,10 +842,10 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *ring,
 	u8 tc;
 
 	/* Configure XPS */
-	ice_cfg_xps_tx_ring(ring);
+	ice_cfg_xps_tx_ring(tx_ring);
 
-	pf_q = ring->reg_idx;
-	ice_setup_tx_ctx(ring, &tlan_ctx, pf_q);
+	pf_q = tx_ring->reg_idx;
+	ice_setup_tx_ctx(tx_ring, &tlan_ctx, pf_q);
 	/* copy context contents into the qg_buf */
 	qg_buf->txqs[0].txq_id = cpu_to_le16(pf_q);
 	ice_set_ctx(hw, (u8 *)&tlan_ctx, qg_buf->txqs[0].txq_ctx,
@@ -852,10 +854,9 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *ring,
 	/* init queue specific tail reg. It is referred as
 	 * transmit comm scheduler queue doorbell.
 	 */
-	ring->tail = hw->hw_addr + QTX_COMM_DBELL(pf_q);
-
+	tx_ring->tail = hw->hw_addr + QTX_COMM_DBELL(pf_q);
 	if (IS_ENABLED(CONFIG_DCB))
-		tc = ring->dcb_tc;
+		tc = tx_ring->dcb_tc;
 	else
 		tc = 0;
 
@@ -863,15 +864,18 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *ring,
 	 * TC into the VSI Tx ring
 	 */
 	if (vsi->type == ICE_VSI_SWITCHDEV_CTRL)
-		ring->q_handle = ice_eswitch_calc_q_handle(ring);
+		tx_ring->q_handle = ice_eswitch_calc_q_handle(tx_ring);
 	else
-		ring->q_handle = ice_calc_q_handle(vsi, ring, tc);
+		tx_ring->q_handle = ice_calc_q_handle(vsi, tx_ring, tc);
 
-	status = (ch ?
-		  ice_ena_vsi_txq(vsi->port_info, ch->ch_vsi->idx, 0,
-				  ring->q_handle, 1, qg_buf, buf_len, NULL) :
-		  ice_ena_vsi_txq(vsi->port_info, vsi->idx, tc,
-				  ring->q_handle, 1, qg_buf, buf_len, NULL));
+	if (ch)
+		status = ice_ena_vsi_txq(vsi->port_info, ch->ch_vsi->idx, 0,
+					 tx_ring->q_handle, 1, qg_buf, buf_len,
+					 NULL);
+	else
+		status = ice_ena_vsi_txq(vsi->port_info, vsi->idx, tc,
+					 tx_ring->q_handle, 1, qg_buf, buf_len,
+					 NULL);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "Failed to set LAN Tx queue context, error: %s\n",
 			ice_stat_str(status));
@@ -884,7 +888,7 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *ring,
 	 */
 	txq = &qg_buf->txqs[0];
 	if (pf_q == le16_to_cpu(txq->txq_id))
-		ring->txq_teid = le32_to_cpu(txq->q_teid);
+		tx_ring->txq_teid = le32_to_cpu(txq->q_teid);
 
 	return 0;
 }

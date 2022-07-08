@@ -10,7 +10,7 @@ bool ice_vf_adq_vsi_valid(struct ice_vf *vf, u8 tc);
 void ice_del_all_adv_switch_fltr(struct ice_vf *vf);
 void ice_vf_adq_release(struct ice_vf *vf);
 void ice_vf_rebuild_adq_host_cfg(struct ice_vf *vf);
-int ice_vf_rebuild_adq_vsi_with_release(struct ice_vf *vf);
+int ice_vf_recreate_adq_vsi(struct ice_vf *vf);
 int ice_vf_rebuild_adq_vsi(struct ice_vf *vf);
 u16 ice_vf_get_tc_based_qid(u16 qid, u16 offset);
 void ice_vf_q_id_get_vsi_q_id(struct ice_vf *vf, u16 vf_q_id, u16 *t_tc,

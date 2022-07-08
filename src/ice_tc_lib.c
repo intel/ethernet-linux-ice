@@ -528,6 +528,7 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	 */
 	fltr->rid = rule_added.rid;
 	fltr->rule_id = rule_added.rule_id;
+	fltr->dest_vsi_handle = rule_added.vsi_handle;
 
 exit:
 	kfree(list);
@@ -1621,8 +1622,8 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 			 struct ice_tc_flower_fltr *fltr)
 {
 	unsigned int nrx = TC_H_MIN(cls_flower->classid);
-	int tc;
 	u32 num_tc;
+	int tc;
 
 	num_tc = (u32)netdev_get_num_tc(vsi->netdev);
 
@@ -1634,7 +1635,8 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	 * TC_H_MIN_PRIORITY + netdev_get_num_tc - 1. (i.e forward to TC)
 	 */
 	if (nrx < TC_H_MIN_PRIORITY) {
-		u32 queue = 0;
+		struct ice_hw *hw = &vsi->back->hw;
+		u32 queue, global_qid;
 		/* user specified queue, hence action is forward to queue */
 		if (nrx > vsi->num_rxq) {
 			NL_SET_ERR_MSG_MOD(fltr->extack,
@@ -1649,7 +1651,8 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 		fltr->action.fwd.q.queue = queue;
 
 		/* determine corresponding HW queue */
-		fltr->action.fwd.q.hw_queue = vsi->rxq_map[queue];
+		global_qid = hw->func_caps.common_cap.rxq_first_id + queue;
+		fltr->action.fwd.q.hw_queue = global_qid;
 	} else if ((nrx - TC_H_MIN_PRIORITY) < num_tc) {
 		/* user specified hw_tc (it must be non-zero for ADQ TC, hence
 		 * action is forward to "hw_tc (aka ADQ channel number)"
@@ -1707,16 +1710,6 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 				vsi->netdev->dev_addr);
 		eth_broadcast_addr(fltr->outer_headers.l2_mask.dst_mac);
 		fltr->flags |= ICE_TC_FLWR_FIELD_DST_MAC;
-	}
-
-	/* validate specified dest MAC address, make sure either it belongs to
-	 * lower netdev or any of non-offloaded MACVLAN. Non-offloaded MACVLANs
-	 * MAC address are added as unicast MAC filter destined to main VSI.
-	 */
-	if (!ice_mac_fltr_exist(&vsi->back->hw,
-				fltr->outer_headers.l2_key.dst_mac, vsi->idx)) {
-		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because legacy MAC filter for specified destination doesn't exist");
-		return -EINVAL;
 	}
 
 	/* Make sure VLAN is already added to main VSI, before allowing ADQ to

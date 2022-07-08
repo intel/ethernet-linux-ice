@@ -11,7 +11,7 @@
 
 static int
 noop_vlan_arg(struct ice_vsi __always_unused *vsi,
-	      struct ice_vlan * __always_unused vlan)
+	      struct ice_vlan __always_unused *vlan)
 {
 	return 0;
 }

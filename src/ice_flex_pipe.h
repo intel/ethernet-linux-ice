@@ -6,21 +6,6 @@
 
 #include "ice_type.h"
 
-/* Package minimal version supported */
-#define ICE_PKG_SUPP_VER_MAJ	1
-#define ICE_PKG_SUPP_VER_MNR	3
-
-/* Package format version */
-#define ICE_PKG_FMT_VER_MAJ	1
-#define ICE_PKG_FMT_VER_MNR	0
-#define ICE_PKG_FMT_VER_UPD	0
-#define ICE_PKG_FMT_VER_DFT	0
-
-#define ICE_PKG_CNT 4
-
-enum ice_status
-ice_acquire_change_lock(struct ice_hw *hw, enum ice_aq_res_access_type access);
-void ice_release_change_lock(struct ice_hw *hw);
 enum ice_status
 ice_find_prot_off(struct ice_hw *hw, enum ice_block blk, u8 prof, u16 fv_idx,
 		  u8 *prot, u16 *off);
@@ -32,12 +17,6 @@ ice_get_sw_fv_bitmap(struct ice_hw *hw, enum ice_prof_type type,
 		     unsigned long *bm);
 void
 ice_init_prof_result_bm(struct ice_hw *hw);
-enum ice_status
-ice_get_sw_fv_list(struct ice_hw *hw, u8 *prot_ids, u16 ids_cnt,
-		   unsigned long *bm, struct list_head *fv_list);
-enum ice_status
-ice_pkg_buf_unreserve_section(struct ice_buf_build *bld, u16 count);
-u16 ice_pkg_buf_get_free_space(struct ice_buf_build *bld);
 enum ice_status
 ice_aq_upload_section(struct ice_hw *hw, struct ice_buf_hdr *pkg_buf,
 		      u16 buf_size, struct ice_sq_cd *cd);
@@ -84,12 +63,7 @@ enum ice_status
 ice_set_prof_context(struct ice_hw *hw, enum ice_block blk, u64 id, u64 cntxt);
 enum ice_status
 ice_get_prof_context(struct ice_hw *hw, enum ice_block blk, u64 id, u64 *cntxt);
-enum ice_ddp_state ice_init_pkg(struct ice_hw *hw, u8 *buff, u32 len);
-enum ice_ddp_state
-ice_copy_and_init_pkg(struct ice_hw *hw, const u8 *buf, u32 len);
-bool ice_is_init_pkg_successful(enum ice_ddp_state state);
 enum ice_status ice_init_hw_tbls(struct ice_hw *hw);
-void ice_free_seg(struct ice_hw *hw);
 void ice_fill_blk_tbls(struct ice_hw *hw);
 void ice_clear_hw_tbls(struct ice_hw *hw);
 void ice_free_hw_tbls(struct ice_hw *hw);
@@ -101,13 +75,25 @@ ice_rem_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi[], u8 count,
 	     u64 id);
 enum ice_status
 ice_rem_prof(struct ice_hw *hw, enum ice_block blk, u64 id);
-struct ice_buf_build *
-ice_pkg_buf_alloc_single_section(struct ice_hw *hw, u32 type, u16 size,
-				 void **section);
-struct ice_buf *ice_pkg_buf(struct ice_buf_build *bld);
-void ice_pkg_buf_free(struct ice_hw *hw, struct ice_buf_build *bld);
 
 enum ice_status
 ice_set_key(u8 *key, u16 size, u8 *val, u8 *upd, u8 *dc, u8 *nm, u16 off,
 	    u16 len);
+
+void ice_fill_blk_tbls(struct ice_hw *hw);
+
+/* To support tunneling entries by PF, the package will append the PF number to
+ * the label; for example TNL_VXLAN_PF0, TNL_VXLAN_PF1, TNL_VXLAN_PF2, etc.
+ */
+#define ICE_TNL_PRE	"TNL_"
+/* For supporting double VLAN mode, it is necessary to enable or disable certain
+ * boost tcam entries. The metadata labels names that match the following
+ * prefixes will be saved to allow enabling double VLAN mode.
+ */
+#define ICE_DVM_PRE	"BOOST_MAC_VLAN_DVM"	/* enable these entries */
+#define ICE_SVM_PRE	"BOOST_MAC_VLAN_SVM"	/* disable these entries */
+
+void ice_add_tunnel_hint(struct ice_hw *hw, char *label_name, u16 val);
+void ice_add_dvm_hint(struct ice_hw *hw, u16 val, bool enable);
+
 #endif /* _ICE_FLEX_PIPE_H_ */

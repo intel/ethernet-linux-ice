@@ -189,9 +189,9 @@ void ice_vsi_set_dcb_tc_cfg(struct ice_vsi *vsi)
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 	case ICE_VSI_CHNL:
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	case ICE_VSI_OFFLOAD_MACVLAN:
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 	case ICE_VSI_VMDQ2:
 	case ICE_VSI_SWITCHDEV_CTRL:
 		vsi->tc_cfg.ena_tc = BIT(ice_get_first_droptc(vsi));
@@ -223,8 +223,7 @@ u8 ice_dcb_get_tc(struct ice_vsi *vsi, int queue_index)
  */
 void ice_vsi_cfg_dcb_rings(struct ice_vsi *vsi)
 {
-	u16 qoffset;
-	u16 qcount;
+	u16 qoffset, qcount;
 	int i, n;
 
 	if (!test_bit(ICE_FLAG_DCB_ENA, vsi->back->flags)) {
@@ -253,7 +252,7 @@ void ice_vsi_cfg_dcb_rings(struct ice_vsi *vsi)
 			vsi->rx_rings[i]->dcb_tc = n;
 	}
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	/* when DCB is configured TC for MACVLAN queues should be
 	 * the first drop TC of the main VSI
 	 */
@@ -265,7 +264,7 @@ void ice_vsi_cfg_dcb_rings(struct ice_vsi *vsi)
 		ice_for_each_alloc_rxq(vsi, i)
 			vsi->rx_rings[i]->dcb_tc = first_droptc;
 	}
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 	if (vsi->type == ICE_VSI_PF) {
@@ -329,7 +328,7 @@ static void ice_dcb_ena_dis_vsi(struct ice_pf *pf, bool ena, bool locked)
 
 /**
  * ice_dcb_bwchk - check if ETS bandwidth input parameters are correct
- * @pf: pointer to PF struct
+ * @pf: pointer to the PF struct
  * @dcbcfg: pointer to DCB config structure
  */
 int ice_dcb_bwchk(struct ice_pf *pf, struct ice_dcbx_cfg *dcbcfg)
@@ -357,8 +356,7 @@ int ice_dcb_bwchk(struct ice_pf *pf, struct ice_dcbx_cfg *dcbcfg)
 	if (!total_bw) {
 		etscfg->tcbwtable[0] = ICE_TC_MAX_BW;
 	} else if (total_bw != ICE_TC_MAX_BW) {
-		dev_err(ice_pf_to_dev(pf),
-			"Invalid config, total bandwidth must equal 100\n");
+		dev_err(ice_pf_to_dev(pf), "Invalid config, total bandwidth must equal 100\n");
 		return -EINVAL;
 	}
 
@@ -376,8 +374,8 @@ int ice_pf_dcb_cfg(struct ice_pf *pf, struct ice_dcbx_cfg *new_cfg, bool locked)
 	struct ice_aqc_port_ets_elem buf = { 0 };
 	struct ice_dcbx_cfg *old_cfg, *curr_cfg;
 	struct device *dev = ice_pf_to_dev(pf);
-	struct iidc_event *event;
 	int ret = ICE_DCB_NO_HW_CHG;
+	struct iidc_event *event;
 
 	curr_cfg = &pf->hw.port_info->qos_cfg.local_dcbx_cfg;
 
@@ -772,11 +770,11 @@ void ice_pf_dcb_recfg(struct ice_pf *pf)
 				tc_map = ICE_DFLT_TRAFFIC_CLASS;
 				ice_dcb_noncontig_cfg(pf);
 			}
-#if defined(HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO) && defined(HAVE_NETDEV_SB_DEV)
+#if defined(HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO) && defined(HAVE_NDO_DFWD_OPS)
 		} else if (vsi->type == ICE_VSI_CHNL ||
 			   vsi->type == ICE_VSI_OFFLOAD_MACVLAN) {
 			tc_map = BIT(ice_get_first_droptc(vsi));
-# endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO && HAVE_NETDEV_SB_DEV */
+# endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO && HAVE_NDO_DFWD_OPS */
 		} else {
 			tc_map = ICE_DFLT_TRAFFIC_CLASS;
 		}
@@ -1025,9 +1023,9 @@ ice_dcb_process_lldp_set_mib_change(struct ice_pf *pf,
 	struct ice_dcbx_cfg tmp_dcbx_cfg;
 	bool need_reconfig = false;
 	struct ice_port_info *pi;
+	u8 mib_type;
 	u32 numtc;
 	int ret;
-	u8 mib_type;
 
 	/* Not DCB capable or capability disabled */
 	if (!(test_bit(ICE_FLAG_DCB_CAPABLE, pf->flags)))

@@ -93,6 +93,13 @@
 #endif
 
 /*****************************************************************************/
+#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(4,12,14,10))
+#else /* >= 4.12.14-10 */
+#undef NEED_INDIRECT_CALL_WRAPPER_MACROS
+#define HAVE_INDIRECT_CALL_WRAPPER_HEADER
+#endif /* 4.12.14-10 */
+
+/*****************************************************************************/
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(4,12,14,100))
 #else /* >= 4.12.14-100 */
 #undef HAVE_TCF_EXTS_TO_LIST
@@ -173,5 +180,26 @@
 #else /* >= 5.3.18-38 */
 #undef NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY
 #endif /* 5.3.18-38 */
+
+/*****************************************************************************/
+#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,18,59))
+#else /* >= 5.3.18-59 */
+#undef NEED_ETH_HW_ADDR_SET
+#endif /* 5.3.18-59 */
+
+/*****************************************************************************/
+#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5, 14, 17, 1))
+#else /* >= 5.14.17-150400.1 */
+	#undef HAVE_DEVLINK_PARAMS_PUBLISH
+	#undef HAVE_DEVLINK_REGISTER_SETS_DEV
+	#undef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+#endif /* 5.14.17-150400.1 */
+
+/*****************************************************************************/
+#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,14,21,9))
+#else /* >= 5.14.21-150400.9 */
+#undef NEED_DEVLINK_ALLOC_SETS_DEV
+#define HAVE_ETHTOOL_COALESCE_EXTACK
+#endif /* 5.14.21-150400.9 */
 
 #endif /* _KCOMPAT_SLES_DEFS_H_ */

@@ -18,9 +18,6 @@
  */
 #define ICE_MAX_MACADDR_PER_VF		18
 
-/* Malicious Driver Detection */
-#define ICE_DFLT_NUM_INVAL_MSGS_ALLOWED		10
-
 /* Maximum number of queue pairs to configure by default for a VF */
 #define ICE_MAX_DFLT_QS_PER_VF		16
 
@@ -29,6 +26,12 @@
 
 /* Max number of flexible descriptor rxdid */
 #define ICE_FLEX_DESC_RXDID_MAX_NUM 64
+
+#define ICE_DFLT_QUANTA 1024
+#define ICE_MAX_QUANTA_SIZE 4096
+#define ICE_MIN_QUANTA_SIZE 256
+#define calc_quanta_desc(x)	\
+	max_t(u16, 12, min_t(u16, 63, ((x + 66) / 132) * 2 + 4))
 
 #define ICE_VF_UCAST_PROMISC_BITS ICE_PROMISC_UCAST_RX
 #define ICE_VF_UCAST_VLAN_PROMISC_BITS	(ICE_PROMISC_UCAST_RX | \
@@ -75,6 +78,8 @@ struct ice_virtchnl_ops {
 	int (*handle_rss_cfg_msg)(struct ice_vf *vf, u8 *msg, bool add);
 	int (*get_qos_caps)(struct ice_vf *vf);
 	int (*cfg_q_tc_map)(struct ice_vf *vf, u8 *msg);
+	int (*cfg_q_bw)(struct ice_vf *vf, u8 *msg);
+	int (*cfg_q_quanta)(struct ice_vf *vf, u8 *msg);
 	int (*add_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*del_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*get_max_rss_qregion)(struct ice_vf *vf);
@@ -114,10 +119,9 @@ void ice_vc_notify_vf_link_state(struct ice_vf *vf);
 void ice_vc_notify_link_state(struct ice_pf *pf);
 void ice_vc_notify_reset(struct ice_pf *pf);
 int
-ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m);
-int
 ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen);
+bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 #else /* CONFIG_PCI_IOV */
 static inline void ice_virtchnl_set_dflt_ops(struct ice_vf *vf) { }
 static inline void ice_virtchnl_set_repr_ops(struct ice_vf *vf) { }
@@ -130,17 +134,17 @@ ice_vc_vf_broadcast(struct ice_pf *pf, enum virtchnl_ops v_opcode,
 static inline void ice_vc_notify_vf_link_state(struct ice_vf *vf) { }
 static inline void ice_vc_notify_link_state(struct ice_pf *pf) { }
 static inline void ice_vc_notify_reset(struct ice_pf *pf) { }
-static inline int
-ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
-{
-	return 0;
-}
 
 static inline int
 ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen)
 {
 	return -EOPNOTSUPP;
+}
+
+static inline bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id)
+{
+	return 0;
 }
 #endif /* !CONFIG_PCI_IOV */
 

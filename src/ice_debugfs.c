@@ -25,10 +25,10 @@ static void ice_dump_pf(struct ice_pf *pf)
 	dev_info(dev, "\tnum_lan_msix = %d\n", pf->num_lan_msix);
 	dev_info(dev, "\tnum_rdma_msix = %d\n", pf->num_rdma_msix);
 	dev_info(dev, "\trdma_base_vector = %d\n", pf->rdma_base_vector);
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	dev_info(dev, "\tnum_macvlan = %d\n", pf->num_macvlan);
 	dev_info(dev, "\tmax_num_macvlan = %d\n", pf->max_num_macvlan);
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 	dev_info(dev, "\tirq_tracker->num_entries = %d\n",
 		 pf->irq_tracker->num_entries);
 	dev_info(dev, "\tirq_tracker->end = %d\n", pf->irq_tracker->end);
@@ -291,6 +291,11 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 	enum ice_status status;
 	int cnt = 0;
 
+	if (!ice_is_cgu_present(hw)) {
+		dev_err(dev, "CGU not present\n");
+		return -ENODEV;
+	}
+
 	memset(&abilities, 0, sizeof(struct ice_aqc_get_cgu_abilities));
 	status = ice_aq_get_cgu_abilities(hw, &abilities);
 	if (status) {
@@ -300,8 +305,6 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		abilities.num_inputs = 7;
 		abilities.pps_dpll_idx = 1;
 		abilities.synce_dpll_idx = 0;
-		abilities.cgu_part_num =
-			ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032;
 	}
 
 	status = ice_aq_get_cgu_info(hw, &cgu_id, &cgu_cfg_ver, &cgu_fw_ver);
@@ -323,6 +326,9 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		cnt += snprintf(&buff[cnt], bytes_left - cnt,
 				"DPLL Config ver: %d.%d.%d.%d\n", ver_major,
 				ver_minor, rev, bugfix);
+	} else if (abilities.cgu_part_num ==
+		   ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384) {
+		cnt = snprintf(buff, bytes_left, "Found SI5383/5384 CGU\n");
 	}
 
 	cnt += snprintf(&buff[cnt], bytes_left - cnt, "\nCGU Input status:\n");

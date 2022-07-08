@@ -41,6 +41,7 @@ static void ice_qp_clean_rings(struct ice_vsi *vsi, u16 q_idx)
 	ice_clean_tx_ring(vsi->tx_rings[q_idx]);
 	if (ice_is_xdp_ena_vsi(vsi))
 		ice_clean_tx_ring(vsi->xdp_rings[q_idx]);
+
 	ice_clean_rx_ring(vsi->rx_rings[q_idx]);
 }
 
@@ -219,7 +220,6 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 		return -ENOMEM;
 
 	qg_buf->num_txqs = 1;
-
 	tx_ring = vsi->tx_rings[q_idx];
 	rx_ring = vsi->rx_rings[q_idx];
 	q_vector = rx_ring->q_vector;
@@ -687,11 +687,11 @@ ice_alloc_buf_slow_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
 }
 #endif /* !HAVE_MEM_TYPE_XSK_BUFF_POOL */
 
-/*
+#ifdef HAVE_MEM_TYPE_XSK_BUFF_POOL
+/**
  * ice_alloc_rx_bufs_zc - allocate a number of Rx buffers
  * @rx_ring: Rx ring
  * @count: The number of buffers to allocate
- * @alloc: the function pointer to call for allocation
  *
  * This function allocates a number of Rx buffers from the fill ring
  * or the internal recycle mechanism and places them on the Rx ring.
@@ -700,12 +700,11 @@ ice_alloc_buf_slow_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
  * NOTE: this function header description doesn't do kdoc style
  *       because of the function pointer creating problems.
  */
-#ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
+bool ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count)
+#else
 static bool
 ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count,
 		     bool (*alloc)(struct ice_ring *, struct ice_rx_buf *))
-#else
-bool ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count)
 #endif
 {
 	union ice_32b_rx_flex_desc *rx_desc;

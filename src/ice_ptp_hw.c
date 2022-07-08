@@ -384,6 +384,45 @@ static enum ice_status ice_init_cgu_e822(struct ice_hw *hw)
 }
 
 /**
+ * ice_ptp_src_cmd - Prepare source timer for a timer command
+ * @hw: pointer to HW structure
+ * @cmd: Timer command
+ *
+ * Prepare the source timer for an upcoming timer sync command.
+ */
+void ice_ptp_src_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
+{
+	u32 cmd_val;
+	u8 tmr_idx;
+
+	tmr_idx = ice_get_ptp_src_clock_index(hw);
+	cmd_val = tmr_idx << SEL_CPK_SRC;
+
+	switch (cmd) {
+	case INIT_TIME:
+		cmd_val |= GLTSYN_CMD_INIT_TIME;
+		break;
+	case INIT_INCVAL:
+		cmd_val |= GLTSYN_CMD_INIT_INCVAL;
+		break;
+	case ADJ_TIME:
+		cmd_val |= GLTSYN_CMD_ADJ_TIME;
+		break;
+	case ADJ_TIME_AT_TIME:
+		cmd_val |= GLTSYN_CMD_ADJ_INIT_TIME;
+		break;
+	case READ_TIME:
+		cmd_val |= GLTSYN_CMD_READ_TIME;
+		break;
+	default:
+		dev_warn(ice_hw_to_dev(hw), "Unknown timer command %u\n", cmd);
+		return;
+	}
+
+	wr32(hw, GLTSYN_CMD, cmd_val);
+}
+
+/**
  * ice_ptp_exec_tmr_cmd - Execute all prepared timer commands
  * @hw: pointer to HW struct
  *
@@ -431,9 +470,9 @@ ice_fill_phy_msg_e822(struct ice_sbq_msg_input *msg, u8 port, u16 offset)
 {
 	int phy_port, phy, quadtype;
 
-	phy_port = port % ICE_PORTS_PER_PHY;
-	phy = port / ICE_PORTS_PER_PHY;
-	quadtype = (port / ICE_PORTS_PER_QUAD) % ICE_NUM_QUAD_TYPE;
+	phy_port = port % ICE_PORTS_PER_PHY_E822;
+	phy = port / ICE_PORTS_PER_PHY_E822;
+	quadtype = (port / ICE_PORTS_PER_QUAD) % ICE_QUADS_PER_PHY_E822;
 
 	if (quadtype == 0) {
 		msg->msg_addr_low = P_Q0_L(P_0_BASE + offset, phy_port);
@@ -821,20 +860,25 @@ ice_write_64b_phy_reg_e822(struct ice_hw *hw, u8 port, u16 low_addr, u64 val)
  * Fill a message buffer for accessing a register in a quad shared between
  * multiple PHYs.
  */
-static void
+static enum ice_status
 ice_fill_quad_msg_e822(struct ice_sbq_msg_input *msg, u8 quad, u16 offset)
 {
 	u32 addr;
 
+	if (quad >= ICE_MAX_QUAD)
+		return ICE_ERR_PARAM;
+
 	msg->dest_dev = rmn_0;
 
-	if ((quad % ICE_NUM_QUAD_TYPE) == 0)
+	if ((quad % ICE_QUADS_PER_PHY_E822) == 0)
 		addr = Q_0_BASE + offset;
 	else
 		addr = Q_1_BASE + offset;
 
 	msg->msg_addr_low = ICE_LO_WORD(addr);
 	msg->msg_addr_high = ICE_HI_WORD(addr);
+
+	return 0;
 }
 
 /**
@@ -855,22 +899,21 @@ ice_read_quad_reg_e822_lp(struct ice_hw *hw, u8 quad, u16 offset, u32 *val,
 	struct ice_sbq_msg_input msg = {0};
 	enum ice_status status;
 
-	if (quad >= ICE_MAX_QUAD)
-		return ICE_ERR_PARAM;
+	status = ice_fill_quad_msg_e822(&msg, quad, offset);
+	if (status)
+		goto exit_err;
 
-	ice_fill_quad_msg_e822(&msg, quad, offset);
 	msg.opcode = ice_sbq_msg_rd;
 
 	status = ice_sbq_rw_reg_lp(hw, &msg, lock_sbq);
-	if (status) {
+exit_err:
+	if (status)
 		ice_debug(hw, ICE_DBG_PTP, "Failed to send message to phy, status %d\n",
 			  status);
-		return status;
-	}
+	else
+		*val = msg.data;
 
-	*val = msg.data;
-
-	return 0;
+	return status;
 }
 
 enum ice_status
@@ -897,21 +940,20 @@ ice_write_quad_reg_e822_lp(struct ice_hw *hw, u8 quad, u16 offset, u32 val,
 	struct ice_sbq_msg_input msg = {0};
 	enum ice_status status;
 
-	if (quad >= ICE_MAX_QUAD)
-		return ICE_ERR_PARAM;
+	status = ice_fill_quad_msg_e822(&msg, quad, offset);
+	if (status)
+		goto exit_err;
 
-	ice_fill_quad_msg_e822(&msg, quad, offset);
 	msg.opcode = ice_sbq_msg_wr;
 	msg.data = val;
 
 	status = ice_sbq_rw_reg_lp(hw, &msg, lock_sbq);
-	if (status) {
+exit_err:
+	if (status)
 		ice_debug(hw, ICE_DBG_PTP, "Failed to send message to phy, status %d\n",
 			  status);
-		return status;
-	}
 
-	return 0;
+	return status;
 }
 
 enum ice_status
@@ -994,6 +1036,31 @@ ice_clear_phy_tstamp_e822(struct ice_hw *hw, u8 quad, u8 idx)
 		ice_debug(hw, ICE_DBG_PTP, "Failed to clear high PTP timestamp register, status %d\n",
 			  status);
 		return status;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_ptp_set_vernier_wl - Set the window length for vernier calibration
+ * @hw: pointer to the HW struct
+ *
+ * Set the window length used for the vernier port calibration process.
+ */
+enum ice_status ice_ptp_set_vernier_wl(struct ice_hw *hw)
+{
+	u8 port;
+
+	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+		enum ice_status status;
+
+		status = ice_write_phy_reg_e822_lp(hw, port, P_REG_WL,
+						   PTP_VERNIER_WL, true);
+		if (status) {
+			ice_debug(hw, ICE_DBG_PTP, "Failed to set vernier window length for port %u, status %d\n",
+				  port, status);
+			return status;
+		}
 	}
 
 	return 0;
@@ -1450,31 +1517,6 @@ ice_ptp_port_cmd_e822(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
  * a port. This calibration increases the precision of the timestamps on the
  * port.
  */
-
-/**
- * ice_ptp_set_vernier_wl - Set the window length for vernier calibration
- * @hw: pointer to the HW struct
- *
- * Set the window length used for the vernier port calibration process.
- */
-enum ice_status ice_ptp_set_vernier_wl(struct ice_hw *hw)
-{
-	u8 port;
-
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
-		enum ice_status status;
-
-		status = ice_write_phy_reg_e822_lp(hw, port, P_REG_WL,
-						   PTP_VERNIER_WL, true);
-		if (status) {
-			ice_debug(hw, ICE_DBG_PTP, "Failed to set vernier window length for port %u, status %d\n",
-				  port, status);
-			return status;
-		}
-	}
-
-	return 0;
-}
 
 /**
  * ice_phy_get_speed_and_fec_e822 - Get link speed and FEC based on serdes mode
@@ -2772,6 +2814,87 @@ ice_write_phy_reg_e810(struct ice_hw *hw, u32 addr, u32 val)
 }
 
 /**
+ * ice_read_phy_tstamp_ll_e810 - Read a PHY timestamp registers through the FW
+ * @hw: pointer to the HW struct
+ * @idx: the timestamp index to read
+ * @hi: 8 bit timestamp high value
+ * @lo: 32 bit timestamp low value
+ *
+ * Read a 8bit timestamp high value and 32 bit timestamp low value out of the
+ * timestamp block of the external PHY on the E810 device using the low latency
+ * timestamp read.
+ */
+static enum ice_status
+ice_read_phy_tstamp_ll_e810(struct ice_hw *hw, u8 idx, u8 *hi, u32 *lo)
+{
+	u8 i;
+
+	/* Write TS index to read to the PF register so the FW can read it */
+	wr32(hw, PF_SB_ATQBAL, TS_LL_READ_TS_IDX(idx));
+
+	/* Read the register repeatedly until the FW provides us the TS */
+	for (i = TS_LL_READ_RETRIES; i > 0; i--) {
+		u32 val = rd32(hw, PF_SB_ATQBAL);
+
+		/* When the bit is cleared, the TS is ready in the register */
+		if (!(val & TS_LL_READ_TS)) {
+			/* High 8 bit value of the TS is on the bits 16:23 */
+			*hi = (u8)(val >> TS_LL_READ_TS_HIGH_S);
+
+			/* Read the low 32 bit value and set the TS valid bit */
+			*lo = rd32(hw, PF_SB_ATQBAH) | TS_VALID;
+			return 0;
+		}
+
+		udelay(10);
+	}
+
+	/* FW failed to provide the TS in time */
+	ice_debug(hw, ICE_DBG_PTP, "Failed to read PTP timestamp using low latency read\n");
+	return ICE_ERR_NOT_READY;
+}
+
+/**
+ * ice_read_phy_tstamp_sbq_e810 - Read a PHY timestamp registers through the sbq
+ * @hw: pointer to the HW struct
+ * @lport: the lport to read from
+ * @idx: the timestamp index to read
+ * @hi: 8 bit timestamp high value
+ * @lo: 32 bit timestamp low value
+ *
+ * Read a 8bit timestamp high value and 32 bit timestamp low value out of the
+ * timestamp block of the external PHY on the E810 device using sideband queue.
+ */
+static enum ice_status
+ice_read_phy_tstamp_sbq_e810(struct ice_hw *hw, u8 lport, u8 idx, u8 *hi,
+			     u32 *lo)
+{
+	u32 hi_addr = TS_EXT(HIGH_TX_MEMORY_BANK_START, lport, idx);
+	u32 lo_addr = TS_EXT(LOW_TX_MEMORY_BANK_START, lport, idx);
+	enum ice_status status;
+	u32 lo_val, hi_val;
+
+	status = ice_read_phy_reg_e810(hw, lo_addr, &lo_val);
+	if (status) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to read low PTP timestamp register, status %d\n",
+			  status);
+		return status;
+	}
+
+	status = ice_read_phy_reg_e810(hw, hi_addr, &hi_val);
+	if (status) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to read high PTP timestamp register, status %d\n",
+			  status);
+		return status;
+	}
+
+	*lo = lo_val;
+	*hi = (u8)hi_val;
+
+	return 0;
+}
+
+/**
  * ice_read_phy_tstamp_e810 - Read a PHY timestamp out of the external PHY
  * @hw: pointer to the HW struct
  * @lport: the lport to read from
@@ -2785,24 +2908,16 @@ static enum ice_status
 ice_read_phy_tstamp_e810(struct ice_hw *hw, u8 lport, u8 idx, u64 *tstamp)
 {
 	enum ice_status status;
-	u32 lo_addr, hi_addr, lo, hi;
+	u32 lo = 0;
+	u8 hi = 0;
 
-	lo_addr = TS_EXT(LOW_TX_MEMORY_BANK_START, lport, idx);
-	hi_addr = TS_EXT(HIGH_TX_MEMORY_BANK_START, lport, idx);
+	if (hw->dev_caps.ts_dev_info.ts_ll_read)
+		status = ice_read_phy_tstamp_ll_e810(hw, idx, &hi, &lo);
+	else
+		status = ice_read_phy_tstamp_sbq_e810(hw, lport, idx, &hi, &lo);
 
-	status = ice_read_phy_reg_e810(hw, lo_addr, &lo);
-	if (status) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to read low PTP timestamp register, status %d\n",
-			  status);
+	if (status)
 		return status;
-	}
-
-	status = ice_read_phy_reg_e810(hw, hi_addr, &hi);
-	if (status) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to read high PTP timestamp register, status %d\n",
-			  status);
-		return status;
-	}
 
 	/* For E810 devices, the timestamp is reported with the lower 32 bits
 	 * in the low register, and the upper 8 bits in the high register.
@@ -3208,30 +3323,6 @@ bool ice_is_phy_rclk_present_e810t(struct ice_hw *hw)
 }
 
 /**
- * ice_is_cgu_present_e810t
- * @hw: pointer to the hw struct
- *
- * Check if the Clock Generation Unit (CGU) device is present in the netlist
- */
-bool ice_is_cgu_present_e810t(struct ice_hw *hw)
-{
-	if (!ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL,
-				   ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032,
-				   NULL)) {
-		hw->cgu_part_number =
-			ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032;
-		return true;
-	}
-	if (!ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL,
-				   ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5384,
-				   NULL)) {
-		hw->cgu_part_number = ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5384;
-		return true;
-	}
-	return false;
-}
-
-/**
  * ice_is_clock_mux_present_e810t
  * @hw: pointer to the hw struct
  *
@@ -3432,22 +3523,44 @@ enum ice_status ice_write_sma_ctrl_e810t(struct ice_hw *hw, u8 data)
 }
 
 /**
- * ice_is_pca9575_present_e810t
+ * ice_is_pca9575_present
  * @hw: pointer to the hw struct
  *
  * Check if the SW IO expander is present in the netlist
  */
-bool ice_is_pca9575_present_e810t(struct ice_hw *hw)
+bool ice_is_pca9575_present(struct ice_hw *hw)
 {
 	enum ice_status status;
 	u16 handle = 0;
 
-	if (!ice_is_e810t(hw))
-		return false;
-
 	status = ice_get_pca9575_handle(hw, &handle);
 	if (!status && handle)
 		return true;
+
+	return false;
+}
+
+/**
+ * ice_is_cgu_present
+ * @hw: pointer to the hw struct
+ *
+ * Check if the Clock Generation Unit (CGU) device is present in the netlist
+ */
+bool ice_is_cgu_present(struct ice_hw *hw)
+{
+	if (!ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL,
+				   ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032,
+				   NULL)) {
+		hw->cgu_part_number =
+			ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032;
+		return true;
+	} else if (!ice_find_netlist_node(hw,
+					  ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL,
+					  ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384,
+					  NULL)) {
+		hw->cgu_part_number = ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384;
+		return true;
+	}
 
 	return false;
 }
@@ -3457,7 +3570,7 @@ static const struct ice_cgu_state_desc ice_cgu_states[] = {
 	{ "invalid",		ICE_CGU_STATE_INVALID },
 	{ "freerun",		ICE_CGU_STATE_FREERUN },
 	{ "locked",		ICE_CGU_STATE_LOCKED },
-	{ "locked_ho_ack",	ICE_CGU_STATE_LOCKED_HO_ACQ },
+	{ "locked_ho_acq",	ICE_CGU_STATE_LOCKED_HO_ACQ },
 	{ "holdover",		ICE_CGU_STATE_HOLDOVER },
 	{ "uninitialized",	ICE_CGU_STATE_UNINITIALIZED },
 };
@@ -3476,36 +3589,8 @@ const char *ice_cgu_state_to_name(u8 state)
 	return "unknown";
 }
 
-static const struct ice_e810t_cgu_pin_desc ice_e810t_cgu_inputs[] = {
-	/* name		  idx */
-	{ "CVL-SDP22",    REF0P },
-	{ "CVL-SDP20",    REF0N },
-	{ "C827_0-RCLKA", REF1P },
-	{ "C827_0-RCLKB", REF1N },
-	{ "C827_1-RCLKA", REF2P },
-	{ "C827_1-RCLKB", REF2N },
-	{ "SMA1",         REF3P },
-	{ "SMA2/U.FL2",   REF3N },
-	{ "GNSS-1PPS",    REF4N },
-	{ "OCXO",         REF4P },
-};
-
 /**
- * ice_zl_pin_idx_to_name_e810t - get the name of E810T CGU pin
- * @pin: pin number
- *
- * Return: name of E810T CGU pin
- */
-const char *ice_zl_pin_idx_to_name_e810t(u8 pin)
-{
-	if (pin < NUM_E810T_CGU_PINS)
-		return ice_e810t_cgu_inputs[pin].name;
-
-	return "invalid";
-}
-
-/**
- * ice_get_zl_state_e810t - get the state of the DPLL
+ * ice_get_cgu_state - get the state of the DPLL
  * @hw: pointer to the hw struct
  * @dpll_idx: Index of internal DPLL unit
  * @pin: pointer to a buffer for returning currently active pin
@@ -3518,10 +3603,9 @@ const char *ice_zl_pin_idx_to_name_e810t(u8 pin)
  *
  * Return: state of the DPLL
  */
-enum ice_e810t_cgu_state
-ice_get_zl_state_e810t(struct ice_hw *hw, u8 dpll_idx, u8 *pin,
-		       s64 *phase_offset,
-		       enum ice_e810t_cgu_state last_dpll_state)
+enum ice_cgu_state
+ice_get_cgu_state(struct ice_hw *hw, u8 dpll_idx, u8 *pin, s64 *phase_offset,
+		  enum ice_cgu_state last_dpll_state)
 {
 	enum ice_status status;
 	u16 dpll_state;
@@ -3569,10 +3653,84 @@ ice_get_zl_state_e810t(struct ice_hw *hw, u8 dpll_idx, u8 *pin,
 	return ICE_CGU_STATE_FREERUN;
 }
 
+static const struct ice_cgu_pin_desc ice_e810t_cgu_inputs[] = {
+	/* name		  idx */
+	{ "CVL-SDP22",    ZL_REF0P },
+	{ "CVL-SDP20",    ZL_REF0N },
+	{ "C827_0-RCLKA", ZL_REF1P },
+	{ "C827_0-RCLKB", ZL_REF1N },
+	{ "C827_1-RCLKA", ZL_REF2P },
+	{ "C827_1-RCLKB", ZL_REF2N },
+	{ "SMA1",         ZL_REF3P },
+	{ "SMA2/U.FL2",   ZL_REF3N },
+	{ "GNSS-1PPS",    ZL_REF4P },
+	{ "OCXO",         ZL_REF4N },
+};
+
+/**
+ * ice_zl_pin_idx_to_name_e810t - get the name of E810T CGU pin
+ * @pin: pin number
+ *
+ * Return: name of E810T CGU pin
+ */
+const char *ice_zl_pin_idx_to_name_e810t(u8 pin)
+{
+	if (pin < NUM_ZL_CGU_PINS)
+		return ice_e810t_cgu_inputs[pin].name;
+
+	return "invalid";
+}
+static const struct ice_cgu_pin_desc ice_e823_si_cgu_inputs[] = {
+	/* name		  idx */
+	{ "NONE",         SI_REF0P },
+	{ "NONE",         SI_REF0N },
+	{ "SYNCE0_DP",    SI_REF1P },
+	{ "SYNCE0_DN",    SI_REF1N },
+	{ "EXT_CLK_SYNC", SI_REF2P },
+	{ "NONE",         SI_REF2N },
+	{ "EXT_PPS_OUT",  SI_REF3  },
+	{ "INT_PPS_OUT",  SI_REF4  },
+};
+
+static const struct ice_cgu_pin_desc ice_e823_zl_cgu_inputs[] = {
+	/* name		  idx */
+	{ "NONE",         ZL_REF0P },
+	{ "INT_PPS_OUT",  ZL_REF0N },
+	{ "SYNCE0_DP",    ZL_REF1P },
+	{ "SYNCE0_DN",    ZL_REF1N },
+	{ "NONE",         ZL_REF2P },
+	{ "NONE",         ZL_REF2N },
+	{ "EXT_CLK_SYNC", ZL_REF3P },
+	{ "NONE",         ZL_REF3N },
+	{ "EXT_PPS_OUT",  ZL_REF4P },
+	{ "OCXO",         ZL_REF4N },
+};
+
+/**
+ * ice_pin_idx_to_name_e823 - get the name of E823 CGU pin
+ * @hw: pointer to the hw struct
+ * @pin: pin number
+ *
+ * Return: name of E823 CGU pin
+ */
+const char *ice_pin_idx_to_name_e823(struct ice_hw *hw, u8 pin)
+{
+	if (hw->cgu_part_number ==
+	    ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032 &&
+	    pin < NUM_ZL_CGU_PINS)
+		return ice_e823_zl_cgu_inputs[pin].name;
+	else if (hw->cgu_part_number ==
+		 ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384 &&
+		 pin < NUM_SI_CGU_PINS)
+		return ice_e823_si_cgu_inputs[pin].name;
+	else
+		return "invalid";
+}
+
 /* Device agnostic functions
  *
- * The following functions implement shared behavior common to both E822 and
- * E810 devices, possibly calling a device specific implementation where
+ * The following functions implement shared behavior common to both E822/E823
+ * and E810 devices, possibly calling a device specific implementation where
  * necessary.
  */
 
@@ -3623,45 +3781,6 @@ bool ice_ptp_lock(struct ice_hw *hw)
 void ice_ptp_unlock(struct ice_hw *hw)
 {
 	wr32(hw, PFTSYN_SEM + (PFTSYN_SEM_BYTES * hw->pf_id), 0);
-}
-
-/**
- * ice_ptp_src_cmd - Prepare source timer for a timer command
- * @hw: pointer to HW structure
- * @cmd: Timer command
- *
- * Prepare the source timer for an upcoming timer sync command.
- */
-void ice_ptp_src_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
-{
-	u32 cmd_val;
-	u8 tmr_idx;
-
-	tmr_idx = ice_get_ptp_src_clock_index(hw);
-	cmd_val = tmr_idx << SEL_CPK_SRC;
-
-	switch (cmd) {
-	case INIT_TIME:
-		cmd_val |= GLTSYN_CMD_INIT_TIME;
-		break;
-	case INIT_INCVAL:
-		cmd_val |= GLTSYN_CMD_INIT_INCVAL;
-		break;
-	case ADJ_TIME:
-		cmd_val |= GLTSYN_CMD_ADJ_TIME;
-		break;
-	case ADJ_TIME_AT_TIME:
-		cmd_val |= GLTSYN_CMD_ADJ_INIT_TIME;
-		break;
-	case READ_TIME:
-		cmd_val |= GLTSYN_CMD_READ_TIME;
-		break;
-	default:
-		dev_warn(ice_hw_to_dev(hw), "Unknown timer command %u\n", cmd);
-		return;
-	}
-
-	wr32(hw, GLTSYN_CMD, cmd_val);
 }
 
 /**

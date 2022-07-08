@@ -30,8 +30,8 @@
 
 struct gnss_write_buf {
 	struct list_head queue;
-	u32 size;
-	u8 *buf;
+	unsigned int size;
+	unsigned char *buf;
 };
 
 /**

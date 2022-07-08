@@ -121,6 +121,7 @@ enum ice_prot_id {
 	ICE_PROT_IPV6_OF_OR_S	= 40,
 	ICE_PROT_IPV6_IL	= 41,
 	ICE_PROT_IPV6_IL_IL	= 42,
+	ICE_PROT_IPV6_NEXT_PROTO = 43,
 	ICE_PROT_IPV6_FRAG	= 47,
 	ICE_PROT_TCP_IL		= 49,
 	ICE_PROT_UDP_OF		= 52,
@@ -149,6 +150,7 @@ enum ice_prot_id {
 
 #define ICE_VNI_OFFSET		12 /* offset of VNI from ICE_PROT_UDP_OF */
 
+#define ICE_NAN_OFFSET		511
 #define ICE_MAC_OFOS_HW		1
 #define ICE_MAC_IL_HW		4
 #define ICE_ETYPE_OL_HW		9

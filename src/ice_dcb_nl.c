@@ -182,7 +182,7 @@ static u8 ice_dcbnl_setdcbx(struct net_device *netdev, u8 mode)
 
 	qos_cfg = &pf->hw.port_info->qos_cfg;
 
-	/* DSCP mode is not DCBx negotiated */
+	/* DSCP configuration is not DCBx negotiated */
 	if (qos_cfg->local_dcbx_cfg.pfc_mode == ICE_QOS_MODE_DSCP)
 		return ICE_DCB_NO_HW_CHG;
 

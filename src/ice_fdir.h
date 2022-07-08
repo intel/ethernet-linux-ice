@@ -4,7 +4,7 @@
 #ifndef _ICE_FDIR_H_
 #define _ICE_FDIR_H_
 
-#include "ice_common.h"
+#include "ice_type.h"
 
 #define ICE_FDIR_GTPU_IP_INNER_PKT_OFF 50
 #define ICE_FDIR_GTPU_EH_INNER_PKT_OFF 58

@@ -554,7 +554,7 @@ void ice_init_arfs(struct ice_vsi *vsi)
 	if (!vsi || vsi->type != ICE_VSI_PF)
 		return;
 
-	arfs_fltr_list = kzalloc(sizeof(*arfs_fltr_list) * ICE_MAX_ARFS_LIST,
+	arfs_fltr_list = kcalloc(ICE_MAX_ARFS_LIST, sizeof(*arfs_fltr_list),
 				 GFP_KERNEL);
 	if (!arfs_fltr_list)
 		return;
@@ -611,10 +611,10 @@ void ice_clear_arfs(struct ice_vsi *vsi)
 }
 
 /**
- * ice_free_cpu_rx_rmap - free setup cpu reverse map
+ * ice_free_cpu_rx_rmap - free setup CPU reverse map
  * @vsi: the VSI to be forwarded to
  */
-static void ice_free_cpu_rx_rmap(struct ice_vsi *vsi)
+void ice_free_cpu_rx_rmap(struct ice_vsi *vsi)
 {
 	struct net_device *netdev;
 
@@ -630,7 +630,7 @@ static void ice_free_cpu_rx_rmap(struct ice_vsi *vsi)
 }
 
 /**
- * ice_set_cpu_rx_rmap - setup cpu reverse map for each queue
+ * ice_set_cpu_rx_rmap - setup CPU reverse map for each queue
  * @vsi: the VSI to be forwarded to
  */
 int ice_set_cpu_rx_rmap(struct ice_vsi *vsi)

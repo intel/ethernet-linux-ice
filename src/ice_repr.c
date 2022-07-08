@@ -109,7 +109,7 @@ struct ice_repr *ice_netdev_to_repr(struct net_device *netdev)
  * interface is made active by the system (IFF_UP). Corresponding
  * VF is notified about link status change.
  *
- * Returns 0 on success, negative value on failure
+ * Returns 0 on success
  */
 static int ice_repr_open(struct net_device *netdev)
 {
@@ -135,7 +135,7 @@ static int ice_repr_open(struct net_device *netdev)
  * interface is de-activated by the system. Corresponding
  * VF is notified about link status change.
  *
- * Returns 0 on success, negative value on failure
+ * Returns 0 on success
  */
 static int ice_repr_stop(struct net_device *netdev)
 {
@@ -191,6 +191,8 @@ ice_repr_sp_stats64(const struct net_device *dev,
 	ice_fetch_u64_stats_per_ring(ring, &pkts, &bytes);
 	stats->tx_packets = pkts;
 	stats->tx_bytes = bytes;
+	stats->tx_dropped = ring->rx_stats.alloc_page_failed +
+			    ring->rx_stats.alloc_buf_failed;
 
 	return 0;
 }
@@ -380,7 +382,12 @@ static int ice_repr_add(struct ice_vf *vf)
 	struct ice_q_vector *q_vector;
 	struct ice_netdev_priv *np;
 	struct ice_repr *repr;
+	struct ice_vsi *vsi;
 	int err;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -EINVAL;
 
 	repr = kzalloc(sizeof(*repr), GFP_KERNEL);
 	if (!repr)
@@ -398,7 +405,7 @@ static int ice_repr_add(struct ice_vf *vf)
 		goto err_alloc;
 	}
 
-	repr->src_vsi = ice_get_vf_vsi(vf);
+	repr->src_vsi = vsi;
 	repr->vf = vf;
 	vf->repr = repr;
 	np = netdev_priv(repr->netdev);
@@ -429,6 +436,7 @@ static int ice_repr_add(struct ice_vf *vf)
 #endif /* HAVE_NETDEVICE_MIN_MAX_MTU */
 #endif /* CONFIG_NET_DEVLINK */
 
+	SET_NETDEV_DEV(repr->netdev, ice_pf_to_dev(vf->pf));
 	err = ice_repr_reg_netdev(repr->netdev);
 	if (err)
 		goto err_netdev;

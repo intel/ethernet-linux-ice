@@ -55,7 +55,6 @@ ice_ieps_i2c_write(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 {
 	struct ice_hw *hw = &pf->hw;
 	struct ice_aq_desc desc;
-	enum ice_status status;
 	u8 i, remaining, wrlen;
 
 	if (rw->data_len == 0) {
@@ -70,6 +69,7 @@ ice_ieps_i2c_write(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 #define ICE_IEPS_I2C_WR_SZ 4
 	for (i = 0; i < rw->data_len; i += ICE_IEPS_I2C_WR_SZ) {
 		struct ice_aqc_i2c *i2c;
+		enum ice_status status;
 
 		remaining = rw->data_len - i;
 		if (remaining > ICE_IEPS_I2C_WR_SZ)
@@ -108,7 +108,6 @@ ice_ieps_i2c_read(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 {
 	struct ice_hw *hw = &pf->hw;
 	struct ice_aq_desc desc;
-	enum ice_status status;
 	u8 i, remaining, rdlen;
 
 	if (rw->data_len == 0) {
@@ -118,6 +117,7 @@ ice_ieps_i2c_read(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 #define ICE_IEPS_I2C_RD_SZ 15
 	for (i = 0; i < rw->data_len; i += ICE_IEPS_I2C_RD_SZ) {
 		struct ice_aqc_i2c *i2c;
+		enum ice_status status;
 
 		remaining = rw->data_len - i;
 		if (remaining > ICE_IEPS_I2C_RD_SZ)
@@ -216,10 +216,11 @@ ice_ieps_mdio_read(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 	enum ieps_peer_status pstatus;
 	struct ice_hw *hw = &pf->hw;
 	struct ice_aq_desc desc;
-	enum ice_status status;
 	int i;
 
 	for (i = 0; i < rw->data_len; i++) {
+		enum ice_status status;
+
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_read_mdio);
 		pstatus = ice_ieps_mdio_fill_desc(pf, rw, &desc);
 		if (pstatus)
@@ -251,10 +252,6 @@ ice_ieps_mdio_read(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 static enum ieps_peer_status
 ice_ieps_mdio_write(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 {
-	enum ieps_peer_status pstatus;
-	struct ice_hw *hw = &pf->hw;
-	struct ice_aq_desc desc;
-	enum ice_status status;
 	int i;
 
 	dev_dbg(ice_pf_to_dev(pf),
@@ -263,6 +260,11 @@ ice_ieps_mdio_write(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 		rw->data[0]);
 
 	for (i = 0; i < rw->data_len; i++) {
+		enum ieps_peer_status pstatus;
+		struct ice_hw *hw = &pf->hw;
+		struct ice_aq_desc desc;
+		enum ice_status status;
+
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_write_mdio);
 		pstatus = ice_ieps_mdio_fill_desc(pf, rw, &desc);
 		if (pstatus)
@@ -282,7 +284,6 @@ ice_ieps_mdio_write(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 }
 
 #define ICE_IEPS_ETH_GPIO_MAX_PIN_COUNT 20
-#define ICE_IEPS_IOW_GPIO_OFFSET        6
 
 /**
  * ice_ieps_gpio_fill_desc - Fill GPIO set_get AQ command descriptor
@@ -302,7 +303,7 @@ ice_ieps_gpio_fill_desc(struct ice_pf *pf, struct ieps_peer_gpio *io,
 		return IEPS_PEER_INVALID_ARG;
 	}
 
-	sw_gpio_cmd->gpio_num = io->pin_num + ICE_IEPS_IOW_GPIO_OFFSET;
+	sw_gpio_cmd->gpio_num = io->pin_num;
 	if (io->pin_val)
 		sw_gpio_cmd->gpio_params |= ICE_AQC_SW_GPIO_PARAMS_VALUE;
 
@@ -600,7 +601,7 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 		phy_type_multi = true;
 
 	if (!phy_type_multi && phy_cfg->phy_type_high) {
-		for (i = 0; i < ICE_PHY_TYPE_HIGH_MAX_INDEX; i++) {
+		for (i = 0; i <= ICE_PHY_TYPE_HIGH_MAX_INDEX; i++) {
 			u64 type_high = le64_to_cpu(phy_cfg->phy_type_high);
 
 			if (type_high & BIT_ULL(i)) {

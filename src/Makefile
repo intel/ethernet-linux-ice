@@ -51,6 +51,7 @@ ice-y := ice_main.o	\
 	 ice_acl.o		\
 	 ice_acl_ctrl.o		\
 	 ice_vlan_mode.o	\
+	 ice_ddp.o		\
 	 ice_flex_pipe.o	\
 	 ice_flow.o		\
 	 ice_lag.o		\
@@ -61,16 +62,21 @@ ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
 ice-y += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
-ice-$(CONFIG_PCI_IOV) += ice_virtchnl_allowlist.o
-ice-$(CONFIG_PCI_IOV) += ice_dcf.o
-ice-$(CONFIG_PCI_IOV) += ice_virtchnl_fdir.o
-ice-$(CONFIG_PCI_IOV) +=	\
-	ice_sriov.o		\
-	ice_vf_mbx.o		\
-	ice_vf_vsi_vlan_ops.o	\
-	ice_vf_adq.o		\
-	ice_virtchnl.o		\
+
+ice-$(CONFIG_PCI_IOV) +=		\
+	ice_dcf.o			\
+	ice_sriov.o			\
+	ice_vf_mbx.o			\
+	ice_vf_vsi_vlan_ops.o		\
+	ice_virtchnl_allowlist.o	\
+	ice_vf_adq.o			\
+	ice_virtchnl.o			\
+	ice_virtchnl_fdir.o		\
 	ice_vf_lib.o
+
+ifneq (${ENABLE_SIOV_SUPPORT},)
+ice-$(CONFIG_VFIO_MDEV:m=y) += ice_vdcm.o ice_siov.o
+endif
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
@@ -104,6 +110,12 @@ endif
 # ice does not support building on kernels older than 3.10.0
 $(call minimum_kver_check,3,10,0)
 
+# SIOV support is only supported if the kernel has features for controlling
+# PASID support. Do not even try to build SIOV support if the kernel lacks
+# the necessary infrastructure.
+ifeq ($(call is_kcompat_defined,HAVE_PASID_SUPPORT),1)
+export ENABLE_SIOV_SUPPORT := 1
+endif
 
 # Command to update initramfs or display a warning message
 ifeq (${cmd_initrd},)
@@ -141,7 +153,20 @@ DDP_PKG_DEST := ${DDP_PKG_DEST_PATH}/${DDP_PKG_NAME}
 DDP_PKG_LINK := ${DRIVER}.pkg
 modules_install: all
 	+$(call kernelbuild,modules_install)
-	${auxiliary_post_install}
+	$(MAKE) auxiliary_install
+ifneq (${DDP_PKG_ORIGIN},)
+	@# Install DDP package file if provided/required with ice module
+	install -D -m 644 ${DDP_PKG_ORIGIN} ${DDP_PKG_DEST}
+	(cd ${DDP_PKG_DEST_PATH} && ln -sf ${DDP_PKG_NAME} ${DDP_PKG_LINK})
+	install -D -m 644 ../ddp/LICENSE ${DDP_PKG_DEST_PATH}/LICENSE \
+		2>/dev/null || true
+endif
+
+# Install kernel module files without auxiliary. This target is called by the
+# RPM specfile when  generating binary RPMs, and is not expected to modify
+# files outside of the build root. Thus, it must not update initramfs, or run depmod.
+modules_install_no_aux:
+	@+$(call kernelbuild,modules_install)
 ifneq (${DDP_PKG_ORIGIN},)
 	@# Install DDP package file if provided/required with ice module
 	install -D -m 644 ${DDP_PKG_ORIGIN} ${DDP_PKG_DEST}
@@ -166,7 +191,7 @@ install: modules_install mandocs_install
 # build root. Thus, it must not update the initramfs image or run depmod.
 modules_uninstall:
 	rm -f ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_MOD_DIR}/${DRIVER}.ko
-	${auxiliary_post_uninstall}
+	$(MAKE) auxiliary_uninstall
 ifneq (${DDP_PKG_ORIGIN},)
 	@# Uninstall DDP package file if provided/required with ice module
 	(cd ${DDP_PKG_DEST_PATH} && \
@@ -187,6 +212,12 @@ uninstall: modules_uninstall mandocs_uninstall
 
 auxiliary_info:
 	@../scripts/check_aux_bus --verbose --ksrc="${KSRC}" --build-kernel="${BUILD_KERNEL}"
+
+auxiliary_install:
+	${auxiliary_post_install}
+
+auxiliary_uninstall:
+	${auxiliary_post_uninstall}
 
 ifeq (${NEED_AUX_BUS},1)
 all: auxiliary_info

@@ -4,17 +4,14 @@
 #ifndef _ICE_TYPE_H_
 #define _ICE_TYPE_H_
 
-#define ICE_BYTES_PER_WORD	2
-#define ICE_BYTES_PER_DWORD	4
-#define ICE_MAX_TRAFFIC_CLASS	8
-#define ICE_CHNL_MAX_TC		16
-
+#include "ice_defs.h"
 #include "ice_status.h"
 #include "ice_hw_autogen.h"
 #include "ice_devids.h"
 #include "ice_osdep.h"
-#include "ice_controlq.h"
 #include "ice_lan_tx_rx.h"
+#include "ice_ddp.h"
+#include "ice_controlq.h"
 #include "ice_flex_type.h"
 #include "ice_protocol_type.h"
 #include "ice_sbq_cmd.h"
@@ -99,11 +96,6 @@ enum ice_aq_res_ids {
 #define ICE_CHANGE_LOCK_TIMEOUT		1000
 #define ICE_GLOBAL_CFG_LOCK_TIMEOUT	3000
 
-enum ice_aq_res_access_type {
-	ICE_RES_READ = 1,
-	ICE_RES_WRITE
-};
-
 struct ice_driver_ver {
 	u8 major_ver;
 	u8 minor_ver;
@@ -131,7 +123,8 @@ enum ice_fec_mode {
 	ICE_FEC_NONE = 0,
 	ICE_FEC_RS,
 	ICE_FEC_BASER,
-	ICE_FEC_AUTO
+	ICE_FEC_AUTO,
+	ICE_FEC_DIS_AUTO
 };
 
 struct ice_phy_cache_mode_data {
@@ -178,6 +171,7 @@ enum ice_vsi_type {
 	ICE_VSI_OFFLOAD_MACVLAN = 5,
 	ICE_VSI_LB = 6,
 	ICE_VSI_SWITCHDEV_CTRL = 7,
+	ICE_VSI_ADI = 8,
 };
 
 struct ice_link_status {
@@ -563,6 +557,8 @@ struct ice_hw_common_caps {
 #define ICE_EXT_TOPO_DEV_IMG_LOAD_EN	BIT(0)
 	bool ext_topo_dev_img_prog_en[ICE_EXT_TOPO_DEV_IMG_COUNT];
 #define ICE_EXT_TOPO_DEV_IMG_PROG_EN	BIT(1)
+	bool tx_sched_topo_comp_mode_en;
+	bool dyn_flattening_en;
 };
 
 /* IEEE 1588 TIME_SYNC specific info */
@@ -620,6 +616,7 @@ struct ice_ts_func_info {
 #define ICE_TS_DEV_ENA_M		BIT(24)
 #define ICE_TS_TMR0_ENA_M		BIT(25)
 #define ICE_TS_TMR1_ENA_M		BIT(26)
+#define ICE_TS_LL_TX_TS_READ_M		BIT(28)
 
 struct ice_ts_dev_info {
 	/* Device specific info */
@@ -632,6 +629,7 @@ struct ice_ts_dev_info {
 	u8 ena;
 	u8 tmr0_ena;
 	u8 tmr1_ena;
+	u8 ts_ll_read;
 };
 
 /* Function specific capabilities */
@@ -1059,10 +1057,6 @@ struct ice_port_info {
 #define ICE_SCHED_PORT_STATE_READY	0x1
 	u8 lport;
 #define ICE_LPORT_MASK			0xff
-	u16 dflt_tx_vsi_rule_id;
-	u16 dflt_tx_vsi_num;
-	u16 dflt_rx_vsi_rule_id;
-	u16 dflt_rx_vsi_num;
 	struct ice_fc_info fc;
 	struct ice_mac_info mac;
 	struct ice_phy_info phy;
@@ -1256,18 +1250,20 @@ struct ice_hw {
 	/* true if VSIs can share unicast MAC addr */
 	u8 umac_shared;
 
-#define ICE_PHY_PER_NAC		1
-#define ICE_MAX_QUAD		2
-#define ICE_NUM_QUAD_TYPE	2
-#define ICE_PORTS_PER_QUAD	4
-#define ICE_PHY_0_LAST_QUAD	1
-#define ICE_PORTS_PER_PHY	8
-#define ICE_NUM_EXTERNAL_PORTS		ICE_PORTS_PER_PHY
+#define ICE_PHY_PER_NAC_E822		1
+#define ICE_MAX_QUAD			2
+#define ICE_QUADS_PER_PHY_E822		2
+#define ICE_PORTS_PER_PHY_E822		8
+#define ICE_PORTS_PER_QUAD		4
+#define ICE_PORTS_PER_PHY_E810		4
+#define ICE_NUM_EXTERNAL_PORTS		(ICE_MAX_QUAD * ICE_PORTS_PER_QUAD)
 
 	/* Active package version (currently active) */
 	struct ice_pkg_ver active_pkg_ver;
 	u32 pkg_seg_id;
+	u32 pkg_sign_type;
 	u32 active_track_id;
+	u8 pkg_has_signing_seg:1;
 	u8 active_pkg_name[ICE_PKG_NAME_SIZE];
 	u8 active_pkg_in_nvm;
 
@@ -1582,6 +1578,11 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_FW_API_REPORT_DFLT_CFG_MAJ		1
 #define ICE_FW_API_REPORT_DFLT_CFG_MIN		7
 #define ICE_FW_API_REPORT_DFLT_CFG_PATCH	3
+
+/* AQ API version for FEC disable in Auto FEC mode */
+#define ICE_FW_API_FEC_DIS_AUTO_MAJ		1
+#define ICE_FW_API_FEC_DIS_AUTO_MIN		7
+#define ICE_FW_API_FEC_DIS_AUTO_PATCH		5
 
 /* AQ API version for FW health reports */
 #define ICE_FW_API_HEALTH_REPORT_MAJ		1

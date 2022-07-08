@@ -223,12 +223,12 @@ bool ice_check_dcf_allowed(struct ice_vf *vf)
 		return false;
 	}
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	if (ice_is_offloaded_macvlan_ena(pf)) {
 		dev_err(dev, "L2 Forwarding Offload is currently enabled. Device Control Functionality cannot be enabled.\n");
 		return false;
 	}
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 	sw = pf->hw.switch_info;
 	for (i = 0; i < ICE_MAX_NUM_RECIPES; i++) {

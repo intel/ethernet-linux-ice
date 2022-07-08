@@ -136,7 +136,7 @@ struct ice_stats {
 #define ICE_RXQ_NAPI_POLL		PICK("rx_queue_%u_napi_poll_cnt", "rx_q-%u_napi_poll_count")
 #endif /* ICE_ADD_PROBES */
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 #ifdef ICE_ADD_PROBES
 /* macvlan stats */
 #define L2_FWD_TX_PKTS1			PICK("l2-fwd-%s-tx_pkts", "tx-l2-forward_q-%s_pkts")
@@ -148,7 +148,7 @@ struct ice_stats {
 #define L2_FWD_RX_PKTS2			PICK("l2-fwd-%i-rx_pkts", "rx-l2-forward_q-%i_pkts")
 #define L2_FWD_RX_BYTES2		PICK("l2-fwd-%i-rx_bytes", "rx-l2-forward_q-%i_bytes")
 #endif /* ICE_ADD_PROBES */
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
 #ifdef ADQ_PERF_COUNTERS
 /* ADQ stats */

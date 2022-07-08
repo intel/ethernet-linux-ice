@@ -408,6 +408,7 @@ struct ice_ring {
 	u8 rx_crc_strip_dis;
 	u8 dcb_tc;			/* Traffic class of ring */
 	u16 rx_buf_len;
+	u16 quanta_prof_id;
 	struct ice_ptp_tx *tx_tstamps;
 	u64 cached_phctime;
 	u8 ptp_rx:1;
@@ -456,9 +457,14 @@ struct ice_ring_container {
 	/* this matches the maximum number of ITR bits, but in usec
 	 * values, so it is shifted left one bit (bit zero is ignored)
 	 */
-	u16 itr_setting:13;
-	u16 itr_reserved:2;
-	u16 itr_mode:1;
+	union {
+		struct {
+			u16 itr_setting:13;
+			u16 itr_reserved:2;
+			u16 itr_mode:1;
+		};
+		u16 itr_settings;
+	};
 };
 
 struct ice_coalesce_stored {
@@ -510,11 +516,12 @@ u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
 		     select_queue_fallback_t fallback);
 #endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
 #endif /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
+int ice_setup_tstamp_ring(struct ice_ring *tstamp_ring);
+void ice_free_tx_ring(struct ice_ring *tx_ring);
 void ice_clean_tx_ring(struct ice_ring *tx_ring);
 void ice_clean_rx_ring(struct ice_ring *rx_ring);
 int ice_setup_tx_ring(struct ice_ring *tx_ring);
 int ice_setup_rx_ring(struct ice_ring *rx_ring);
-void ice_free_tx_ring(struct ice_ring *tx_ring);
 void ice_free_rx_ring(struct ice_ring *rx_ring);
 int ice_napi_poll(struct napi_struct *napi, int budget);
 int

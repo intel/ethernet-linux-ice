@@ -307,7 +307,7 @@ ice_fdir_remap_entries(struct ice_fd_hw_prof *prof, int tun, int idx)
 }
 
 /**
- * ice_fdir_rem_adq_chnl - remove a ADQ channel from HW filter rules
+ * ice_fdir_rem_adq_chnl - remove an ADQ channel from HW filter rules
  * @hw: hardware structure containing filter list
  * @vsi_idx: VSI handle
  */
@@ -348,8 +348,7 @@ void ice_fdir_rem_adq_chnl(struct ice_hw *hw, u16 vsi_idx)
 			 */
 			status = ice_flow_rem_vsi_prof(hw, ICE_BLK_FD, vsi_idx, prof_id);
 			if (status) {
-				dev_err(ice_hw_to_dev(hw),
-					"ice_flow_rem_vsi_prof() failed status=%d\n",
+				dev_err(ice_hw_to_dev(hw), "ice_flow_rem_vsi_prof() failed status=%d\n",
 					status);
 			}
 		}
@@ -905,7 +904,7 @@ ice_create_init_fdir_rule(struct ice_pf *pf, enum ice_fltr_ptype flow)
 	if (!seg)
 		return -ENOMEM;
 
-	tun_seg = devm_kzalloc(dev, sizeof(*seg) * ICE_FD_HW_SEG_MAX,
+	tun_seg = devm_kcalloc(dev, sizeof(*seg), ICE_FD_HW_SEG_MAX,
 			       GFP_KERNEL);
 	if (!tun_seg) {
 		devm_kfree(dev, seg);
@@ -1339,7 +1338,7 @@ ice_cfg_fdir_xtrct_seq(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp,
 	if (!seg)
 		return -ENOMEM;
 
-	tun_seg = devm_kzalloc(dev, sizeof(*seg) * ICE_FD_HW_SEG_MAX,
+	tun_seg = devm_kcalloc(dev, sizeof(*seg), ICE_FD_HW_SEG_MAX,
 			       GFP_KERNEL);
 	if (!tun_seg) {
 		devm_kfree(dev, seg);
@@ -1951,7 +1950,7 @@ ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 	else
 		return -EINVAL;
 
-	/* zero input so filter comparisions are safer */
+	/* zero input so filter comparisons are safer */
 	memset(input, 0, sizeof(struct ice_fdir_fltr));
 
 	pf = vsi->back;

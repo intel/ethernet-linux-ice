@@ -410,8 +410,9 @@ export INSTALL_MOD_DIR ?= updates/drivers/net/ethernet/intel/${DRIVER}
 # If the check_aux_bus script exists, then this driver depends on the
 # auxiliary module. Run the script to determine if we need to include
 # auxiliary files with this build.
-ifneq ($(call test_file,../scripts/check_aux_bus),)
-NEED_AUX_BUS := $(shell ../scripts/check_aux_bus --ksrc="${KSRC}" --build-kernel="${BUILD_KERNEL}" >/dev/null 2>&1; echo $$?)
+CHECK_AUX_BUS ?= ../scripts/check_aux_bus
+ifneq ($(call test_file,${CHECK_AUX_BUS}),)
+NEED_AUX_BUS := $(shell ${CHECK_AUX_BUS} --ksrc="${KSRC}" --build-kernel="${BUILD_KERNEL}" >/dev/null 2>&1; echo $$?)
 endif # check_aux_bus exists
 
 # The out-of-tree auxiliary module we ship should be moved into this
@@ -420,13 +421,14 @@ export INSTALL_AUX_DIR ?= updates/drivers/net/ethernet/intel/auxiliary
 
 # If we're installing auxiliary bus out-of-tree, the following steps are
 # necessary to ensure the relevant files get put in place.
+AUX_BUS_HEADER ?= linux/auxiliary_bus.h
 ifeq (${NEED_AUX_BUS},2)
 define auxiliary_post_install
 	install -D -m 644 Module.symvers ${INSTALL_MOD_PATH}/lib/modules/${KVER}/extern-symvers/auxiliary.symvers
 	install -d ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_AUX_DIR}
 	mv -f ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_MOD_DIR}/auxiliary.ko \
 	      ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_AUX_DIR}/auxiliary.ko
-	install -D -m 644 linux/auxiliary_bus.h ${INSTALL_MOD_PATH}/${KSRC}/include/linux/auxiliary_bus.h
+	install -D -m 644 ${AUX_BUS_HEADER} ${INSTALL_MOD_PATH}/${KSRC}/include/linux/auxiliary_bus.h
 endef
 else
 auxiliary_post_install =

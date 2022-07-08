@@ -30,6 +30,7 @@
 		8086 000f  Ethernet Network Adapter E810-C-Q2T
 		8086 0010  Ethernet 100G 2P E810-C-stg Adapter
 		8086 0011  Ethernet Network Adapter E810-C-Q1 for OCP3.0
+		8086 0012  Ethernet 100G 2P E810-C-st Adapter
 	1593  Ethernet Controller E810-C for SFP
 		1137 02c3  E810XXVDA4 4x25/10 GbE SFP28 PCIe NIC
 		1137 02e9  E810XXVDA4TG 4x25/10 GbE SFP28 PCIe NIC
@@ -61,6 +62,7 @@
 	188a  Ethernet Connection E823-C for backplane
 	188b  Ethernet Controller E823-C for QSFP
 	188c  Ethernet Controller E823-C for SFP
+		1028 0abd  Ethernet Connection 25G 4P E823-C LOM
 	188d  Ethernet Connection E823-C/X557-AT 10GBASE-T
 	188e  Ethernet Connection E823-C 1GbE
 	1890  Ethernet Connection E822-C for backplane
@@ -72,3 +74,7 @@
 	1898  Ethernet Connection E822-L for SFP
 	1899  Ethernet Connection E822-L/X557-AT 10GBASE-T
 	189a  Ethernet Connection E822-L 1GbE
+	579c  Ethernet Connection E825-C for backplane
+	579d  Ethernet Connection E825-C for QSFP
+	579e  Ethernet Connection E825-C for SFP
+	579f  Ethernet Connection E825-C 1GbE

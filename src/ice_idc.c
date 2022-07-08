@@ -18,15 +18,21 @@ static struct cdev_info_id ice_cdev_ids[] = ASSIGN_IIDC_INFO;
  * @cdev_info: pointer to iidc_core_dev_info struct
  *
  * This function has to be called with a device_lock on the
- * cdev_info->adev.dev to avoid race conditions.
+ * cdev_info->adev.dev to avoid race conditions for auxiliary
+ * driver unload, and the mutex pf->adev_mutex locked to avoid
+ * plug/unplug race conditions..
  */
 struct iidc_auxiliary_drv
 *ice_get_auxiliary_drv(struct iidc_core_dev_info *cdev_info)
 {
 	struct auxiliary_device *adev;
+	struct ice_pf *pf;
 
 	if (!cdev_info)
 		return NULL;
+	pf = pci_get_drvdata(cdev_info->pdev);
+
+	lockdep_assert_held(&pf->adev_mutex);
 
 	adev = cdev_info->adev;
 	if (!adev || !adev->dev.driver)
@@ -75,15 +81,25 @@ ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
 {
 	struct iidc_event *event = (struct iidc_event *)data;
 	struct iidc_auxiliary_drv *iadrv;
+	struct ice_pf *pf;
 
-	if (!cdev_info || !cdev_info->adev || !event)
+	if (!cdev_info)
 		return 0;
+	pf = pci_get_drvdata(cdev_info->pdev);
+
+	mutex_lock(&pf->adev_mutex);
+
+	if (!cdev_info->adev || !event) {
+		mutex_unlock(&pf->adev_mutex);
+		return 0;
+	}
 
 	device_lock(&cdev_info->adev->dev);
 	iadrv = ice_get_auxiliary_drv(cdev_info);
 	if (iadrv && iadrv->event_handler)
 		iadrv->event_handler(cdev_info, event);
 	device_unlock(&cdev_info->adev->dev);
+	mutex_unlock(&pf->adev_mutex);
 
 	return 0;
 }
@@ -160,21 +176,6 @@ void ice_cdev_info_refresh_msix(struct ice_pf *pf)
 
 #endif /* CONFIG_PM */
 /**
- * ice_find_vsi - Find the VSI from VSI ID
- * @pf: The PF pointer to search in
- * @vsi_num: The VSI ID to search for
- */
-static struct ice_vsi *ice_find_vsi(struct ice_pf *pf, u16 vsi_num)
-{
-	int i;
-
-	ice_for_each_vsi(pf, i)
-		if (pf->vsi[i] && pf->vsi[i]->vsi_num == vsi_num)
-			return  pf->vsi[i];
-	return NULL;
-}
-
-/**
  * ice_alloc_rdma_qsets - Allocate Leaf Nodes for RDMA Qset
  * @cdev_info: aux driver that is requesting the Leaf Nodes
  * @qset: Resource to be allocated
@@ -201,7 +202,7 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 	pf = pci_get_drvdata(cdev_info->pdev);
 	dev = ice_pf_to_dev(pf);
 
-	if (!test_bit(ICE_FLAG_IWARP_ENA, pf->flags))
+	if (!ice_chk_rdma_cap(pf))
 		return -EINVAL;
 
 	ice_for_each_traffic_class(i)
@@ -452,7 +453,7 @@ ice_cdev_info_vc_send(struct iidc_core_dev_info *cdev_info, u32 vf_id,
  */
 static int ice_reserve_cdev_info_qvector(struct ice_pf *pf)
 {
-	if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
+	if (ice_chk_rdma_cap(pf)) {
 		int index;
 
 		index = ice_get_res(pf, pf->irq_tracker, pf->num_rdma_msix, ICE_RES_RDMA_VEC_ID);
@@ -581,7 +582,7 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	struct iidc_auxiliary_dev *iadev;
 	struct auxiliary_device *adev;
 	struct ice_pf *pf;
-	int ret;
+	int ret = 0;
 
 	if (!cdev_info || !name)
 		return -EINVAL;
@@ -594,18 +595,19 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	 * devices, then exit gracefully
 	 */
 	if (!ice_is_aux_ena(pf))
-		return 0;
-
+		return ret;
+	mutex_lock(&pf->adev_mutex);
 	if (cdev_info->adev)
-		return 0;
+		goto aux_plug_out;
 
-	if (cdev_info->cdev_info_id == IIDC_RDMA_ID &&
-	    !test_bit(ICE_FLAG_IWARP_ENA, pf->flags))
-		return 0;
+	if (cdev_info->cdev_info_id == IIDC_RDMA_ID && !ice_chk_rdma_cap(pf))
+		goto aux_plug_out;
 
 	iadev = kzalloc(sizeof(*iadev), GFP_KERNEL);
-	if (!iadev)
-		return -ENOMEM;
+	if (!iadev) {
+		ret = -ENOMEM;
+		goto aux_plug_out;
+	}
 
 	adev = &iadev->adev;
 	cdev_info->adev = adev;
@@ -620,17 +622,18 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	if (ret) {
 		cdev_info->adev = NULL;
 		kfree(iadev);
-		return ret;
+		goto aux_plug_out;
 	}
 
 	ret = auxiliary_device_add(adev);
 	if (ret) {
 		cdev_info->adev = NULL;
 		auxiliary_device_uninit(adev);
-		return ret;
 	}
 
-	return 0;
+aux_plug_out:
+	mutex_unlock(&pf->adev_mutex);
+	return ret;
 }
 
 /* ice_unplug_aux_dev - unregister and free aux dev
@@ -638,13 +641,23 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
  */
 void ice_unplug_aux_dev(struct iidc_core_dev_info *cdev_info)
 {
-	/* if this aux dev has already been unplugged move on */
-	if (!cdev_info || !cdev_info->adev)
+	struct ice_pf *pf;
+
+	if (!cdev_info)
 		return;
+	pf = pci_get_drvdata(cdev_info->pdev);
+
+	/* if this aux dev has already been unplugged move on */
+	mutex_lock(&pf->adev_mutex);
+	if (!cdev_info->adev) {
+		mutex_unlock(&pf->adev_mutex);
+		return;
+	}
 
 	auxiliary_device_delete(cdev_info->adev);
 	auxiliary_device_uninit(cdev_info->adev);
 	cdev_info->adev = NULL;
+	mutex_unlock(&pf->adev_mutex);
 }
 
 /* ice_plug_aux_devs - allocate and register aux dev for cdev_info
@@ -658,10 +671,22 @@ int ice_plug_aux_devs(struct ice_pf *pf)
 	u8 i;
 
 	for (i = 0; i < ARRAY_SIZE(ice_cdev_ids); i++) {
+		const char *name;
+
 		if (!pf->cdev_infos[i])
 			continue;
 
-		ret = ice_plug_aux_dev(pf->cdev_infos[i], ice_cdev_ids[i].name);
+		if (pf->cdev_infos[i]->cdev_info_id == IIDC_RDMA_ID) {
+			if (pf->cdev_infos[i]->rdma_protocol ==
+			    IIDC_RDMA_PROTOCOL_IWARP)
+				name = IIDC_RDMA_IWARP_NAME;
+			else
+				name = IIDC_RDMA_ROCE_NAME;
+		} else {
+			name = ice_cdev_ids[i].name;
+		}
+
+		ret = ice_plug_aux_dev(pf->cdev_infos[i], name);
 		if (ret)
 			return ret;
 	}
@@ -771,20 +796,8 @@ int ice_init_aux_devices(struct ice_pf *pf)
 		 */
 		switch (ice_cdev_ids[i].id) {
 
-		/* Skip IEPS AUX dev creation for unsupported DIDs */
-		case IIDC_IEPS_ID:
-			if (pf->pdev->device != ICE_DEV_ID_E823L_BACKPLANE &&
-			    pf->pdev->device != ICE_DEV_ID_E823C_BACKPLANE &&
-			    pf->pdev->device != ICE_DEV_ID_E822L_BACKPLANE &&
-			    pf->pdev->device != ICE_DEV_ID_E822C_BACKPLANE) {
-				pf->cdev_infos[i] = NULL;
-				kfree(cdev_info);
-				continue;
-			}
-			break;
-
 		case IIDC_RDMA_ID:
-			if (!test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
+			if (!ice_chk_rdma_cap(pf)) {
 				pf->cdev_infos[i] = NULL;
 				kfree(cdev_info);
 				continue;
@@ -806,7 +819,6 @@ int ice_init_aux_devices(struct ice_pf *pf)
 		}
 		cdev_info->msix_entries = entry;
 	}
-
 	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
 
 	return err;
@@ -826,10 +838,12 @@ bool ice_is_rdma_aux_loaded(struct ice_pf *pf)
 	if (!rcdi)
 		return false;
 
+	mutex_lock(&pf->adev_mutex);
 	device_lock(&rcdi->adev->dev);
 	iadrv = ice_get_auxiliary_drv(rcdi);
 	loaded = iadrv ? true : false;
 	device_unlock(&rcdi->adev->dev);
+	mutex_unlock(&pf->adev_mutex);
 
 	dev_dbg(ice_pf_to_dev(pf), "RDMA Auxiliary Driver status: %s\n",
 		loaded ? "loaded" : "not loaded");

@@ -20,7 +20,7 @@ enum ice_ptp_pin {
 	NUM_ICE_PTP_PIN
 };
 
-/* Master timer mode */
+/* Main timer mode */
 enum ice_src_tmr_mode {
 	ICE_SRC_TMR_MODE_NANOSECONDS,
 	ICE_SRC_TMR_MODE_LOCKED,
@@ -52,7 +52,7 @@ enum ice_phy_rclk_pins {
 };
 
 #define E810T_CGU_INPUT_C827(_phy, _pin) ((_phy) * ICE_C827_RCLK_PINS_NUM + \
-					  (_pin) + REF1P)
+					  (_pin) + ZL_REF1P)
 
 struct ice_perout_channel {
 	bool ena;
@@ -102,6 +102,7 @@ struct ice_tx_tstamp {
 
 /**
  * struct ice_ptp_tx - Tracking structure for Tx timestamp requests on a port
+ * @tasklet: tasklet to handle processing of Tx timestamps
  * @work: work function to handle processing of Tx timestamps
  * @lock: lock to prevent concurrent write to in_use bitmap
  * @tstamps: array of len to store outstanding requests
@@ -112,8 +113,10 @@ struct ice_tx_tstamp {
  * @init: if true, the tracker is initialized;
  * @calibrating: if true, the PHY is calibrating the Tx offset. During this
  *               window, timestamps are temporarily disabled.
+ * @ll_ena: if true, the low latency timestamping feature is supported
  */
 struct ice_ptp_tx {
+	struct tasklet_struct tasklet;
 	struct kthread_work work;
 	spinlock_t lock; /* protects access to in_use bitmap */
 	struct ice_tx_tstamp *tstamps;
@@ -123,6 +126,7 @@ struct ice_ptp_tx {
 	u8 len;
 	u8 init;
 	u8 calibrating;
+	u8 ll_ena;
 };
 
 /* Quad and port information for initializing timestamp blocks */

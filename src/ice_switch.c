@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright (C) 2018-2021, Intel Corporation. */
 
+#include "ice_common.h"
 #include "ice_switch.h"
 #include "ice_flex_type.h"
 #include "ice_flow.h"
@@ -1391,8 +1392,8 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 				result_bm);
 
 		/* get the first profile that is associated with rid */
-		prof = find_first_bit(recipe_to_profile[idx],
-				      ICE_MAX_NUM_PROFILES);
+		prof = (u8) find_first_bit(recipe_to_profile[idx],
+					   ICE_MAX_NUM_PROFILES);
 		for (i = 0; i < ICE_NUM_WORDS_RECIPE; i++) {
 			u8 lkup_indx = root_bufs.content.lkup_indx[i + 1];
 
@@ -1495,6 +1496,9 @@ static void ice_get_recp_to_prof_map(struct ice_hw *hw)
 			set_bit(i, recipe_to_profile[j]);
 	}
 }
+
+static bool
+ice_vsi_uses_fltr(struct ice_fltr_mgmt_list_entry *fm_entry, u16 vsi_handle);
 
 /**
  * ice_init_def_sw_recp - initialize the recipe book keeping tables
@@ -2419,6 +2423,7 @@ ice_aq_alloc_free_vsi_list(struct ice_hw *hw, u16 *vsi_list_id,
 	    lkup_type == ICE_SW_LKUP_ETHERTYPE_MAC ||
 	    lkup_type == ICE_SW_LKUP_PROMISC ||
 	    lkup_type == ICE_SW_LKUP_PROMISC_VLAN ||
+	    lkup_type == ICE_SW_LKUP_DFLT ||
 	    lkup_type == ICE_SW_LKUP_LAST) {
 		sw_buf->res_type = cpu_to_le16(ICE_AQC_RES_TYPE_VSI_LIST_REP);
 	} else if (lkup_type == ICE_SW_LKUP_VLAN) {
@@ -2776,8 +2781,6 @@ ice_init_port_info(struct ice_port_info *pi, u16 vsi_port_num, u8 type,
 		pi->sw_id = swid;
 		pi->pf_vf_num = pf_vf_num;
 		pi->is_vf = is_vf;
-		pi->dflt_tx_vsi_num = ICE_DFLT_VSI_INVAL;
-		pi->dflt_rx_vsi_num = ICE_DFLT_VSI_INVAL;
 		break;
 	default:
 		ice_debug(pi->hw, ICE_DBG_SW, "incorrect VSI/port type received\n");
@@ -2865,6 +2868,53 @@ out:
 }
 
 /**
+ * ice_dump_lkup_filters
+ * @hw: pointer to the hardware structure
+ * @rule_lock: pointer to lock that's protecting filter list
+ * @rule_head: pointer to head of filter list
+ * @lkup: type of switch lookup rule
+ *
+ * Helper function that prints all filters for a particular switch
+ * lookup type
+ */
+static void ice_dump_lkup_filters(struct ice_hw *hw, struct mutex *rule_lock,
+				  struct list_head *rule_head,
+				  enum ice_sw_lkup_type lkup)
+{
+	struct ice_fltr_mgmt_list_entry *fm_entry;
+	char extra_param[128] = {'\0'};
+	char mac_addr[ETH_ALEN];
+
+	memset(mac_addr, 0, ETH_ALEN);
+	mutex_lock(rule_lock);
+	list_for_each_entry(fm_entry, rule_head, list_entry) {
+		struct ice_fltr_info *fi = &fm_entry->fltr_info;
+
+		if (lkup == ICE_SW_LKUP_MAC || lkup == ICE_SW_LKUP_PROMISC) {
+			ether_addr_copy(mac_addr, fi->l_data.mac.mac_addr);
+		} else if (lkup == ICE_SW_LKUP_MAC_VLAN) {
+			ether_addr_copy(mac_addr,
+					fi->l_data.mac_vlan.mac_addr);
+			snprintf(extra_param, sizeof(extra_param),
+				 "vlan_id = %d", fi->l_data.mac_vlan.vlan_id);
+		} else if (lkup == ICE_SW_LKUP_ETHERTYPE_MAC) {
+			ether_addr_copy(mac_addr,
+					fi->l_data.ethertype_mac.mac_addr);
+			snprintf(extra_param, sizeof(extra_param),
+				 "ethertype = %d",
+				 fi->l_data.ethertype_mac.ethertype);
+		}
+
+		dev_info(ice_hw_to_dev(hw),
+			 "\tmac: %pM, vsi_count = %d, fw_act_flag = %d, lb_en = %d, lan_en = %d, filt_act = %d, filt_rule_id = %d %s\n",
+			 mac_addr, fm_entry->vsi_count, fi->flag, fi->lb_en,
+			 fi->lan_en, fi->fltr_act, fi->fltr_rule_id,
+			 extra_param);
+	}
+	mutex_unlock(rule_lock);
+}
+
+/**
  * ice_dump_all_sw_rules
  * @hw: pointer to the hardware structure
  * @lkup: switch rule filter lookup type
@@ -2890,16 +2940,7 @@ ice_dump_all_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lkup,
 		/* dump MAC hash list */
 		dev_info(ice_hw_to_dev(hw),
 			 "\tDump MAC hash list of lookup type %d\n", lkup);
-		mutex_lock(rule_lock);
-		list_for_each_entry(fm_entry, rule_head, list_entry) {
-			fi = &fm_entry->fltr_info;
-			dev_info(ice_hw_to_dev(hw),
-				 "\tmac: %pM, vsi_count = %d, fw_act_flag = %d, lb_en = %d, lan_en = %d, filt_act = %d, filt_rule_id = %d\n",
-				 fi->l_data.mac.mac_addr, fm_entry->vsi_count,
-				 fi->flag, fi->lb_en, fi->lan_en,
-				 fi->fltr_act, fi->fltr_rule_id);
-		}
-		mutex_unlock(rule_lock);
+		ice_dump_lkup_filters(hw, rule_lock, rule_head, lkup);
 		break;
 	case ICE_SW_LKUP_VLAN:
 		/* dump VLAN hash list */
@@ -2923,17 +2964,7 @@ ice_dump_all_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lkup,
 		dev_info(ice_hw_to_dev(hw),
 			 "\tDump MAC VLAN hash list of lookup type %d\n",
 			 lkup);
-		mutex_lock(rule_lock);
-		list_for_each_entry(fm_entry, rule_head, list_entry) {
-			fi = &fm_entry->fltr_info;
-			dev_info(ice_hw_to_dev(hw),
-				 "\tmac: %pM, vlan_id = %d, vsi_count = %d, fw_act_flag = %d, lb_en = %d, lan_en = %d, filt_act = %d, filt_rule_id = %d\n",
-				 fi->l_data.mac_vlan.mac_addr,
-				 fi->l_data.mac_vlan.vlan_id,
-				 fm_entry->vsi_count, fi->flag, fi->lb_en,
-				 fi->lan_en, fi->fltr_act, fi->fltr_rule_id);
-		}
-		mutex_unlock(rule_lock);
+		ice_dump_lkup_filters(hw, rule_lock, rule_head, lkup);
 		break;
 	case ICE_SW_LKUP_ETHERTYPE:
 		/* dump Ethertype/Ethertype MAC hash list */
@@ -2956,17 +2987,7 @@ ice_dump_all_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lkup,
 		dev_info(ice_hw_to_dev(hw),
 			 "\tDump Ethertype MAC hash list of lookup type %d\n",
 			 lkup);
-		mutex_lock(rule_lock);
-		list_for_each_entry(fm_entry, rule_head, list_entry) {
-			fi = &fm_entry->fltr_info;
-			dev_info(ice_hw_to_dev(hw),
-				 "\tmac: %pM, ethertype = %d, vsi_count = %d, fw_act_flag = %d, filt_act = %d, lb_en = %d, lan_en = %d, filt_rule_id = %d\n",
-				 fi->l_data.ethertype_mac.mac_addr,
-				 fi->l_data.ethertype_mac.ethertype,
-				 fm_entry->vsi_count, fi->flag, fi->lb_en,
-				 fi->lan_en, fi->fltr_act, fi->fltr_rule_id);
-		}
-		mutex_unlock(rule_lock);
+		ice_dump_lkup_filters(hw, rule_lock, rule_head, lkup);
 		break;
 	case ICE_SW_LKUP_PROMISC:
 		/* dump Promisc mode hash list */
@@ -2975,33 +2996,13 @@ ice_dump_all_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lkup,
 			 lkup);
 		dev_info(ice_hw_to_dev(hw),
 			 "\tNote: Ignore VLAN in case of Promisc only lookup type & ignore MAC in case of Promisc VLAN lookup type\n");
-		mutex_lock(rule_lock);
-		list_for_each_entry(fm_entry, rule_head, list_entry) {
-			fi = &fm_entry->fltr_info;
-			dev_info(ice_hw_to_dev(hw),
-				 "\tmac: %pM, vlan_id = %d, vsi_count = %d, fw_act_flag = %d, lb_en = %d, lan_en = %d, filt_act = %d, filt_rule_id = %d\n",
-				 fi->l_data.mac_vlan.mac_addr,
-				 fi->l_data.mac_vlan.vlan_id,
-				 fm_entry->vsi_count, fi->flag, fi->lb_en,
-				 fi->lan_en, fi->fltr_act, fi->fltr_rule_id);
-		}
-		mutex_unlock(rule_lock);
+		ice_dump_lkup_filters(hw, rule_lock, rule_head, lkup);
 		break;
 	case ICE_SW_LKUP_DFLT:
-		/* dump default VSI filter rule */
-		if (hw->port_info->dflt_tx_vsi_num != ICE_DFLT_VSI_INVAL)
-			dev_info(ice_hw_to_dev(hw),
-				 "\tDefault VSI filter (lookup type %d): tx_vsi_id = %d, filt_act = %d, tx_filt_rule_id = %d\n",
-				 lkup, hw->port_info->dflt_tx_vsi_num,
-				 ICE_FWD_TO_VSI,
-				 hw->port_info->dflt_tx_vsi_rule_id);
-
-		if (hw->port_info->dflt_rx_vsi_num != ICE_DFLT_VSI_INVAL)
-			dev_info(ice_hw_to_dev(hw),
-				 "\tDefault VSI filter (lookup type %d): rx_vsi_id = %d, filt_act = %d, rx_filt_rule_id = %d\n",
-				 lkup, hw->port_info->dflt_rx_vsi_num,
-				 ICE_FWD_TO_VSI,
-				 hw->port_info->dflt_rx_vsi_rule_id);
+		dev_info(ice_hw_to_dev(hw),
+			 "\tDump Default VSI's VLAN mode hash list of lookup type %d\n",
+			 lkup);
+		ice_dump_lkup_filters(hw, rule_lock, rule_head, lkup);
 		break;
 	case ICE_SW_LKUP_PROMISC_VLAN:
 	case ICE_SW_LKUP_LAST:
@@ -3402,7 +3403,7 @@ ice_add_counter_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 				 ice_aqc_opc_update_sw_rules, NULL);
 	if (!status) {
 		m_ent->lg_act_idx = l_id;
-		m_ent->counter_index = counter_id;
+		m_ent->counter_index = (u8)counter_id;
 	}
 
 	devm_kfree(ice_hw_to_dev(hw), lg_act);
@@ -3473,6 +3474,7 @@ ice_update_vsi_list_rule(struct ice_hw *hw, u16 *vsi_handle_arr, u16 num_vsi,
 	    lkup_type == ICE_SW_LKUP_ETHERTYPE_MAC ||
 	    lkup_type == ICE_SW_LKUP_PROMISC ||
 	    lkup_type == ICE_SW_LKUP_PROMISC_VLAN ||
+	    lkup_type == ICE_SW_LKUP_DFLT ||
 	    lkup_type == ICE_SW_LKUP_LAST)
 		rule_type = remove ? ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR :
 			ICE_AQC_SW_RULES_T_VSI_LIST_SET;
@@ -3633,11 +3635,12 @@ ice_update_pkt_fwd_rule(struct ice_hw *hw, struct ice_fltr_info *f_info)
  */
 enum ice_status ice_update_sw_rule_bridge_mode(struct ice_hw *hw)
 {
-	struct ice_switch_info *sw = hw->switch_info;
 	struct ice_fltr_mgmt_list_entry *fm_entry;
 	enum ice_status status = 0;
 	struct list_head *rule_head;
 	struct mutex *rule_lock; /* Lock to protect filter rule list */
+	struct ice_switch_info *sw;
+	sw = hw->switch_info;
 
 	rule_lock = &sw->recp_list[ICE_SW_LKUP_MAC].filt_rule_lock;
 	rule_head = &sw->recp_list[ICE_SW_LKUP_MAC].filt_rules;
@@ -3695,7 +3698,6 @@ ice_add_update_vsi_list(struct ice_hw *hw,
 {
 	enum ice_status status = 0;
 	u16 vsi_list_id = 0;
-
 	if ((cur_fltr->fltr_act == ICE_FWD_TO_Q ||
 	     cur_fltr->fltr_act == ICE_FWD_TO_QGRP))
 		return ICE_ERR_NOT_IMPL;
@@ -4345,7 +4347,8 @@ ice_add_mac_rule(struct ice_hw *hw, struct list_head *m_list,
 		if (!ice_is_vsi_valid(hw, vsi_handle))
 			return ICE_ERR_PARAM;
 		hw_vsi_id = ice_get_hw_vsi_num(hw, vsi_handle);
-		m_list_itr->fltr_info.fwd_id.hw_vsi_id = hw_vsi_id;
+		if (m_list_itr->fltr_info.fltr_act == ICE_FWD_TO_VSI)
+			m_list_itr->fltr_info.fwd_id.hw_vsi_id = hw_vsi_id;
 		/* update the src in case it is VSI num */
 		if (m_list_itr->fltr_info.src_id != ICE_SRC_ID_VSI)
 			return ICE_ERR_PARAM;
@@ -4978,24 +4981,19 @@ enum ice_status
 ice_cfg_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle, bool set,
 		 u8 direction)
 {
-	struct ice_aqc_sw_rules_elem *s_rule;
+	struct ice_fltr_list_entry f_list_entry;
+	struct ice_sw_recipe *recp_list;
 	struct ice_fltr_info f_info;
 	struct ice_hw *hw = pi->hw;
-	enum ice_adminq_opc opcode;
 	enum ice_status status;
-	u16 s_rule_size;
+	u8 lport = pi->lport;
 	u16 hw_vsi_id;
+	recp_list = &pi->hw->switch_info->recp_list[ICE_SW_LKUP_DFLT];
 
 	if (!ice_is_vsi_valid(hw, vsi_handle))
 		return ICE_ERR_PARAM;
+
 	hw_vsi_id = ice_get_hw_vsi_num(hw, vsi_handle);
-
-	s_rule_size = set ? ICE_SW_RULE_RX_TX_ETH_HDR_SIZE :
-		ICE_SW_RULE_RX_TX_NO_HDR_SIZE;
-
-	s_rule = devm_kzalloc(ice_hw_to_dev(hw), s_rule_size, GFP_KERNEL);
-	if (!s_rule)
-		return ICE_ERR_NO_MEMORY;
 
 	memset(&f_info, 0, sizeof(f_info));
 
@@ -5003,54 +5001,62 @@ ice_cfg_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle, bool set,
 	f_info.flag = direction;
 	f_info.fltr_act = ICE_FWD_TO_VSI;
 	f_info.fwd_id.hw_vsi_id = hw_vsi_id;
+	f_info.vsi_handle = vsi_handle;
 
 	if (f_info.flag & ICE_FLTR_RX) {
 		f_info.src = pi->lport;
 		f_info.src_id = ICE_SRC_ID_LPORT;
-		if (!set)
-			f_info.fltr_rule_id =
-				pi->dflt_rx_vsi_rule_id;
 	} else if (f_info.flag & ICE_FLTR_TX) {
 		f_info.src_id = ICE_SRC_ID_VSI;
 		f_info.src = hw_vsi_id;
-		if (!set)
-			f_info.fltr_rule_id =
-				pi->dflt_tx_vsi_rule_id;
 	}
+	f_list_entry.fltr_info = f_info;
 
 	if (set)
-		opcode = ice_aqc_opc_add_sw_rules;
+		status = ice_add_rule_internal(hw, recp_list, lport,
+					       &f_list_entry);
 	else
-		opcode = ice_aqc_opc_remove_sw_rules;
+		status = ice_remove_rule_internal(hw, recp_list,
+						  &f_list_entry);
 
-	ice_fill_sw_rule(hw, &f_info, s_rule, opcode);
+	return status;
+}
 
-	status = ice_aq_sw_rules(hw, s_rule, s_rule_size, 1, opcode, NULL);
-	if (status || !(f_info.flag & ICE_FLTR_TX_RX))
-		goto out;
-	if (set) {
-		u16 index = le16_to_cpu(s_rule->pdata.lkup_tx_rx.index);
+/**
+ * ice_check_if_dflt_vsi - check if VSI is default VSI
+ * @pi: pointer to the port_info structure
+ * @vsi_handle: vsi handle to check for in filter list
+ * @rule_exists: indicates if there are any VSI's in the rule list
+ *
+ * checks if the VSI is in a default VSI list, and also indicates
+ * if the default VSI list is empty
+ */
+bool ice_check_if_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle,
+			   bool *rule_exists)
+{
+	struct ice_fltr_mgmt_list_entry *fm_entry;
+	struct list_head *rule_head;
+	struct ice_sw_recipe *recp_list;
+	struct mutex *rule_lock;
+	bool ret = false;
+	recp_list = &pi->hw->switch_info->recp_list[ICE_SW_LKUP_DFLT];
+	rule_lock = &recp_list->filt_rule_lock;
+	rule_head = &recp_list->filt_rules;
 
-		if (f_info.flag & ICE_FLTR_TX) {
-			pi->dflt_tx_vsi_num = hw_vsi_id;
-			pi->dflt_tx_vsi_rule_id = index;
-		} else if (f_info.flag & ICE_FLTR_RX) {
-			pi->dflt_rx_vsi_num = hw_vsi_id;
-			pi->dflt_rx_vsi_rule_id = index;
-		}
-	} else {
-		if (f_info.flag & ICE_FLTR_TX) {
-			pi->dflt_tx_vsi_num = ICE_DFLT_VSI_INVAL;
-			pi->dflt_tx_vsi_rule_id = ICE_INVAL_ACT;
-		} else if (f_info.flag & ICE_FLTR_RX) {
-			pi->dflt_rx_vsi_num = ICE_DFLT_VSI_INVAL;
-			pi->dflt_rx_vsi_rule_id = ICE_INVAL_ACT;
+	mutex_lock(rule_lock);
+
+	if (rule_exists && !list_empty(rule_head))
+		*rule_exists = true;
+
+	list_for_each_entry(fm_entry, rule_head, list_entry) {
+		if (ice_vsi_uses_fltr(fm_entry, vsi_handle)) {
+			ret = true;
+			break;
 		}
 	}
 
-out:
-	devm_kfree(ice_hw_to_dev(hw), s_rule);
-	return status;
+	mutex_unlock(rule_lock);
+	return ret;
 }
 
 /**
@@ -5723,6 +5729,13 @@ _ice_set_vlan_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
 		goto free_fltr_list;
 
 	list_for_each_entry(list_itr, &vsi_list_head, list_entry) {
+		/* Avoid enabling or disabling vlan zero twice when in double
+		 * vlan mode
+		 */
+		if (ice_is_dvm_ena(hw) &&
+		    list_itr->fltr_info.l_data.vlan.tpid == 0)
+			continue;
+
 		vlan_id = list_itr->fltr_info.l_data.vlan.vlan_id;
 		if (rm_vlan_promisc)
 			status =  _ice_clear_vsi_promisc(hw, vsi_handle,
@@ -5732,7 +5745,7 @@ _ice_set_vlan_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
 			status =  _ice_set_vsi_promisc(hw, vsi_handle,
 						       promisc_mask, vlan_id,
 						       lport, sw);
-		if (status)
+		if (status && status != ICE_ERR_ALREADY_EXISTS)
 			break;
 	}
 
@@ -5800,7 +5813,7 @@ ice_remove_vsi_lkup_fltr(struct ice_hw *hw, u16 vsi_handle,
 		break;
 	case ICE_SW_LKUP_PROMISC:
 	case ICE_SW_LKUP_PROMISC_VLAN:
-		ice_remove_promisc(hw, lkup, &remove_list_head);
+		ice_remove_promisc(hw, (u8)lkup, &remove_list_head);
 		break;
 	case ICE_SW_LKUP_MAC_VLAN:
 		ice_remove_mac_vlan(hw, &remove_list_head);
@@ -6610,7 +6623,7 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 	/* Allocate the recipe resources, and configure them according to the
 	 * match fields from protocol headers and extracted field vectors.
 	 */
-	chain_idx = find_first_bit(result_idx_bm, ICE_MAX_FV_WORDS);
+	chain_idx = (u8) find_first_bit(result_idx_bm, ICE_MAX_FV_WORDS);
 	list_for_each_entry(entry, &rm->rg_list, l_entry) {
 		u8 i;
 
@@ -6645,7 +6658,8 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 		}
 
 		for (i = 0; i < entry->r_group.n_val_pairs; i++) {
-			buf[recps].content.lkup_indx[i + 1] = entry->fv_idx[i];
+			buf[recps].content.lkup_indx[i + 1] =
+				(u8)entry->fv_idx[i];
 			buf[recps].content.mask[i + 1] =
 				cpu_to_le16(entry->fv_mask[i]);
 		}
@@ -6666,8 +6680,8 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 				((chain_idx << ICE_AQ_RECIPE_RESULT_DATA_S) &
 				 ICE_AQ_RECIPE_RESULT_DATA_M);
 			clear_bit(chain_idx, result_idx_bm);
-			chain_idx = find_first_bit(result_idx_bm,
-						   ICE_MAX_FV_WORDS);
+			chain_idx = (u8) find_first_bit(result_idx_bm,
+							ICE_MAX_FV_WORDS);
 		}
 
 		/* fill recipe dependencies */
@@ -6799,7 +6813,7 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 		is_root = (rm->root_rid == entry->rid);
 		recp->is_root = is_root;
 
-		recp->root_rid = entry->rid;
+		recp->root_rid = (u8)entry->rid;
 		recp->big_recp = (is_root && rm->n_grp_count > 1);
 
 		memcpy(&recp->ext_words, entry->r_group.pairs,
@@ -7870,8 +7884,11 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 				word_cnt++;
 	}
 
-	if (!word_cnt || word_cnt > ICE_MAX_CHAIN_WORDS)
+	if (!word_cnt)
 		return ICE_ERR_PARAM;
+
+	if (word_cnt > ICE_MAX_CHAIN_WORDS)
+		return ICE_ERR_MAX_LIMIT;
 
 	/* make sure that we can locate a dummy packet */
 	ice_find_dummy_packet(lkups, lkups_cnt, rinfo->tun_type, &pkt, &pkt_len,
@@ -8007,8 +8024,13 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		goto err_ice_add_adv_rule;
 	}
 
-	adv_fltr->lkups = devm_kmemdup(ice_hw_to_dev(hw), lkups,
-				       lkups_cnt * sizeof(*lkups), GFP_KERNEL);
+	if (lkups_cnt) {
+		adv_fltr->lkups = devm_kmemdup(ice_hw_to_dev(hw), lkups,
+					       lkups_cnt * sizeof(*lkups),
+					       GFP_KERNEL);
+	} else {
+		adv_fltr->lkups = NULL;
+	}
 	if (!adv_fltr->lkups) {
 		status = ICE_ERR_NO_MEMORY;
 		goto err_ice_add_adv_rule;
@@ -8438,9 +8460,11 @@ enum ice_status
 ice_replay_vsi_all_fltr(struct ice_hw *hw, struct ice_port_info *pi,
 			u16 vsi_handle)
 {
-	struct ice_switch_info *sw = hw->switch_info;
+struct ice_switch_info *sw;
 	enum ice_status status;
 	u8 i;
+
+	sw = hw->switch_info;
 
 	/* Update the recipes that were created */
 	for (i = 0; i < ICE_MAX_NUM_RECIPES; i++) {

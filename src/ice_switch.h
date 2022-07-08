@@ -4,7 +4,7 @@
 #ifndef _ICE_SWITCH_H_
 #define _ICE_SWITCH_H_
 
-#include "ice_common.h"
+#include "ice_type.h"
 #include "ice_protocol_type.h"
 
 #define ICE_SW_CFG_MAX_BUF_LEN 2048
@@ -431,6 +431,8 @@ void ice_remove_vsi_fltr(struct ice_hw *hw, u16 vsi_handle);
 enum ice_status
 ice_cfg_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle, bool set,
 		 u8 direction);
+bool ice_check_if_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle,
+			   bool *rule_exists);
 enum ice_status
 ice_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
 		    u16 vid);

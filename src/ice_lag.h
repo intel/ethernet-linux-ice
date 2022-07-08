@@ -6,6 +6,7 @@
 #ifdef HAVE_NETDEV_UPPER_INFO
 
 #include <linux/netdevice.h>
+#include "ice.h"
 
 /* LAG roles for netdev */
 enum ice_lag_role {
@@ -21,17 +22,28 @@ struct ice_pf;
 struct ice_lag {
 	struct ice_pf *pf; /* backlink to PF struct */
 	struct net_device *netdev; /* this PF's netdev */
-	struct net_device *peer_netdev;
 	struct net_device *upper_netdev; /* upper bonding netdev */
 	struct notifier_block notif_block;
 	u8 bonded:1; /* currently bonded */
-	u8 master:1; /* this is a master */
+	u8 primary:1; /* this is primary */
 	u8 handler:1; /* did we register a rx_netdev_handler */
 	/* each thing blocking bonding will increment this value by one.
 	 * If this value is zero, then bonding is allowed.
 	 */
 	u16 dis_lag;
 	u8 role;
+	struct workqueue_struct *lag_wq;
+};
+
+/* LAG workqueue struct */
+struct ice_lag_work {
+	struct work_struct lag_task;
+	struct ice_lag *lag;
+	unsigned long event;
+	union {
+		struct netdev_notifier_changeupper_info changeupper_info;
+		struct netdev_notifier_bonding_info bonding_info;
+	} info;
 };
 
 int ice_init_lag(struct ice_pf *pf);

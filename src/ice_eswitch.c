@@ -18,10 +18,10 @@
  * @mac: VF's MAC address
  *
  * This function adds advanced rule that forwards packets with
- * VF's MAC address (src MAC) to the coresponding switchdev ctrl VSI queue.
+ * VF's MAC address (src MAC) to the corresponding switchdev ctrl VSI queue.
  */
-int ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf,
-				const u8 *mac)
+int
+ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf, const u8 *mac)
 {
 	struct ice_vsi *ctrl_vsi = pf->switchdev.control_vsi;
 	struct ice_adv_rule_info rule_info = {0};
@@ -66,8 +66,7 @@ int ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf,
  *
  * This function replays VF's MAC rule after reset.
  */
-void
-ice_eswitch_replay_vf_mac_rule(struct ice_vf *vf)
+void ice_eswitch_replay_vf_mac_rule(struct ice_vf *vf)
 {
 	int err;
 
@@ -137,8 +136,8 @@ static int ice_eswitch_setup_env(struct ice_pf *pf)
 	if (ice_vsi_add_vlan_zero(uplink_vsi))
 		goto err_def_rx;
 
-	if (!ice_is_dflt_vsi_in_use(uplink_vsi->vsw)) {
-		if (ice_set_dflt_vsi(uplink_vsi->vsw, uplink_vsi))
+	if (!ice_is_dflt_vsi_in_use(uplink_vsi->port_info)) {
+		if (ice_set_dflt_vsi(uplink_vsi))
 			goto err_def_rx;
 		rule_added = true;
 	}
@@ -155,7 +154,7 @@ err_override_control:
 	ice_vsi_update_security(uplink_vsi, ice_vsi_ctx_clear_allow_override);
 err_override_uplink:
 	if (rule_added)
-		ice_clear_dflt_vsi(uplink_vsi->vsw);
+		ice_clear_dflt_vsi(uplink_vsi);
 err_def_rx:
 	ice_fltr_add_mac_and_broadcast(uplink_vsi,
 				       uplink_vsi->port_info->mac.perm_addr,
@@ -178,7 +177,7 @@ ice_eswitch_release_env(struct ice_pf *pf)
 
 	ice_vsi_update_security(ctrl_vsi, ice_vsi_ctx_clear_allow_override);
 	ice_vsi_update_security(uplink_vsi, ice_vsi_ctx_clear_allow_override);
-	ice_clear_dflt_vsi(uplink_vsi->vsw);
+	ice_clear_dflt_vsi(uplink_vsi);
 	ice_fltr_add_mac_and_broadcast(uplink_vsi,
 				       uplink_vsi->port_info->mac.perm_addr,
 				       ICE_FWD_TO_VSI);
@@ -211,8 +210,7 @@ ice_eswitch_remap_ring(struct ice_ring *ring, struct ice_q_vector *q_vector,
  * will have dedicated 1 Tx/Rx ring pair, so number of rings pair is equal to
  * number of VFs.
  */
-static void
-ice_eswitch_remap_rings_to_vectors(struct ice_pf *pf)
+static void ice_eswitch_remap_rings_to_vectors(struct ice_pf *pf)
 {
 	struct ice_vsi *vsi = pf->switchdev.control_vsi;
 	int q_id;
@@ -259,8 +257,8 @@ ice_eswitch_remap_rings_to_vectors(struct ice_pf *pf)
  * @pf: poiner to PF struct
  * @ctrl_vsi: pointer to switchdev control VSI
  */
-static void ice_eswitch_release_reprs(struct ice_pf *pf,
-				      struct ice_vsi *ctrl_vsi)
+static void
+ice_eswitch_release_reprs(struct ice_pf *pf, struct ice_vsi *ctrl_vsi)
 {
 	struct ice_vf *vf;
 	unsigned int bkt;
@@ -385,7 +383,6 @@ void ice_eswitch_update_repr(struct ice_vsi *vsi)
 					       ICE_FWD_TO_VSI);
 		dev_err(ice_pf_to_dev(pf), "Failed to update VF %d port representor",
 			vf->vf_id);
-		return;
 	}
 }
 
@@ -406,7 +403,8 @@ ice_eswitch_port_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	np = netdev_priv(netdev);
 	vsi = np->vsi;
 
-	if (ice_is_reset_in_progress(vsi->back->state))
+	if (ice_is_reset_in_progress(vsi->back->state) ||
+	    test_bit(ICE_VF_DIS, vsi->back->state))
 		return NETDEV_TX_BUSY;
 
 	repr = ice_netdev_to_repr(netdev);
@@ -423,8 +421,9 @@ ice_eswitch_port_start_xmit(struct sk_buff *skb, struct net_device *netdev)
  * @skb: pointer to send buffer
  * @off: pointer to offload struct
  */
-void ice_eswitch_set_target_vsi(struct sk_buff *skb,
-				struct ice_tx_offload_params *off)
+void
+ice_eswitch_set_target_vsi(struct sk_buff *skb,
+			   struct ice_tx_offload_params *off)
 {
 	struct metadata_dst *dst = skb_metadata_dst(skb);
 	u64 cd_cmd, dst_vsi;
@@ -593,8 +592,9 @@ static void ice_eswitch_disable_switchdev(struct ice_pf *pf)
  * @mode: eswitch mode to switch to
  * @extack: pointer to extack structure
  */
-int ice_eswitch_mode_set(struct devlink *devlink, u16 mode,
-			 struct netlink_ext_ack *extack)
+int
+ice_eswitch_mode_set(struct devlink *devlink, u16 mode,
+		     struct netlink_ext_ack *extack)
 #else
 int ice_eswitch_mode_set(struct devlink *devlink, u16 mode)
 #endif /* HAVE_DEVLINK_ESWITCH_OPS_EXTACK */
@@ -605,14 +605,14 @@ int ice_eswitch_mode_set(struct devlink *devlink, u16 mode)
 		return 0;
 
 	if (ice_has_vfs(pf)) {
-		dev_info(ice_pf_to_dev(pf),
-			 "Changing eswitch mode is allowed only if there is no VFs created");
+		dev_info(ice_pf_to_dev(pf), "Changing eswitch mode is allowed only if there is no VFs created");
 		return -EOPNOTSUPP;
 	}
 
 	switch (mode) {
 	case DEVLINK_ESWITCH_MODE_LEGACY:
-		dev_info(ice_pf_to_dev(pf), "PF %d changed eswitch mode to legacy", pf->hw.pf_id);
+		dev_info(ice_pf_to_dev(pf), "PF %d changed eswitch mode to legacy",
+			 pf->hw.pf_id);
 		break;
 	case DEVLINK_ESWITCH_MODE_SWITCHDEV:
 	{
@@ -623,15 +623,15 @@ int ice_eswitch_mode_set(struct devlink *devlink, u16 mode)
 		}
 #endif /* NETIF_F_HW_TC */
 
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 		if (ice_is_offloaded_macvlan_ena(pf)) {
 			dev_err(ice_pf_to_dev(pf), "switchdev cannot be configured -  L2 Forwarding Offload is currently enabled.\n");
 			return -EOPNOTSUPP;
 		}
-#endif /* HAVE_NETDEV_SB_DEV */
+#endif /* HAVE_NDO_DFWD_OPS */
 
-		dev_info(ice_pf_to_dev(pf),
-			 "PF %d changed eswitch mode to switchdev", pf->hw.pf_id);
+		dev_info(ice_pf_to_dev(pf), "PF %d changed eswitch mode to switchdev",
+			 pf->hw.pf_id);
 		break;
 	}
 	default:

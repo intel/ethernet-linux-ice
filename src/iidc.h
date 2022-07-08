@@ -21,7 +21,7 @@
  * an appropriate message.
  */
 #define IIDC_MAJOR_VER		10
-#define IIDC_MINOR_VER		1
+#define IIDC_MINOR_VER		2
 
 enum iidc_event_type {
 	IIDC_EVENT_BEFORE_MTU_CHANGE,
@@ -31,6 +31,8 @@ enum iidc_event_type {
 	IIDC_EVENT_VF_RESET,
 	IIDC_EVENT_LINK_CHNG,
 	IIDC_EVENT_CRIT_ERR,
+	IIDC_EVENT_FAILOVER_START,
+	IIDC_EVENT_FAILOVER_FINISH,
 	IIDC_EVENT_NBITS		/* must be last */
 };
 
@@ -240,6 +242,8 @@ struct iidc_core_dev_info {
 	 */
 	const struct iidc_core_ops *ops;
 	u8 pf_id;
+	u8 main_pf_port;
+	u8 rdma_active_port;
 };
 
 struct iidc_auxiliary_dev {

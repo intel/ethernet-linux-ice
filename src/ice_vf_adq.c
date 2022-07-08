@@ -382,7 +382,7 @@ void ice_vf_rebuild_adq_host_cfg(struct ice_vf *vf)
 }
 
 /**
- * ice_vf_rebuild_adq_vsi_with_release - release and setup each ADQ VSI
+ * ice_vf_recreate_adq_vsi - release and recreate each ADQ VSI
  * @vf: VF to re-apply ADQ configuration for
  *
  * This is only called when a single VF is being reset (i.e. VFR, VFLR, host VF
@@ -391,7 +391,7 @@ void ice_vf_rebuild_adq_host_cfg(struct ice_vf *vf)
  * This cannot be called for the reset all VFs case as ice_vf_adq_vsi_release()
  * will fail because there are no VF VSI(s) in firmware at this point.
  */
-int ice_vf_rebuild_adq_vsi_with_release(struct ice_vf *vf)
+int ice_vf_recreate_adq_vsi(struct ice_vf *vf)
 {
 	u8 tc;
 
@@ -1041,8 +1041,8 @@ int ice_vc_add_switch_filter(struct ice_vf *vf, u8 *msg)
 	struct virtchnl_filter *vcf = (struct virtchnl_filter *)msg;
 	struct ice_tc_flower_fltr *fltr = NULL;
 	enum virtchnl_status_code v_ret;
+	struct ice_vsi *dest_vsi, *vsi;
 	struct ice_pf *pf = vf->pf;
-	struct ice_vsi *dest_vsi;
 	struct device *dev;
 	int ret;
 
@@ -1061,6 +1061,13 @@ int ice_vc_add_switch_filter(struct ice_vf *vf, u8 *msg)
 		goto err;
 	}
 
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		dev_err(dev, "VF %d: No corresponding VF VSI\n", vf->vf_id);
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
 	dest_vsi = pf->vsi[vf->ch[vcf->action_meta].vsi_idx];
 
 	fltr = devm_kzalloc(dev, sizeof(*fltr), GFP_KERNEL);
@@ -1073,7 +1080,7 @@ int ice_vc_add_switch_filter(struct ice_vf *vf, u8 *msg)
 	ice_setup_fltr(vf, fltr, vcf, dest_vsi, vcf->action_meta);
 
 	/* call function which adds advanced switch filter */
-	ret = ice_add_tc_flower_adv_fltr(ice_get_vf_vsi(vf), fltr);
+	ret = ice_add_tc_flower_adv_fltr(vsi, fltr);
 	if (ret) {
 		dev_err(dev, "Failed to add TC Flower filter using advance filter recipe\n");
 		v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;

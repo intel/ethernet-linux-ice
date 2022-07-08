@@ -280,6 +280,8 @@ DEFINE_EVENT(ice_tx_tstamp_template, name, \
 
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_request);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_complete);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_req);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_done);
 
 /* End tracepoints */
 

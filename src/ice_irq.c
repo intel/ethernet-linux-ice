@@ -95,6 +95,18 @@ static void ice_adj_vec_sum(int *dst, int *src, int size)
 		dst[i] += src[i];
 }
 
+/*
+ * Allow 256 queue pairs for ADQ only if the PF has at least
+ * 1024 msix vectors (1 or 2 port NIC).
+ */
+static int ice_adq_max_qps(struct ice_pf *pf)
+{
+	if (pf->hw.func_caps.common_cap.num_msix_vectors >= 1024)
+		return ICE_ADQ_MAX_QPS;
+
+	return num_online_cpus();
+}
+
 /**
  * ice_ena_msix_range - request a range of MSI-X vectors from the OS
  * @pf: board private structure
@@ -111,26 +123,32 @@ static void ice_adj_vec_sum(int *dst, int *src, int size)
  *
  * Step [1]: Enable MSI-X vectors with eswitch support disabled
  *
- * Step [2]: Enable MSI-X vectors with MACVLAN support disabled, which
- * reduces the request by the MSI-X vectors needed for MACVLAN.
+ * Step [2]: Enable MSI-X vectors with the number of vectors reserved for
+ * MACVLAN and Scalable IOV support reduced by a factor of 2.
  *
- * Step [3]: Enable MSI-X vectors with the number of pf->num_lan_msix reduced
+ * Step [3]: Enable MSI-X vectors with the number of vectors reserved for
+ * MACVLAN and Scalable IOV support reduced by a factor of 4.
+ *
+ * Step [4]: Enable MSI-X vectors with MACVLAN and Scalable IOV support
+ * disabled.
+ *
+ * Step [5]: Enable MSI-X vectors with the number of pf->num_lan_msix reduced
  * by a factor of 2 from the previous step (i.e. num_online_cpus() / 2).
  * Also, with the number of pf->num_rdma_msix reduced by a factor of ~2 from the
  * previous step (i.e. num_online_cpus() / 2 + ICE_RDMA_NUM_AEQ_MSIX).
  *
- * Step [4]: Same as step [3], except reduce both by a factor of 4.
+ * Step [6]: Same as step [3], except reduce both by a factor of 4.
  *
- * Step [5]: Enable the bare-minimum MSI-X vectors.
+ * Step [7]: Enable the bare-minimum MSI-X vectors.
  *
- * Each feature has separeate table with needed irqs in each step. Sum of these
+ * Each feature has separate table with needed irqs in each step. Sum of these
  * tables is tracked in adj_vec to show needed irqs in each step. Separate
  * tables are later use to set correct number of irqs for each feature based on
  * choosed step.
  */
 static int ice_ena_msix_range(struct ice_pf *pf)
 {
-#define ICE_ADJ_VEC_STEPS 6
+#define ICE_ADJ_VEC_STEPS 8
 #define ICE_ADJ_VEC_WORST_CASE 0
 #define ICE_ADJ_VEC_BEST_CASE (ICE_ADJ_VEC_STEPS - 1)
 	int num_cpus = num_online_cpus();
@@ -148,6 +166,10 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
 		num_cpus > ICE_MIN_RDMA_MSIX ?
 			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
+		num_cpus > ICE_MIN_RDMA_MSIX ?
+			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
+		num_cpus > ICE_MIN_RDMA_MSIX ?
+			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
 	};
 	int lan_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_MIN_LAN_MSIX,
@@ -156,25 +178,38 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
 		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
 		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
+		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
+		max_t(int, ice_adq_max_qps(pf), ICE_MIN_LAN_MSIX),
 	};
 	int fdir_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_FDIR_MSIX, ICE_FDIR_MSIX, ICE_FDIR_MSIX,
 		ICE_FDIR_MSIX, ICE_FDIR_MSIX, ICE_FDIR_MSIX,
+		ICE_FDIR_MSIX, ICE_FDIR_MSIX,
 	};
 	int adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_OICR_MSIX, ICE_OICR_MSIX, ICE_OICR_MSIX,
 		ICE_OICR_MSIX, ICE_OICR_MSIX, ICE_OICR_MSIX,
+		ICE_OICR_MSIX, ICE_OICR_MSIX,
 	};
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	int macvlan_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		0, 0, 0, 0,
+		(ICE_MAX_MACVLANS * ICE_DFLT_VEC_VMDQ_VSI) / 4,
+		(ICE_MAX_MACVLANS * ICE_DFLT_VEC_VMDQ_VSI) / 2,
 		ICE_MAX_MACVLANS * ICE_DFLT_VEC_VMDQ_VSI,
 		ICE_MAX_MACVLANS * ICE_DFLT_VEC_VMDQ_VSI,
 	};
 #endif /* OFFLOAD_MACVLAN_SUPPORT */
 	int eswitch_adj_vec[ICE_ADJ_VEC_STEPS] = {
-		0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0,
 		ICE_ESWITCH_MSIX,
+	};
+	int scalable_adj_vec[ICE_ADJ_VEC_STEPS] = {
+		0, 0, 0, 0,
+		(ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL) / 4,
+		(ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL) / 2,
+		ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL,
+		ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL,
 	};
 	struct device *dev = ice_pf_to_dev(pf);
 	int adj_step = ICE_ADJ_VEC_BEST_CASE;
@@ -193,7 +228,7 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	} else {
 		ice_adj_vec_clear(eswitch_adj_vec, ICE_ADJ_VEC_STEPS);
 	}
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 
 	if (test_bit(ICE_FLAG_VMDQ_ENA, pf->flags)) {
 		needed += macvlan_adj_vec[ICE_ADJ_VEC_BEST_CASE];
@@ -203,7 +238,7 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	}
 #endif /* OFFLOAD_MACVLAN_SUPPORT */
 
-	if (test_bit(ICE_FLAG_IWARP_ENA, pf->flags)) {
+	if (ice_chk_rdma_cap(pf)) {
 		needed += rdma_adj_vec[ICE_ADJ_VEC_BEST_CASE];
 		ice_adj_vec_sum(adj_vec, rdma_adj_vec, ICE_ADJ_VEC_STEPS);
 	} else {
@@ -215,6 +250,13 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		ice_adj_vec_sum(adj_vec, fdir_adj_vec, ICE_ADJ_VEC_STEPS);
 	} else {
 		ice_adj_vec_clear(fdir_adj_vec, ICE_ADJ_VEC_STEPS);
+	}
+
+	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags)) {
+		needed += scalable_adj_vec[ICE_ADJ_VEC_BEST_CASE];
+		ice_adj_vec_sum(adj_vec, scalable_adj_vec, ICE_ADJ_VEC_STEPS);
+	} else {
+		ice_adj_vec_clear(scalable_adj_vec, ICE_ADJ_VEC_STEPS);
 	}
 
 	v_actual = ice_ena_msix(pf, needed);
@@ -240,13 +282,19 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		dev_warn(dev, "Not enough MSI-X for eswitch support, disabling feature\n");
 		clear_bit(ICE_FLAG_ESWITCH_CAPABLE, pf->flags);
 	}
-#ifdef HAVE_NETDEV_SB_DEV
+#ifdef HAVE_NDO_DFWD_OPS
 	if (test_bit(ICE_FLAG_VMDQ_ENA, pf->flags) &&
 	    !macvlan_adj_vec[adj_step]) {
 		dev_warn(dev, "Not enough MSI-X for hardware MACVLAN support, disabling feature\n");
 		clear_bit(ICE_FLAG_VMDQ_ENA, pf->flags);
 	}
 #endif /* OFFLOAD_MACVLAN_SUPPORT */
+	pf->max_adq_qps = lan_adj_vec[adj_step];
+	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags) &&
+	    !scalable_adj_vec[adj_step]) {
+		dev_warn(dev, "Not enough MSI-X for Scalable IOV support, disabling feature\n");
+		clear_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags);
+	}
 	return v_actual;
 
 err:

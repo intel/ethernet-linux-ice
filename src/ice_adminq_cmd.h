@@ -8,9 +8,17 @@
  * descriptor format. It is shared between Firmware and Software.
  */
 
+#include "ice_osdep.h"
+#include "ice_defs.h"
+
 #define ICE_MAX_VSI			768
 #define ICE_AQC_TOPO_MAX_LEVEL_NUM	0x9
 #define ICE_AQ_SET_MAC_FRAME_SIZE_MAX	9728
+
+enum ice_aq_res_access_type {
+	ICE_RES_READ = 1,
+	ICE_RES_WRITE
+};
 
 struct ice_aqc_generic {
 	__le32 param0;
@@ -150,6 +158,8 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_EXT_TOPO_DEV_IMG1			0x0082
 #define ICE_AQC_CAPS_EXT_TOPO_DEV_IMG2			0x0083
 #define ICE_AQC_CAPS_EXT_TOPO_DEV_IMG3			0x0084
+#define ICE_AQC_CAPS_TX_SCHED_TOPO_COMP_MODE		0x0085
+#define ICE_AQC_CAPS_DYN_FLATTENING			0x0090
 
 	u8 major_ver;
 	u8 minor_ver;
@@ -1064,6 +1074,24 @@ struct ice_aqc_get_topo {
 	__le32 addr_low;
 };
 
+/* Get/Set Tx Topology (indirect 0x0418/0x0417) */
+struct ice_aqc_get_set_tx_topo {
+	u8 set_flags;
+#define ICE_AQC_TX_TOPO_FLAGS_CORRER		BIT(0)
+#define ICE_AQC_TX_TOPO_FLAGS_SRC_RAM		BIT(1)
+#define ICE_AQC_TX_TOPO_FLAGS_SET_PSM		BIT(2)
+#define ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW		BIT(4)
+#define ICE_AQC_TX_TOPO_FLAGS_ISSUED		BIT(5)
+	u8 get_flags;
+#define ICE_AQC_TX_TOPO_GET_NO_UPDATE		0
+#define ICE_AQC_TX_TOPO_GET_PSM			1
+#define ICE_AQC_TX_TOPO_GET_RAM			2
+	__le16 reserved1;
+	__le32 reserved2;
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
 /* Update TSE (indirect 0x0403)
  * Get TSE (indirect 0x0404)
  * Add TSE (indirect 0x0401)
@@ -1217,15 +1245,20 @@ struct ice_aqc_rl_profile_elem {
 	__le16 rl_encode;
 };
 
-/*
- * Configure Node Max Children (direct 0x0417)
- * Query Node Max Children (direct 0x0418)
+/* Config Node Attributes (indirect 0x0419)
+ * Query Node Attributes (indirect 0x041A)
  */
-struct ice_aqc_cfg_query_node_max_children {
+struct ice_aqc_node_attr {
+	__le16 num_entries; /* Number of attributes structures in the buffer */
+	u8 reserved[6];
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+struct ice_aqc_node_attr_elem {
 	__le32 node_teid;
 	__le16 max_children;
 	__le16 children_level;
-	u8 reserved[8];
 };
 
 /* Configure L2 Node CGD (indirect 0x0414)
@@ -1393,7 +1426,7 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_HIGH_100G_CAUI2		BIT_ULL(2)
 #define ICE_PHY_TYPE_HIGH_100G_AUI2_AOC_ACC	BIT_ULL(3)
 #define ICE_PHY_TYPE_HIGH_100G_AUI2		BIT_ULL(4)
-#define ICE_PHY_TYPE_HIGH_MAX_INDEX		5
+#define ICE_PHY_TYPE_HIGH_MAX_INDEX		4
 
 struct ice_aqc_get_phy_caps_data {
 	__le64 phy_type_low; /* Use values from ICE_PHY_TYPE_LOW_* */
@@ -1434,6 +1467,7 @@ struct ice_aqc_get_phy_caps_data {
 #define ICE_AQC_PHY_FEC_25G_RS_528_REQ			BIT(2)
 #define ICE_AQC_PHY_FEC_25G_KR_REQ			BIT(3)
 #define ICE_AQC_PHY_FEC_25G_RS_544_REQ			BIT(4)
+#define ICE_AQC_PHY_FEC_DIS				BIT(5)
 #define ICE_AQC_PHY_FEC_25G_RS_CLAUSE91_EN		BIT(6)
 #define ICE_AQC_PHY_FEC_25G_KR_CLAUSE74_EN		BIT(7)
 #define ICE_AQC_PHY_FEC_MASK				ICE_M(0xdf, 0)
@@ -1541,6 +1575,12 @@ struct ice_aqc_get_link_status {
 	__le32 addr_high;
 	__le32 addr_low;
 };
+
+enum ice_get_link_status_data_version {
+	ICE_GET_LINK_STATUS_DATA_V1 = 1,
+};
+
+#define ICE_GET_LINK_STATUS_DATALEN_V1		32
 
 /* Get link status response data structure, also used for Link Status Event */
 struct ice_aqc_get_link_status_data {
@@ -1921,7 +1961,7 @@ struct ice_aqc_get_link_topo {
 	u8 node_part_num;
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_PCA9575			0x21
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032		0x24
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5384			0x25
+#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384		0x25
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_C827			0x31
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX		0x47
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_GPS			0x48
@@ -2257,6 +2297,7 @@ struct ice_aqc_nvm {
 #define ICE_AQC_NVM_LLDP_STATUS_RD_LEN		4 /* In Bytes */
 
 #define ICE_AQC_NVM_MINSREV_MOD_ID		0x130
+#define ICE_AQC_NVM_TX_TOPO_MOD_ID		0x14B
 
 /* Used for reading and writing MinSRev using 0x0701 and 0x0703. Note that the
  * type field is excluded from the section when reading and writing from
@@ -2271,6 +2312,13 @@ struct ice_aqc_nvm_minsrev {
 	__le16 nvm_minsrev_h;
 	__le16 orom_minsrev_l;
 	__le16 orom_minsrev_h;
+};
+
+struct ice_aqc_nvm_tx_topo_user_sel {
+	__le16 length;
+	u8 data;
+#define ICE_AQC_NVM_TX_TOPO_USER_SEL		BIT(4)
+	u8 reserved;
 };
 
 /* Used for 0x0704 as well as for 0x0705 commands */
@@ -3501,8 +3549,8 @@ struct ice_aqc_write_cgu_reg {
 struct ice_aqc_driver_shared_params {
 	u8 set_or_get_op;
 #define ICE_AQC_DRIVER_PARAM_OP_MASK		BIT(0)
-#define ICE_AQC_DRIVER_PARAM_SET		0
-#define ICE_AQC_DRIVER_PARAM_GET		1
+#define ICE_AQC_DRIVER_PARAM_SET		((u8)0)
+#define ICE_AQC_DRIVER_PARAM_GET		((u8)1)
 	u8 param_indx;
 #define ICE_AQC_DRIVER_PARAM_MAX_IDX		15
 	u8 rsvd[2];
@@ -3531,17 +3579,19 @@ struct ice_aqc_event_lan_overflow {
 /* Debug Dump Internal Data (indirect 0xFF08) */
 struct ice_aqc_debug_dump_internals {
 	u8 cluster_id;
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_SW		0
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_ACL		1
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_TXSCHED	2
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_PROFILES	3
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_SW			0
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_ACL			1
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_TXSCHED		2
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_PROFILES		3
 /* EMP_DRAM only dumpable in device debug mode */
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_EMP_DRAM	4
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_LINK	5
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_EMP_DRAM		4
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_LINK		5
 /* AUX_REGS only dumpable in device debug mode */
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_AUX_REGS	6
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_DCB	7
-#define ICE_AQC_DBG_DUMP_CLUSTER_ID_L2P	8
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_AUX_REGS		6
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_DCB			7
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_L2P			8
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_QUEUE_MNG		9
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_FULL_CSR_SPACE	21
 	u8 reserved;
 	__le16 table_id; /* Used only for non-memory clusters */
 	__le32 idx; /* In table entries for tables, in bytes for memory */
@@ -3792,8 +3842,7 @@ struct ice_aq_desc {
 		struct ice_aqc_cfg_l2_node_cgd cfg_l2_node_cgd;
 		struct ice_aqc_query_port_ets port_ets;
 		struct ice_aqc_rl_profile rl_profile;
-		struct ice_aqc_cfg_query_node_max_children
-			cfg_query_node_max_children;
+		struct ice_aqc_node_attr node_attr;
 		struct ice_aqc_nvm nvm;
 		struct ice_aqc_nvm_cfg nvm_cfg;
 		struct ice_aqc_nvm_checksum nvm_checksum;
@@ -3873,6 +3922,7 @@ struct ice_aq_desc {
 		struct ice_aqc_clear_health_status clear_health_status;
 		struct ice_aqc_prog_topo_dev_nvm prog_topo_dev_nvm;
 		struct ice_aqc_read_topo_dev_nvm read_topo_dev_nvm;
+		struct ice_aqc_get_set_tx_topo get_set_tx_topo;
 	} params;
 };
 
@@ -4029,8 +4079,10 @@ enum ice_adminq_opc {
 	ice_aqc_opc_query_node_to_root			= 0x0413,
 	ice_aqc_opc_cfg_l2_node_cgd			= 0x0414,
 	ice_aqc_opc_remove_rl_profiles			= 0x0415,
-	ice_aqc_opc_cfg_node_max_children		= 0x0417,
-	ice_aqc_opc_query_node_max_children		= 0x0418,
+	ice_aqc_opc_set_tx_topo				= 0x0417,
+	ice_aqc_opc_get_tx_topo				= 0x0418,
+	ice_aqc_opc_cfg_node_attr			= 0x0419,
+	ice_aqc_opc_query_node_attr			= 0x041A,
 
 	/* PHY commands */
 	ice_aqc_opc_get_phy_caps			= 0x0600,

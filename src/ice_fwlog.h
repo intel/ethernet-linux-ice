@@ -43,7 +43,7 @@ struct ice_fwlog_cfg {
 	/* options used to configure firmware logging */
 	u16 options;
 	/* minimum number of log events sent per Admin Receive Queue event */
-	u8 log_resolution;
+	u16 log_resolution;
 };
 
 void ice_fwlog_set_support_ena(struct ice_hw *hw);
