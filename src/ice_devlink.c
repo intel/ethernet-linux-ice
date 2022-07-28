@@ -1041,7 +1041,9 @@ void ice_devlink_register(struct ice_pf *pf)
 
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
 #ifndef HAVE_DEVLINK_SET_FEATURES
+#ifdef HAVE_DEVLINK_RELOAD_ENABLE_DISABLE
 	devlink_reload_enable(devlink);
+#endif /* HAVE_DEVLINK_RELOAD_ENABLE_DISABLE */
 #endif /* !HAVE_DEVLINK_SET_FEATURES */
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 }
@@ -1058,7 +1060,9 @@ void ice_devlink_unregister(struct ice_pf *pf)
 
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
 #ifndef HAVE_DEVLINK_SET_FEATURES
+#ifdef HAVE_DEVLINK_RELOAD_ENABLE_DISABLE
 	devlink_reload_disable(devlink);
+#endif /* HAVE_DEVLINK_RELOAD_ENABLE_DISABLE */
 #endif /* !HAVE_DEVLINK_SET_FEATURES */
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 

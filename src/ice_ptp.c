@@ -3368,7 +3368,7 @@ void ice_ptp_process_ts(struct ice_pf *pf)
 static int
 ice_ptp_alloc_tx_tracker(struct ice_ptp_tx *tx)
 {
-	tx->tstamps = kcalloc(tx->len, sizeof(*tx->tstamps), GFP_KERNEL);
+	tx->tstamps = (struct ice_tx_tstamp *)kcalloc(tx->len, sizeof(*tx->tstamps), GFP_KERNEL);
 	if (!tx->tstamps)
 		return -ENOMEM;
 

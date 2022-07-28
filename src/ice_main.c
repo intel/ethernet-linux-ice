@@ -27,9 +27,9 @@
 
 #define DRV_VERSION_MAJOR 1
 #define DRV_VERSION_MINOR 9
-#define DRV_VERSION_BUILD 7
+#define DRV_VERSION_BUILD 11
 
-#define DRV_VERSION	"1.9.7"
+#define DRV_VERSION	"1.9.11"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -8210,6 +8210,7 @@ static int ice_up_complete(struct ice_vsi *vsi)
 	if (vsi->port_info &&
 	    (vsi->port_info->phy.link_info.link_info & ICE_AQ_LINK_UP) &&
 	    vsi->netdev && vsi->type == ICE_VSI_PF) {
+		ice_force_phys_link_state(vsi, true);
 		ice_print_link_msg(vsi, true);
 		netif_tx_start_all_queues(vsi->netdev);
 		netif_carrier_on(vsi->netdev);

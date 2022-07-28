@@ -149,6 +149,9 @@
 #define NEED_DEVLINK_FLASH_UPDATE_STATUS_NOTIFY
 #define NEED_BUS_FIND_DEVICE_CONST_DATA
 #else /* >= 5.3.0 */
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(5,3,10))
+#define HAVE_DEVLINK_RELOAD_ENABLE_DISABLE
+#endif /* 5.3.10 */
 #endif /* 5.3.0 */
 
 /*****************************************************************************/
@@ -264,6 +267,8 @@
 #undef HAVE_PASID_SUPPORT
 #define HAVE_DEVLINK_SET_FEATURES
 #define HAVE_DEVLINK_NOTIFY_REGISTER
+#undef HAVE_DEVLINK_RELOAD_ENABLE_DISABLE
+#undef HAVE_DEVLINK_PARAMS_PUBLISH
 #endif /* 5.16.0 */
 
 /*****************************************************************************/

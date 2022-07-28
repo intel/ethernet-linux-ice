@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ===============================================================================
 
-June 15, 2022
+July 5, 2022
 
 ===============================================================================
 
@@ -712,7 +712,7 @@ TC flower filters.
 enabled:
 
   # tc qdisc add dev <ethX> root mqprio num_tc 8 map 0 1 2 3 4 5 6 7 \
-    2@0 4@2 8@6 16@14 32@30 64@62 128@126 2@254 hw 1 mode channel
+    queues 2@0 4@2 8@6 16@14 32@30 64@62 128@126 2@254 hw 1 mode channel
 
 - To set a minimum rate for a TC:
 
