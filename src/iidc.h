@@ -9,7 +9,11 @@
 #include <linux/if_ether.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
+#ifdef USE_INTEL_AUX_BUS
+#include "linux/auxiliary_bus.h"
+#else
 #include <linux/auxiliary_bus.h>
+#endif /* USE_INTEL_AUX_BUS */
 
 /* This major and minor version represent IDC API version information.
  *
@@ -42,16 +46,18 @@ enum iidc_reset_type {
 	IIDC_GLOBR,
 };
 
+#define IIDC_RDMA_INVALID_PORT	0xFF
+
 enum iidc_rdma_protocol {
 	IIDC_RDMA_PROTOCOL_IWARP = BIT(0),
 	IIDC_RDMA_PROTOCOL_ROCEV2 = BIT(1),
 };
 
 enum iidc_rdma_gen {
-	IIDC_RDMA_GEN_1,
-	IIDC_RDMA_GEN_2,
-	IIDC_RDMA_GEN_3,
-	IIDC_RDMA_GEN_4,
+	IIDC_RDMA_GEN_RESERVED = 0,
+	IIDC_RDMA_GEN_1 = 1,
+	IIDC_RDMA_GEN_2 = 2,
+	IIDC_RDMA_GEN_3 = 3,
 };
 
 struct iidc_rdma_caps {

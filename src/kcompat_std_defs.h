@@ -32,6 +32,12 @@
 #endif
 
 /*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0))
+#define NEED_DEVM_KASPRINTF
+#else /* >= 3,17,0 */
+#endif /* 3,17,0 */
+
+/*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0))
 #define NEED_DEV_PM_DOMAIN_ATTACH_DETACH
 #else /* >= 3,18,0 */
@@ -65,13 +71,26 @@
 #define HAVE_KTHREAD_DELAYED_API
 #define HAVE_NDO_OFFLOAD_STATS
 #undef NEED_DECLARE_STATIC_KEY_FALSE
+#define HAVE_INCLUDE_BITFIELD
 #endif /* 4,9,0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,9,62))
+#define NEED_IN_TASK
+#else /* >= 4,9,62 */
+#endif /* 4,9,62 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0))
 #else /* >= 4,12,0 */
 #define HAVE_NAPI_BUSY_LOOP
 #endif /* 4,12,0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,13,0))
+#else /* >= 4,13,0 */
+#define HAVE_FLOW_DISSECTOR_KEY_IP
+#endif /* 4,13,0 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0))
@@ -114,23 +133,28 @@
 #define HAVE_DEVLINK_REGIONS
 #define HAVE_TC_ETF_QOPT_OFFLOAD
 #define HAVE_DEVLINK_PARAMS
+#define HAVE_FLOW_DISSECTOR_KEY_ENC_IP
 #endif /* 4,19,0 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,20,0))
 #define NEED_NETDEV_TX_SENT_QUEUE
 #else /* >= 4.20.0 */
+#define HAVE_VXLAN_TYPE
+#define HAVE_LINKMODE
 #endif /* 4.20.0 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0))
 #define NEED_INDIRECT_CALL_WRAPPER_MACROS
 #else /* >= 5.0.0 */
+#define HAVE_GRETAP_TYPE
 #define HAVE_INDIRECT_CALL_WRAPPER_HEADER
 #endif /* 5.0.0 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,1,0))
+#define NEED_FLOW_MATCH
 #else /* >= 5.1.0 */
 #define HAVE_ETHTOOL_200G_BITS
 #define HAVE_ETHTOOL_NEW_100G_BITS
@@ -142,6 +166,7 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0))
 #else /* >= 5.2.0 */
 #define HAVE_DEVLINK_PORT_ATTRS_SET_SWITCH_ID
+#define HAVE_FLOW_DISSECTOR_KEY_CVLAN
 #endif /* 5.2.0 */
 
 /*****************************************************************************/
@@ -190,6 +215,7 @@
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0))
+#define NEED_XSK_UMEM_GET_RX_FRAME_SIZE
 #else /* >= 5.8.0 */
 #undef HAVE_XSK_UNALIGNED_CHUNK_PLACEMENT
 #endif /* 5.8.0 */
@@ -199,6 +225,7 @@
 #define NEED_DEVLINK_PORT_ATTRS_SET_STRUCT
 #define HAVE_XDP_QUERY_PROG
 #define NEED_INDIRECT_CALL_3_AND_4
+#define NEED_MUL_U64_U64_DIV_U64
 #else /* >= 5.9.0 */
 #define HAVE_TASKLET_SETUP
 #endif /* 5.9.0 */
@@ -207,11 +234,14 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0))
 #define NEED_NET_PREFETCH
 #define NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY
+#define NEED_XSK_BUFF_DMA_SYNC_FOR_CPU
+#define NEED_XSK_BUFF_POOL_RENAME
 #else /* >= 5.10.0 */
 #define HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
 #define HAVE_DEVLINK_REGION_OPS_SNAPSHOT_OPS
 #define HAVE_DEVLINK_FLASH_UPDATE_PARAMS
 #define HAVE_UDP_TUNNEL_NIC_SHARED
+#define HAVE_NETDEV_BPF_XSK_POOL
 #endif /* 5.10.0 */
 
 /*****************************************************************************/
@@ -222,6 +252,7 @@
 #define HAVE_XSK_BATCHED_DESCRIPTOR_INTERFACES
 #define HAVE_PASID_SUPPORT
 #undef HAVE_XDP_RXQ_INFO_REG_3_PARAMS
+#define HAVE_XSK_TX_PEEK_RELEASE_DESC_BATCH_3_PARAMS
 #endif /* 5.11.0 */
 
 /*****************************************************************************/
@@ -242,6 +273,7 @@
 #define HAVE_KOBJ_IN_MDEV_PARENT_OPS_CREATE
 #define HAVE_DEV_IN_MDEV_API
 #else /* >= 5.13.0 */
+#define HAVE_XPS_MAP_TYPE
 #endif /* 5.13.0 */
 
 /*****************************************************************************/
@@ -259,6 +291,8 @@
 #define HAVE_ETHTOOL_COALESCE_EXTACK
 #define HAVE_NDO_ETH_IOCTL
 #define HAVE_DEVICE_IN_MDEV_PARENT_OPS
+#define HAVE_LMV1_SUPPORT
+#define NEED_PCI_IOV_VF_ID
 #endif /* 5.15.0 */
 
 /*****************************************************************************/
@@ -281,11 +315,29 @@
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0))
-#define HAVE_XSK_TX_PEEK_RELEASE_DESC_BATCH_3_PARAMS
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0))
-#undef HAVE_XSK_TX_PEEK_RELEASE_DESC_BATCH_3_PARAMS
-#endif /* 5.11.0 */
 #else /* >=5.18.0*/
+#undef HAVE_LMV1_SUPPORT
+#undef NEED_PCI_IOV_VF_ID
+#define HAVE_GTP_SUPPORT
+#undef HAVE_XSK_TX_PEEK_RELEASE_DESC_BATCH_3_PARAMS
 #endif /* 5.18.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,19,0))
+#else /* >=5.19.0 */
+#define HAVE_NDO_FDB_DEL_EXTACK
+#endif /* 5.19.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,0,0))
+#else /* >=6.0.0 */
+#define HAVE_FLOW_DISSECTOR_KEY_PPPOE
+#endif /* 6.0.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,1,0))
+#else /* >=6.1.0 */
+#define HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+#endif /* 6.1.0 */
 
 #endif /* _KCOMPAT_STD_DEFS_H_ */

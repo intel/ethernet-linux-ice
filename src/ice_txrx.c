@@ -25,7 +25,9 @@
 #include "ice_eswitch.h"
 #include <net/busy_poll.h>
 
+#ifndef CONFIG_ICE_USE_SKB
 #define ICE_RX_HDR_SIZE		256
+#endif
 
 #define FDIR_DESC_RXDID 0x40
 #define ICE_FDIR_CLEAN_DELAY 10
@@ -210,6 +212,7 @@ void ice_free_tx_ring(struct ice_ring *tx_ring)
 				   tx_ring->desc, tx_ring->dma);
 		tx_ring->desc = NULL;
 	}
+
 }
 
 /**
@@ -423,6 +426,17 @@ void ice_clean_rx_ring(struct ice_ring *rx_ring)
 	for (i = 0; i < rx_ring->count; i++) {
 		struct ice_rx_buf *rx_buf = &rx_ring->rx_buf[i];
 
+#ifdef CONFIG_ICE_USE_SKB
+		if (!rx_buf->skb)
+			continue;
+
+		if (rx_buf->dma)
+			dma_unmap_single(dev, rx_buf->dma,
+					 rx_ring->rx_buf_len, DMA_FROM_DEVICE);
+		dev_kfree_skb(rx_buf->skb);
+		rx_buf->dma = 0;
+		rx_buf->skb = NULL;
+#else /* CONFIG_ICE_USE_SKB */
 		if (rx_buf->skb) {
 			dev_kfree_skb(rx_buf->skb);
 			rx_buf->skb = NULL;
@@ -450,6 +464,7 @@ void ice_clean_rx_ring(struct ice_ring *rx_ring)
 
 		rx_buf->page = NULL;
 		rx_buf->page_offset = 0;
+#endif /* CONFIG_ICE_USE_SKB */
 	}
 
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
@@ -547,6 +562,49 @@ err:
 	return -ENOMEM;
 }
 
+#ifdef CONFIG_ICE_USE_SKB
+static bool
+ice_alloc_mapped_skb(struct ice_ring *rx_ring, struct ice_rx_buf *bi)
+{
+	struct sk_buff *skb = bi->skb;
+	dma_addr_t dma;
+
+	if (unlikely(skb))
+		return true;
+
+	/* must not call __napi_alloc_skb with preemption enabled */
+	preempt_disable();
+
+	skb = __napi_alloc_skb(&rx_ring->q_vector->napi,
+			       rx_ring->rx_buf_len,
+			       GFP_ATOMIC | __GFP_NOWARN);
+	if (unlikely(!skb)) {
+		rx_ring->rx_stats.alloc_buf_failed++;
+		preempt_enable();
+		return false;
+	}
+
+	dma = dma_map_single(rx_ring->dev, skb->data,
+			     rx_ring->rx_buf_len, DMA_FROM_DEVICE);
+
+	/* if mapping failed free memory back to system since
+	 * there isn't much point in holding memory we can't use
+	 */
+	if (dma_mapping_error(rx_ring->dev, dma)) {
+		dev_kfree_skb_any(skb);
+		rx_ring->rx_stats.alloc_buf_failed++;
+		preempt_enable();
+		return false;
+	}
+
+	bi->skb = skb;
+	bi->dma = dma;
+
+	preempt_enable();
+
+	return true;
+}
+#else /* CONFIG_ICE_USE_SKB */
 /**
  * ice_rx_offset - Return expected offset into page to access data
  * @rx_ring: Ring we are requesting offset of
@@ -811,6 +869,7 @@ ice_alloc_mapped_page(struct ice_ring *rx_ring, struct ice_rx_buf *bi)
 	return true;
 }
 
+#endif /* CONFIG_ICE_USE_SKB */
 /**
  * ice_alloc_rx_bufs - Replace used receive buffers
  * @rx_ring: ring to place buffers on
@@ -840,6 +899,12 @@ bool ice_alloc_rx_bufs(struct ice_ring *rx_ring, u16 cleaned_count)
 	bi = &rx_ring->rx_buf[ntu];
 
 	do {
+#ifdef CONFIG_ICE_USE_SKB
+		if (!ice_alloc_mapped_skb(rx_ring, bi))
+			break;
+
+		rx_desc->read.pkt_addr = cpu_to_le64(bi->dma);
+#else /* CONFIG_ICE_USE_SKB */
 		/* if we fail here, we have work remaining */
 		if (!ice_alloc_mapped_page(rx_ring, bi))
 			break;
@@ -854,6 +919,7 @@ bool ice_alloc_rx_bufs(struct ice_ring *rx_ring, u16 cleaned_count)
 		 * because each write-back erases this info.
 		 */
 		rx_desc->read.pkt_addr = cpu_to_le64(bi->dma + bi->page_offset);
+#endif /* CONFIG_ICE_USE_SKB */
 		rx_desc++;
 		bi++;
 		ntu++;
@@ -875,6 +941,82 @@ bool ice_alloc_rx_bufs(struct ice_ring *rx_ring, u16 cleaned_count)
 	return !!cleaned_count;
 }
 
+/**
+ * ice_inc_ntc: Advance the next_to_clean index
+ * @rx_ring: Rx ring
+ **/
+static void ice_inc_ntc(struct ice_ring *rx_ring)
+{
+	u16 ntc = rx_ring->next_to_clean + 1;
+
+	ntc = (ntc < rx_ring->count) ? ntc : 0;
+	rx_ring->next_to_clean = ntc;
+	prefetch(ICE_RX_DESC(rx_ring, ntc));
+}
+
+static struct ice_rx_buf *ice_rx_buf(struct ice_ring *rx_ring, u32 idx)
+{
+	return &rx_ring->rx_buf[idx];
+}
+
+#ifdef CONFIG_ICE_USE_SKB
+/**
+ * ice_get_rx_buf - Fetch Rx buffer and synchronize data for use
+ * @rx_ring: rx descriptor ring to transact packets on
+ * @skb: skb to be used
+ * @size: size of buffer to add to skb
+ * @rx_buf_pgcnt: rx_buf page refcount - unused
+ *
+ * This function will pull an Rx buffer from the ring and synchronize it
+ * for use by the CPU.
+ *
+ * ONE-BUFF version
+ */
+static struct ice_rx_buf *
+ice_get_rx_buf(struct ice_ring *rx_ring, struct sk_buff **skb,
+	       const unsigned int size, __always_unused int *rx_buf_pgcnt)
+{
+	struct ice_rx_buf *rx_buf;
+
+	rx_buf = ice_rx_buf(rx_ring, rx_ring->next_to_clean);
+	*skb = rx_buf->skb;
+
+	/* we are reusing so sync this buffer for CPU use */
+	dma_unmap_single(rx_ring->dev, rx_buf->dma,
+			 rx_ring->rx_buf_len, DMA_FROM_DEVICE);
+
+	prefetch(rx_buf->skb->data);
+
+	return rx_buf;
+}
+
+/**
+ * ice_put_rx_buf - Clean up used buffer and either recycle or free
+ * @rx_ring: rx descriptor ring to transact packets on
+ * @rx_buf: rx buffer to pull data from
+ * @rx_buf_pgcnt: Rx buffer page count pre xdp_do_redirect() - unused
+ *
+ * This function will clean up the contents of the rx_buf.  It will
+ * either recycle the buffer or unmap it and free the associated resources.
+ *
+ * ONE-BUFF version
+ */
+static void
+ice_put_rx_buf(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
+	       __always_unused int rx_buf_pgcnt)
+{
+	ice_inc_ntc(rx_ring);
+
+	if (!rx_buf)
+		return;
+
+	/* TODO add skb recycling here? */
+
+	/* clear contents of buffer_info */
+	rx_buf->skb = NULL;
+}
+
+#else /* CONFIG_ICE_USE_SKB */
 /**
  * ice_page_is_reserved - check if reuse is possible
  * @page: page struct to check
@@ -909,13 +1051,15 @@ ice_rx_buf_adjust_pg_offset(struct ice_rx_buf *rx_buf, unsigned int size)
 /**
  * ice_can_reuse_rx_page - Determine if page can be reused for another Rx
  * @rx_buf: buffer containing the page
+ * @rx_buf_pgcnt: rx_buf page refcount pre xdp_do_redirect() call
  *
  * If page is reusable, we have a green light for calling ice_reuse_rx_page,
  * which will assign the current buffer to the buffer that next_to_alloc is
  * pointing to; otherwise, the DMA mapping needs to be destroyed and
  * page freed
  */
-static bool ice_can_reuse_rx_page(struct ice_rx_buf *rx_buf)
+static bool
+ice_can_reuse_rx_page(struct ice_rx_buf *rx_buf, int rx_buf_pgcnt)
 {
 	unsigned int pagecnt_bias = rx_buf->pagecnt_bias;
 	struct page *page = rx_buf->page;
@@ -926,7 +1070,7 @@ static bool ice_can_reuse_rx_page(struct ice_rx_buf *rx_buf)
 
 #if (PAGE_SIZE < 8192)
 	/* if we are only owner of page we can reuse it */
-	if (unlikely((page_count(page) - pagecnt_bias) > 1))
+	if (unlikely((rx_buf_pgcnt - pagecnt_bias) > 1))
 		return false;
 #else
 #define ICE_LAST_OFFSET \
@@ -1018,17 +1162,24 @@ ice_reuse_rx_page(struct ice_ring *rx_ring, struct ice_rx_buf *old_buf)
  * @rx_ring: Rx descriptor ring to transact packets on
  * @skb: skb to be used
  * @size: size of buffer to add to skb
+ * @rx_buf_pgcnt: rx_buf page refcount
  *
  * This function will pull an Rx buffer from the ring and synchronize it
  * for use by the CPU.
  */
 static struct ice_rx_buf *
 ice_get_rx_buf(struct ice_ring *rx_ring, struct sk_buff **skb,
-	       const unsigned int size)
+	       const unsigned int size, int *rx_buf_pgcnt)
 {
 	struct ice_rx_buf *rx_buf;
 
-	rx_buf = &rx_ring->rx_buf[rx_ring->next_to_clean];
+	rx_buf = ice_rx_buf(rx_ring, rx_ring->next_to_clean);
+	*rx_buf_pgcnt =
+#if (PAGE_SIZE < 8192)
+		page_count(rx_buf->page);
+#else
+		0;
+#endif
 	prefetchw(rx_buf->page);
 	*skb = rx_buf->skb;
 
@@ -1168,23 +1319,22 @@ ice_construct_skb(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
  * ice_put_rx_buf - Clean up used buffer and either recycle or free
  * @rx_ring: Rx descriptor ring to transact packets on
  * @rx_buf: Rx buffer to pull data from
+ * @rx_buf_pgcnt: Rx buffer page count pre xdp_do_redirect()
  *
  * This function will update next_to_clean and then clean up the contents
  * of the rx_buf. It will either recycle the buffer or unmap it and free
  * the associated resources.
  */
-static void ice_put_rx_buf(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
+static void
+ice_put_rx_buf(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
+	       int rx_buf_pgcnt)
 {
-	u16 ntc = rx_ring->next_to_clean + 1;
-
-	/* fetch, update, and store next to clean */
-	ntc = (ntc < rx_ring->count) ? ntc : 0;
-	rx_ring->next_to_clean = ntc;
+	ice_inc_ntc(rx_ring);
 
 	if (!rx_buf)
 		return;
 
-	if (ice_can_reuse_rx_page(rx_buf)) {
+	if (ice_can_reuse_rx_page(rx_buf, rx_buf_pgcnt)) {
 		/* hand second half of page back to the ring */
 		ice_reuse_rx_page(rx_ring, rx_buf);
 #ifdef ICE_ADD_PROBES
@@ -1207,6 +1357,8 @@ static void ice_put_rx_buf(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
 	rx_buf->page = NULL;
 	rx_buf->skb = NULL;
 }
+
+#endif /* CONFIG_ICE_USE_SKB */
 
 /**
  * ice_is_non_eop - process handling of non-EOP buffers
@@ -1466,12 +1618,15 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 	unsigned int total_rx_bytes = 0, total_rx_pkts = 0;
 	u16 cleaned_count = ICE_DESC_UNUSED(rx_ring);
 #ifdef HAVE_XDP_SUPPORT
-	unsigned int xdp_res, xdp_xmit = 0;
 	struct bpf_prog *xdp_prog = NULL;
+	unsigned int xdp_xmit = 0;
 #endif /* HAVE_XDP_SUPPORT */
+#ifndef CONFIG_ICE_USE_SKB
 	struct xdp_buff xdp;
+#endif
 	bool failure;
 
+#ifndef CONFIG_ICE_USE_SKB
 #ifdef HAVE_XDP_SUPPORT
 #ifdef HAVE_XDP_BUFF_RXQ
 	xdp.rxq = &rx_ring->xdp_rxq;
@@ -1483,14 +1638,21 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 	xdp.frame_sz = ice_rx_frame_truesize(rx_ring, 0);
 #endif
 #endif /* HAVE_XDP_BUFF_FRAME_SZ */
+#endif /* !CONFIG_ICE_USE_SKB */
 
 	/* start the loop to process Rx packets bounded by 'budget' */
 	while (likely(total_rx_pkts < (unsigned int)budget)) {
 		union ice_32b_rx_flex_desc *rx_desc;
 		struct ice_rx_buf *rx_buf;
 		struct sk_buff *skb;
+#ifndef CONFIG_ICE_USE_SKB
+#ifdef HAVE_XDP_SUPPORT
+		unsigned int xdp_res;
+#endif /* HAVE_XDP_SUPPORT */
+#endif /* CONFIG_ICE_USE_SKB */
 		unsigned int size;
 		u16 stat_err_bits;
+		int rx_buf_pgcnt;
 		u16 vlan_tag = 0;
 		u16 rx_ptype;
 
@@ -1519,7 +1681,7 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 			if (rx_desc->wb.rxdid == FDIR_DESC_RXDID &&
 			    ctrl_vsi->vf)
 				ice_vc_fdir_irq_handler(ctrl_vsi, rx_desc);
-			ice_put_rx_buf(rx_ring, NULL);
+			ice_put_rx_buf(rx_ring, NULL, 0);
 			cleaned_count++;
 			continue;
 		}
@@ -1528,8 +1690,9 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 			ICE_RX_FLX_DESC_PKT_LEN_M;
 
 		/* retrieve a buffer from the ring */
-		rx_buf = ice_get_rx_buf(rx_ring, &skb, size);
+		rx_buf = ice_get_rx_buf(rx_ring, &skb, size, &rx_buf_pgcnt);
 
+#ifndef CONFIG_ICE_USE_SKB
 		if (!size) {
 			xdp.data = NULL;
 			xdp.data_end = NULL;
@@ -1589,10 +1752,14 @@ int ice_clean_rx_irq(struct ice_ring *rx_ring, int budget)
 		total_rx_pkts++;
 
 		cleaned_count++;
-		ice_put_rx_buf(rx_ring, rx_buf);
+		ice_put_rx_buf(rx_ring, rx_buf, rx_buf_pgcnt);
 		continue;
 #endif /* HAVE_XDP_SUPPORT */
 construct_skb:
+#endif /* !CONFIG_ICE_USE_SKB */
+#ifdef CONFIG_ICE_USE_SKB
+		__skb_put(skb, size);
+#else /* CONFIG_ICE_USE_SKB */
 		if (skb) {
 			ice_add_rx_frag(rx_ring, rx_buf, skb, size);
 		} else if (likely(xdp.data)) {
@@ -1608,8 +1775,9 @@ construct_skb:
 				rx_buf->pagecnt_bias++;
 			break;
 		}
+#endif /* CONFIG_ICE_USE_SKB */
 
-		ice_put_rx_buf(rx_ring, rx_buf);
+		ice_put_rx_buf(rx_ring, rx_buf, rx_buf_pgcnt);
 		cleaned_count++;
 
 		/* skip if it is NOP desc */
@@ -2210,12 +2378,14 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 	 * budget and be more aggressive about cleaning up the Tx descriptors.
 	 */
 	ice_for_each_ring(ring, q_vector->tx) {
+		bool wd;
+
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
-		bool wd = ring->xsk_pool ?
+		wd = ring->xsk_pool ?
 			  ice_clean_tx_irq_zc(ring) :
 			  ice_clean_tx_irq(ring, budget);
 #else
-		bool wd = ice_clean_tx_irq(ring, budget);
+		wd = ice_clean_tx_irq(ring, budget);
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 
 #ifdef ICE_ADD_PROBES
@@ -3447,8 +3617,10 @@ ice_tstamp(struct ice_ring *tx_ring, struct sk_buff *skb,
 
 	/* Grab an open timestamp slot */
 	idx = ice_ptp_request_ts(tx_ring->tx_tstamps, skb);
-	if (idx < 0)
+	if (idx < 0) {
+		tx_ring->vsi->back->ptp.tx_hwtstamp_skipped++;
 		return;
+	}
 
 	off->cd_qw1 |= (u64)(ICE_TX_DESC_DTYPE_CTX |
 			     (ICE_TX_CTX_DESC_TSYN << ICE_TXD_CTX_QW1_CMD_S) |

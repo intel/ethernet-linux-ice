@@ -404,7 +404,7 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	/* Strip the Ethernet CRC bytes before the packet is posted to host
 	 * memory.
 	 */
-	rlan_ctx.crcstrip = ring->rx_crc_strip_dis ? 0 : 1;
+	rlan_ctx.crcstrip = !(ring->flags & ICE_RX_FLAGS_CRC_STRIP_DIS);
 
 	/* L2TSEL flag defines the reported L2 Tags in the receive descriptor
 	 * and it needs to remain 1 for non-DVM capable configurations to not
@@ -523,7 +523,7 @@ int ice_vsi_cfg_rxq(struct ice_ring *ring)
 			xdp_rxq_info_reg(&ring->xdp_rxq, ring->netdev,
 					 ring->q_index, ring->q_vector->napi.napi_id);
 
-		ring->xsk_pool = ice_xsk_umem(ring);
+		ring->xsk_pool = ice_xsk_pool(ring);
 		if (ring->xsk_pool) {
 			xdp_rxq_info_unreg_mem_model(&ring->xdp_rxq);
 
@@ -837,7 +837,7 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *tx_ring,
 	struct ice_aqc_add_txqs_perq *txq;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 	u16 pf_q;
 	u8 tc;
 
@@ -877,9 +877,9 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *tx_ring,
 					 tx_ring->q_handle, 1, qg_buf, buf_len,
 					 NULL);
 	if (status) {
-		dev_err(ice_pf_to_dev(pf), "Failed to set LAN Tx queue context, error: %s\n",
-			ice_stat_str(status));
-		return -ENODEV;
+		dev_err(ice_pf_to_dev(pf), "Failed to set LAN Tx queue context, error: %d\n",
+			status);
+		return status;
 	}
 
 	/* Add Tx Queue TEID into the VSI Tx ring from the
@@ -1003,7 +1003,7 @@ ice_vsi_stop_tx_ring(struct ice_vsi *vsi, enum ice_disq_rst_src rst_src,
 	struct ice_pf *pf = vsi->back;
 	struct ice_q_vector *q_vector;
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 	u32 val;
 
 	/* clear cause_ena bit for disabled queues */
@@ -1026,19 +1026,18 @@ ice_vsi_stop_tx_ring(struct ice_vsi *vsi, enum ice_disq_rst_src rst_src,
 				 &txq_meta->q_id, &txq_meta->q_teid, rst_src,
 				 rel_vmvf_num, NULL);
 
-	/* if the disable queue command was exercised during an
-	 * active reset flow, ICE_ERR_RESET_ONGOING is returned.
-	 * This is not an error as the reset operation disables
-	 * queues at the hardware level anyway.
+	/* If the disable queue command was exercised during an active reset
+	 * flow, -EBUSY is returned. This is not an error as the reset
+	 * operation disables queues at the hardware level anyway.
 	 */
-	if (status == ICE_ERR_RESET_ONGOING) {
+	if (status == -EBUSY) {
 		dev_dbg(ice_pf_to_dev(vsi->back), "Reset in progress. LAN Tx queues already disabled\n");
-	} else if (status == ICE_ERR_DOES_NOT_EXIST) {
+	} else if (status == -ENOENT) {
 		dev_dbg(ice_pf_to_dev(vsi->back), "LAN Tx queues do not exist, nothing to disable\n");
 	} else if (status) {
-		dev_dbg(ice_pf_to_dev(vsi->back), "Failed to disable LAN Tx queues, error: %s\n",
-			ice_stat_str(status));
-		return -ENODEV;
+		dev_dbg(ice_pf_to_dev(vsi->back), "Failed to disable LAN Tx queues, error: %d\n",
+			status);
+		return status;
 	}
 
 	return 0;

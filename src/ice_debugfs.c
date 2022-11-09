@@ -132,10 +132,16 @@ static void ice_dump_rclk_status(struct ice_pf *pf)
 {
 	struct device *dev = ice_pf_to_dev(pf);
 	u8 phy, phy_pin, pin;
+	int phy_pins;
 
-	for (phy_pin = 0; phy_pin < ICE_C827_RCLK_PINS_NUM; phy_pin++) {
+	if (ice_is_e810(&pf->hw))
+		phy_pins = ICE_C827_RCLK_PINS_NUM;
+	else
+		/* E822-based devices have only one RCLK pin */
+		phy_pins = E822_CGU_RCLK_PHY_PINS_NUM;
+
+	for (phy_pin = 0; phy_pin < phy_pins; phy_pin++) {
 		const char *pin_name, *pin_state;
-		enum ice_status status;
 		u8 port_num, flags;
 		u32 freq;
 
@@ -144,16 +150,28 @@ static void ice_dump_rclk_status(struct ice_pf *pf)
 					       &flags, &freq))
 			return;
 
-		status = ice_get_pf_c827_idx(&pf->hw, &phy);
-		if (status) {
-			dev_err(dev, "Could not find PF C827 PHY, status=%s\n",
-				ice_stat_str(status));
-			return;
+		if (ice_is_e810(&pf->hw)) {
+			int status = ice_get_pf_c827_idx(&pf->hw, &phy);
+
+			if (status) {
+				dev_err(dev,
+					"Could not find PF C827 PHY, status=%d\n",
+					status);
+				return;
+			}
+
+			pin = E810T_CGU_INPUT_C827(phy, phy_pin);
+			pin_name = ice_zl_pin_idx_to_name_e810t(pin);
+		} else {
+			/* e822-based devices for now have only one phy
+			 * available (from Rimmon) and only one DPLL RCLK input
+			 * pin
+			 */
+			pin_name = E822_CGU_RCLK_PIN_NAME;
 		}
-		pin = E810T_CGU_INPUT_C827(phy, phy_pin);
-		pin_name = ice_zl_pin_idx_to_name_e810t(pin);
-		pin_state = flags & ICE_AQC_SET_PHY_REC_CLK_OUT_OUT_EN ?
-			    "Enabled" : "Disabled";
+		pin_state =
+			flags & ICE_AQC_SET_PHY_REC_CLK_OUT_OUT_EN ?
+			"Enabled" : "Disabled";
 
 		dev_info(dev, "State for pin %s: %s\n", pin_name, pin_state);
 	}
@@ -260,10 +278,6 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 #define ZL_VER_REV_MASK		ICE_M(0xff, ZL_VER_REV_SHIFT)
 #define ZL_VER_BF_SHIFT		0
 #define ZL_VER_BF_MASK		ICE_M(0xff, ZL_VER_BF_SHIFT)
-#define PIN_FAIL_FLAGS		(ICE_AQC_GET_CGU_IN_CFG_STATUS_SCM_FAIL | \
-				ICE_AQC_GET_CGU_IN_CFG_STATUS_CFM_FAIL | \
-				ICE_AQC_GET_CGU_IN_CFG_STATUS_GST_FAIL | \
-				ICE_AQC_GET_CGU_IN_CFG_STATUS_PFM_FAIL)
 
 /**
  * ice_get_dpll_status - get the detailed state of the clock generator
@@ -288,8 +302,8 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 	size_t bytes_left = *buff_size;
 	struct ice_hw *hw = &pf->hw;
 	char pin_name[MAX_PIN_NAME];
-	enum ice_status status;
 	int cnt = 0;
+	int status;
 
 	if (!ice_is_cgu_present(hw)) {
 		dev_err(dev, "CGU not present\n");
@@ -309,7 +323,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 
 	status = ice_aq_get_cgu_info(hw, &cgu_id, &cgu_cfg_ver, &cgu_fw_ver);
 	if (status)
-		return ice_status_to_errno(status);
+		return status;
 
 	if (abilities.cgu_part_num ==
 	    ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032) {
@@ -347,9 +361,9 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 
 		status = ice_aq_get_input_pin_cfg(hw, &cfg, pin);
 		if (status)
-			data = PIN_FAIL_FLAGS;
+			data = ICE_CGU_IN_PIN_FAIL_FLAGS;
 		else
-			data = (cfg.status & PIN_FAIL_FLAGS);
+			data = (cfg.status & ICE_CGU_IN_PIN_FAIL_FLAGS);
 
 		/* get either e810t pin names or generic ones */
 		ice_dpll_pin_idx_to_name(pf, pin, pin_name);
@@ -363,14 +377,14 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 			ptp_prio = ICE_E810T_NEVER_USE_PIN;
 
 		/* if all flags are set, the pin is invalid */
-		if (data == PIN_FAIL_FLAGS) {
-			pin_state = "invalid";
+		if (data == ICE_CGU_IN_PIN_FAIL_FLAGS) {
+			pin_state = ICE_DPLL_PIN_STATE_INVALID;
 		/* if some flags are set, the pin is validating */
 		} else if (data) {
-			pin_state = "validating";
+			pin_state = ICE_DPLL_PIN_STATE_VALIDATING;
 		/* if all flags are cleared, the pin is valid */
 		} else {
-			pin_state = "valid";
+			pin_state = ICE_DPLL_PIN_STATE_VALID;
 			esync_en = !!(cfg.flags2 &
 				      ICE_AQC_GET_CGU_IN_CFG_FLG2_ESYNC_EN);
 			esync_fail = !!(cfg.status &
@@ -560,7 +574,7 @@ static void ice_fwlog_dump_cfg(struct ice_hw *hw)
 {
 	struct device *dev = ice_pf_to_dev((struct ice_pf *)(hw->back));
 	struct ice_fwlog_cfg *cfg;
-	enum ice_status status;
+	int status;
 	u16 i;
 
 	cfg = kzalloc(sizeof(*cfg), GFP_KERNEL);

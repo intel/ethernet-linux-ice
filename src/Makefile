@@ -54,6 +54,17 @@ ice-y := ice_main.o	\
 	 ice_ddp.o		\
 	 ice_flex_pipe.o	\
 	 ice_flow.o		\
+	 ice_parser.o		\
+	 ice_imem.o		\
+	 ice_pg_cam.o		\
+	 ice_metainit.o		\
+	 ice_bst_tcam.o		\
+	 ice_ptype_mk.o		\
+	 ice_mk_grp.o		\
+	 ice_proto_grp.o	\
+	 ice_flg_rd.o		\
+	 ice_xlt_kb.o		\
+	 ice_parser_rt.o	\
 	 ice_lag.o		\
 	 ice_fwlog.o		\
 	 ice_ieps.o		\
@@ -72,6 +83,7 @@ ice-$(CONFIG_PCI_IOV) +=		\
 	ice_vf_adq.o			\
 	ice_virtchnl.o			\
 	ice_virtchnl_fdir.o		\
+	ice_virtchnl_fsub.o		\
 	ice_vf_lib.o
 
 ifneq (${ENABLE_SIOV_SUPPORT},)
@@ -91,8 +103,11 @@ ifndef CONFIG_DIMLIB
 ice-y += kcompat_dim.o kcompat_net_dim.o
 endif
 
+
+
 ifeq (${NEED_AUX_BUS},2)
-obj-m += auxiliary.o
+intel_auxiliary-objs := auxiliary.o
+obj-m += intel_auxiliary.o
 endif
 
 else	# ifneq($(KERNELRELEASE),)
@@ -116,6 +131,7 @@ $(call minimum_kver_check,3,10,0)
 ifeq ($(call is_kcompat_defined,HAVE_PASID_SUPPORT),1)
 export ENABLE_SIOV_SUPPORT := 1
 endif
+
 
 # Command to update initramfs or display a warning message
 ifeq (${cmd_initrd},)

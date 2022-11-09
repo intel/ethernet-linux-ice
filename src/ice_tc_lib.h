@@ -23,6 +23,20 @@
 #define ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT	BIT(15)
 #define ICE_TC_FLWR_FIELD_ENC_DST_MAC		BIT(16)
 #define ICE_TC_FLWR_FIELD_ETH_TYPE_ID		BIT(17)
+#ifdef HAVE_GTP_SUPPORT
+#define ICE_TC_FLWR_FIELD_ENC_OPTS		BIT(18)
+#endif /* HAVE_GTP_SUPPORT */
+#ifdef HAVE_FLOW_DISSECTOR_KEY_IP
+#define ICE_TC_FLWR_FIELD_IP_TOS		BIT(19)
+#define ICE_TC_FLWR_FIELD_IP_TTL		BIT(20)
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
+#ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_IP
+#define ICE_TC_FLWR_FIELD_ENC_IP_TOS		BIT(21)
+#define ICE_TC_FLWR_FIELD_ENC_IP_TTL		BIT(22)
+#endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
+#define ICE_TC_FLWR_FIELD_PPPOE_SESSID		BIT(23)
+#define ICE_TC_FLWR_FIELD_PPP_PROTO		BIT(24)
+#define ICE_TC_FLWR_FIELD_CVLAN			BIT(25)
 
 /* TC flower supported filter match */
 #define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC		ICE_TC_FLWR_FIELD_DST_MAC
@@ -41,6 +55,11 @@
 #define ICE_TC_FLOWER_MASK_32	0xFFFFFFFF
 #define ICE_TC_FLOWER_MASK_16	0xFFFF
 #define ICE_TC_FLOWER_VNI_MAX	0xFFFFFFU
+
+#if defined(HAVE_FLOW_DISSECTOR_KEY_IP) || defined(HAVE_FLOW_DISSECTOR_KEY_ENC_IP)
+#define ICE_IPV6_HDR_TC_OFFSET 20
+#define ICE_IPV6_HDR_TC_MASK GENMASK(27, 20)
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP || HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
 
 #ifdef HAVE_TC_INDIR_BLOCK
 struct ice_indr_block_priv {
@@ -73,6 +92,11 @@ struct ice_tc_vlan_hdr {
 #ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
 	u16 vlan_prio; /* Only last 3 bits valid (valid values: 0..7) */
 #endif
+};
+
+struct ice_tc_pppoe_hdr {
+	__be16 session_id;
+	__be16 ppp_proto;
 };
 
 struct ice_tc_l2_hdr {
@@ -114,6 +138,8 @@ struct ice_tc_flower_lyr_2_4_hdrs {
 	struct ice_tc_l2_hdr l2_key;
 	struct ice_tc_l2_hdr l2_mask;
 	struct ice_tc_vlan_hdr vlan_hdr;
+	struct ice_tc_vlan_hdr cvlan_hdr;
+	struct ice_tc_pppoe_hdr pppoe_hdr;
 	/* L3 (IPv4[6]) layer fields with their mask */
 	struct ice_tc_l3_hdr l3_key;
 	struct ice_tc_l3_hdr l3_mask;
@@ -153,6 +179,10 @@ struct ice_tc_flower_fltr {
 	struct ice_tc_flower_lyr_2_4_hdrs inner_headers;
 	struct ice_vsi *src_vsi;
 	__be32 tenant_id;
+#ifdef HAVE_GTP_SUPPORT
+	struct gtp_pdu_session_info gtp_pdu_info_keys;
+	struct gtp_pdu_session_info gtp_pdu_info_masks;
+#endif /* HAVE_GTP_SUPPORT */
 	u32 flags;
 #define ICE_TC_FLWR_TNL_TYPE_NONE        0xff
 	u8 tunnel_type;
@@ -199,11 +229,11 @@ static inline int ice_chnl_dmac_fltr_cnt(struct ice_pf *pf)
 int
 ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			   struct ice_tc_flower_fltr *tc_fltr);
-#if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
+#if defined(HAVE_TCF_MIRRED_DEV) || defined(HAVE_TC_FLOW_RULE_INFRASTRUCTURE)
 int
 ice_tc_tun_get_type(struct net_device *tunnel_dev,
 		    struct flow_rule *rule);
-#endif /* HAVE_TC_FLOWER_ENC && HAVE_TC_INDIR_BLOCK */
+#endif /* HAVE_TCF_MIRRED_DEC || HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
 int
 #ifdef HAVE_TC_INDIR_BLOCK
 ice_add_cls_flower(struct net_device *netdev, struct ice_vsi *vsi,

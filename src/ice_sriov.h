@@ -26,7 +26,6 @@
 
 #define ICE_MAX_VF_RESET_TRIES		40
 #define ICE_MAX_VF_RESET_SLEEP_MS	20
-#define ICE_MAX_VF_PORT			ICE_MAX_PORT_PER_PCI_DEV
 
 /**
  * ice_vf_chnl_dmac_fltr_cnt - number of dmac based channel filters

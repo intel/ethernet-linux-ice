@@ -57,6 +57,8 @@ static void ice_free_vf_res(struct ice_vf *vf)
 	if (vf->ctrl_vsi_idx != ICE_NO_VSI)
 		ice_vf_ctrl_vsi_release(vf);
 
+	ice_vf_fsub_exit(vf);
+
 	/* free VSI and disconnect it from the parent uplink */
 	if (vf->lan_vsi_idx != ICE_NO_VSI) {
 		ice_vf_vsi_release(vf);
@@ -1183,7 +1185,6 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 {
 	struct ice_pf *pf = pci_get_drvdata(pdev);
 	struct device *dev = ice_pf_to_dev(pf);
-	enum ice_status status;
 	int err;
 
 	err = ice_check_sriov_allowed(pf);
@@ -1205,9 +1206,9 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 		return -EBUSY;
 	}
 
-	status = ice_mbx_init_snapshot(&pf->hw, num_vfs);
-	if (status)
-		return ice_status_to_errno(status);
+	err = ice_mbx_init_snapshot(&pf->hw, num_vfs);
+	if (err)
+		return err;
 
 	err = ice_pci_sriov_ena(pf, num_vfs);
 	if (err) {
@@ -2083,9 +2084,9 @@ ice_is_malicious_vf(struct ice_pf *pf, struct ice_rq_event_info *event,
 	s16 vf_id = le16_to_cpu(event->desc.retval);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_mbx_data mbxdata;
-	enum ice_status status;
 	bool malvf = false;
 	struct ice_vf *vf;
+	int status;
 
 	vf = ice_get_vf_by_id(pf, vf_id);
 	if (!vf)

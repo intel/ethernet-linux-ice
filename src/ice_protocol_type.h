@@ -30,6 +30,7 @@ enum ice_protocol_type {
 	ICE_MAC_OFOS = 0,
 	ICE_MAC_IL,
 	ICE_ETYPE_OL,
+	ICE_ETYPE_IL,
 	ICE_VLAN_OFOS,
 	ICE_IPV4_OFOS,
 	ICE_IPV4_IL,
@@ -44,15 +45,16 @@ enum ice_protocol_type {
 	ICE_VXLAN_GPE,
 	ICE_NVGRE,
 	ICE_GTP,
+	ICE_GTP_NO_PAY,
 	ICE_PPPOE,
 	ICE_PFCP,
 	ICE_L2TPV3,
 	ICE_ESP,
 	ICE_AH,
 	ICE_NAT_T,
-	ICE_GTP_NO_PAY,
 	ICE_VLAN_EX,
 	ICE_VLAN_IN,
+	ICE_FLG_DIR,
 	ICE_PROTOCOL_LAST
 };
 
@@ -68,6 +70,10 @@ enum ice_sw_tunnel_type {
 	ICE_SW_TUN_UDP, /* This means all "UDP" tunnel types: VXLAN-GPE, VXLAN
 			 * and GENEVE
 			 */
+	ICE_SW_IPV4_TCP,
+	ICE_SW_IPV4_UDP,
+	ICE_SW_IPV6_TCP,
+	ICE_SW_IPV6_UDP,
 	ICE_SW_TUN_IPV4_GTP_IPV4_TCP,
 	ICE_SW_TUN_IPV4_GTP_IPV4_UDP,
 	ICE_SW_TUN_IPV4_GTP_IPV6_TCP,
@@ -84,6 +90,8 @@ enum ice_sw_tunnel_type {
 	ICE_SW_TUN_GTP_IPV4_UDP,
 	ICE_SW_TUN_GTP_IPV6_TCP,
 	ICE_SW_TUN_GTP_IPV6_UDP,
+	ICE_SW_TUN_GTPU,
+	ICE_SW_TUN_GTPC,
 	ICE_SW_TUN_IPV4_GTPU_IPV4,
 	ICE_SW_TUN_IPV4_GTPU_IPV6,
 	ICE_SW_TUN_IPV6_GTPU_IPV4,
@@ -154,6 +162,7 @@ enum ice_prot_id {
 #define ICE_MAC_OFOS_HW		1
 #define ICE_MAC_IL_HW		4
 #define ICE_ETYPE_OL_HW		9
+#define ICE_ETYPE_IL_HW		10
 #define ICE_VLAN_OF_HW		16
 #define ICE_VLAN_OL_HW		17
 #define ICE_IPV4_OFOS_HW	32
@@ -174,12 +183,15 @@ enum ice_prot_id {
  */
 #define ICE_UDP_OF_HW	52 /* UDP Tunnels */
 #define ICE_GRE_OF_HW	64 /* NVGRE */
+#define ICE_PPPOE_HW	103
 #define ICE_META_DATA_ID_HW 255 /* this is used for tunnel type */
 
 #define ICE_MDID_SIZE 2
-#define ICE_TUN_FLAG_MDID 21
-#define ICE_TUN_FLAG_MDID_OFF (ICE_MDID_SIZE * ICE_TUN_FLAG_MDID)
+#define ICE_TUN_FLAG_MDID 20
+#define ICE_TUN_FLAG_MDID_OFF(word) \
+	(ICE_MDID_SIZE * (ICE_TUN_FLAG_MDID + (word)))
 #define ICE_TUN_FLAG_MASK 0xFF
+#define ICE_DIR_FLAG_MASK 0x10
 #define ICE_TUN_FLAG_VLAN_MASK 0x01
 #define ICE_TUN_FLAG_FV_IND 2
 
@@ -277,7 +289,6 @@ struct ice_udp_gtp_hdr {
 	u8 qfi;
 	u8 rsvrd;
 };
-
 struct ice_pppoe_hdr {
 	u8 rsrvd_ver_type;
 	u8 rsrvd_code;

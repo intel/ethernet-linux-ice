@@ -30,6 +30,9 @@
 #include <linux/timer.h>
 #include <linux/delay.h>
 #include <linux/bitmap.h>
+#ifdef HAVE_INCLUDE_BITFIELD
+#include <linux/bitfield.h>
+#endif /* HAVE_INCLUDE_BITFIELD */
 #include <linux/hashtable.h>
 #include <linux/log2.h>
 #include <linux/ip.h>
@@ -40,6 +43,9 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/sizes.h>
+#ifdef HAVE_LINKMODE
+#include <linux/linkmode.h>
+#endif /* HAVE_LINKMODE */
 #ifdef HAVE_XDP_SUPPORT
 #include <linux/bpf.h>
 #include <linux/filter.h>
@@ -65,7 +71,11 @@
 #include "ice_common.h"
 #include "ice_flow.h"
 #include "ice_sched.h"
+#ifdef USE_INTEL_AUX_BUS
+#include "linux/auxiliary_bus.h"
+#else
 #include <linux/auxiliary_bus.h>
+#endif /* USE_INTEL_AUX_BUS */
 #include <linux/idr.h>
 #include "ice_idc_int.h"
 #include "virtchnl.h"
@@ -96,6 +106,9 @@
 #include <net/geneve.h>
 #endif
 #endif /* HAVE_GENEVE_RX_OFFLOAD || HAVE_GENEVE_TYPE */
+#ifdef HAVE_GTP_SUPPORT
+#include <net/gtp.h>
+#endif /* HAVE_GTP_SUPPORT */
 #ifdef HAVE_UDP_ENC_RX_OFFLOAD
 #include <net/udp_tunnel.h>
 #endif
@@ -115,8 +128,9 @@
 #include "ice_gnss.h"
 
 extern const char ice_drv_ver[];
-#define ICE_BAR0		0
-#define ICE_BAR3		3
+#define ICE_BAR0			0
+#define ICE_BAR_RDMA_DOORBELL_OFFSET	0x7f0000
+#define ICE_BAR3			3
 #ifdef CONFIG_DEBUG_FS
 #define ICE_MAX_CSR_SPACE	(8 * 1024 * 1024 - 64 * 1024)
 #endif /* CONFIG_DEBUG_FS */
@@ -124,7 +138,11 @@ extern const char ice_drv_ver[];
 #define ICE_MIN_NUM_DESC	64
 #define ICE_MAX_NUM_DESC	8160
 #define ICE_DFLT_MIN_RX_DESC	512
+#ifdef CONFIG_ICE_USE_SKB
+#define ICE_DFLT_NUM_RX_DESC    512
+#else
 #define ICE_DFLT_NUM_RX_DESC	2048
+#endif /* CONFIG_ICE_USE_SKB */
 #define ICE_DFLT_NUM_TX_DESC	256
 
 #define ICE_DFLT_TXQ_VMDQ_VSI	1
@@ -204,9 +222,12 @@ extern const char ice_drv_ver[];
  */
 #define ICE_BW_KBPS_DIVISOR		125
 
-#if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
-#define ICE_GTP_TNL_WELLKNOWN_PORT 2152
-#endif /* HAVE_TC_FLOWER_ENC && HAVE_TC_INDIR_BLOCK */
+#if defined(HAVE_TCF_MIRRED_DEV) || defined(HAVE_TC_FLOW_RULE_INFRASTRUCTURE)
+#define ICE_GTPU_PORT 2152
+#endif /* HAVE_TCF_MIRRED_DEC || HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
+#ifdef HAVE_GTP_SUPPORT
+#define ICE_GTPC_PORT 2123
+#endif /* HAVE_GTP_SUPPORT */
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 /* prio 5..7 can be used as advanced switch filter priority. Default recipes
@@ -277,6 +298,8 @@ enum ice_feature {
 	ICE_F_PHY_RCLK,
 	ICE_F_SMA_CTRL,
 	ICE_F_GNSS,
+	ICE_F_FIXED_TIMING_PINS,
+	ICE_F_LAG,
 	ICE_F_MAX
 };
 
@@ -400,6 +423,7 @@ enum ice_pf_state {
 	ICE_LINK_DEFAULT_OVERRIDE_PENDING,
 	ICE_PHY_INIT_COMPLETE,
 	ICE_FD_VF_FLUSH_CTX,		/* set at FD Rx IRQ or timeout */
+	ICE_AUX_ERR_PENDING,
 	ICE_STATE_NBITS		/* must be last */
 };
 
@@ -410,7 +434,6 @@ enum ice_vsi_state {
 	ICE_VSI_NETDEV_REGISTERED,
 	ICE_VSI_UMAC_FLTR_CHANGED,
 	ICE_VSI_MMAC_FLTR_CHANGED,
-	ICE_VSI_VLAN_FLTR_CHANGED,
 	ICE_VSI_PROMISC_CHANGED,
 	ICE_VSI_STATE_NBITS		/* must be last */
 };
@@ -930,11 +953,12 @@ struct ice_pf {
 	struct mutex sw_mutex;		/* lock for protecting VSI alloc flow */
 	struct mutex tc_mutex;		/* lock to protect TC changes */
 	struct mutex adev_mutex;	/* lock to protect aux device access */
+	struct mutex lag_mutex;		/* lock protects the lag struct */
 	u32 msg_enable;
 	struct ice_ptp ptp;
 	struct tty_driver *ice_gnss_tty_driver;
-	struct tty_port *gnss_tty_port[ICE_GNSS_TTY_MINOR_DEVICES];
-	struct gnss_serial *gnss_serial[ICE_GNSS_TTY_MINOR_DEVICES];
+	struct tty_port *gnss_tty_port;
+	struct gnss_serial *gnss_serial;
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
 #ifdef HAVE_NDO_DFWD_OPS
@@ -954,6 +978,7 @@ struct ice_pf {
 	wait_queue_head_t reset_wait_queue;
 
 	u32 hw_csum_rx_error;
+	u32 oicr_err_reg;
 	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
 	u16 num_avail_sw_msix;	/* remaining MSIX SW vectors left unclaimed */
 	u16 max_pf_txqs;	/* Total Tx queues PF wide */
@@ -1055,10 +1080,14 @@ struct ice_pf {
 	enum ice_cgu_state ptp_dpll_state;
 	u8 ptp_ref_pin;
 	s64 ptp_dpll_phase_offset;
+
+	u32 phc_recalc;
+
 	u8 n_quanta_prof_used;
 };
 
 extern struct workqueue_struct *ice_wq;
+extern struct workqueue_struct *ice_lag_wq;
 
 struct ice_netdev_priv {
 	struct ice_vsi *vsi;
@@ -1202,12 +1231,30 @@ static inline struct ice_pf *ice_netdev_to_pf(struct net_device *netdev)
 	return np->vsi->back;
 }
 
-#ifdef HAVE_XDP_SUPPORT
-static inline bool ice_is_xdp_ena_vsi(struct ice_vsi *vsi)
+/**
+ * ice_kobj_to_pf - Retrieve the PF struct associated with a kobj
+ * @kobj: pointer to the kobject
+ *
+ * Returns a pointer to PF or NULL if there is no association.
+ */
+static inline struct ice_pf *ice_kobj_to_pf(struct kobject *kobj)
 {
-	return !!vsi->xdp_prog;
+	if (!kobj || !kobj->parent)
+		return NULL;
+
+	return pci_get_drvdata(to_pci_dev(kobj_to_dev(kobj->parent)));
 }
 
+static inline bool ice_is_xdp_ena_vsi(struct ice_vsi *vsi)
+{
+#ifdef HAVE_XDP_SUPPORT
+	return !!vsi->xdp_prog;
+#else
+	return false;
+#endif
+}
+
+#ifdef HAVE_XDP_SUPPORT
 static inline void ice_set_ring_xdp(struct ice_ring *ring)
 {
 	ring->flags |= ICE_TX_FLAGS_RING_XDP;
@@ -1216,16 +1263,16 @@ static inline void ice_set_ring_xdp(struct ice_ring *ring)
 #endif /* HAVE_XDP_SUPPORT */
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 /**
- * ice_xsk_umem - get XDP UMEM bound to a ring
- * @ring: ring to use
+ * ice_xsk_pool - get XSK buffer pool bound to a ring
+ * @ring: Rx ring to use
  *
- * Returns a pointer to xdp_umem structure if there is an UMEM present,
+ * Returns a pointer to xdp_umem structure if there is a buffer pool present,
  * NULL otherwise.
  */
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
-static inline struct xsk_buff_pool *ice_xsk_umem(struct ice_ring *ring)
+static inline struct xsk_buff_pool *ice_xsk_pool(struct ice_ring *ring)
 #else
-static inline struct xdp_umem *ice_xsk_umem(struct ice_ring *ring)
+static inline struct xdp_umem *ice_xsk_pool(struct ice_ring *ring)
 #endif
 {
 	struct ice_vsi *vsi = ring->vsi;
@@ -1552,6 +1599,7 @@ void ice_update_vsi_stats(struct ice_vsi *vsi);
 int ice_up(struct ice_vsi *vsi);
 void ice_fetch_u64_stats_per_ring(struct ice_ring *ring, u64 *pkts, u64 *bytes);
 int ice_down(struct ice_vsi *vsi);
+int ice_down_up(struct ice_vsi *vsi);
 int ice_vsi_cfg(struct ice_vsi *vsi);
 struct ice_vsi *ice_lb_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi);
 #ifdef HAVE_NDO_DFWD_OPS
@@ -1638,7 +1686,6 @@ static inline bool ice_chk_rdma_cap(struct ice_pf *pf)
 	return test_bit(ICE_FLAG_IWARP_ENA, pf->flags);
 }
 
-const char *ice_stat_str(enum ice_status stat_err);
 const char *ice_aq_str(enum ice_aq_err aq_err);
 bool ice_is_wol_supported(struct ice_hw *hw);
 int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,

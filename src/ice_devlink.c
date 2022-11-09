@@ -40,13 +40,13 @@ static void ice_info_get_dsn(struct ice_pf *pf, struct ice_info_ctx *ctx)
 static void ice_info_pba(struct ice_pf *pf, struct ice_info_ctx *ctx)
 {
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 
 	status = ice_read_pba_string(hw, (u8 *)ctx->buf, sizeof(ctx->buf));
 	if (status)
 		/* We failed to locate the PBA, so just skip this entry */
-		dev_dbg(ice_pf_to_dev(pf), "Failed to read Product Board Assembly string, status %s\n",
-			ice_stat_str(status));
+		dev_dbg(ice_pf_to_dev(pf), "Failed to read Product Board Assembly string, status %d\n",
+			status);
 }
 
 static void ice_info_fw_mgmt(struct ice_pf *pf, struct ice_info_ctx *ctx)
@@ -295,7 +295,6 @@ static int ice_devlink_info_get(struct devlink *devlink,
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
 	struct ice_info_ctx *ctx;
-	enum ice_status status;
 	size_t i;
 	int err;
 
@@ -315,20 +314,19 @@ static int ice_devlink_info_get(struct devlink *devlink,
 		return -ENOMEM;
 
 	/* discover capabilities first */
-	status = ice_discover_dev_caps(hw, &ctx->dev_caps);
-	if (status) {
-		dev_dbg(dev, "Failed to discover device capabilities, status %s aq_err %s\n",
-			ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
+	err = ice_discover_dev_caps(hw, &ctx->dev_caps);
+	if (err) {
+		dev_dbg(dev, "Failed to discover device capabilities, status %d aq_err %s\n",
+			err, ice_aq_str(hw->adminq.sq_last_status));
 		NL_SET_ERR_MSG_MOD(extack, "Unable to discover device capabilities");
-		err = -EIO;
 		goto out_free_ctx;
 	}
 
 	if (ctx->dev_caps.common_cap.nvm_update_pending_orom) {
-		status = ice_get_inactive_orom_ver(hw, &ctx->pending_orom);
-		if (status) {
-			dev_dbg(dev, "Unable to read inactive Option ROM version data, status %s aq_err %s\n",
-				ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
+		err = ice_get_inactive_orom_ver(hw, &ctx->pending_orom);
+		if (err) {
+			dev_dbg(dev, "Unable to read inactive Option ROM version data, status %d aq_err %s\n",
+				err, ice_aq_str(hw->adminq.sq_last_status));
 
 			/* disable display of pending Option ROM */
 			ctx->dev_caps.common_cap.nvm_update_pending_orom = false;
@@ -336,10 +334,10 @@ static int ice_devlink_info_get(struct devlink *devlink,
 	}
 
 	if (ctx->dev_caps.common_cap.nvm_update_pending_nvm) {
-		status = ice_get_inactive_nvm_ver(hw, &ctx->pending_nvm);
-		if (status) {
-			dev_dbg(dev, "Unable to read inactive NVM version data, status %s aq_err %s\n",
-				ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
+		err = ice_get_inactive_nvm_ver(hw, &ctx->pending_nvm);
+		if (err) {
+			dev_dbg(dev, "Unable to read inactive NVM version data, status %d aq_err %s\n",
+				err, ice_aq_str(hw->adminq.sq_last_status));
 
 			/* disable display of pending Option ROM */
 			ctx->dev_caps.common_cap.nvm_update_pending_nvm = false;
@@ -347,10 +345,10 @@ static int ice_devlink_info_get(struct devlink *devlink,
 	}
 
 	if (ctx->dev_caps.common_cap.nvm_update_pending_netlist) {
-		status = ice_get_inactive_netlist_ver(hw, &ctx->pending_netlist);
-		if (status) {
-			dev_dbg(dev, "Unable to read inactive Netlist version data, status %s aq_err %s\n",
-				ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
+		err = ice_get_inactive_netlist_ver(hw, &ctx->pending_netlist);
+		if (err) {
+			dev_dbg(dev, "Unable to read inactive Netlist version data, status %d aq_err %s\n",
+				err, ice_aq_str(hw->adminq.sq_last_status));
 
 			/* disable display of pending Option ROM */
 			ctx->dev_caps.common_cap.nvm_update_pending_netlist = false;
@@ -444,7 +442,7 @@ ice_devlink_minsrev_get(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
-	enum ice_status status;
+	int status;
 
 	if (id != ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV &&
 	    id != ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV)
@@ -500,7 +498,6 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
 	struct ice_rq_event_info event;
-	enum ice_status status;
 	u16 completion_retval;
 	int err;
 
@@ -519,8 +516,8 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 		return -EINVAL;
 	}
 
-	status = ice_update_nvm_minsrevs(&pf->hw, &minsrevs);
-	if (status) {
+	err = ice_update_nvm_minsrevs(&pf->hw, &minsrevs);
+	if (err) {
 		dev_warn(dev, "Failed to update minimum security revision data\n");
 		return -EIO;
 	}
@@ -564,7 +561,7 @@ ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_para
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
-	enum ice_status status;
+	int status;
 
 	if (id != ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV &&
 	    id != ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV)
@@ -621,12 +618,11 @@ ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_para
  *
  * Returns zero when read was successful, negative values otherwise.
  */
-static enum ice_status
-ice_get_tx_topo_user_sel(struct ice_pf *pf, bool *txbalance_ena)
+static int ice_get_tx_topo_user_sel(struct ice_pf *pf, bool *txbalance_ena)
 {
 	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 
 	status = ice_acquire_nvm(hw, ICE_RES_READ);
 	if (status)
@@ -653,21 +649,19 @@ ice_get_tx_topo_user_sel(struct ice_pf *pf, bool *txbalance_ena)
  *
  * Returns zero when save was successful, negative values otherwise.
  */
-static enum ice_status
-ice_update_tx_topo_user_sel(struct ice_pf *pf, bool txbalance_ena)
+static int ice_update_tx_topo_user_sel(struct ice_pf *pf, bool txbalance_ena)
 {
 	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
 	int err;
 
-	status = ice_acquire_nvm(hw, ICE_RES_WRITE);
-	if (status)
-		return status;
+	err = ice_acquire_nvm(hw, ICE_RES_WRITE);
+	if (err)
+		return err;
 
-	status = ice_aq_read_nvm(hw, ICE_AQC_NVM_TX_TOPO_MOD_ID, 0,
-				 sizeof(usr_sel), &usr_sel, true, true, NULL);
-	if (status)
+	err = ice_aq_read_nvm(hw, ICE_AQC_NVM_TX_TOPO_MOD_ID, 0,
+			      sizeof(usr_sel), &usr_sel, true, true, NULL);
+	if (err)
 		goto exit_release_res;
 
 	if (txbalance_ena)
@@ -679,12 +673,12 @@ ice_update_tx_topo_user_sel(struct ice_pf *pf, bool txbalance_ena)
 				      sizeof(usr_sel.data), &usr_sel.data,
 				      true, NULL, NULL);
 	if (err)
-		status = ICE_ERR_NVM;
+		err = -EIO;
 
 exit_release_res:
 	ice_release_nvm(hw);
 
-	return status;
+	return err;
 }
 
 /**
@@ -700,7 +694,7 @@ static int ice_devlink_txbalance_get(struct devlink *devlink, u32 id,
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
-	enum ice_status status;
+	int status;
 
 	status = ice_get_tx_topo_user_sel(pf, &ctx->val.vbool);
 	if (status) {
@@ -724,7 +718,7 @@ static int ice_devlink_txbalance_set(struct devlink *devlink, u32 id,
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
-	enum ice_status status;
+	int status;
 
 	status = ice_update_tx_topo_user_sel(pf, ctx->val.vbool);
 	if (status)
@@ -888,7 +882,6 @@ ice_devlink_reload_empr_start(struct devlink *devlink, bool netns_change,
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
 	u8 pending;
 	int err;
 
@@ -913,13 +906,12 @@ ice_devlink_reload_empr_start(struct devlink *devlink, bool netns_change,
 
 	dev_dbg(dev, "Issuing device EMP reset to activate firmware\n");
 
-	status = ice_aq_nvm_update_empr(hw);
-	if (status) {
-		dev_err(dev, "Failed to trigger EMP device reset to reload firmware, err %s aq_err %s\n",
-			ice_stat_str(status),
-			ice_aq_str(hw->adminq.sq_last_status));
+	err = ice_aq_nvm_update_empr(hw);
+	if (err) {
+		dev_err(dev, "Failed to trigger EMP device reset to reload firmware, err %d aq_err %s\n",
+			err, ice_aq_str(hw->adminq.sq_last_status));
 		NL_SET_ERR_MSG_MOD(extack, "Failed to trigger EMP device reset to reload firmware");
-		return -EIO;
+		return err;
 	}
 
 	return 0;
@@ -953,12 +945,10 @@ ice_devlink_reload_empr_finish(struct devlink *devlink,
 	 * and rebuild process.
 	 */
 	err = ice_wait_for_reset(pf, 60 * HZ);
-	if (err) {
+	if (err)
 		NL_SET_ERR_MSG_MOD(extack, "Device still resetting after 1 minute");
-		return err;
-	}
 
-	return 0;
+	return err;
 }
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 
@@ -1320,7 +1310,7 @@ ice_devlink_nvm_snapshot(struct devlink *devlink,
 	 */
 	for (i = 0; i < num_blks; i++) {
 		u32 read_sz = min_t(u32, ICE_DEVLINK_READ_BLK_SIZE, left);
-		enum ice_status status;
+		int status;
 
 		status = ice_acquire_nvm(hw, ICE_RES_READ);
 		if (status) {
@@ -1380,34 +1370,34 @@ ice_devlink_sram_snapshot(struct devlink *devlink,
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
 	u8 *sram_data;
 	u32 sram_size;
+	int err;
 
 	sram_size = hw->flash.sr_words * 2u;
 	sram_data = vzalloc(sram_size);
 	if (!sram_data)
 		return -ENOMEM;
 
-	status = ice_acquire_nvm(hw, ICE_RES_READ);
-	if (status) {
+	err = ice_acquire_nvm(hw, ICE_RES_READ);
+	if (err) {
 		dev_dbg(dev, "ice_acquire_nvm failed, err %d aq_err %d\n",
-			status, hw->adminq.sq_last_status);
+			err, hw->adminq.sq_last_status);
 		NL_SET_ERR_MSG_MOD(extack, "Failed to acquire NVM semaphore");
 		vfree(sram_data);
-		return -EIO;
+		return err;
 	}
 
 	/* Read from the Shadow RAM, rather than directly from NVM */
-	status = ice_read_flat_nvm(hw, 0, &sram_size, sram_data, true);
-	if (status) {
+	err = ice_read_flat_nvm(hw, 0, &sram_size, sram_data, true);
+	if (err) {
 		dev_dbg(dev, "ice_read_flat_nvm failed after reading %u bytes, err %d aq_err %d\n",
-			sram_size, status, hw->adminq.sq_last_status);
+			sram_size, err, hw->adminq.sq_last_status);
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Failed to read Shadow RAM contents");
 		ice_release_nvm(hw);
 		vfree(sram_data);
-		return -EIO;
+		return err;
 	}
 
 	ice_release_nvm(hw);
@@ -1443,8 +1433,8 @@ ice_devlink_devcaps_snapshot(struct devlink *devlink,
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
 	void *devcaps;
+	int status;
 
 	devcaps = vzalloc(ICE_AQ_MAX_BUF_LEN);
 	if (!devcaps)
@@ -1457,7 +1447,7 @@ ice_devlink_devcaps_snapshot(struct devlink *devlink,
 			status, hw->adminq.sq_last_status);
 		NL_SET_ERR_MSG_MOD(extack, "Failed to read device capabilities");
 		vfree(devcaps);
-		return -EIO;
+		return status;
 	}
 
 	*data = (u8 *)devcaps;
@@ -1976,7 +1966,6 @@ ice_devlink_tc_qps_per_poller_set(struct devlink *devlink, u32 id,
 	ch_vsi->ch->qps_per_poller = ctx->val.vu8;
 
 	ice_ch_vsi_update_ring_vecs(ice_get_main_vsi(pf));
-
 	return 0;
 }
 

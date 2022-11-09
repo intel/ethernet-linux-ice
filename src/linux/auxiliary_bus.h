@@ -12,8 +12,16 @@
 #include <linux/device.h>
 #include <linux/mod_devicetable.h>
 
-#define AUXILIARY_NAME_SIZE 32
-#define AUXILIARY_MODULE_PREFIX "auxiliary:"
+#define AUXILIARY_NAME_SIZE 38
+#define AUXILIARY_MODULE_PREFIX "intel_auxiliary:"
+
+#define AUX_PREFIX(func) intel_ ## func
+
+#define auxiliary_device_init AUX_PREFIX(auxiliary_device_init)
+#define __auxiliary_device_add AUX_PREFIX(__auxiliary_device_add)
+#define auxiliary_find_device AUX_PREFIX(auxiliary_find_device)
+#define __auxiliary_driver_register AUX_PREFIX(__auxiliary_driver_register)
+#define auxiliary_driver_unregister AUX_PREFIX(auxiliary_driver_unregister)
 
 struct auxiliary_device_id {
 	char name[AUXILIARY_NAME_SIZE];

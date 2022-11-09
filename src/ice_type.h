@@ -5,7 +5,6 @@
 #define _ICE_TYPE_H_
 
 #include "ice_defs.h"
-#include "ice_status.h"
 #include "ice_hw_autogen.h"
 #include "ice_devids.h"
 #include "ice_osdep.h"
@@ -149,6 +148,7 @@ enum ice_mac_type {
 	ICE_MAC_VF,
 	ICE_MAC_E810,
 	ICE_MAC_GENERIC,
+	ICE_MAC_GENERIC_3K,
 };
 
 /* Media Types */
@@ -231,6 +231,15 @@ struct ice_phy_info {
 };
 
 #define ICE_MAX_NUM_MIRROR_RULES	64
+
+#define ICE_L2TPV2_FLAGS_CTRL	0x8000
+#define ICE_L2TPV2_FLAGS_LEN	0x4000
+#define ICE_L2TPV2_FLAGS_SEQ	0x0800
+#define ICE_L2TPV2_FLAGS_OFF	0x0200
+#define ICE_L2TPV2_FLAGS_VER	0x0002
+
+#define ICE_L2TPV2_PKT_LENGTH	6
+#define ICE_PPP_PKT_LENGTH	4
 
 /* protocol enumeration for filters */
 enum ice_fltr_ptype {
@@ -429,6 +438,24 @@ enum ice_fltr_ptype {
 	ICE_FLTR_PTYPE_NONF_IPV4_UDP_VXLAN_IPV4_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV4_UDP_VXLAN_IPV4_SCTP,
 	ICE_FLTR_PTYPE_NONF_IPV4_UDP_VXLAN_IPV4_OTHER,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_CONTROL,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_PPP,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_PPP_IPV4,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_PPP_IPV4_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_PPP_IPV4_TCP,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_PPP_IPV6,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_PPP_IPV6_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV2_PPP_IPV6_TCP,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_CONTROL,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_PPP,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_PPP_IPV4,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_PPP_IPV4_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_PPP_IPV4_TCP,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_PPP_IPV6,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_PPP_IPV6_UDP,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV2_PPP_IPV6_TCP,
 	ICE_FLTR_PTYPE_MAX,
 };
 
@@ -520,6 +547,7 @@ struct ice_hw_common_caps {
 	u8 ieee_1588;
 	u8 mgmt_cem;
 	u8 iwarp;
+	u8 roce_lag;
 
 	/* WoL and APM support */
 #define ICE_WOL_SUPPORT_M		BIT(0)
@@ -528,6 +556,13 @@ struct ice_hw_common_caps {
 	u8 apm_wol_support;
 	u8 acpi_prog_mthd;
 	u8 proxy_support;
+#define ICE_NVM_ADDRESS_VALUE_READS 3
+	u16 nvm_word_address[ICE_NVM_ADDRESS_VALUE_READS];
+	u16 nvm_value[ICE_NVM_ADDRESS_VALUE_READS];
+	u32 orom_ver;
+	u32 base_release_ver_major;
+	u32 base_release_ver_type;
+	u32 base_release_ver_iana;
 	bool nvm_update_pending_nvm;
 	bool nvm_update_pending_orom;
 	bool nvm_update_pending_netlist;
@@ -598,13 +633,12 @@ enum ice_clk_src {
 struct ice_ts_func_info {
 	/* Function specific info */
 	enum ice_time_ref_freq time_ref;
-	u8 clk_freq;
-	u8 clk_src;
-	u8 tmr_index_assoc;
-	u8 ena;
-	u8 tmr_index_owned;
-	u8 src_tmr_owned;
-	u8 tmr_ena;
+	u8 clk_src : 1;
+	u8 tmr_index_assoc : 1;
+	u8 ena : 1;
+	u8 tmr_index_owned : 1;
+	u8 src_tmr_owned : 1;
+	u8 tmr_ena : 1;
 };
 
 /* Device specific definitions */
@@ -620,16 +654,24 @@ struct ice_ts_func_info {
 
 struct ice_ts_dev_info {
 	/* Device specific info */
-	u32 ena_ports;
 	u32 tmr_own_map;
-	u32 tmr0_owner;
-	u32 tmr1_owner;
-	u8 tmr0_owned;
-	u8 tmr1_owned;
-	u8 ena;
-	u8 tmr0_ena;
-	u8 tmr1_ena;
-	u8 ts_ll_read;
+	u8 tmr0_owner;
+	u8 tmr1_owner;
+	u8 tmr0_owned : 1;
+	u8 tmr1_owned : 1;
+	u8 ena : 1;
+	u8 tmr0_ena : 1;
+	u8 tmr1_ena : 1;
+	u8 ts_ll_read : 1;
+};
+
+#define ICE_NAC_TOPO_PRIMARY_M	BIT(0)
+#define ICE_NAC_TOPO_DUAL_M	BIT(1)
+#define ICE_NAC_TOPO_ID_M	ICE_M(0xf, 0)
+
+struct ice_nac_topology {
+	u32 mode;
+	u8 id;
 };
 
 /* Function specific capabilities */
@@ -651,6 +693,7 @@ struct ice_hw_dev_caps {
 	u32 num_flow_director_fltr;	/* Number of FD filters available */
 	struct ice_ts_dev_info ts_dev_info;
 	u32 num_funcs;
+	struct ice_nac_topology nac_topo;
 };
 
 /* Information about MAC such as address, etc... */
@@ -1408,6 +1451,7 @@ enum ice_sw_fwd_act_type {
 	ICE_FWD_TO_Q,
 	ICE_FWD_TO_QGRP,
 	ICE_DROP_PACKET,
+	ICE_LG_ACTION,
 	ICE_INVAL_ACT
 };
 
@@ -1579,10 +1623,11 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_FW_API_REPORT_DFLT_CFG_MIN		7
 #define ICE_FW_API_REPORT_DFLT_CFG_PATCH	3
 
-/* AQ API version for FEC disable in Auto FEC mode */
-#define ICE_FW_API_FEC_DIS_AUTO_MAJ		1
-#define ICE_FW_API_FEC_DIS_AUTO_MIN		7
-#define ICE_FW_API_FEC_DIS_AUTO_PATCH		5
+/* FW version for FEC disable in Auto FEC mode */
+#define ICE_FW_FEC_DIS_AUTO_BRANCH		1
+#define ICE_FW_FEC_DIS_AUTO_MAJ			7
+#define ICE_FW_FEC_DIS_AUTO_MIN			0
+#define ICE_FW_FEC_DIS_AUTO_PATCH		5
 
 /* AQ API version for FW health reports */
 #define ICE_FW_API_HEALTH_REPORT_MAJ		1

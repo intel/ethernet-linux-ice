@@ -18,6 +18,7 @@
 #include "ice_type.h"
 #include "ice_flow.h"
 #include "ice_virtchnl_fdir.h"
+#include "ice_virtchnl_fsub.h"
 #include "ice_dcf.h"
 #include "ice_vsi_vlan_ops.h"
 
@@ -117,6 +118,18 @@ struct ice_dcf_vlan_info {
 	u8 applying:1;
 };
 
+/* Structure to store fdir fv entry */
+struct ice_fdir_prof_info {
+	struct ice_parser_profile prof;
+	u64 fdir_active_cnt;
+};
+
+/* Structure to store RSS field vector entry */
+struct ice_rss_prof_info {
+	struct ice_parser_profile prof;
+	bool symm;
+};
+
 /* VF operations */
 struct ice_vf_ops {
 	enum ice_disq_rst_src reset_type;
@@ -171,7 +184,10 @@ struct ice_vf {
 	u16 lan_vsi_idx;		/* index into PF struct */
 	u16 ctrl_vsi_idx;
 	struct ice_vf_fdir fdir;
+	struct ice_fdir_prof_info fdir_prof_info[ICE_MAX_PTGS];
+	struct ice_vf_fsub fsub;
 	struct ice_vf_hash_ctx hash_ctx;
+	struct ice_rss_prof_info rss_prof_info[ICE_MAX_PTGS];
 	struct ice_vf_qs_bw qs_bw[ICE_MAX_QS_PER_VF];
 	/* first vector index of this VF in the PF space */
 	int first_vector_idx;

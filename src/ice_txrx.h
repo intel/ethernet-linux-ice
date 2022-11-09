@@ -349,6 +349,7 @@ struct ice_ring {
 #define ICE_RX_FLAGS_RING_BUILD_SKB		BIT(1)
 #define ICE_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1	BIT(2)
 #define ICE_TX_FLAGS_VLAN_TAG_LOC_L2TAG2	BIT(3)
+#define ICE_RX_FLAGS_CRC_STRIP_DIS		BIT(6)
 	u8 flags;
 
 	u16 count;			/* Number of descriptors */
@@ -405,7 +406,6 @@ struct ice_ring {
 	unsigned int size;		/* length of descriptor ring in bytes */
 	u32 txq_teid;			/* Added Tx queue TEID */
 	u32 ch_inline_fd_cnt_index;
-	u8 rx_crc_strip_dis;
 	u8 dcb_tc;			/* Traffic class of ring */
 	u16 rx_buf_len;
 	u16 quanta_prof_id;

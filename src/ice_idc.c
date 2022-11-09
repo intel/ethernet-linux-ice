@@ -83,10 +83,15 @@ ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
 	struct iidc_auxiliary_drv *iadrv;
 	struct ice_pf *pf;
 
+	if (WARN_ON_ONCE(!in_task()))
+		return -EINVAL;
+
 	if (!cdev_info)
-		return 0;
+		return -EINVAL;
 	pf = pci_get_drvdata(cdev_info->pdev);
 
+	if (!pf)
+		return -EINVAL;
 	mutex_lock(&pf->adev_mutex);
 
 	if (!cdev_info->adev || !event) {
@@ -102,6 +107,21 @@ ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
 	mutex_unlock(&pf->adev_mutex);
 
 	return 0;
+}
+
+/**
+ * ice_send_event_to_aux_no_lock - send event to aux dev without taking dev_lock
+ * @cdev: pointer to iidc_core_dev_info struct
+ * @data: opaque poiner used to pass event struct
+ */
+void ice_send_event_to_aux_no_lock(struct iidc_core_dev_info *cdev, void *data)
+{
+	struct iidc_event *event = (struct iidc_event *)data;
+	struct iidc_auxiliary_drv *iadrv;
+
+	iadrv = ice_get_auxiliary_drv(cdev);
+	if (iadrv && iadrv->event_handler)
+		iadrv->event_handler(cdev, event);
 }
 
 /**
@@ -188,13 +208,15 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 		     struct iidc_rdma_qset_params *qset)
 {
 	u16 max_rdmaqs[ICE_MAX_TRAFFIC_CLASS];
-	enum ice_status status;
+#ifdef HAVE_NETDEV_UPPER_INFO
+	struct ice_lag *lag;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	struct ice_vsi *vsi;
 	struct device *dev;
 	struct ice_pf *pf;
 	u32 qset_teid;
 	u16 qs_handle;
-	int i;
+	int i, status;
 
 	if (!cdev_info || !qset)
 		return -EINVAL;
@@ -221,19 +243,62 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 				  max_rdmaqs);
 	if (status) {
 		dev_err(dev, "Failed VSI RDMA qset config\n");
-		return -EINVAL;
+		return status;
 	}
 
 	status = ice_ena_vsi_rdma_qset(vsi->port_info, vsi->idx, qset->tc,
 				       &qs_handle, 1, &qset_teid);
 	if (status) {
 		dev_err(dev, "Failed VSI RDMA qset enable\n");
-		return -EINVAL;
+		return status;
 	}
 	vsi->qset_handle[qset->tc] = qset->qs_handle;
 	qset->teid = qset_teid;
 
-	return 0;
+#ifdef HAVE_NETDEV_UPPER_INFO
+	lag = pf->lag;
+	if (lag && lag->bonded) {
+		mutex_lock(&pf->lag_mutex);
+		lag->rdma_qset[qset->tc] = *qset;
+
+		if (cdev_info->rdma_active_port != pf->hw.port_info->lport &&
+		    cdev_info->rdma_active_port != ICE_LAG_INVALID_PORT) {
+			struct net_device *tmp_nd;
+
+			rcu_read_lock();
+			for_each_netdev_rcu(&init_net, tmp_nd) {
+				struct ice_netdev_priv *tmp_ndp;
+				struct ice_lag *tmp_lag;
+				struct ice_vsi *tmp_vsi;
+				struct ice_hw *tmp_hw;
+
+				if (!netif_is_ice(tmp_nd))
+					continue;
+
+				tmp_ndp = netdev_priv(tmp_nd);
+				tmp_vsi = tmp_ndp->vsi;
+				tmp_lag = tmp_vsi->back->lag;
+
+				if (!tmp_lag->bonded ||
+				    tmp_lag->bond_id != lag->bond_id)
+					continue;
+
+				tmp_hw = &tmp_vsi->back->hw;
+
+				if (cdev_info->rdma_active_port ==
+				    tmp_hw->port_info->lport)
+					status = ice_lag_move_node_sync(&pf->hw,
+									tmp_hw,
+									tmp_vsi,
+									qset);
+			}
+			rcu_read_unlock();
+		}
+		mutex_unlock(&pf->lag_mutex);
+	}
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+	return status;
 }
 
 /**
@@ -245,11 +310,11 @@ static int
 ice_free_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 		    struct iidc_rdma_qset_params *qset)
 {
-	enum ice_status status;
 	struct ice_vsi *vsi;
 	struct device *dev;
 	struct ice_pf *pf;
 	u16 vsi_id;
+	int status;
 	u32 teid;
 	u16 q_id;
 
@@ -275,10 +340,52 @@ ice_free_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 
 	vsi->qset_handle[qset->tc] = 0;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag && pf->lag->bonded) {
+		mutex_lock(&pf->lag_mutex);
+
+		if (cdev_info->rdma_active_port != pf->hw.port_info->lport &&
+		    cdev_info->rdma_active_port != ICE_LAG_INVALID_PORT) {
+			struct net_device *tmp_nd;
+
+			rcu_read_lock();
+			for_each_netdev_rcu(&init_net, tmp_nd) {
+				struct ice_netdev_priv *tmp_ndp;
+				struct ice_lag *tmp_lag;
+				struct ice_vsi *tmp_vsi;
+				struct ice_hw *tmp_hw;
+
+				if (!netif_is_ice(tmp_nd))
+					continue;
+
+				tmp_ndp = netdev_priv(tmp_nd);
+				tmp_vsi = tmp_ndp->vsi;
+				tmp_lag = tmp_vsi->back->lag;
+				tmp_hw = &tmp_vsi->back->hw;
+
+				if (!tmp_lag->bonded ||
+				    tmp_lag->bond_id != pf->lag->bond_id)
+					continue;
+
+				if (cdev_info->rdma_active_port ==
+				    tmp_hw->port_info->lport)
+					ice_lag_move_node_sync(tmp_hw, &pf->hw,
+							       pf->vsi[0],
+							       qset);
+			}
+			rcu_read_unlock();
+		}
+		mutex_unlock(&pf->lag_mutex);
+	}
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	status = ice_dis_vsi_rdma_qset(vsi->port_info, 1, &teid, &q_id);
 	if (status)
 		return -EINVAL;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	memset(&pf->lag->rdma_qset[qset->tc], 0, sizeof(*qset));
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	return 0;
 }
 
@@ -405,9 +512,9 @@ static int
 ice_cdev_info_vc_send(struct iidc_core_dev_info *cdev_info, u32 vf_id,
 		      u8 *msg, u16 len)
 {
-	enum ice_status status;
 	struct ice_pf *pf;
 	u32 rel_vf_id;
+	int status;
 
 	if (!cdev_info)
 		return -EINVAL;
@@ -435,16 +542,15 @@ ice_cdev_info_vc_send(struct iidc_core_dev_info *cdev_info, u32 vf_id,
 					       NULL);
 		break;
 	default:
-		dev_err(ice_pf_to_dev(pf),
-			"Can't send message to VF, Aux not supported, %u\n",
+		dev_err(ice_pf_to_dev(pf), "Can't send message to VF, Aux not supported, %u\n",
 			(u32)cdev_info->cdev_info_id);
 		return -ENODEV;
 	}
 
 	if (status)
-		dev_err(ice_pf_to_dev(pf), "Unable to send msg to VF, error %s\n",
-			ice_stat_str(status));
-	return ice_status_to_errno(status);
+		dev_err(ice_pf_to_dev(pf), "Unable to send msg to VF, error %d\n",
+			status);
+	return status;
 }
 
 /**
@@ -548,7 +654,7 @@ void ice_cdev_info_update_vsi(struct iidc_core_dev_info *cdev_info,
 }
 
 /* Initialize the ice_ops struct, which is used in 'ice_init_aux_devices' */
-static const struct iidc_core_ops ops = {
+static const struct iidc_core_ops iidc_ops = {
 	.alloc_res			= ice_cdev_info_alloc_res,
 	.free_res			= ice_cdev_info_free_res,
 	.request_reset			= ice_cdev_info_request_reset,
@@ -789,8 +895,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 		cdev_info->cdev_info_id = ice_cdev_ids[i].id;
 		cdev_info->pdev = pdev;
 		/* Initialize ice_ops */
-		cdev_info->ops = &ops;
-
+		cdev_info->ops = &iidc_ops;
 		/* make sure peer specific resources such as msix_count and
 		 * msix_entries are initialized
 		 */
@@ -804,9 +909,15 @@ int ice_init_aux_devices(struct ice_pf *pf)
 			}
 			cdev_info->vport_id = vsi->vsi_num;
 			cdev_info->netdev = vsi->netdev;
-			cdev_info->rdma_protocol = IIDC_RDMA_PROTOCOL_IWARP;
+			cdev_info->rdma_protocol = IIDC_RDMA_PROTOCOL_ROCEV2;
+			cdev_info->rdma_caps.gen = IIDC_RDMA_GEN_2;
+			cdev_info->ftype = IIDC_FUNCTION_TYPE_PF;
 			cdev_info->cdev_info_id = IIDC_RDMA_ID;
 			cdev_info->pf_id = pf->hw.pf_id;
+#ifdef HAVE_NETDEV_UPPER_INFO
+			cdev_info->rdma_active_port = ICE_LAG_INVALID_PORT;
+			cdev_info->main_pf_port = pf->hw.port_info->lport;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 			ice_cdev_init_rdma_qos_info(pf, &cdev_info->qos_info);
 			/* make sure peer specific resources such as msix_count
 			 * and msix_entries are initialized

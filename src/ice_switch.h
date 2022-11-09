@@ -14,6 +14,19 @@
 #define ICE_FLTR_TX BIT(1)
 #define ICE_FLTR_TX_RX (ICE_FLTR_RX | ICE_FLTR_TX)
 
+/* Switch Profile IDs for Profile related switch rules */
+#define ICE_PROFID_IPV4_TCP		4
+#define ICE_PROFID_IPV4_UDP		5
+#define ICE_PROFID_IPV6_TCP		7
+#define ICE_PROFID_IPV6_UDP		8
+#define ICE_PROFID_IPV4_GTPC_TEID	41
+#define ICE_PROFID_IPV4_GTPC_NO_TEID		42
+#define ICE_PROFID_IPV4_GTPU_TEID		43
+#define ICE_PROFID_IPV6_GTPC_TEID		44
+#define ICE_PROFID_IPV6_GTPC_NO_TEID		45
+#define ICE_PROFID_IPV6_GTPU_TEID		46
+#define ICE_PROFID_IPV6_GTPU_IPV6_TCP		70
+
 #define DUMMY_ETH_HDR_LEN		16
 #define ICE_SW_RULE_RX_TX_ETH_HDR_SIZE \
 	(offsetof(struct ice_aqc_sw_rules_elem, pdata.lkup_tx_rx.hdr) + \
@@ -211,7 +224,9 @@ struct ice_adv_rule_info {
 	struct ice_sw_act_ctrl sw_act;
 	u32 priority;
 	u8 rx; /* true means LOOKUP_RX otherwise LOOKUP_TX */
+	u8 add_dir_lkup;
 	u16 fltr_rule_id;
+	u16 lg_id;
 	struct ice_adv_rule_flags_info flags_info;
 };
 
@@ -292,7 +307,7 @@ struct ice_vsi_list_map_info {
 
 struct ice_fltr_list_entry {
 	struct list_head list_entry;
-	enum ice_status status;
+	int status;
 	struct ice_fltr_info fltr_info;
 };
 
@@ -337,167 +352,203 @@ enum ice_promisc_flags {
 	ICE_PROMISC_VLAN_TX = 0x80,
 };
 
+struct ice_dummy_pkt_offsets {
+	enum ice_protocol_type type;
+	u16 offset; /* ICE_PROTOCOL_LAST indicates end of list */
+};
+
+void
+ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
+		      enum ice_sw_tunnel_type tun_type, const u8 **pkt,
+		      u16 *pkt_len,
+		      const struct ice_dummy_pkt_offsets **offsets);
+
+int
+ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
+			  struct ice_aqc_sw_rules_elem *s_rule,
+			  const u8 *dummy_pkt, u16 pkt_len,
+			  const struct ice_dummy_pkt_offsets *offsets);
+
+int
+ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
+		   u16 lkups_cnt, struct ice_adv_rule_info *rinfo, u16 *rid);
+
+struct ice_adv_fltr_mgmt_list_entry *
+ice_find_adv_rule_entry(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
+			u16 lkups_cnt, u16 recp_id,
+			struct ice_adv_rule_info *rinfo);
+
+int
+ice_adv_add_update_vsi_list(struct ice_hw *hw,
+			    struct ice_adv_fltr_mgmt_list_entry *m_entry,
+			    struct ice_adv_rule_info *cur_fltr,
+			    struct ice_adv_rule_info *new_fltr);
+
+struct ice_vsi_list_map_info *
+ice_find_vsi_list_entry(struct ice_sw_recipe *recp_list, u16 vsi_handle,
+			u16 *vsi_list_id);
+
 /* VSI related commands */
-enum ice_status
+int
 ice_add_vsi(struct ice_hw *hw, u16 vsi_handle, struct ice_vsi_ctx *vsi_ctx,
 	    struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_free_vsi(struct ice_hw *hw, u16 vsi_handle, struct ice_vsi_ctx *vsi_ctx,
 	     bool keep_vsi_alloc, struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_update_vsi(struct ice_hw *hw, u16 vsi_handle, struct ice_vsi_ctx *vsi_ctx,
 	       struct ice_sq_cd *cd);
 struct ice_vsi_ctx *ice_get_vsi_ctx(struct ice_hw *hw, u16 vsi_handle);
 void ice_clear_all_vsi_ctx(struct ice_hw *hw);
-enum ice_status
+int
 ice_aq_get_vsi_params(struct ice_hw *hw, struct ice_vsi_ctx *vsi_ctx,
 		      struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
 			   u16 count, struct ice_mir_rule_buf *mr_buf,
 			   struct ice_sq_cd *cd, u16 *rule_id);
-enum ice_status
+int
 ice_aq_delete_mir_rule(struct ice_hw *hw, u16 rule_id, bool keep_allocd,
 		       struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_aq_get_storm_ctrl(struct ice_hw *hw, u32 *bcast_thresh, u32 *mcast_thresh,
 		      u32 *ctl_bitmask);
-enum ice_status
+int
 ice_aq_set_storm_ctrl(struct ice_hw *hw, u32 bcast_thresh, u32 mcast_thresh,
 		      u32 ctl_bitmask);
 /* Switch config */
-enum ice_status
+int
 ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp_elem *buf,
 		  u16 buf_size, u16 *req_desc, u16 *num_elems,
 		  struct ice_sq_cd *cd);
-enum ice_status ice_get_initial_sw_cfg(struct ice_hw *hw);
+int ice_get_initial_sw_cfg(struct ice_hw *hw);
 
-enum ice_status
+int
 ice_alloc_vlan_res_counter(struct ice_hw *hw, u16 *counter_id);
-enum ice_status
+int
 ice_free_vlan_res_counter(struct ice_hw *hw, u16 counter_id);
-enum ice_status
+int
 ice_alloc_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 		   u16 *counter_id);
-enum ice_status
+int
 ice_free_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 		  u16 counter_id);
 
-enum ice_status ice_update_sw_rule_bridge_mode(struct ice_hw *hw);
-enum ice_status ice_alloc_rss_global_lut(struct ice_hw *hw, bool shared_res, u16 *global_lut_id);
-enum ice_status ice_free_rss_global_lut(struct ice_hw *hw, u16 global_lut_id);
-enum ice_status
+int ice_update_sw_rule_bridge_mode(struct ice_hw *hw);
+int ice_alloc_rss_global_lut(struct ice_hw *hw, bool shared_res, u16 *global_lut_id);
+int ice_free_rss_global_lut(struct ice_hw *hw, u16 global_lut_id);
+int
 ice_alloc_sw(struct ice_hw *hw, bool ena_stats, bool shared_res, u16 *sw_id,
 	     u16 *counter_id);
-enum ice_status
+int
 ice_free_sw(struct ice_hw *hw, u16 sw_id, u16 counter_id);
-enum ice_status
+int
 ice_aq_get_res_alloc(struct ice_hw *hw, u16 *num_entries,
 		     struct ice_aqc_get_res_resp_elem *buf, u16 buf_size,
 		     struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_aq_get_res_descs(struct ice_hw *hw, u16 num_entries,
 		     struct ice_aqc_res_elem *buf, u16 buf_size, u16 res_type,
 		     bool res_shared, u16 *desc_id, struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_add_vlan(struct ice_hw *hw, struct list_head *m_list);
-enum ice_status
+int
 ice_remove_vlan(struct ice_hw *hw, struct list_head *v_list);
 void ice_rem_all_sw_rules_info(struct ice_hw *hw);
-enum ice_status ice_add_mac(struct ice_hw *hw, struct list_head *m_lst);
-enum ice_status ice_remove_mac(struct ice_hw *hw, struct list_head *m_lst);
+int ice_add_mac(struct ice_hw *hw, struct list_head *m_lst);
+int ice_remove_mac(struct ice_hw *hw, struct list_head *m_lst);
 bool ice_mac_fltr_exist(struct ice_hw *hw, u8 *mac, u16 vsi_handle);
 bool ice_vlan_fltr_exist(struct ice_hw *hw, u16 vlan_id, u16 vsi_handle);
-enum ice_status
+int
 ice_add_eth_mac(struct ice_hw *hw, struct list_head *em_list);
-enum ice_status
+int
 ice_remove_eth_mac(struct ice_hw *hw, struct list_head *em_list);
 void ice_dump_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lookup);
-enum ice_status
+int
 ice_cfg_iwarp_fltr(struct ice_hw *hw, u16 vsi_handle, bool enable);
-enum ice_status
+int
 ice_add_mac_vlan(struct ice_hw *hw, struct list_head *m_list);
-enum ice_status
+int
 ice_remove_mac_vlan(struct ice_hw *hw, struct list_head *v_list);
 
-enum ice_status
+int
 ice_add_mac_with_sw_marker(struct ice_hw *hw, struct ice_fltr_info *f_info,
 			   u16 sw_marker);
-enum ice_status
+int
 ice_add_mac_with_counter(struct ice_hw *hw, struct ice_fltr_info *f_info);
 void ice_remove_vsi_fltr(struct ice_hw *hw, u16 vsi_handle);
 
 /* Promisc/defport setup for VSIs */
-enum ice_status
+int
 ice_cfg_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle, bool set,
 		 u8 direction);
 bool ice_check_if_dflt_vsi(struct ice_port_info *pi, u16 vsi_handle,
 			   bool *rule_exists);
-enum ice_status
+int
 ice_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
 		    u16 vid);
-enum ice_status
+int
 ice_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
 		      u16 vid);
-enum ice_status
+int
 ice_set_vlan_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
 			 bool rm_vlan_promisc);
 
 /* Get VSIs Promisc/defport settings */
-enum ice_status
+int
 ice_get_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 *promisc_mask,
 		    u16 *vid);
-enum ice_status
+int
 ice_get_vsi_vlan_promisc(struct ice_hw *hw, u16 vsi_handle, u8 *promisc_mask,
 			 u16 *vid);
 
-enum ice_status
+int
 ice_aq_add_recipe(struct ice_hw *hw,
 		  struct ice_aqc_recipe_data_elem *s_recipe_list,
 		  u16 num_recipes, struct ice_sq_cd *cd);
 
-enum ice_status
+int
 ice_aq_get_recipe(struct ice_hw *hw,
 		  struct ice_aqc_recipe_data_elem *s_recipe_list,
 		  u16 *num_recipes, u16 recipe_root, struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_aq_map_recipe_to_profile(struct ice_hw *hw, u32 profile_id, u8 *r_bitmap,
 			     struct ice_sq_cd *cd);
 
-enum ice_status
+int
 ice_aq_get_recipe_to_profile(struct ice_hw *hw, u32 profile_id, u8 *r_bitmap,
 			     struct ice_sq_cd *cd);
 
-enum ice_status ice_alloc_recipe(struct ice_hw *hw, u16 *recipe_id);
-enum ice_status
+int ice_alloc_recipe(struct ice_hw *hw, u16 *recipe_id);
+int
 ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		 u16 lkups_cnt, struct ice_adv_rule_info *rinfo,
 		 struct ice_rule_query_data *added_entry);
-enum ice_status
+int
 ice_rem_adv_rule_for_vsi(struct ice_hw *hw, u16 vsi_handle);
-enum ice_status
+int
 ice_rem_adv_rule_by_id(struct ice_hw *hw,
 		       struct ice_rule_query_data *remove_entry);
-enum ice_status
+int
 ice_rem_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		 u16 lkups_cnt, struct ice_adv_rule_info *rinfo);
 
-enum ice_status ice_dump_sw_cfg(struct ice_hw *hw);
+int ice_dump_sw_cfg(struct ice_hw *hw);
 
-enum ice_status
+int
 ice_init_def_sw_recp(struct ice_hw *hw, struct ice_sw_recipe **recp_list);
 u16 ice_get_hw_vsi_num(struct ice_hw *hw, u16 vsi_handle);
 bool ice_is_vsi_valid(struct ice_hw *hw, u16 vsi_handle);
 
-enum ice_status
+int
 ice_replay_vsi_all_fltr(struct ice_hw *hw, struct ice_port_info *pi,
 			u16 vsi_handle);
 void ice_rm_sw_replay_rule_info(struct ice_hw *hw, struct ice_switch_info *sw);
 void ice_rm_all_sw_replay_rule_info(struct ice_hw *hw);
-enum ice_status
+int
 ice_aq_sw_rules(struct ice_hw *hw, void *rule_list, u16 rule_list_sz,
 		u8 num_rules, enum ice_adminq_opc opc, struct ice_sq_cd *cd);
-enum ice_status
+int
 ice_update_recipe_lkup_idx(struct ice_hw *hw,
 			   struct ice_update_recipe_lkup_idx_params *params);
 void ice_change_proto_id_to_dvm(void);

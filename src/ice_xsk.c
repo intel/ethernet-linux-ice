@@ -237,7 +237,7 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 		if (err)
 			goto free_buf;
 		ice_set_ring_xdp(xdp_ring);
-		xdp_ring->xsk_pool = ice_xsk_umem(xdp_ring);
+		xdp_ring->xsk_pool = ice_xsk_pool(xdp_ring);
 	}
 
 	err = ice_vsi_cfg_rxq(rx_ring);
@@ -368,38 +368,38 @@ static void ice_xsk_umem_dma_unmap(struct ice_vsi *vsi, struct xdp_umem *umem)
 #endif
 
 /**
- * ice_xsk_umem_disable - disable a UMEM region
+ * ice_xsk_pool_disable - disable a buffer pool region
  * @vsi: Current VSI
  * @qid: queue ID
  *
  * Returns 0 on success, negative on failure
  */
-static int ice_xsk_umem_disable(struct ice_vsi *vsi, u16 qid)
+static int ice_xsk_pool_disable(struct ice_vsi *vsi, u16 qid)
 {
 #ifdef HAVE_AF_XDP_NETDEV_UMEM
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
-	struct xsk_buff_pool *umem = xsk_get_pool_from_qid(vsi->netdev, qid);
+	struct xsk_buff_pool *pool = xsk_get_pool_from_qid(vsi->netdev, qid);
 #else
-	struct xdp_umem *umem = xsk_get_pool_from_qid(vsi->netdev, qid);
+	struct xdp_umem *pool = xsk_get_pool_from_qid(vsi->netdev, qid);
 #endif
 #else
-	struct xdp_umem *umem;
+	struct xdp_umem *pool;
 
 	if (!vsi->xsk_umems || qid >= vsi->num_xsk_umems)
 		return -EINVAL;
 
-	umem = vsi->xsk_umems[qid];
+	pool = vsi->xsk_umems[qid];
 #endif
 
-	if (!umem)
+	if (!pool)
 		return -EINVAL;
 
 	clear_bit(qid, vsi->af_xdp_zc_qps);
 
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
-	ice_xsk_umem_dma_unmap(vsi, umem);
+	ice_xsk_umem_dma_unmap(vsi, pool);
 #else
-	xsk_pool_dma_unmap(umem, ICE_RX_DMA_ATTR);
+	xsk_pool_dma_unmap(pool, ICE_RX_DMA_ATTR);
 #endif
 
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
@@ -410,18 +410,18 @@ static int ice_xsk_umem_disable(struct ice_vsi *vsi, u16 qid)
 }
 
 /**
- * ice_xsk_umem_enable - enable a UMEM region
+ * ice_xsk_pool_enable - enable a buffer pool region
  * @vsi: Current VSI
- * @umem: pointer to a requested UMEM region
+ * @pool: pointer to a requested buffer pool region
  * @qid: queue ID
  *
  * Returns 0 on success, negative on failure
  */
 static int
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
-ice_xsk_umem_enable(struct ice_vsi *vsi, struct xsk_buff_pool *umem, u16 qid)
+ice_xsk_pool_enable(struct ice_vsi *vsi, struct xsk_buff_pool *pool, u16 qid)
 #else
-ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
+ice_xsk_pool_enable(struct ice_vsi *vsi, struct xdp_umem *pool, u16 qid)
 #endif /* HAVE_NETDEV_BPF_XSK_POOL */
 {
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
@@ -445,7 +445,7 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 	if (vsi->xsk_umems && vsi->xsk_umems[qid])
 		return -EBUSY;
 
-	vsi->xsk_umems[qid] = umem;
+	vsi->xsk_umems[qid] = pool;
 	vsi->num_xsk_umems_used++;
 #else
 	if (qid >= vsi->netdev->real_num_rx_queues ||
@@ -458,11 +458,11 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 	if (!reuseq)
 		return -ENOMEM;
 
-	xsk_reuseq_free(xsk_reuseq_swap(umem, reuseq));
+	xsk_reuseq_free(xsk_reuseq_swap(pool, reuseq));
 
-	err = ice_xsk_umem_dma_map(vsi, umem);
+	err = ice_xsk_umem_dma_map(vsi, pool);
 #else
-	err = xsk_pool_dma_map(umem, ice_pf_to_dev(vsi->back),
+	err = xsk_pool_dma_map(pool, ice_pf_to_dev(vsi->back),
 			       ICE_RX_DMA_ATTR);
 #endif
 
@@ -475,21 +475,27 @@ ice_xsk_umem_enable(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 }
 
 /**
- * ice_xsk_umem_setup - enable/disable a UMEM region depending on its state
+ * ice_xsk_pool_setup - enable/disable a buffer pool region depending on its state
  * @vsi: Current VSI
- * @umem: UMEM to enable/associate to a ring, NULL to disable
+ * @pool: buffer pool to enable/associate to a ring, NULL to disable
  * @qid: queue ID
  *
  * Returns 0 on success, negative on failure
  */
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
-int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xsk_buff_pool *umem, u16 qid)
+int ice_xsk_pool_setup(struct ice_vsi *vsi, struct xsk_buff_pool *pool, u16 qid)
 #else
-int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
+int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xdp_umem *pool, u16 qid)
 #endif
 {
-	bool if_running, umem_present = !!umem;
-	int ret = 0, umem_failure = 0;
+	bool if_running, pool_present = !!pool;
+	int ret = 0, pool_failure = 0;
+
+	if (qid >= vsi->num_rxq || qid >= vsi->num_txq) {
+		netdev_err(vsi->netdev, "Please use queue id in scope of combined queues count\n");
+		pool_failure = -EINVAL;
+		goto failure;
+	}
 
 	if_running = netif_running(vsi->netdev) && ice_is_xdp_ena_vsi(vsi);
 
@@ -497,26 +503,27 @@ int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xdp_umem *umem, u16 qid)
 		ret = ice_qp_dis(vsi, qid);
 		if (ret) {
 			netdev_err(vsi->netdev, "ice_qp_dis error = %d\n", ret);
-			goto xsk_umem_if_up;
+			goto xsk_pool_if_up;
 		}
 	}
 
-	umem_failure = umem_present ? ice_xsk_umem_enable(vsi, umem, qid) :
-				      ice_xsk_umem_disable(vsi, qid);
+	pool_failure = pool_present ? ice_xsk_pool_enable(vsi, pool, qid) :
+				      ice_xsk_pool_disable(vsi, qid);
 
-xsk_umem_if_up:
+xsk_pool_if_up:
 	if (if_running) {
 		ret = ice_qp_ena(vsi, qid);
-		if (!ret && umem_present)
+		if (!ret && pool_present)
 			napi_schedule(&vsi->xdp_rings[qid]->q_vector->napi);
 		else if (ret)
 			netdev_err(vsi->netdev, "ice_qp_ena error = %d\n", ret);
 	}
 
-	if (umem_failure) {
-		netdev_err(vsi->netdev, "Could not %sable UMEM, error = %d\n",
-			   umem_present ? "en" : "dis", umem_failure);
-		return umem_failure;
+failure:
+	if (pool_failure) {
+		netdev_err(vsi->netdev, "Could not %sable pool, error = %d\n",
+			   pool_present ? "en" : "dis", pool_failure);
+		return pool_failure;
 	}
 
 	return ret;

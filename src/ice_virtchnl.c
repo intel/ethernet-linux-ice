@@ -382,6 +382,12 @@ ice_vc_hash_field_match_type ice_vc_hash_field_list[] = {
 		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ECPRI_PC_RTC_ID),
 		BIT_ULL(ICE_FLOW_FIELD_IDX_ECPRI_TP0_PC_ID) |
 		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_ECPRI_TP0_PC_ID)},
+	{VIRTCHNL_PROTO_HDR_L2TPV2,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_L2TPV2_SESS_ID),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_L2TPV2_SESS_ID)},
+	{VIRTCHNL_PROTO_HDR_L2TPV2,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_L2TPV2_LEN_SESS_ID),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_L2TPV2_LEN_SESS_ID)},
 };
 
 /**
@@ -517,9 +523,9 @@ int
 ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen)
 {
-	enum ice_status aq_ret;
 	struct device *dev;
 	struct ice_pf *pf;
+	int aq_ret;
 
 	pf = vf->pf;
 	dev = ice_pf_to_dev(pf);
@@ -527,8 +533,8 @@ ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 	aq_ret = ice_aq_send_msg_to_vf(&pf->hw, vf->vf_id, v_opcode, v_retval,
 				       msg, msglen, NULL);
 	if (aq_ret && pf->hw.mailboxq.sq_last_status != ICE_AQ_RC_ENOSYS) {
-		dev_info(dev, "Unable to send the message to VF %d ret %s aq_err %s\n",
-			 vf->vf_id, ice_stat_str(aq_ret),
+		dev_info(dev, "Unable to send the message to VF %d ret %d aq_err %s\n",
+			 vf->vf_id, aq_ret,
 			 ice_aq_str(pf->hw.mailboxq.sq_last_status));
 		return -EIO;
 	}
@@ -689,6 +695,9 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_FDIR_PF)
 		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_FDIR_PF;
+
+	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_FSUB_PF)
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_FSUB_PF;
 
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2)
 		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2;
@@ -880,7 +889,7 @@ ice_vc_rss_hash_update(struct ice_hw *hw, struct ice_vsi *vsi, u8 hash_type)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct ice_vsi_ctx *ctx;
-	enum ice_status status;
+	int status;
 
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
@@ -901,10 +910,8 @@ ice_vc_rss_hash_update(struct ice_hw *hw, struct ice_vsi *vsi, u8 hash_type)
 
 	status = ice_update_vsi(hw, vsi->idx, ctx, NULL);
 	if (status) {
-		dev_err(ice_hw_to_dev(hw),
-			"update VSI for rss failed, err %s aq_err %s\n",
-			ice_stat_str(status),
-			ice_aq_str(hw->adminq.sq_last_status));
+		dev_err(ice_hw_to_dev(hw), "update VSI for RSS failed, err %d aq_err %s\n",
+			status, ice_aq_str(hw->adminq.sq_last_status));
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 	} else {
 		vsi->info.q_opt_rss = ctx->info.q_opt_rss;
@@ -933,10 +940,33 @@ ice_vc_validate_pattern(struct ice_vf *vf, struct virtchnl_proto_hdrs *proto)
 	bool is_udp = false;
 	u16 ptype = -1;
 	int i = 0;
+	int count;
+	s32 type;
 
-	while (i < proto->count &&
-	       proto->proto_hdr[i].type != VIRTCHNL_PROTO_HDR_NONE) {
-		switch (proto->proto_hdr[i].type) {
+	/* pass the validate for raw pattern */
+	if (proto->tunnel_level == 0 && proto->count == 0)
+		return true;
+
+	if (proto->count > VIRTCHNL_MAX_NUM_PROTO_HDRS +
+			   VIRTCHNL_MAX_NUM_PROTO_HDRS_W_MSK)
+		return false;
+
+	if (proto->count > VIRTCHNL_MAX_NUM_PROTO_HDRS)
+		count = proto->count - VIRTCHNL_MAX_NUM_PROTO_HDRS;
+	else
+		count = proto->count;
+
+	while (i < count) {
+		if (proto->proto_hdr[i].type != VIRTCHNL_PROTO_HDR_NONE)
+			type = proto->proto_hdr[i].type;
+		else if (i < VIRTCHNL_MAX_NUM_PROTO_HDRS_W_MSK &&
+			 proto->proto_hdr_w_msk[i].type !=
+				VIRTCHNL_PROTO_HDR_NONE)
+			type = proto->proto_hdr_w_msk[i].type;
+		else
+			break;
+
+		switch (type) {
 		case VIRTCHNL_PROTO_HDR_ETH:
 			ptype = ICE_PTYPE_MAC_PAY;
 			break;
@@ -1097,6 +1127,21 @@ static bool ice_vc_parse_rss_cfg(struct ice_hw *hw,
 				hdr_found = hdr_map.ice_hdr;
 		}
 
+		/* Find matched ice hash fields according to
+		 * virtchnl hash fields.
+		 */
+		for (j = 0; j < hf_list_len; j++) {
+			struct ice_vc_hash_field_match_type hf_map =
+				hf_list[j];
+
+			if (proto_hdr->type == hf_map.vc_hdr &&
+			    proto_hdr->field_selector ==
+			     hf_map.vc_hash_field) {
+				*hash_flds |= hf_map.ice_hash_field;
+				break;
+			}
+		}
+
 		if (!hdr_found)
 			return false;
 
@@ -1105,16 +1150,18 @@ static bool ice_vc_parse_rss_cfg(struct ice_hw *hw,
 		else if (proto_hdr->type == VIRTCHNL_PROTO_HDR_IPV6 &&
 			 !inner_hdr)
 			outer_ipv6 = true;
-		/* for GTPU and L2TPv2, take inner header as input set if no
+		/* for GRE and L2TPv2, take inner header as input set if no
 		 * any field is selected from outer headers.
+		 * for GTPU, take inner header and GTPU teid as input set.
 		 */
-		else if ((proto_hdr->type == VIRTCHNL_PROTO_HDR_L2TPV2 ||
-			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GRE ||
-			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_IP ||
+		else if ((proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_IP ||
 			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_EH ||
 			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_DWN ||
-			  proto_hdr->type == VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP) &&
-			  *hash_flds == 0) {
+			  proto_hdr->type ==
+				VIRTCHNL_PROTO_HDR_GTPU_EH_PDU_UP) ||
+			 ((proto_hdr->type == VIRTCHNL_PROTO_HDR_L2TPV2 ||
+			   proto_hdr->type == VIRTCHNL_PROTO_HDR_GRE) &&
+			   *hash_flds == 0)) {
 			/* set inner_hdr flag, and clean up outer header */
 			inner_hdr = true;
 
@@ -1143,21 +1190,6 @@ static bool ice_vc_parse_rss_cfg(struct ice_hw *hw,
 		}
 
 		*addl_hdrs |= hdr_found;
-
-		/* Find matched ice hash fields according to
-		 * virtchnl hash fields.
-		 */
-		for (j = 0; j < hf_list_len; j++) {
-			struct ice_vc_hash_field_match_type hf_map =
-				hf_list[j];
-
-			if (proto_hdr->type == hf_map.vc_hdr &&
-			    proto_hdr->field_selector ==
-			     hf_map.vc_hash_field) {
-				*hash_flds |= hf_map.ice_hash_field;
-				break;
-			}
-		}
 
 		/* refine hash hdrs and fields for IP fragment */
 		if (VIRTCHNL_TEST_PROTO_HDR_FIELD(proto_hdr,
@@ -1286,16 +1318,16 @@ static int
 ice_hash_moveout(struct ice_vf *vf, struct ice_rss_hash_cfg *cfg)
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
-	enum ice_status status = 0;
 	struct ice_hw *hw = &vf->pf->hw;
+	int status;
 
 	if (!is_hash_cfg_valid(cfg))
 		return -ENOENT;
 
 	status = ice_rem_rss_cfg(hw, vf->lan_vsi_idx, cfg);
-	if (status && status != ICE_ERR_DOES_NOT_EXIST) {
-		dev_err(dev, "ice_rem_rss_cfg failed for VSI:%d, error:%s\n",
-			vf->lan_vsi_num, ice_stat_str(status));
+	if (status && status != -ENOENT) {
+		dev_err(dev, "ice_rem_rss_cfg failed for VSI:%d, error:%d\n",
+			vf->lan_vsi_num, status);
 		return -EBUSY;
 	}
 
@@ -1313,16 +1345,16 @@ static int
 ice_hash_moveback(struct ice_vf *vf, struct ice_rss_hash_cfg *cfg)
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
-	enum ice_status status = 0;
 	struct ice_hw *hw = &vf->pf->hw;
+	int status;
 
 	if (!is_hash_cfg_valid(cfg))
 		return -ENOENT;
 
 	status = ice_add_rss_cfg(hw, vf->lan_vsi_idx, cfg);
 	if (status) {
-		dev_err(dev, "ice_add_rss_cfg failed for VSI:%d, error:%s\n",
-			vf->lan_vsi_num, ice_stat_str(status));
+		dev_err(dev, "ice_add_rss_cfg failed for VSI:%d, error:%d\n",
+			vf->lan_vsi_num, status);
 		return -EBUSY;
 	}
 
@@ -1925,22 +1957,21 @@ ice_rem_rss_cfg_post(struct ice_vf *vf, struct ice_rss_hash_cfg *cfg)
  * and also post process the hash context base on the rollback mechanism
  * which handle some rules conflict by ice_add_rss_cfg_wrap.
  */
-static enum ice_status
+static int
 ice_rem_rss_cfg_wrap(struct ice_vf *vf, struct ice_rss_hash_cfg *cfg)
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	struct ice_hw *hw = &vf->pf->hw;
-	enum ice_status status;
+	int status;
 
 	status = ice_rem_rss_cfg(hw, vf->lan_vsi_idx, cfg);
-	/* We just ignore ICE_ERR_DOES_NOT_EXIST, because
-	 * if two configurations share the same profile remove
-	 * one of them actually removes both, since the
+	/* We just ignore -ENOENT, because if two configurations share the same
+	 * profile remove one of them actually removes both, since the
 	 * profile is deleted.
 	 */
-	if (status && status != ICE_ERR_DOES_NOT_EXIST) {
-		dev_err(dev, "ice_rem_rss_cfg failed for VSI:%d, error:%s\n",
-			vf->lan_vsi_num, ice_stat_str(status));
+	if (status && status != -ENOENT) {
+		dev_err(dev, "ice_rem_rss_cfg failed for VSI:%d, error:%d\n",
+			vf->lan_vsi_num, status);
 		return status;
 	}
 
@@ -1958,26 +1989,213 @@ ice_rem_rss_cfg_wrap(struct ice_vf *vf, struct ice_rss_hash_cfg *cfg)
  * also use a rollback mechanism to handle some rules conflict due to TCAM
  * write sequence from top to down.
  */
-static enum ice_status
+static int
 ice_add_rss_cfg_wrap(struct ice_vf *vf, struct ice_rss_hash_cfg *cfg)
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
-	enum ice_status status = 0;
 	struct ice_hw *hw = &vf->pf->hw;
+	int status;
 
 	if (ice_add_rss_cfg_pre(vf, cfg))
-		return ICE_ERR_PARAM;
+		return -EINVAL;
 
 	status = ice_add_rss_cfg(hw, vf->lan_vsi_idx, cfg);
 	if (status) {
-		dev_err(dev, "ice_add_rss_cfg failed for VSI:%d, error:%s\n",
-			vf->lan_vsi_num, ice_stat_str(status));
+		dev_err(dev, "ice_add_rss_cfg failed for VSI:%d, error:%d\n",
+			vf->lan_vsi_num, status);
 		return status;
 	}
 
 	if (ice_add_rss_cfg_post(vf, cfg))
-		status = ICE_ERR_PARAM;
+		status = -EINVAL;
 
+	return status;
+}
+
+/**
+ * ice_parse_raw_rss_pattern - Parse raw pattern spec and mask for RSS
+ * @vf: pointer to the VF info
+ * @proto: pointer to the virtchnl protocol header
+ * @raw_cfg: pointer to the RSS raw pattern configuration
+ *
+ * Parser function to get spec and mask from virtchnl message, and parse
+ * them to get the corresponding profile and offset. The profile is used
+ * to add RSS configuration.
+ */
+static int
+ice_parse_raw_rss_pattern(struct ice_vf *vf, struct virtchnl_proto_hdrs *proto,
+			  struct ice_rss_raw_cfg *raw_cfg)
+{
+	struct ice_parser_result pkt_parsed;
+	struct ice_hw *hw = &vf->pf->hw;
+	struct ice_parser_profile prof;
+	u16 pkt_len, udp_port = 0;
+	struct ice_parser *psr;
+	u8 *pkt_buf, *msk_buf;
+	int status = 0;
+
+	pkt_len = proto->raw.pkt_len;
+	pkt_buf = kzalloc(pkt_len, GFP_KERNEL);
+	msk_buf = kzalloc(pkt_len, GFP_KERNEL);
+	if (!pkt_buf || !msk_buf) {
+		status = -ENOMEM;
+		goto free_alloc;
+	}
+
+	memcpy(pkt_buf, proto->raw.spec, pkt_len);
+	memcpy(msk_buf, proto->raw.mask, pkt_len);
+
+	status = ice_parser_create(hw, &psr);
+	if (status)
+		goto parser_destroy;
+
+	if (ice_get_open_tunnel_port(hw, TNL_VXLAN, &udp_port))
+		ice_parser_vxlan_tunnel_set(psr, udp_port, true);
+
+	status = ice_parser_run(psr, pkt_buf, pkt_len, &pkt_parsed);
+	if (status)
+		goto parser_destroy;
+
+	status = ice_parser_profile_init(&pkt_parsed, pkt_buf, msk_buf,
+					 pkt_len, ICE_BLK_RSS,
+					 true, &prof);
+	if (status)
+		goto parser_destroy;
+
+	memcpy(&raw_cfg->prof, &prof, sizeof(prof));
+
+parser_destroy:
+	ice_parser_destroy(psr);
+free_alloc:
+	kfree(pkt_buf);
+	kfree(msk_buf);
+	return status;
+}
+
+/**
+ * ice_add_raw_rss_cfg - add RSS configuration for raw pattern
+ * @vf: pointer to the VF info
+ * @cfg: pointer to the RSS raw pattern configuration
+ *
+ * This function adds the RSS configuration for raw pattern.
+ * Check if current profile is matched. If not, remove the old
+ * one and add the new profile to HW directly. Update the symmetric
+ * hash configuration as well.
+ */
+static int
+ice_add_raw_rss_cfg(struct ice_vf *vf, struct ice_rss_raw_cfg *cfg)
+{
+	struct ice_parser_profile *prof = &cfg->prof;
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_rss_prof_info *rss_prof;
+	struct ice_hw *hw = &vf->pf->hw;
+	int i, ptg, status = 0;
+	u16 vsi_handle;
+	u64 id;
+
+	vsi_handle = vf->lan_vsi_idx;
+	id = find_first_bit(prof->ptypes, ICE_FLOW_PTYPE_MAX);
+
+	ptg = hw->blk[ICE_BLK_RSS].xlt1.t[id];
+	rss_prof = &vf->rss_prof_info[ptg];
+
+	/* check if ptg already has a profile */
+	if (rss_prof->prof.fv_num) {
+		for (i = 0; i < ICE_MAX_FV_WORDS; i++) {
+			if (rss_prof->prof.fv[i].proto_id !=
+			    prof->fv[i].proto_id ||
+			    rss_prof->prof.fv[i].offset !=
+			    prof->fv[i].offset)
+				break;
+		}
+
+		/* current profile is matched, check symmetric hash */
+		if (i == ICE_MAX_FV_WORDS) {
+			if (rss_prof->symm != cfg->symm)
+				goto update_symm;
+			return status;
+		}
+
+		/* current profile is not matched, remove it */
+		status =
+		ice_rem_prof_id_flow(hw, ICE_BLK_RSS,
+				     ice_get_hw_vsi_num(hw, vsi_handle),
+				     id);
+		if (status) {
+			dev_err(dev, "remove RSS flow failed\n");
+			return status;
+		}
+
+		status = ice_rem_prof(hw, ICE_BLK_RSS, id);
+		if (status) {
+			dev_err(dev, "remove RSS profile failed\n");
+			return status;
+		}
+	}
+
+	/* add new profile */
+	status = ice_flow_set_hw_prof(hw, vsi_handle, 0, prof, ICE_BLK_RSS);
+	if (status) {
+		dev_err(dev, "HW profile add failed\n");
+		return status;
+	}
+
+	memcpy(&rss_prof->prof, prof, sizeof(struct ice_parser_profile));
+
+update_symm:
+	rss_prof->symm = cfg->symm;
+	ice_rss_update_raw_symm(hw, cfg, id);
+	return status;
+}
+
+/**
+ * ice_rem_raw_rss_cfg - remove RSS configuration for raw pattern
+ * @vf: pointer to the VF info
+ * @cfg: pointer to the RSS raw pattern configuration
+ *
+ * This function removes the RSS configuration for raw pattern.
+ * Check if vsi group is already removed first. If not, remove the
+ * profile.
+ */
+static int
+ice_rem_raw_rss_cfg(struct ice_vf *vf, struct ice_rss_raw_cfg *cfg)
+{
+	struct ice_parser_profile *prof = &cfg->prof;
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_hw *hw = &vf->pf->hw;
+	int ptg, status = 0;
+	u16 vsig, vsi;
+	u64 id;
+
+	id = find_first_bit(prof->ptypes, ICE_FLOW_PTYPE_MAX);
+
+	ptg = hw->blk[ICE_BLK_RSS].xlt1.t[id];
+
+	memset(&vf->rss_prof_info[ptg], 0,
+	       sizeof(struct ice_rss_prof_info));
+
+	/* check if vsig is already removed */
+	vsi = ice_get_hw_vsi_num(hw, vf->lan_vsi_idx);
+	if (vsi >= ICE_MAX_VSI) {
+		status = -EINVAL;
+		goto err;
+	}
+
+	vsig = hw->blk[ICE_BLK_RSS].xlt2.vsis[vsi].vsig;
+	if (vsig) {
+		status = ice_rem_prof_id_flow(hw, ICE_BLK_RSS, vsi, id);
+		if (status)
+			goto err;
+
+		status = ice_rem_prof(hw, ICE_BLK_RSS, id);
+		if (status)
+			goto err;
+	}
+
+	return status;
+
+err:
+	dev_err(dev, "HW profile remove failed\n");
 	return status;
 }
 
@@ -1998,6 +2216,8 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	struct ice_hw *hw = &vf->pf->hw;
 	struct ice_vsi *vsi;
+	u8 hash_type;
+	bool symm;
 
 	if (!test_bit(ICE_FLAG_RSS_ENA, vf->pf->flags)) {
 		dev_dbg(dev, "VF %d attempting to configure RSS, but RSS is not supported by the PF\n",
@@ -2039,24 +2259,45 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 	}
 
 	if (rss_cfg->rss_algorithm == VIRTCHNL_RSS_ALG_R_ASYMMETRIC) {
-		u8 hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_XOR :
+		hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_XOR :
 				     ICE_AQ_VSI_Q_OPT_RSS_TPLZ;
 
 		v_ret = ice_vc_rss_hash_update(hw, vsi, hash_type);
+		goto error_param;
+	}
+
+	hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_SYM_TPLZ :
+			ICE_AQ_VSI_Q_OPT_RSS_TPLZ;
+	v_ret = ice_vc_rss_hash_update(hw, vsi, hash_type);
+	if (v_ret)
+		goto error_param;
+
+	symm = rss_cfg->rss_algorithm == VIRTCHNL_RSS_ALG_TOEPLITZ_SYMMETRIC;
+	/* Configure RSS hash for raw pattern */
+	if (rss_cfg->proto_hdrs.tunnel_level == 0 &&
+	    rss_cfg->proto_hdrs.count == 0) {
+		struct ice_rss_raw_cfg raw_cfg;
+
+		if (ice_parse_raw_rss_pattern(vf, &rss_cfg->proto_hdrs,
+					      &raw_cfg)) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto error_param;
+		}
+
+		if (add) {
+			raw_cfg.symm = symm;
+			if (ice_add_raw_rss_cfg(vf, &raw_cfg))
+				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		} else {
+			if (ice_rem_raw_rss_cfg(vf, &raw_cfg))
+				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		}
 	} else {
 		struct ice_rss_hash_cfg cfg;
-		u8 hash_type;
 
 		cfg.addl_hdrs = ICE_FLOW_SEG_HDR_NONE;
 		cfg.hash_flds = ICE_HASH_INVALID;
 		cfg.hdr_type = ICE_RSS_ANY_HEADERS;
-
-		hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_SYM_TPLZ :
-				ICE_AQ_VSI_Q_OPT_RSS_TPLZ;
-
-		v_ret = ice_vc_rss_hash_update(hw, vsi, hash_type);
-		if (v_ret)
-			goto error_param;
 
 		if (!ice_vc_parse_rss_cfg(hw, rss_cfg, &cfg)) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -2064,12 +2305,7 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 		}
 
 		if (add) {
-			if (rss_cfg->rss_algorithm ==
-				     VIRTCHNL_RSS_ALG_TOEPLITZ_SYMMETRIC)
-				cfg.symm = true;
-			else
-				cfg.symm = false;
-
+			cfg.symm = symm;
 			if (ice_add_rss_cfg_wrap(vf, &cfg))
 				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		} else {
@@ -2570,14 +2806,11 @@ static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 	ice_vf_get_promisc_masks(vf, vsi, &ucast_m, &mcast_m);
 
 	if (!test_bit(ICE_FLAG_VF_TRUE_PROMISC_ENA, pf->flags)) {
-		if (alluni) {
-			/* in this case we're turning on promiscuous mode */
+		if (alluni)
 			ret = ice_set_dflt_vsi(vsi);
-		} else {
-			/* in this case we're turning off promiscuous mode */
-			if (ice_is_dflt_vsi_in_use(vsi->port_info))
-				ret = ice_clear_dflt_vsi(vsi);
-		}
+		else
+			ret = ice_clear_dflt_vsi(vsi);
+
 		/* in this case we're turning on/off only
 		 * allmulticast
 		 */
@@ -3359,7 +3592,7 @@ static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
 		qs_bw[i].tc = qbw->cfg[i].tc;
 	}
 
-	memcpy(vf->qs_bw, qs_bw, sizeof(*qs_bw));
+	memcpy(vf->qs_bw, qs_bw, len);
 
 err_bw:
 	kfree(qs_bw);
@@ -3448,30 +3681,23 @@ err:
  */
 static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 {
-	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_vsi_queue_config_info *qci =
 	    (struct virtchnl_vsi_queue_config_info *)msg;
 	struct virtchnl_queue_pair_info *qpi;
 	struct ice_pf *pf = vf->pf;
-	struct ice_vsi *vsi;
+	struct ice_vsi *vsi = NULL;
 	u16 queue_id_tmp, tc;
-	int i, q_idx;
+	int i = -1, q_idx;
 
-	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
 		goto error_param;
-	}
 
-	if (!ice_vc_isvalid_vsi_id(vf, qci->vsi_id)) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+	if (!ice_vc_isvalid_vsi_id(vf, qci->vsi_id))
 		goto error_param;
-	}
 
 	vsi = ice_get_vf_vsi(vf);
-	if (!vsi) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+	if (!vsi)
 		goto error_param;
-	}
 
 	/* check for number of queues is done in ice_alloc_vf_res() function
 	 * for ADQ
@@ -3483,7 +3709,6 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 	    qci->num_queue_pairs > min_t(u16, vsi->alloc_txq, vsi->alloc_rxq)) {
 		dev_err(ice_pf_to_dev(pf), "VF-%d trying to configure more than allocated number of queues: %d\n",
 			vf->vf_id, min_t(u16, vsi->alloc_txq, vsi->alloc_rxq));
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto error_param;
 	}
 
@@ -3496,10 +3721,8 @@ skip_num_queues_check:
 
 		if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_CRC) ||
 		    vf->dcf_vlan_info.outer_stripping_ena ||
-		    vf->vlan_strip_ena) {
-			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		    vf->vlan_strip_ena)
 			goto error_param;
-		}
 	}
 	for (i = 0; i < qci->num_queue_pairs; i++) {
 		qpi = &qci->qpair[i];
@@ -3512,19 +3735,15 @@ skip_num_queues_check:
 		    qpi->txq.headwb_enabled ||
 		    !ice_vc_isvalid_ring_len(qpi->txq.ring_len) ||
 		    !ice_vc_isvalid_ring_len(qpi->rxq.ring_len) ||
-		    !ice_vc_isvalid_q_id(vf, qci->vsi_id, qpi->txq.queue_id)) {
-			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		    !ice_vc_isvalid_q_id(vf, qci->vsi_id, qpi->txq.queue_id))
 			goto error_param;
-		}
 
 skip_non_adq_checks:
 		if (ice_is_vf_adq_ena(vf)) {
 			q_idx = queue_id_tmp;
 			vsi = ice_find_vsi(vf->pf, vf->ch[tc].vsi_num);
-			if (!vsi) {
-				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			if (!vsi)
 				goto error_param;
-			}
 		} else {
 			q_idx = qpi->rxq.queue_id;
 		}
@@ -3533,10 +3752,8 @@ skip_non_adq_checks:
 		 * for selected "vsi" (which could be main VF VSI or
 		 * VF ADQ VSI
 		 */
-		if (q_idx >= vsi->alloc_txq || q_idx >= vsi->alloc_rxq) {
-			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		if (q_idx >= vsi->alloc_txq || q_idx >= vsi->alloc_rxq)
 			goto error_param;
-		}
 
 		/* copy Tx queue info from VF into VSI */
 		if (qpi->txq.ring_len > 0) {
@@ -3545,14 +3762,13 @@ skip_non_adq_checks:
 
 			/* Disable any existing queue first */
 			if (ice_vf_vsi_dis_single_txq(vf, vsi, q_idx,
-						      qpi->txq.queue_id)) {
-				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+						      qpi->txq.queue_id))
 				goto error_param;
-			}
 
 			/* Configure a queue with the requested settings */
 			if (ice_vsi_cfg_single_txq(vsi, vsi->tx_rings, q_idx)) {
-				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+				dev_warn(ice_pf_to_dev(pf), "VF-%d failed to configure TX queue %d\n",
+					 vf->vf_id, i);
 				goto error_param;
 			}
 		}
@@ -3565,21 +3781,23 @@ skip_non_adq_checks:
 			vsi->rx_rings[q_idx]->dma = qpi->rxq.dma_ring_addr;
 			vsi->rx_rings[q_idx]->count = qpi->rxq.ring_len;
 
-			vsi->rx_rings[q_idx]->rx_crc_strip_dis = qpi->rxq.crc_disable;
+			if (qpi->rxq.crc_disable)
+				vsi->rx_rings[q_idx]->flags |=
+					ICE_RX_FLAGS_CRC_STRIP_DIS;
+			else
+				vsi->rx_rings[q_idx]->flags &=
+					~ICE_RX_FLAGS_CRC_STRIP_DIS;
 
 			if (qpi->rxq.databuffer_size != 0 &&
 			    (qpi->rxq.databuffer_size > ((16 * 1024) - 128) ||
-			     qpi->rxq.databuffer_size < 1024)) {
-				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			     qpi->rxq.databuffer_size < 1024))
 				goto error_param;
-			}
+
 			vsi->rx_buf_len = qpi->rxq.databuffer_size;
 			vsi->rx_rings[q_idx]->rx_buf_len = vsi->rx_buf_len;
 			if (qpi->rxq.max_pkt_size > max_frame_size ||
-			    qpi->rxq.max_pkt_size < 64) {
-				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			    qpi->rxq.max_pkt_size < 64)
 				goto error_param;
-			}
 
 			vsi->max_frame = qpi->rxq.max_pkt_size;
 			/* add space for the port VLAN since the VF driver is
@@ -3590,7 +3808,8 @@ skip_non_adq_checks:
 				vsi->max_frame += VLAN_HLEN;
 
 			if (ice_vsi_cfg_single_rxq(vsi, q_idx)) {
-				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+				dev_warn(ice_pf_to_dev(pf), "VF-%d failed to configure RX queue %d\n",
+					 vf->vf_id, i);
 				goto error_param;
 			}
 
@@ -3601,10 +3820,8 @@ skip_non_adq_checks:
 			 */
 			if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC) {
 				rxdid = qpi->rxq.rxdid;
-				if (!(BIT(rxdid) & pf->supported_rxdids)) {
-					v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+				if (!(BIT(rxdid) & pf->supported_rxdids))
 					goto error_param;
-				}
 			} else {
 				rxdid = ICE_RXDID_LEGACY_1;
 			}
@@ -3629,14 +3846,31 @@ skip_non_adq_checks:
 		}
 	}
 
-	if (vf->qs_bw)
-		if (ice_vf_cfg_qs_bw(vf, qci->num_queue_pairs))
-			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+	if (ice_vf_cfg_qs_bw(vf, qci->num_queue_pairs))
+		goto error_param;
 
-error_param:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES, v_ret,
-				     NULL, 0);
+	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,
+				     VIRTCHNL_STATUS_SUCCESS, NULL, 0);
+error_param:
+	/* disable whatever we can */
+	if (vsi) {
+		for (; i >= 0; i--) {
+			qpi = &qci->qpair[i];
+
+			if (ice_vsi_ctrl_one_rx_ring(vsi, false, i, true))
+				dev_err(ice_pf_to_dev(pf), "VF-%d could not disable RX queue %d\n",
+					vf->vf_id, i);
+			if (ice_vf_vsi_dis_single_txq(vf, vsi, i,
+						      qpi->txq.queue_id))
+				dev_err(ice_pf_to_dev(pf), "VF-%d could not disable TX queue %d\n",
+					vf->vf_id, i);
+		}
+	}
+
+	/* send the response to the VF */
+	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,
+				     VIRTCHNL_STATUS_ERR_PARAM, NULL, 0);
 }
 
 /**
@@ -3740,7 +3974,6 @@ ice_vc_add_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	u8 *mac_addr = vc_ether_addr->addr;
-	enum ice_status status;
 	int ret = 0;
 
 	/* device MAC already added */
@@ -3751,18 +3984,17 @@ ice_vc_add_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 			return -EPERM;
 		}
 
-		status = ice_fltr_add_mac(vsi, mac_addr, ICE_FWD_TO_VSI);
-		if (status == ICE_ERR_ALREADY_EXISTS) {
+		ret = ice_fltr_add_mac(vsi, mac_addr, ICE_FWD_TO_VSI);
+		if (ret == -EEXIST) {
 			dev_dbg(dev, "MAC %pM already exists for VF %d\n",
 				mac_addr, vf->vf_id);
 			/* don’t return since we might need to update
 			 * the primary MAC in ice_vfhw_mac_add() below
 			 */
-			ret = -EEXIST;
-		} else if (status) {
-			dev_err(dev, "Failed to add MAC %pM for VF %d\n, error %s\n",
-				mac_addr, vf->vf_id, ice_stat_str(status));
-			return -EIO;
+		} else if (ret) {
+			dev_err(dev, "Failed to add MAC %pM for VF %d\n, error %d\n",
+				mac_addr, vf->vf_id, ret);
+			return ret;
 		} else {
 			vf->num_mac++;
 		}
@@ -3840,20 +4072,20 @@ ice_vc_del_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	u8 *mac_addr = vc_ether_addr->addr;
-	enum ice_status status;
+	int status;
 
 	if (!ice_can_vf_change_mac(vf) &&
 	    ether_addr_equal(vf->dev_lan_addr.addr, mac_addr))
 		return 0;
 
 	status = ice_fltr_remove_mac(vsi, mac_addr, ICE_FWD_TO_VSI);
-	if (status == ICE_ERR_DOES_NOT_EXIST) {
+	if (status == -ENOENT) {
 		dev_err(dev, "MAC %pM does not exist for VF %d\n", mac_addr,
 			vf->vf_id);
 		return -ENOENT;
 	} else if (status) {
-		dev_err(dev, "Failed to delete MAC %pM for VF %d, error %s\n",
-			mac_addr, vf->vf_id, ice_stat_str(status));
+		dev_err(dev, "Failed to delete MAC %pM for VF %d, error %d\n",
+			mac_addr, vf->vf_id, status);
 		return -EIO;
 	}
 
@@ -4064,8 +4296,8 @@ static int
 ice_vf_ena_vlan_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 			struct ice_vlan *vlan)
 {
-	enum ice_status status;
 	u8 promisc_m = 0;
+	int status;
 
 	if (test_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states))
 		promisc_m |= ICE_VF_UCAST_VLAN_PROMISC_BITS;
@@ -4077,8 +4309,8 @@ ice_vf_ena_vlan_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 
 	status = ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m,
 					  vlan->vid, vsi->port_info->lport);
-	if (status && status != ICE_ERR_ALREADY_EXISTS)
-		return ice_status_to_errno(status);
+	if (status && status != -EEXIST)
+		return status;
 
 	return 0;
 }
@@ -4098,12 +4330,12 @@ ice_vf_dis_vlan_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 {
 	u8 promisc_m = ICE_VF_UCAST_VLAN_PROMISC_BITS |
 		ICE_MCAST_VLAN_PROMISC_BITS;
-	enum ice_status status;
+	int status;
 
 	status = ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m,
 					    vlan->vid, vsi->port_info->lport);
-	if (status && status != ICE_ERR_DOES_NOT_EXIST)
-		return ice_status_to_errno(status);
+	if (status && status != -ENOENT)
+		return status;
 
 	return 0;
 }
@@ -4335,7 +4567,7 @@ static bool ice_vsi_is_rxq_crc_strip_dis(struct ice_vsi *vsi)
 	u16 i;
 
 	for (i = 0; i < vsi->alloc_rxq; i++)
-		if (vsi->rx_rings[i]->rx_crc_strip_dis)
+		if (vsi->rx_rings[i]->flags & ICE_RX_FLAGS_CRC_STRIP_DIS)
 			return true;
 
 	return false;
@@ -4467,9 +4699,9 @@ static int ice_vc_set_rss_hena(struct ice_vf *vf, u8 *msg)
 	struct virtchnl_rss_hena *vrh = (struct virtchnl_rss_hena *)msg;
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct ice_pf *pf = vf->pf;
-	enum ice_status status;
 	struct ice_vsi *vsi;
 	struct device *dev;
+	int status;
 
 	dev = ice_pf_to_dev(pf);
 
@@ -4902,9 +5134,9 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct ice_pf *pf = vf->pf;
 	enum virtchnl_ops v_op;
-	enum ice_status aq_ret;
 	u16 v_msg_len = 0;
 	u8 *v_msg = NULL;
+	int aq_ret;
 	int ret;
 
 	pf->dcf.aq_desc_received = false;
@@ -4933,17 +5165,17 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 	}
 
 	aq_ret = ice_aq_send_cmd(&pf->hw, aq_desc, aq_buf, aq_buf_size, NULL);
-	/* It needs to send back the AQ response message if ICE_ERR_AQ_ERROR
-	 * returns, some AdminQ handlers will use the error code filled by FW
-	 * to do exception handling.
+	/* It needs to send back the AQ response message if -EIO returns, some
+	 * AdminQ handlers will use the error code filled by FW to do exception
+	 * handling.
 	 */
-	if (aq_ret && aq_ret != ICE_ERR_AQ_ERROR) {
+	if (aq_ret && aq_ret != -EIO) {
 		v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
 		v_op = VIRTCHNL_OP_DCF_CMD_DESC;
 		goto err;
 	}
 
-	if (aq_ret != ICE_ERR_AQ_ERROR) {
+	if (aq_ret != -EIO) {
 		v_ret = ice_dcf_post_aq_send_cmd(pf, aq_desc, aq_buf);
 		if (v_ret != VIRTCHNL_STATUS_SUCCESS) {
 			v_op = VIRTCHNL_OP_DCF_CMD_DESC;
@@ -5221,20 +5453,19 @@ err:
  * Configure the bandwidth for VF VSI per enabled TC. If
  * bandwidth is zero, default configuration is applied.
  */
-static enum ice_status
+static int
 ice_dcf_cfg_vf_tc_bw_lmt(struct ice_vf *vf,
 			 struct virtchnl_dcf_bw_cfg_list *cfg_list)
 {
 	struct ice_port_info *pi = vf->pf->hw.port_info;
 	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
 	struct virtchnl_dcf_bw_cfg *cfg;
-	enum ice_status ret;
 	u32 committed_rate;
 	u32 peak_rate;
-	int i;
+	int i, ret;
 
 	if (!vsi)
-		return ICE_ERR_PARAM;
+		return -EINVAL;
 
 	for (i = 0; i < cfg_list->num_elem; i++) {
 		cfg = &cfg_list->cfg[i];
@@ -5314,16 +5545,15 @@ static u32 ice_dcf_tc_total_peak(struct virtchnl_dcf_bw_cfg_list *cfg_list)
  * Configure the bandwidth for enabled TC nodes. If bandwidth is zero,
  * default configuration is applied.
  */
-static enum ice_status
+static int
 ice_dcf_cfg_tc_node_bw_lmt(struct ice_pf *pf,
 			   struct virtchnl_dcf_bw_cfg_list *cfg_list)
 {
 	struct ice_port_info *pi = pf->hw.port_info;
 	struct device *dev = ice_pf_to_dev(pf);
 	struct virtchnl_dcf_bw_cfg *cfg;
-	enum ice_status ret;
 	u32 peak_rate;
-	int i;
+	int i, ret;
 
 	for (i = 0; i < cfg_list->num_elem; i++) {
 		cfg = &cfg_list->cfg[i];
@@ -6932,6 +7162,8 @@ static const struct ice_virtchnl_ops ice_virtchnl_dflt_ops = {
 	.cfg_q_quanta = ice_vc_cfg_q_quanta,
 	.add_fdir_fltr_msg = ice_vc_add_fdir_fltr,
 	.del_fdir_fltr_msg = ice_vc_del_fdir_fltr,
+	.flow_sub_fltr_msg = ice_vc_flow_sub_fltr,
+	.flow_unsub_fltr_msg = ice_vc_flow_unsub_fltr,
 	.get_max_rss_qregion = ice_vc_get_max_rss_qregion,
 	.ena_qs_v2_msg = ice_vc_ena_qs_v2_msg,
 	.dis_qs_v2_msg = ice_vc_dis_qs_v2_msg,
@@ -7092,6 +7324,8 @@ static const struct ice_virtchnl_ops ice_virtchnl_repr_ops = {
 	.cfg_q_quanta = ice_vc_cfg_q_quanta,
 	.add_fdir_fltr_msg = ice_vc_add_fdir_fltr,
 	.del_fdir_fltr_msg = ice_vc_del_fdir_fltr,
+	.flow_sub_fltr_msg = ice_vc_flow_sub_fltr,
+	.flow_unsub_fltr_msg = ice_vc_flow_unsub_fltr,
 	.get_max_rss_qregion = ice_vc_get_max_rss_qregion,
 	.ena_qs_v2_msg = ice_vc_ena_qs_v2_msg,
 	.dis_qs_v2_msg = ice_vc_dis_qs_v2_msg,
@@ -7314,6 +7548,12 @@ error_handler:
 		break;
 	case VIRTCHNL_OP_DEL_FDIR_FILTER:
 		err = ops->del_fdir_fltr_msg(vf, msg);
+		break;
+	case VIRTCHNL_OP_FLOW_SUBSCRIBE:
+		err = ops->flow_sub_fltr_msg(vf, msg);
+		break;
+	case VIRTCHNL_OP_FLOW_UNSUBSCRIBE:
+		err = ops->flow_unsub_fltr_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_MAX_RSS_QREGION:
 		err = ops->get_max_rss_qregion(vf);

@@ -28,7 +28,7 @@ ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf, const u8 *mac)
 	struct ice_adv_lkup_elem *list;
 	struct ice_hw *hw = &pf->hw;
 	const u16 lkups_cnt = 1;
-	enum ice_status status;
+	int err;
 
 	list = kcalloc(lkups_cnt, sizeof(*list), GFP_ATOMIC);
 	if (!list)
@@ -47,17 +47,18 @@ ice_eswitch_add_vf_mac_rule(struct ice_pf *pf, struct ice_vf *vf, const u8 *mac)
 	rule_info.flags_info.act |= ICE_SINGLE_ACT_LB_ENABLE;
 	rule_info.flags_info.act_valid = true;
 	rule_info.tun_type = ICE_SW_TUN_AND_NON_TUN;
+	rule_info.add_dir_lkup = false;
 
-	status = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info,
-				  vf->repr->mac_rule);
-	if (status)
+	err = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info,
+			       vf->repr->mac_rule);
+	if (err)
 		dev_err(ice_pf_to_dev(pf), "Unable to add VF mac rule in switchdev mode for VF %d",
 			vf->vf_id);
 	else
 		vf->repr->rule_added = true;
 
 	kfree(list);
-	return ice_status_to_errno(status);
+	return err;
 }
 
 /**
@@ -136,7 +137,7 @@ static int ice_eswitch_setup_env(struct ice_pf *pf)
 	if (ice_vsi_add_vlan_zero(uplink_vsi))
 		goto err_def_rx;
 
-	if (!ice_is_dflt_vsi_in_use(uplink_vsi->port_info)) {
+	if (!ice_is_vsi_dflt_vsi(uplink_vsi)) {
 		if (ice_set_dflt_vsi(uplink_vsi))
 			goto err_def_rx;
 		rule_added = true;
@@ -523,8 +524,7 @@ static void ice_eswitch_napi_disable(struct ice_pf *pf)
  * ice_eswitch_enable_switchdev - configure eswitch in switchdev mode
  * @pf: pointer to PF structure
  */
-static int
-ice_eswitch_enable_switchdev(struct ice_pf *pf)
+static int ice_eswitch_enable_switchdev(struct ice_pf *pf)
 {
 	struct ice_vsi *ctrl_vsi;
 

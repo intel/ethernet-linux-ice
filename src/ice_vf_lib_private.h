@@ -25,7 +25,7 @@
 
 int ice_initialize_vf_entry(struct ice_vf *vf);
 void ice_dis_vf_qs(struct ice_vf *vf);
-enum virtchnl_status_code ice_err_to_virt_err(enum ice_status ice_err);
+enum virtchnl_status_code ice_err_to_virt_err(int err);
 int ice_check_vf_init(struct ice_vf *vf);
 struct ice_port_info *ice_vf_get_port_info(struct ice_vf *vf);
 int ice_vsi_apply_spoofchk(struct ice_vsi *vsi, bool enable);

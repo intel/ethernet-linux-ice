@@ -114,10 +114,10 @@ static int ice_vsi_configure_pasid(struct ice_vf *vf, u32 pasid, bool ena)
 {
 	struct ice_adi_priv *priv = vf_to_adi_priv(vf);
 	struct ice_vsi_ctx *ctxt;
-	enum ice_status status;
 	struct ice_vsi *vsi;
 	struct device *dev;
 	struct ice_hw *hw;
+	int status;
 
 	hw = &vf->pf->hw;
 	dev = ice_pf_to_dev(vf->pf);
@@ -140,16 +140,15 @@ static int ice_vsi_configure_pasid(struct ice_vf *vf, u32 pasid, bool ena)
 	ctxt->info.pasid_id = cpu_to_le32(pasid);
 	status = ice_update_vsi(hw, vsi->idx, ctxt, NULL);
 	if (status) {
-		dev_err(dev, "Failed to update pasid id in VSI context, err %s aq_err %s\n",
-			ice_stat_str(status),
-			ice_aq_str(hw->adminq.sq_last_status));
+		dev_err(dev, "Failed to update pasid id in VSI context, err %d aq_err %s\n",
+			status, ice_aq_str(hw->adminq.sq_last_status));
 	} else {
 		vsi->info.pasid_id = pasid;
 		priv->pasid = pasid;
 	}
 
 	kfree(ctxt);
-	return ice_status_to_errno(status);
+	return status;
 }
 
 /**

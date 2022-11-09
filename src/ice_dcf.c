@@ -311,7 +311,7 @@ ice_dcf_rm_sw_rule_to_vsi(struct ice_pf *pf,
 			  struct ice_dcf_sw_rule_entry *s_entry)
 {
 	struct ice_aqc_sw_rules_elem *s_rule;
-	enum ice_status status;
+	int status;
 
 	s_rule = kzalloc(ICE_SW_RULE_RX_TX_NO_HDR_SIZE, GFP_KERNEL);
 	if (!s_rule)
@@ -344,9 +344,9 @@ ice_dcf_rm_sw_rule_to_vsi_list(struct ice_pf *pf,
 	struct ice_dcf_vsi_list_info *vsi_list_info = s_entry->vsi_list_info;
 	struct ice_aqc_alloc_free_res_elem *res_buf;
 	struct ice_aqc_sw_rules_elem *s_rule;
-	enum ice_status status;
 	u16 rule_sz;
 	u16 vsi_id;
+	int status;
 	int i = 0;
 
 	if (!vsi_list_info)
@@ -410,7 +410,7 @@ ice_dcf_rm_vsi_from_list(struct ice_pf *pf,
 			 u16 hw_vsi_id)
 {
 	struct ice_aqc_sw_rules_elem *s_rule;
-	enum ice_status status;
+	int status;
 
 	if (!vsi_list_info || !vsi_list_info->vsi_count ||
 	    !test_bit(hw_vsi_id, vsi_list_info->hw_vsi_map))

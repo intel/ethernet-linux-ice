@@ -82,6 +82,8 @@ struct ice_virtchnl_ops {
 	int (*cfg_q_quanta)(struct ice_vf *vf, u8 *msg);
 	int (*add_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*del_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
+	int (*flow_sub_fltr_msg)(struct ice_vf *vf, u8 *msg);
+	int (*flow_unsub_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*get_max_rss_qregion)(struct ice_vf *vf);
 	int (*ena_qs_v2_msg)(struct ice_vf *vf, u8 *msg);
 	int (*dis_qs_v2_msg)(struct ice_vf *vf, u8 *msg);

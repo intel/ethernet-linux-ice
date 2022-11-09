@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ===============================================================================
 
-July 5, 2022
+September 9, 2022
 
 ===============================================================================
 
@@ -97,11 +97,13 @@ from it.
 
 Important notes for SR-IOV, RDMA, and Link Aggregation
 ------------------------------------------------------
-Link Aggregation is mutually exclusive with SR-IOV and RDMA.
-- If Link Aggregation is active, RDMA peers will not be able to register with
-the PF, and SR-IOV VFs cannot be created on the PF.
-- If either RDMA or SR-IOV is active, you cannot set up Link Aggregation on the
-interface.
+Link aggregation (LAG) is mutually exclusive with SR-IOV and may not be
+compatible with RDMA.
+
+- LAG and RDMA are compatible only in certain conditions. See the "RDMA (Remote
+Direct Memory Access)" section later in this README for more information.
+- If LAG is active, SR-IOV VFs cannot be created on the PF.
+- If SR-IOV is active, you cannot set up LAG on the interface.
 
 Bridging and MACVLAN are also affected by this. If you wish to use bridging or
 MACVLAN with RDMA/SR-IOV, you must set up bridging or MACVLAN before enabling
@@ -111,7 +113,7 @@ you must follow these steps:
 1. Remove RDMA if it is active
 2. Destroy SR-IOV VFs if they exist
 3. Remove the interface from the bridge or MACVLAN
-4. Reactivate RDMA and recreate SRIOV VFs as needed
+4. Reactivate RDMA and recreate SR-IOV VFs as needed
 
 
 Building and Installation
@@ -360,19 +362,38 @@ The ice driver supports the following RDMA protocols:
 The major difference is that iWARP performs RDMA over TCP, while RoCEv2 uses
 UDP.
 
-- RDMA requires auxiliary bus support. Refer to "Auxiliary Bus" in this
+RDMA requires auxiliary bus support. Refer to "Auxiliary Bus" in this
 README for more information.
 
-- Devices based on the Intel(R) Ethernet 800 Series do not support RDMA when
+Devices based on the Intel(R) Ethernet 800 Series do not support RDMA when
 operating in multiport mode with more than 4 ports.
-
-- You cannot use RDMA or SR-IOV when link aggregation (LAG)/bonding is active,
-and vice versa. To enforce this, on kernels 4.5 and above, the driver checks
-for this mutual exclusion. On kernels older than 4.5, the driver cannot check
-for this exclusion and is unaware of bonding events.
 
 For detailed installation and configuration information for RDMA, see the
 README file in the irdma driver tarball.
+
+
+Link Aggregation and RDMA
+-------------------------
+Link aggregation (LAG) and RDMA are compatible only if all the following are
+true:
+- You are using an Intel Ethernet 810 Series device with the latest drivers and
+NVM installed.
+- RDMA technology is set to RoCEv2.
+- LAG configuration is active-backup.
+- Bonding is between two ports within the same device.
+- The QoS configuration of the two ports matches prior to the bonding of the
+devices.
+
+If the above conditions are not met:
+- The PF driver will not enable RDMA.
+- RDMA peers will not be able to register with the PF.
+
+NOTE: The first interface added to an aggregate (bond) is assigned as the
+"primary" interface for RDMA and LAG functionality. If LAN interfaces are
+assigned to the bond and you remove the primary interface from the bond, RDMA
+will not function properly over the bonded interface. To address the issue,
+remove all interfaces from the bond and add them again. Interfaces that are not
+assigned to the bond will operate normally.
 
 
 RDMA in the VF
@@ -673,7 +694,10 @@ To create traffic classes on the interface:
       max_rate <max_rate1 ...>: Sets the maximum bandwidth rate limit for each
           TC. You can set a min and max rate together.
 
-NOTE: See the mqprio man page and the examples below for more information.
+NOTE:
+- If you set max_rate to less than 50Mbps, then max_rate is rounded up to
+50Mbps and a warning is logged in dmesg.
+- See the mqprio man page and the examples below for more information.
 
 2. Verify the bandwidth limit using network monitoring tools such as ifstat or
 sar -n DEV [interval] [number of samples]
@@ -711,7 +735,7 @@ TC flower filters.
 - To create 8 TCs with 256 queues spread across all the TCs, when ADQ is
 enabled:
 
-  # tc qdisc add dev <ethX> root mqprio num_tc 8 map 0 1 2 3 4 5 6 7 \
+  # tc qdisc add dev <ethX> root mqprio num_tc 8 map 0 1 2 3 4 5 6 7
     queues 2@0 4@2 8@6 16@14 32@30 64@62 128@126 2@254 hw 1 mode channel
 
 - To set a minimum rate for a TC:
@@ -730,9 +754,6 @@ enabled:
     4@0 8@4 hw 1 mode channel shaper bw_rlimit min_rate 10Gbit 20Gbit
     max_rate 25Gbit 50Gbit
 
-NOTE: If you set max_rate to less than 50Mbps, then max_rate is rounded up to
-50Mbps and a warning is logged in dmesg.
-
 
 Creating traffic class filters
 ------------------------------
@@ -745,6 +766,10 @@ To view all TC filters:
 
   # tc filter show dev <ethX> ingress
   # tc filter show dev <ethX> egress
+
+For detailed configuration information and example code for switchdev mode on
+Intel Ethernet 800 Series devices, refer to the configuration guide at
+https://cdrdv2.intel.com/v1/dl/getContent/645272.
 
 TC FILTER EXAMPLES:
 To configure TCP TC filters, where:
@@ -823,8 +848,8 @@ functionality can be used with or without ADQ.
 
 To add filters for the desired queue, use the following tc command:
 
-# tc filter add dev  ingress prio 1 protocol all flower src_mac <mac_address>
-skip_sw classid ffff:<queue_id>
+# tc filter add dev <ethX> ingress prio 1 protocol all flower src_mac
+<mac_address> skip_sw classid ffff:<queue_id>
 
 Where:
 - <mac_address> is the MAC address(es) you want to direct to the Rx queue
@@ -1154,10 +1179,63 @@ how many VFs each PF supports, use the following command:
 
 # cat /sys/class/net/<ethX>/device/sriov_totalvfs
 
-Note: You cannot use RDMA or SR-IOV when link aggregation (LAG)/bonding is
-active, and vice versa. To enforce this, on kernels 4.5 and above, the driver
-checks for this mutual exclusion. On kernels older than 4.5, the driver cannot
-check for this exclusion and is unaware of bonding events.
+Note: You cannot use SR-IOV when link aggregation (LAG)/bonding is active, and
+vice versa. To enforce this, on kernels 4.5 and above, the driver checks for
+this mutual exclusion. On kernels older than 4.5, the driver cannot check for
+this exclusion and is unaware of bonding events.
+
+
+Intel(R) Scalable I/O Virtualization Support
+--------------------------------------------
+Intel(R) Scalable I/O Virtualization (Intel(R) Scalable IOV) allows you to
+share a physical device across multiple virtual machines and applications.
+Intel Scalable IOV provides your system the ability to share device resources
+with different address domains using different abstractions. For example,
+application processes may access a device using system calls and VMs may access
+a device through virtual device interfaces.
+
+Intel Scalable IOV and SR-IOV (Single Root I/O Virtualization) are mutually
+exclusive. If both are enabled on your system, and all of the Intel Scalable
+IOV requirements are met, the PF driver will use Intel Scalable IOV. If the
+Intel Scalable IOV requirements are not met, the PF driver will use SR-IOV.
+
+For more information, please refer to the Intel Scalable I/O Virtualization
+Technical Specification
+<https://software.intel.com/sites/default/files/managed/cc/0e/intel-scalable-io-
+virtualization-technical-specification.pdf> (login required)
+
+Intel Scalable IOV is not available in the kernel driver. Download and install
+the current ice driver to use this feature. Refer to the SUPPORT section for
+where to download the current driver.
+
+Requirements
+------------
+
+* Your system platform must support Intel Scalable IOV
+* A network device based on an Intel(R) Ethernet 800 Series controller
+* The host operating system must be a Linux distro using kernel version 5.12 -
+5.15
+* The host PF driver must be version 1.9.0, or later
+* The guest operating system must be Linux
+* The guest iAVF driver must be version 4.5.0, or later
+
+Enabling Intel Scalable IOV
+---------------------------
+
+You can use Intel's Ethernet Port Configuration Tool (EPCT) to enable Intel
+Scalable IOV. If the EPCT tool is not available, you can also enable Intel
+Scalable IOV through your system's HII interface (if it has one). The
+recommended method is to use the EPCT tool. To enable or disable Intel Scalable
+IOV using the EPCT tool, use one of these commands:
+#epct -nic=1 -set 'siov enable'
+#epct -nic=1 -set 'siov disable'
+Where -nic=1 specifies the Intel Ethernet device. See the EPCT tool
+documentation for instructions on how to determine the NIC number of your
+device.
+
+If the EPCT tool is not available, and your system has an HII interface, you
+can use the HII interface to enable/disable Intel Scalable IOV. Find the 'Intel
+Scalable IOV (Scalable IOV)' setting and select your desired value.
 
 
 Enabling Intel(R) Scalable I/O Virtualization Virtual Devices
@@ -1389,7 +1467,8 @@ switchdev or legacy mode:
 - Set the number of VFs on the PF to zero
 
 NOTE:
-- ADQ, trusted VFs, and L2 forwarding are not supported in switchdev mode.
+- ADQ, trusted VFs, L2 forwarding, and S-IOV are not supported in switchdev
+mode.
 - Switchdev mode is not persistent across reboots or driver reloads.
 
 To configure the device in switchdev mode, enter the following, where
@@ -1408,42 +1487,49 @@ To check the current eSwitch mode:
 
 # devlink dev eswitch show <pci/0000:##:##.#>
 
-The following filters can be offloaded in switchdev mode:
+The ice driver supports the following hardware offloads in switchdev mode:
 - Supported filter conditions:
     L2: EtherType, src/dst MAC addresses, VLAN ID, VLAN priority, VLAN TPID
     L3: src/dst IP addresses (IPv4 and IPv6), IP protocol
     L4: src/dst port
+    VXLAN/GENEVE/GRETAP tunnel: VNI/GRE key, dst IP addresses,
+        inner src/dst IP addresses, inner src/dst port
+    GTP tunnel: TEID, PDU type, QFI, outer dst IP, outer src IP
 - Supported filter actions: redirect, drop
 
-To offload TC filters to the hardware, you must enable hw-tc-offload on the VF
-port representor (VF_PR). To enable hardware TC offload on the interface:
+NOTE: GTP support requires kernel 5.18 and iproute2 5.18 or newer. On older
+kernel versions, the DCF method provides the same functionality.
 
-# ethtool -K <ethX> hw-tc-offload on
+For detailed configuration information and example code for switchdev mode on
+Intel Ethernet 800 Series devices, refer to the configuration guide at
+https://cdrdv2.intel.com/v1/dl/getContent/645272.
 
-To verify settings:
-
-# ethtool -k <ethX> | grep "hw-tc"
+At a high level, do the following to offload TC filters to the hardware and
+create switch rules in switchdev mode:
+1. Verify that switchdev mode is enabled.
+2. Enable hw-tc-offload on the VF port representor (VF_PR).
+3. For tunnel interfaces: Use the ip link command to create the tunnel.
+4. Use the tc-flower command to create the switch rule.
+5. Verify the offloaded flow in hardware.
 
 Switchdev mode supports the following ip link commands to configure the VF:
-* mac - supported
-* vlan, qos, proto - supported
-* rate - supported but deprecated; use max_tx_rate instead
-* max_tx_rate - supported
-* min_tx_rate - supported
-* spoofchk - supported
-* query_rss - supported
-* state - supported
-* trust - not supported
-* node_guid - supported
-* port_guid - supported
+* mac
+* vlan, vxlan, geneve, gre, nvgre, gtp, qos, proto
+* max_tx_rate
+* min_tx_rate
+* spoofchk
+* query_rss
+* state
+* node_guid
+* port_guid
+NOTE: 'trust' is not supported. 'rate' is supported but deprecated; use
+'max_tx_rate' instead.
 
 To limit the VF's interrupt rate for Rx and Tx in switchdev mode, use the
-following command, where <N> is the desired cap for the interrupt rate:
+following command, where <vf_pr> is the designated VF port representor and <N>
+is the desired cap for the interrupt rate:
 
-# ethtool -C $vf_pr rx-usecs-high <N>
-
-For detailed setup and configuration information for switchdev mode, refer to
-the configuration guide at https://cdrdv2.intel.com/v1/dl/getContent/645272.
+# ethtool -C <vf_pr> rx-usecs-high <N>
 
 
 Jumbo Frames
@@ -1476,62 +1562,10 @@ frames. If you observe a drop in performance after enabling jumbo frames,
 enabling flow control may mitigate the issue.
 
 
-Intel(R) Scalable I/O Virtualization Support
---------------------------------------------
-Intel(R) Scalable I/O Virtualization (Intel(R) Scalable IOV) allows you to
-share a physical device across multiple virtual machines and applications.
-Intel Scalable IOV provides your system the ability to share device resources
-with different address domains using different abstractions. For example,
-application processes may access a device using system calls and VMs may access
-a device through virtual device interfaces.
-
-Intel Scalable IOV and SR-IOV (Single Root I/O Virtualization) are mutually
-exclusive. If both are enabled on your system, and all of the Intel Scalable
-IOV requirements are met, the PF driver will use Intel Scalable IOV. If the
-Intel Scalable IOV requirements are not met, the PF driver will use SR-IOV.
-
-For more information, please refer to the Intel Scalable I/O Virtualization
-Technical Specification
-<https://software.intel.com/sites/default/files/managed/cc/0e/intel-scalable-io-
-virtualization-technical-specification.pdf> (login required)
-
-Intel Scalable IOV is not available in the kernel driver. Download and install
-the current ice driver to use this feature. Refer to the SUPPORT section for
-where to download the current driver.
-
-Requirements
-------------
-
-* Your system platform must support Intel Scalable IOV
-* A network device based on an Intel(R) Ethernet 800 Series controller
-* The host operating system must be a Linux distro using kernel version 5.12 -
-5.15
-* The host PF driver must be version 1.9.0, or later
-* The guest operating system must be Linux
-* The guest iAVF driver must be version 4.5.0, or later
-
-Enabling Intel Scalable IOV
----------------------------
-
-You can use Intel's Ethernet Port Configuration Tool (EPCT) to enable Intel
-Scalable IOV. If the EPCT tool is not available, you can also enable Intel
-Scalable IOV through your system's HII interface (if it has one). The
-recommended method is to use the EPCT tool. To enable or disable Intel Scalable
-IOV using the EPCT tool, use one of these commands:
-#epct -nic=1 -set 'siov enable'
-#epct -nic=1 -set 'siov disable'
-Where -nic=1 specifies the Intel Ethernet device. See the EPCT tool
-documentation for instructions on how to determine the NIC number of your
-device.
-
-If the EPCT tool is not available, and your system has an HII interface, you
-can use the HII interface to enable/disable Intel Scalable IOV. Find the 'Intel
-Scalable IOV (Scalable IOV)' setting and select your desired value.
-
-
 Speed and Duplex Configuration
 ------------------------------
 You cannot set speed, duplex, or autonegotiation settings using ethtool.
+
 
 To see the speed configurations your device supports, run the following:
 
@@ -1652,6 +1686,33 @@ To check the current LLDP setting:
 NOTE: You must enable the UEFI HII "LLDP Agent" attribute for this setting to
 take effect. If "LLDP AGENT" is set to disabled, you cannot enable it from the
 OS.
+
+
+Forward Error Correction (FEC)
+------------------------------
+Allows you to set the Forward Error Correction (FEC) mode. FEC improves link
+stability, but increases latency. Many high quality optics, direct attach
+cables, and backplane channels provide a stable link without FEC.
+
+NOTE:
+For devices to benefit from this feature, link partners must have FEC enabled.
+
+If you enable the flag 'allow-no-fec-modules-in-auto', Auto FEC negotiation
+will include 'No FEC' in case your link partner does not have FEC enabled or is
+not FEC capable.
+# ethtool --set-priv-flags <ethX> vallow-no-fec-modules-in-auto on
+
+NOTE:
+
+On kernels older than 4.14, use the following private flags to disable
+FEC modes:
+  rs-fec (0 to disable, 1 to enable)
+  base-r-fec (0 to disable, 1 to enable)
+On kernel 4.14 or later, use ethtool to get/set the following FEC modes:
+  No FEC
+  Auto FEC
+  BASE-R FEC
+  RS-FEC
 
 
 Link-Level Flow Control (LFC)
@@ -1840,7 +1901,10 @@ Lock flag (cgu-fast-lock) on PF0.
 A detailed user guide is available for the following devices. Refer to it for
 advanced configuration of this feature.
 - Intel(R) Ethernet Network Adapter E810-XXV-4T:
-https://cdrdv2.intel.com/v1/dl/getContent/646265
+  https://cdrdv2.intel.com/v1/dl/getContent/646265
+
+- Intel(R) Ethernet Network Adapter E810-C-Q2T:
+  https://cdrdv2.intel.com/v1/dl/getContent/722960
 
 
 Some devices support hardware-generated timestamps. The ice driver uses these
@@ -1863,7 +1927,10 @@ determined based on the topology configured with the ice SyncE interfaces.
 A detailed user guide is available for the following devices. Refer to it for
 advanced configuration of this feature.
 - Intel(R) Ethernet Network Adapter E810-XXV-4T:
-https://cdrdv2.intel.com/v1/dl/getContent/646265
+  https://cdrdv2.intel.com/v1/dl/getContent/646265
+
+- Intel(R) Ethernet Network Adapter E810-C-Q2T:
+  https://cdrdv2.intel.com/v1/dl/getContent/722960
 
 NOTE: You can only change the state of the Clock Generation Unit (CGU) Fast
 Lock flag (cgu-fast-lock) on PF0.
@@ -1894,6 +1961,32 @@ NOTE:
 To enable/disable UDP Segmentation Offload, issue the following command:
 
 # ethtool -K <ethX> tx-udp-segmentation [off|on]
+
+
+Runtime Control of CRC/FCS Stripping
+------------------------------------
+The frame check sequence (FCS) is a four-octet cyclic redundancy check (CRC)
+that allows the driver to detect corrupted data within a received Ethernet
+frame.
+
+The ice driver allows you to disable or enable FCS/CRC stripping using the
+ethtool command.
+
+NOTE:
+- FCS/CRC stripping is enabled by default.
+- The driver enforces valid combinations of FCS/CRC and VLAN stripping. You can
+only disable FCS/CRC stripping if VLAN stripping is also disabled on the PF.
+- Disabling FCS/CRC stripping may help when debugging issues. XDP programs can
+also use FCS/CRC for their purposes.
+
+Use the following ethtool command to enable or disable FCS/CRC stripping:
+
+# ethtool -K <ethX> rx-fcs on|off
+
+To check the status of FCS/CRC stripping, look for the 'rx-fcs' information
+reported from ethtool:
+
+# ethtool -k <ethX>
 
 
 Using Devlink to update a device's NVM
@@ -1929,8 +2022,22 @@ devices with the "devlink dev info" command.
 Firmware Logs
 -------------
 The ice driver allows you to generate firmware logs for supported categories of
-events, to help debug issues with Intel Customer Support. Firmware logs are
-enabled by default.
+events, to help debug issues with Customer Support. Firmware logs are enabled
+by default. Refer to the Intel(R) Ethernet Adapters and Devices User Guide for
+an overview of this feature and additional tips.
+
+At a high level, you must do the following to capture a firmware log:
+
+1. Set the configuration for the firmware log.
+2. Perform the necessary steps to generate the issue you are trying to debug.
+3. Capture the firmware log.
+4. Stop capturing the firmware log.
+5. Reset your firmware log settings as needed.
+6. Work with Customer Support to debug your issue.
+
+NOTE: Firmware logs are generated in a binary format and must be decoded by
+Customer Support. Information collected is related only to firmware and
+hardware for debug purposes.
 
 Firmware logs are printed to dmesg. The driver groups these events into
 categories, called "modules." Supported modules include:
@@ -1977,14 +2084,39 @@ messages. Available verbosity levels are:
  3 = normal
  4 = verbose
 
-Firmware logs can overrun the dmesg buffer. Before loading the driver, use the
-following command to redirect dmesg to a file:
+NOTE:
+- Firmware logs can overrun the dmesg buffer. Before loading the driver,
+redirect dmesg to a file.
+- Use a bitmap to set the desired verbosity level for the module(s). NOTE: You
+must have dynamic debug enabled in the kernel.
+- You cannot change firmware log parameters at runtime. You must reload the
+driver for changes to take effect.
+
+Do the following to capture a firmware log in Linux:
+
+1. Remove the driver:
+
+# rmmod ice
+
+2. Redirect the firmware log from dmesg to a file:
 
 # dmesg -w > filename.log
 
-Use a bitmap to set the desired verbosity level for the module(s). (NOTE: You
-must have dynamic debug enabled in the kernel.) For example, to set all events
-to log warning messages, use the following command:
+3. Load the driver using the following command, changing the events and level
+values as needed:
+
+# sudo insmod ice.ko dyndbg="+p" fwlog_events=<bitmask> fwlog_level=<level 0-4>
+
+4. Perform the necessary steps to generate the issue you are trying to debug.
+
+5. Work with Customer Support to decode your firmware log file and debug the
+issue.
+
+NOTE: To disable firmware logging completely, remove the driver and reload it.
+Firmware logging will remain disabled until you enable it again.
+
+CODE EXAMPLES:
+To set all events to log warning messages, use the following command:
 
 # sudo insmod ice.ko dyndbg="+p" fwlog_events=0x0FFFFFFF fwlog_level=2
 

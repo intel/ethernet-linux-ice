@@ -13,13 +13,15 @@ struct ice_vsi;
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 #ifdef CONFIG_XDP_SOCKETS
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
-int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xsk_buff_pool *umem,
+int ice_xsk_pool_setup(struct ice_vsi *vsi, struct xsk_buff_pool *pool,
 		       u16 qid);
 #else
 int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xdp_umem *umem,
 		       u16 qid);
 #endif
+#ifndef NO_XDP_QUERY_XSK_UMEM
 int ice_xsk_umem_query(struct ice_vsi *vsi, struct xdp_umem **umem, u16 qid);
+#endif
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 void ice_zca_free(struct zero_copy_allocator *zca, unsigned long handle);
 #endif
@@ -40,10 +42,11 @@ void ice_xsk_clean_rx_ring(struct ice_ring *rx_ring);
 void ice_xsk_clean_xdp_ring(struct ice_ring *xdp_ring);
 #else
 static inline int
-ice_xsk_umem_setup(struct ice_vsi __always_unused *vsi,
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
+ice_xsk_pool_setup(struct ice_vsi __always_unused *vsi,
 		   struct xsk_buff_pool __always_unused *pool,
 #else
+ice_xsk_umem_setup(struct ice_vsi __always_unused *vsi,
 		   struct xdp_umem __always_unused *umem,
 #endif
 		   u16 __always_unused qid)
@@ -51,6 +54,7 @@ ice_xsk_umem_setup(struct ice_vsi __always_unused *vsi,
 	return -EOPNOTSUPP;
 }
 
+#ifndef NO_XDP_QUERY_XSK_UMEM
 static inline int
 ice_xsk_umem_query(struct ice_vsi __always_unused *vsi,
 		   struct xdp_umem __always_unused **umem,
@@ -58,6 +62,7 @@ ice_xsk_umem_query(struct ice_vsi __always_unused *vsi,
 {
 	return -EOPNOTSUPP;
 }
+#endif
 
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 static inline void

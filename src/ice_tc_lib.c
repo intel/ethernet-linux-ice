@@ -6,6 +6,10 @@
 #include "ice_lib.h"
 #include "ice_fltr.h"
 
+#ifdef HAVE_GRETAP_TYPE
+#include <net/gre.h>
+#endif /* HAVE_GRETAP_TYPE */
+
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 /**
  * ice_determine_gtp_tun_type - determine TUN type based on user params
@@ -117,6 +121,7 @@ ice_determine_gtp_tun_type(struct ice_pf *pf, u16 l4_proto, u32 flags,
 	return true;
 }
 
+#ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 /**
  * ice_is_tunnel_fltr - is this a tunnel filter
  * @f: Pointer to tc-flower filter
@@ -128,8 +133,14 @@ static bool ice_is_tunnel_fltr(struct ice_tc_flower_fltr *f)
 {
 	return (f->tunnel_type == TNL_VXLAN ||
 		f->tunnel_type == TNL_GENEVE ||
+		f->tunnel_type == TNL_GRETAP ||
+#ifdef HAVE_GTP_SUPPORT
+		f->tunnel_type == TNL_GTPU ||
+		f->tunnel_type == TNL_GTPC ||
+#endif /* HAVE_GTP_SUPPORT */
 		f->tunnel_type == TNL_GTP);
 }
+#endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 
 /**
  * ice_tc_count_lkups - determine lookup count for switch filter
@@ -145,22 +156,35 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 {
 	int lkups_cnt = 0;
 
-	if (ice_is_tunnel_fltr(fltr)) {
-		/* For ADQ filter, outer DMAC gets added implicitly */
-		if (flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC)
-			lkups_cnt++;
-		/* Copy outer L4 port for non-GTP tunnel */
-		if (fltr->tunnel_type != TNL_GTP) {
-			if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT)
-				if (headers->l3_key.ip_proto == IPPROTO_UDP)
-					lkups_cnt++;
-		}
-		/* due to tunnel */
-		if (fltr->tenant_id)
-			lkups_cnt++;
-	} else if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID) {
+	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID)
 		lkups_cnt++;
-	}
+
+	/* For ADQ filter, outer DMAC gets added implicitly */
+	if (flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC)
+		lkups_cnt++;
+
+#ifdef HAVE_GTP_SUPPORT
+	if (flags & ICE_TC_FLWR_FIELD_ENC_OPTS)
+		lkups_cnt++;
+
+#endif /* HAVE_GTP_SUPPORT */
+	if (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
+		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV4 |
+		     ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
+		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV6))
+		lkups_cnt++;
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_IP
+	if (flags & (ICE_TC_FLWR_FIELD_ENC_IP_TOS |
+		     ICE_TC_FLWR_FIELD_ENC_IP_TTL))
+		lkups_cnt++;
+
+#endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
+	if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT)
+		lkups_cnt++;
+
+	if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID)
+		lkups_cnt++;
 
 	/* is MAC fields specified? */
 	if (flags & (ICE_TC_FLWR_FIELD_DST_MAC | ICE_TC_FLWR_FIELD_SRC_MAC))
@@ -170,12 +194,26 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 	if (flags & ICE_TC_FLWR_FIELD_VLAN)
 		lkups_cnt++;
 
+#ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
+	/* is CVLAN specified? */
+	if (flags & ICE_TC_FLWR_FIELD_CVLAN)
+		lkups_cnt++;
+#endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
+
+	/* are PPPoE options specified? */
+	if (flags & (ICE_TC_FLWR_FIELD_PPPOE_SESSID |
+		     ICE_TC_FLWR_FIELD_PPP_PROTO))
+		lkups_cnt++;
+
 	/* are IPv[4|6] fields specified? */
-	if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV4 | ICE_TC_FLWR_FIELD_SRC_IPV4))
+	if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV4 | ICE_TC_FLWR_FIELD_SRC_IPV4 |
+		     ICE_TC_FLWR_FIELD_DEST_IPV6 | ICE_TC_FLWR_FIELD_SRC_IPV6))
 		lkups_cnt++;
-	else if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV6 |
-			  ICE_TC_FLWR_FIELD_SRC_IPV6))
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_IP
+	if (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL))
 		lkups_cnt++;
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
 	/* is L4 (TCP/UDP/any other L4 protocol fields) specified? */
 	if (flags & (ICE_TC_FLWR_FIELD_DEST_L4_PORT |
@@ -183,6 +221,246 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 		lkups_cnt++;
 
 	return lkups_cnt;
+}
+
+static enum ice_protocol_type ice_proto_type_from_mac(bool inner)
+{
+	return inner ? ICE_MAC_IL : ICE_MAC_OFOS;
+}
+
+static enum ice_protocol_type ice_proto_type_from_etype(bool inner)
+{
+	return inner ? ICE_ETYPE_IL : ICE_ETYPE_OL;
+}
+
+static enum ice_protocol_type ice_proto_type_from_ipv4(bool inner)
+{
+	return inner ? ICE_IPV4_IL : ICE_IPV4_OFOS;
+}
+
+static enum ice_protocol_type ice_proto_type_from_ipv6(bool inner)
+{
+	return inner ? ICE_IPV6_IL : ICE_IPV6_OFOS;
+}
+
+static enum ice_protocol_type ice_proto_type_from_l4_port(u16 ip_proto)
+{
+	switch (ip_proto) {
+	case IPPROTO_TCP:
+		return ICE_TCP_IL;
+	case IPPROTO_UDP:
+		return ICE_UDP_ILOS;
+	}
+
+	return 0;
+}
+
+static enum ice_protocol_type
+ice_proto_type_from_tunnel(enum ice_tunnel_type type)
+{
+	switch (type) {
+	case TNL_VXLAN:
+		return ICE_VXLAN;
+	case TNL_GENEVE:
+		return ICE_GENEVE;
+	case TNL_GRETAP:
+		return ICE_NVGRE;
+#ifdef HAVE_GTP_SUPPORT
+	case TNL_GTPU:
+		/* NO_PAY profiles will not work with GTP-U */
+		return ICE_GTP;
+	case TNL_GTPC:
+		return ICE_GTP_NO_PAY;
+#endif /* HAVE_GTP_SUPPORT */
+	default:
+		return 0;
+	}
+}
+
+static enum ice_sw_tunnel_type
+ice_sw_type_from_tunnel(enum ice_tunnel_type type)
+{
+	switch (type) {
+	case TNL_VXLAN:
+		return ICE_SW_TUN_VXLAN;
+	case TNL_GENEVE:
+		return ICE_SW_TUN_GENEVE;
+	case TNL_GRETAP:
+		return ICE_SW_TUN_NVGRE;
+#ifdef HAVE_GTP_SUPPORT
+	case TNL_GTPU:
+		return ICE_SW_TUN_GTPU;
+	case TNL_GTPC:
+		return ICE_SW_TUN_GTPC;
+#endif /* HAVE_GTP_SUPPORT */
+	default:
+		return ICE_NON_TUN;
+	}
+}
+
+static int
+ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
+			 struct ice_adv_lkup_elem *list)
+{
+	struct ice_tc_flower_lyr_2_4_hdrs *hdr = &fltr->outer_headers;
+	int i = 0;
+
+	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID) {
+		u32 tenant_id;
+
+		list[i].type = ice_proto_type_from_tunnel(fltr->tunnel_type);
+		switch (fltr->tunnel_type) {
+		case TNL_VXLAN:
+		case TNL_GENEVE:
+			tenant_id = be32_to_cpu(fltr->tenant_id) << 8;
+			list[i].h_u.tnl_hdr.vni = cpu_to_be32(tenant_id);
+			memcpy(&list[i].m_u.tnl_hdr.vni, "\xff\xff\xff\x00", 4);
+			i++;
+			break;
+		case TNL_GRETAP:
+			list[i].h_u.nvgre_hdr.tni_flow = fltr->tenant_id;
+			memcpy(&list[i].m_u.nvgre_hdr.tni_flow,
+			       "\xff\xff\xff\xff", 4);
+			i++;
+			break;
+#ifdef HAVE_GTP_SUPPORT
+		case TNL_GTPC:
+		case TNL_GTPU:
+			list[i].h_u.gtp_hdr.teid = fltr->tenant_id;
+			memcpy(&list[i].m_u.gtp_hdr.teid,
+			       "\xff\xff\xff\xff", 4);
+			i++;
+			break;
+#endif /* HAVE_GTP_SUPPORT */
+		default:
+			break;
+		}
+	}
+
+	if (flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC) {
+		list[i].type = ice_proto_type_from_mac(false);
+		ether_addr_copy(list[i].h_u.eth_hdr.dst_addr,
+				hdr->l2_key.dst_mac);
+		ether_addr_copy(list[i].m_u.eth_hdr.dst_addr,
+				hdr->l2_mask.dst_mac);
+		i++;
+	}
+
+#ifdef HAVE_GTP_SUPPORT
+	if (flags & ICE_TC_FLWR_FIELD_ENC_OPTS &&
+	    (fltr->tunnel_type == TNL_GTPU || fltr->tunnel_type == TNL_GTPC)) {
+		list[i].type = ice_proto_type_from_tunnel(fltr->tunnel_type);
+
+		if (fltr->gtp_pdu_info_masks.pdu_type) {
+			list[i].h_u.gtp_hdr.pdu_type =
+				fltr->gtp_pdu_info_keys.pdu_type << 4;
+			memcpy(&list[i].m_u.gtp_hdr.pdu_type, "\xf0", 1);
+		}
+
+		if (fltr->gtp_pdu_info_masks.qfi) {
+			list[i].h_u.gtp_hdr.qfi = fltr->gtp_pdu_info_keys.qfi;
+			memcpy(&list[i].m_u.gtp_hdr.qfi, "\x3f", 1);
+		}
+
+		i++;
+	}
+#endif /* HAVE_GTP_SUPPORT */
+
+	if (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
+		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV4)) {
+		list[i].type = ice_proto_type_from_ipv4(false);
+
+		if (flags & ICE_TC_FLWR_FIELD_ENC_SRC_IPV4) {
+			list[i].h_u.ipv4_hdr.src_addr = hdr->l3_key.src_ipv4;
+			list[i].m_u.ipv4_hdr.src_addr = hdr->l3_mask.src_ipv4;
+		}
+		if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_IPV4) {
+			list[i].h_u.ipv4_hdr.dst_addr = hdr->l3_key.dst_ipv4;
+			list[i].m_u.ipv4_hdr.dst_addr = hdr->l3_mask.dst_ipv4;
+		}
+		i++;
+	}
+
+	if (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
+		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV6)) {
+		list[i].type = ice_proto_type_from_ipv6(false);
+
+		if (flags & ICE_TC_FLWR_FIELD_ENC_SRC_IPV6) {
+			memcpy(&list[i].h_u.ipv6_hdr.src_addr,
+			       &hdr->l3_key.src_ipv6_addr,
+			       sizeof(hdr->l3_key.src_ipv6_addr));
+			memcpy(&list[i].m_u.ipv6_hdr.src_addr,
+			       &hdr->l3_mask.src_ipv6_addr,
+			       sizeof(hdr->l3_mask.src_ipv6_addr));
+		}
+		if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_IPV6) {
+			memcpy(&list[i].h_u.ipv6_hdr.dst_addr,
+			       &hdr->l3_key.dst_ipv6_addr,
+			       sizeof(hdr->l3_key.dst_ipv6_addr));
+			memcpy(&list[i].m_u.ipv6_hdr.dst_addr,
+			       &hdr->l3_mask.dst_ipv6_addr,
+			       sizeof(hdr->l3_mask.dst_ipv6_addr));
+		}
+		i++;
+	}
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_IP
+	if (fltr->inner_headers.l2_key.n_proto == htons(ETH_P_IP) &&
+	    (flags & (ICE_TC_FLWR_FIELD_ENC_IP_TOS |
+		      ICE_TC_FLWR_FIELD_ENC_IP_TTL))) {
+		list[i].type = ice_proto_type_from_ipv4(false);
+
+		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TOS) {
+			list[i].h_u.ipv4_hdr.tos = hdr->l3_key.tos;
+			list[i].m_u.ipv4_hdr.tos = hdr->l3_mask.tos;
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TTL) {
+			list[i].h_u.ipv4_hdr.time_to_live = hdr->l3_key.ttl;
+			list[i].m_u.ipv4_hdr.time_to_live = hdr->l3_mask.ttl;
+		}
+
+		i++;
+	}
+
+	if (fltr->inner_headers.l2_key.n_proto == htons(ETH_P_IPV6) &&
+	    (flags & (ICE_TC_FLWR_FIELD_ENC_IP_TOS |
+		      ICE_TC_FLWR_FIELD_ENC_IP_TTL))) {
+		struct ice_ipv6_hdr *hdr_h, *hdr_m;
+
+		hdr_h = &list[i].h_u.ipv6_hdr;
+		hdr_m = &list[i].m_u.ipv6_hdr;
+		list[i].type = ice_proto_type_from_ipv6(false);
+
+		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TOS) {
+			hdr_h->be_ver_tc_flow =
+				htonl((hdr->l3_key.tos <<
+				       ICE_IPV6_HDR_TC_OFFSET) &
+				      ICE_IPV6_HDR_TC_MASK);
+			hdr_m->be_ver_tc_flow =
+				htonl((hdr->l3_mask.tos <<
+				       ICE_IPV6_HDR_TC_OFFSET) &
+				      ICE_IPV6_HDR_TC_MASK);
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TTL) {
+			hdr_h->hop_limit = hdr->l3_key.ttl;
+			hdr_m->hop_limit = hdr->l3_mask.ttl;
+		}
+
+		i++;
+	}
+
+#endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
+	if ((flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT) &&
+	    hdr->l3_key.ip_proto == IPPROTO_UDP) {
+		list[i].type = ICE_UDP_OF;
+		list[i].h_u.l4_hdr.dst_port = hdr->l4_key.dst_port;
+		list[i].m_u.l4_hdr.dst_port = hdr->l4_mask.dst_port;
+		i++;
+	}
+
+	return i;
 }
 
 /**
@@ -206,113 +484,87 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		  u16 *l4_proto)
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
+	bool inner = false;
 	int i = 0;
 
-	/* copy L2 (MAC) fields, Outer UDP (in case of tunnel) port info */
-	if (ice_is_tunnel_fltr(tc_fltr)) {
-		__be32 tenant_id = tc_fltr->tenant_id;
+	rule_info->tun_type = ice_sw_type_from_tunnel(tc_fltr->tunnel_type);
+	if (tc_fltr->tunnel_type != TNL_LAST) {
+		i = ice_tc_fill_tunnel_outer(flags, tc_fltr, list);
 
-		/* copy L2 (MAC) fields if specified, For tunnel outer DMAC
-		 * is needed and supported and is part of outer_headers.dst_mac
-		 * For VxLAN tunnel, supported ADQ filter config is:
-		 * - Outer dest MAC + VNI + Inner IPv4 + Inner L4 ports
-		 */
-		if (flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC) {
-			list[i].type = ICE_MAC_OFOS;
-			ether_addr_copy(list[i].h_u.eth_hdr.dst_addr,
-					headers->l2_key.dst_mac);
-			ether_addr_copy(list[i].m_u.eth_hdr.dst_addr,
-					headers->l2_mask.dst_mac);
-			i++;
-		}
-		/* copy outer UDP (enc_dst_port) only for non-GTP tunnel */
-		if (tc_fltr->tunnel_type != TNL_GTP) {
-			if ((flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT) &&
-			    headers->l3_key.ip_proto == IPPROTO_UDP) {
-				list[i].type = ICE_UDP_OF;
-				list[i].h_u.l4_hdr.dst_port =
-					headers->l4_key.dst_port;
-				list[i].m_u.l4_hdr.dst_port =
-					headers->l4_mask.dst_port;
-				i++;
-			}
-		}
-		if (tenant_id) {
-			/* setup encap info in list elements such as
-			 * VNI/encap key-id, mask, type of tunnel
-			 */
-			if (tc_fltr->tunnel_type == TNL_VXLAN)
-				list[i].type = ICE_VXLAN;
-			else if (tc_fltr->tunnel_type == TNL_GENEVE)
-				list[i].type = ICE_GENEVE;
-			else if (tc_fltr->tunnel_type == TNL_GTP)
-				list[i].type = ICE_GTP;
-
-			if (tc_fltr->tunnel_type == TNL_VXLAN ||
-			    tc_fltr->tunnel_type == TNL_GENEVE) {
-				u32 vni = be32_to_cpu(tenant_id) << 8;
-
-				list[i].h_u.tnl_hdr.vni = cpu_to_be32(vni);
-				/* 24bit tunnel key mask "\xff\xff\xff\x00" */
-				memcpy(&list[i].m_u.tnl_hdr.vni,
-				       "\xff\xff\xff\x00", 4);
-			} else if (tc_fltr->tunnel_type == TNL_GTP) {
-				list[i].h_u.gtp_hdr.teid = tenant_id;
-				/* 32bit tunnel key mask "\xff\xff\xff\xff" */
-				memcpy(&list[i].m_u.gtp_hdr.teid,
-				       "\xff\xff\xff\xff", 4);
-			}
-			/* advance list index */
-			i++;
-		}
-
-		/* now access values from inner_headers such as inner MAC (if
-		 * supported), inner IPv4[6], Inner L4 ports, hence update
-		 * "headers" to point to inner_headers
-		 */
 		headers = &tc_fltr->inner_headers;
-	} else {
-		rule_info->tun_type = ICE_NON_TUN;
+		inner = true;
+	}
 
-		if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID) {
-			list[i].type = ICE_ETYPE_OL;
-			list[i].h_u.ethertype.ethtype_id =
-					headers->l2_key.n_proto;
-			list[i].m_u.ethertype.ethtype_id =
-					headers->l2_mask.n_proto;
-			i++;
+	if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID) {
+		list[i].type = ice_proto_type_from_etype(inner);
+		list[i].h_u.ethertype.ethtype_id = headers->l2_key.n_proto;
+		list[i].m_u.ethertype.ethtype_id = headers->l2_mask.n_proto;
+		i++;
+	}
+
+	if (flags & (ICE_TC_FLWR_FIELD_DST_MAC |
+		     ICE_TC_FLWR_FIELD_SRC_MAC)) {
+		struct ice_tc_l2_hdr *l2_key, *l2_mask;
+
+		l2_key = &headers->l2_key;
+		l2_mask = &headers->l2_mask;
+
+		list[i].type = ice_proto_type_from_mac(inner);
+		if (flags & ICE_TC_FLWR_FIELD_DST_MAC) {
+			ether_addr_copy(list[i].h_u.eth_hdr.dst_addr,
+					l2_key->dst_mac);
+			ether_addr_copy(list[i].m_u.eth_hdr.dst_addr,
+					l2_mask->dst_mac);
 		}
-
-		/* copy L2 (MAC) fields, for non-tunnel case */
-		if (flags & (ICE_TC_FLWR_FIELD_DST_MAC |
-			     ICE_TC_FLWR_FIELD_SRC_MAC)) {
-			struct ice_tc_l2_hdr *l2_key, *l2_mask;
-
-			l2_key = &headers->l2_key;
-			l2_mask = &headers->l2_mask;
-
-			list[i].type = ICE_MAC_OFOS;
-			if (flags & ICE_TC_FLWR_FIELD_DST_MAC) {
-				ether_addr_copy(list[i].h_u.eth_hdr.dst_addr,
-						l2_key->dst_mac);
-				ether_addr_copy(list[i].m_u.eth_hdr.dst_addr,
-						l2_mask->dst_mac);
-			}
-			if (flags & ICE_TC_FLWR_FIELD_SRC_MAC) {
-				ether_addr_copy(list[i].h_u.eth_hdr.src_addr,
-						l2_key->src_mac);
-				ether_addr_copy(list[i].m_u.eth_hdr.src_addr,
-						l2_mask->src_mac);
-			}
-			i++;
+		if (flags & ICE_TC_FLWR_FIELD_SRC_MAC) {
+			ether_addr_copy(list[i].h_u.eth_hdr.src_addr,
+					l2_key->src_mac);
+			ether_addr_copy(list[i].m_u.eth_hdr.src_addr,
+					l2_mask->src_mac);
 		}
+		i++;
 	}
 
 	/* copy VLAN info */
 	if (flags & ICE_TC_FLWR_FIELD_VLAN) {
 		list[i].type = ICE_VLAN_OFOS;
+#ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
+		if (flags & ICE_TC_FLWR_FIELD_CVLAN)
+			list[i].type = ICE_VLAN_EX;
+#endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
 		list[i].h_u.vlan_hdr.vlan = headers->vlan_hdr.vlan_id;
 		list[i].m_u.vlan_hdr.vlan = cpu_to_be16(0xFFFF);
+		i++;
+	}
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
+	if (flags & ICE_TC_FLWR_FIELD_CVLAN) {
+		list[i].type = ICE_VLAN_IN;
+		list[i].h_u.vlan_hdr.vlan = headers->cvlan_hdr.vlan_id;
+		list[i].m_u.vlan_hdr.vlan = cpu_to_be16(0xFFFF);
+		i++;
+	}
+#endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
+
+	if (flags & (ICE_TC_FLWR_FIELD_PPPOE_SESSID |
+		     ICE_TC_FLWR_FIELD_PPP_PROTO)) {
+		struct ice_pppoe_hdr *vals, *masks;
+
+		vals = &list[i].h_u.pppoe_hdr;
+		masks = &list[i].m_u.pppoe_hdr;
+
+		list[i].type = ICE_PPPOE;
+
+		if (flags & ICE_TC_FLWR_FIELD_PPPOE_SESSID) {
+			vals->session_id = headers->pppoe_hdr.session_id;
+			masks->session_id = cpu_to_be16(0xFFFF);
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_PPP_PROTO) {
+			vals->ppp_prot_id = headers->pppoe_hdr.ppp_proto;
+			masks->ppp_prot_id = cpu_to_be16(0xFFFF);
+		}
+
 		i++;
 	}
 
@@ -321,20 +573,9 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		     ICE_TC_FLWR_FIELD_SRC_IPV4)) {
 		struct ice_tc_l3_hdr *l3_key, *l3_mask;
 
-		/* For encap, Outer L3 and L4 based are not supported,
-		 * hence if user specified L3, L4 fields, they are treated
-		 * as inner L3 and L4 respectively
-		 */
-		if (ice_is_tunnel_fltr(tc_fltr))
-			list[i].type = ICE_IPV4_IL;
-		else
-			list[i].type = ICE_IPV4_OFOS;
-
+		list[i].type = ice_proto_type_from_ipv4(inner);
 		l3_key = &headers->l3_key;
 		l3_mask = &headers->l3_mask;
-		list[i].h_u.ipv4_hdr.protocol = l3_key->ip_proto;
-		list[i].m_u.ipv4_hdr.protocol = l3_mask->ip_proto;
-
 		if (flags & ICE_TC_FLWR_FIELD_DEST_IPV4) {
 			list[i].h_u.ipv4_hdr.dst_addr = l3_key->dst_ipv4;
 			list[i].m_u.ipv4_hdr.dst_addr = l3_mask->dst_ipv4;
@@ -349,10 +590,7 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		struct ice_ipv6_hdr *ipv6_hdr, *ipv6_mask;
 		struct ice_tc_l3_hdr *l3_key, *l3_mask;
 
-		if (ice_is_tunnel_fltr(tc_fltr))
-			list[i].type = ICE_IPV6_IL;
-		else
-			list[i].type = ICE_IPV6_OFOS;
+		list[i].type = ice_proto_type_from_ipv6(inner);
 		ipv6_hdr = &list[i].h_u.ipv6_hdr;
 		ipv6_mask = &list[i].m_u.ipv6_hdr;
 		l3_key = &headers->l3_key;
@@ -373,30 +611,64 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		i++;
 	}
 
+#ifdef HAVE_FLOW_DISSECTOR_KEY_IP
+	if (headers->l2_key.n_proto == htons(ETH_P_IP) &&
+	    (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL))) {
+		list[i].type = ice_proto_type_from_ipv4(inner);
+
+		if (flags & ICE_TC_FLWR_FIELD_IP_TOS) {
+			list[i].h_u.ipv4_hdr.tos = headers->l3_key.tos;
+			list[i].m_u.ipv4_hdr.tos = headers->l3_mask.tos;
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_IP_TTL) {
+			list[i].h_u.ipv4_hdr.time_to_live =
+				headers->l3_key.ttl;
+			list[i].m_u.ipv4_hdr.time_to_live =
+				headers->l3_mask.ttl;
+		}
+
+		i++;
+	}
+
+	if (headers->l2_key.n_proto == htons(ETH_P_IPV6) &&
+	    (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL))) {
+		struct ice_ipv6_hdr *hdr_h, *hdr_m;
+
+		hdr_h = &list[i].h_u.ipv6_hdr;
+		hdr_m = &list[i].m_u.ipv6_hdr;
+		list[i].type = ice_proto_type_from_ipv6(inner);
+
+		if (flags & ICE_TC_FLWR_FIELD_IP_TOS) {
+			hdr_h->be_ver_tc_flow =
+				htonl((headers->l3_key.tos <<
+				       ICE_IPV6_HDR_TC_OFFSET) &
+				      ICE_IPV6_HDR_TC_MASK);
+			hdr_m->be_ver_tc_flow =
+				htonl((headers->l3_mask.tos <<
+				       ICE_IPV6_HDR_TC_OFFSET) &
+				      ICE_IPV6_HDR_TC_MASK);
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_IP_TTL) {
+			hdr_h->hop_limit = headers->l3_key.ttl;
+			hdr_m->hop_limit = headers->l3_mask.ttl;
+		}
+
+		i++;
+	}
+
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 	/* copy L4 (src, dest) port */
 	if (flags & (ICE_TC_FLWR_FIELD_DEST_L4_PORT |
 		     ICE_TC_FLWR_FIELD_SRC_L4_PORT)) {
 		struct ice_tc_l4_hdr *l4_key, *l4_mask;
-		u16 dst_port;
 
+		list[i].type =
+			ice_proto_type_from_l4_port(headers->l3_key.ip_proto);
 		l4_key = &headers->l4_key;
 		l4_mask = &headers->l4_mask;
-		dst_port = be16_to_cpu(l4_key->dst_port);
-		if (headers->l3_key.ip_proto == IPPROTO_TCP) {
-			list[i].type = ICE_TCP_IL;
-			/* detected L4 proto is TCP */
-			if (l4_proto)
-				*l4_proto = IPPROTO_TCP;
-		} else if (headers->l3_key.ip_proto == IPPROTO_UDP) {
-			/* Check if UDP dst port is known as a tunnel port */
-			if (ice_tunnel_port_in_use(hw, dst_port, NULL))
-				list[i].type = ICE_UDP_OF;
-			else
-				list[i].type = ICE_UDP_ILOS;
-			/* detected L4 proto is UDP */
-			if (l4_proto)
-				*l4_proto = IPPROTO_UDP;
-		}
+
 		if (flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) {
 			list[i].h_u.l4_hdr.dst_port = l4_key->dst_port;
 			list[i].m_u.l4_hdr.dst_port = l4_mask->dst_port;
@@ -411,12 +683,164 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	return i;
 }
 
+#if defined(HAVE_TCF_MIRRED_DEV) || defined(HAVE_TC_FLOW_RULE_INFRASTRUCTURE)
+/**
+ * ice_is_tnl_gtp - detect if tunnel type is GTP or not
+ * @tunnel_dev: ptr to tunnel device
+ * @rule: ptr to flow_rule
+ *
+ * If curr_tnl_type is TNL_LAST and "flow_rule" is non-NULL, then
+ * check if enc_dst_port is well known GTP port (2152)
+ * if so - return true (indicating that tunnel type is GTP), otherwise false.
+ */
+static bool
+ice_is_tnl_gtp(struct net_device *tunnel_dev, struct flow_rule *rule)
+{
+	/* if flow_rule is non-NULL, proceed with detecting possibility
+	 * of GTP tunnel. Unlike VXLAN and GENEVE, there is no such API
+	 * like  netif_is_gtp since GTP is not natively supported in kernel
+	 */
+	if (rule && (!is_vlan_dev(tunnel_dev))) {
+		struct flow_match_ports match;
+		u16 enc_dst_port;
+
+		if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS))
+			return false;
+
+		/* get ENC_PORTS info */
+		flow_rule_match_enc_ports(rule, &match);
+		enc_dst_port = be16_to_cpu(match.key->dst);
+
+		/* Outer UDP port is GTP well known port,
+		 * if 'enc_dst_port' matched with GTP well known port,
+		 * return true from this function.
+		 */
+		if (enc_dst_port != ICE_GTPU_PORT)
+			return false;
+
+		/* all checks passed including outer UDP port to be qualified
+		 * for GTP tunnel
+		 */
+		return true;
+	}
+	return false;
+}
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_PPPOE
+/**
+ * ice_tc_set_pppoe - Parse PPPoE fields from TC flower filter
+ * @match: Pointer to flow match structure
+ * @fltr: Pointer to filter structure
+ * @headers: Pointer to outer header fields
+ * @returns PPP protocol used in filter (ppp_ses or ppp_disc)
+ */
+static u16
+ice_tc_set_pppoe(struct flow_match_pppoe *match,
+		 struct ice_tc_flower_fltr *fltr,
+		 struct ice_tc_flower_lyr_2_4_hdrs *headers)
+{
+	if (match->mask->session_id) {
+		fltr->flags |= ICE_TC_FLWR_FIELD_PPPOE_SESSID;
+		headers->pppoe_hdr.session_id = match->key->session_id;
+	}
+
+	if (match->mask->ppp_proto) {
+		fltr->flags |= ICE_TC_FLWR_FIELD_PPP_PROTO;
+		headers->pppoe_hdr.ppp_proto = match->key->ppp_proto;
+	}
+
+	return be16_to_cpu(match->key->type);
+}
+#endif /* HAVE_FLOW_DISSECTOR_KEY_PPPOE */
+
+/**
+ * ice_tc_tun_get_type - get the tunnel type
+ * @tunnel_dev: ptr to tunnel device
+ * @rule: ptr to flow_rule
+ *
+ * This function detects appropriate tunnel_type if specified device is
+ * tunnel device such as vxlan/geneve othertwise it tries to detect
+ * tunnel type based on outer GTP port (2152)
+ */
+int
+ice_tc_tun_get_type(struct net_device *tunnel_dev, struct flow_rule *rule)
+{
+#ifdef HAVE_VXLAN_TYPE
+#if IS_ENABLED(CONFIG_VXLAN)
+	if (netif_is_vxlan(tunnel_dev))
+		return TNL_VXLAN;
+#endif
+#endif /* HAVE_VXLAN_TYPE */
+#ifdef HAVE_GENEVE_TYPE
+#if IS_ENABLED(CONFIG_GENEVE)
+	if (netif_is_geneve(tunnel_dev))
+		return TNL_GENEVE;
+#endif
+#endif /* HAVE_GENEVE_TYPE */
+#ifdef HAVE_GRETAP_TYPE
+	if (netif_is_gretap(tunnel_dev) ||
+	    netif_is_ip6gretap(tunnel_dev))
+		return TNL_GRETAP;
+#endif /* HAVE_GRETAP_TYPE */
+
+#ifdef HAVE_GTP_SUPPORT
+	/* Assume GTP-U by default in case of GTP netdev.
+	 * GTP-C may be selected later, based on enc_dst_port.
+	 */
+	if (netif_is_gtp(tunnel_dev))
+		return TNL_GTPU;
+#endif /* HAVE_GTP_SUPPORT */
+
+	/* detect possibility of GTP tunnel type based on input */
+	if (ice_is_tnl_gtp(tunnel_dev, rule))
+		return TNL_GTP;
+
+	return TNL_LAST;
+}
+
+static bool
+ice_is_tunnel_supported(struct net_device *dev, struct flow_rule *rule)
+{
+	return ice_tc_tun_get_type(dev, rule) != TNL_LAST;
+}
+#endif /* HAVE_TCF_MIRRED_DEC || HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
+
+#if defined(HAVE_TCF_MIRRED_DEV) || defined(HAVE_TC_FLOW_RULE_INFRASTRUCTURE)
+static int
+ice_tc_setup_redirect_action(struct ice_tc_flower_fltr *fltr,
+			     struct net_device *target_dev)
+{
+	fltr->action.fltr_act = ICE_FWD_TO_VSI;
+
+	if (ice_is_port_repr_netdev(target_dev)) {
+		struct ice_repr *repr = ice_netdev_to_repr(target_dev);
+
+		fltr->dest_vsi = repr->src_vsi;
+		fltr->direction = ICE_ESWITCH_FLTR_INGRESS;
+	} else if (netif_is_ice(target_dev) ||
+		   ice_is_tunnel_supported(target_dev, NULL)) {
+		fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
+	} else {
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported netdevice in switchdev mode");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#endif
+
 #ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
 static int
 ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
 			    struct flow_action_entry *act)
+#else
+static int
+ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
+			    struct tc_action *tc_act)
+#endif
 {
-	struct ice_repr *repr;
+#ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
+	int err;
 
 	switch (act->id) {
 	case FLOW_ACTION_DROP:
@@ -424,22 +848,9 @@ ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
 		break;
 
 	case FLOW_ACTION_REDIRECT:
-		fltr->action.fltr_act = ICE_FWD_TO_VSI;
-
-		if (ice_is_port_repr_netdev(act->dev)) {
-			repr = ice_netdev_to_repr(act->dev);
-
-			fltr->dest_vsi = repr->src_vsi;
-			fltr->direction = ICE_ESWITCH_FLTR_INGRESS;
-		} else if (netif_is_ice(act->dev)) {
-			struct ice_netdev_priv *np = netdev_priv(act->dev);
-
-			fltr->dest_vsi = np->vsi;
-			fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
-		} else {
-			NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported netdevice in switchdev mode");
-			return -EINVAL;
-		}
+		err = ice_tc_setup_redirect_action(fltr, act->dev);
+		if (err)
+			return err;
 
 		break;
 
@@ -449,8 +860,23 @@ ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
 	}
 
 	return 0;
+#elif defined(HAVE_TCF_MIRRED_DEV)
+	int err;
+
+	if (is_tcf_gact_shot(tc_act)) {
+		fltr->action.fltr_act = ICE_DROP_PACKET;
+	} else if (is_tcf_mirred_egress_redirect(tc_act)) {
+		err = ice_tc_setup_redirect_action(fltr,
+						   tcf_mirred_dev(tc_act));
+		if (err)
+			return err;
+	}
+
+	return 0;
+#else
+	return -EINVAL;
+#endif
 }
-#endif /* HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
 
 static int
 ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
@@ -461,16 +887,10 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	struct ice_hw *hw = &vsi->back->hw;
 	struct ice_adv_lkup_elem *list;
 	u32 flags = fltr->flags;
-	enum ice_status status;
 	int lkups_cnt;
-	int ret = 0;
-	int i;
+	int i, ret;
 
-	if (!flags || (flags & (ICE_TC_FLWR_FIELD_ENC_DEST_IPV4 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
-				ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
+	if (!flags || (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported encap field(s)");
 		return -EOPNOTSUPP;
 	}
@@ -485,6 +905,23 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		ret = -EINVAL;
 		goto exit;
 	}
+
+	if (fltr->tunnel_type == TNL_VXLAN)
+		rule_info.tun_type = ICE_SW_TUN_VXLAN;
+	else if (fltr->tunnel_type == TNL_GENEVE)
+		rule_info.tun_type = ICE_SW_TUN_GENEVE;
+	else if (fltr->tunnel_type == TNL_GRETAP)
+		rule_info.tun_type = ICE_SW_TUN_NVGRE;
+#ifdef HAVE_GTP_SUPPORT
+	else if (fltr->tunnel_type == TNL_GTPU)
+		rule_info.tun_type = ICE_SW_TUN_GTPU;
+	else if (fltr->tunnel_type == TNL_GTPC)
+		rule_info.tun_type = ICE_SW_TUN_GTPC;
+#endif /* HAVE_GTP_SUPPORT */
+
+	/* egress traffic is always redirect to uplink */
+	if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS)
+		fltr->dest_vsi = vsi->back->switchdev.uplink_vsi;
 
 	rule_info.sw_act.fltr_act = fltr->action.fltr_act;
 	if (fltr->action.fltr_act != ICE_DROP_PACKET)
@@ -509,17 +946,18 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		rule_info.flags_info.act_valid = true;
 	}
 
+	rule_info.add_dir_lkup = false;
+
 	/* specify the cookie as filter_rule_id */
 	rule_info.fltr_rule_id = fltr->cookie;
 
-	status = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info, &rule_added);
-	if (status == ICE_ERR_ALREADY_EXISTS) {
+	ret = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info, &rule_added);
+	if (ret == -EEXIST) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because it already exist");
 		ret = -EINVAL;
 		goto exit;
-	} else if (status) {
+	} else if (ret) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter due to error");
-		ret = -EIO;
 		goto exit;
 	}
 
@@ -758,13 +1196,12 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	u32 flags = tc_fltr->flags;
-	enum ice_status status;
 	struct ice_vsi *ch_vsi;
 	struct device *dev;
 	u16 lkups_cnt = 0;
 	u16 l4_proto = 0;
-	int ret = 0;
 	u16 i = 0;
+	int ret;
 
 	dev = ice_pf_to_dev(pf);
 	if (ice_is_safe_mode(pf)) {
@@ -851,17 +1288,18 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		rule_info.priority = ICE_SWITCH_FLTR_PRIO_VSI;
 	}
 
+	rule_info.add_dir_lkup = false;
+
 	/* specify the cookie as filter_rule_id */
 	rule_info.fltr_rule_id = tc_fltr->cookie;
 
-	status = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info, &rule_added);
-	if (status == ICE_ERR_ALREADY_EXISTS) {
+	ret = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info, &rule_added);
+	if (ret == -EEXIST) {
 		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because it already exist");
 		ret = -EINVAL;
 		goto exit;
-	} else if (status) {
+	} else if (ret) {
 		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter due to error");
-		ret = -EIO;
 		goto exit;
 	}
 
@@ -1026,86 +1464,35 @@ ice_tc_set_port(struct flow_match_ports match,
 }
 
 #if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
-/**
- * ice_is_tnl_gtp - detect if tunnel type is GTP or not
- * @tunnel_dev: ptr to tunnel device
- * @rule: ptr to flow_rule
- *
- * If curr_tnl_type is TNL_LAST and "flow_rule" is non-NULL, then
- * check if enc_dst_port is well known GTP port (2152)
- * if so - return true (indicating that tunnel type is GTP), otherwise false.
- */
-static bool
-ice_is_tnl_gtp(struct net_device *tunnel_dev,
-	       struct flow_rule *rule)
+static bool ice_is_tunnel_supported_rule(struct flow_rule *rule)
 {
-	/* if flow_rule is non-NULL, proceed with detecting possibility
-	 * of GTP tunnel. Unlike VXLAN and GENEVE, there is no such API
-	 * like  netif_is_gtp since GTP is not natively supported in kernel
-	 */
-	if (rule && (!is_vlan_dev(tunnel_dev))) {
-		struct flow_match_ports match;
-		u16 enc_dst_port;
-
-		if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)) {
-			netdev_err(tunnel_dev,
-				   "Tunnel HW offload is not supported, ENC_PORTs are not specified\n");
-			return false;
-		}
-
-		/* get ENC_PORTS info */
-		flow_rule_match_enc_ports(rule, &match);
-		enc_dst_port = be16_to_cpu(match.key->dst);
-
-		/* Outer UDP port is GTP well known port,
-		 * if 'enc_dst_port' matched with GTP well known port,
-		 * return true from this function.
-		 */
-		if (enc_dst_port != ICE_GTP_TNL_WELLKNOWN_PORT) {
-			netdev_err(tunnel_dev,
-				   "Tunnel HW offload is not supported for non-GTP tunnel, ENC_DST_PORT is %u\n",
-				   enc_dst_port);
-			return false;
-		}
-
-		/* all checks passed including outer UDP port to be qualified
-		 * for GTP tunnel
-		 */
-		return true;
-	}
-	return false;
+	return (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) ||
+		flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) ||
+		flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_KEYID) ||
+		flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS));
 }
 
-/**
- * ice_tc_tun_get_type - get the tunnel type
- * @tunnel_dev: ptr to tunnel device
- * @rule: ptr to flow_rule
- *
- * This function detects appropriate tunnel_type if specified device is
- * tunnel device such as vxlan/geneve othertwise it tries to detect
- * tunnel type based on outer GTP port (2152)
- */
-int
-ice_tc_tun_get_type(struct net_device *tunnel_dev,
-		    struct flow_rule *rule)
+static struct net_device *
+ice_get_tunnel_device(struct net_device *dev, struct flow_rule *rule)
 {
-#ifdef HAVE_VXLAN_TYPE
-#if IS_ENABLED(CONFIG_VXLAN)
-	if (netif_is_vxlan(tunnel_dev))
-		return TNL_VXLAN;
-#endif
-#endif /* HAVE_VXLAN_TYPE */
-#ifdef HAVE_GENEVE_TYPE
-#if IS_ENABLED(CONFIG_GENEVE)
-	if (netif_is_geneve(tunnel_dev))
-		return TNL_GENEVE;
-#endif
-#endif /* HAVE_GENEVE_TYPE */
-	/* detect possibility of GTP tunnel type based on input */
-	if (ice_is_tnl_gtp(tunnel_dev, rule))
-		return TNL_GTP;
+#ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
+	struct flow_action_entry *act;
+	int i;
 
-	return TNL_LAST;
+	if (ice_is_tunnel_supported(dev, rule))
+		return dev;
+
+	flow_action_for_each(i, act, &rule->action) {
+		if (act->id == FLOW_ACTION_REDIRECT &&
+		    ice_is_tunnel_supported(act->dev, rule))
+			return act->dev;
+	}
+#endif /* HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
+
+	if (ice_is_tunnel_supported_rule(rule))
+		return dev;
+
+	return NULL;
 }
 
 /**
@@ -1191,7 +1578,10 @@ ice_tc_tun_parse(struct net_device *filter_dev, struct ice_vsi *vsi,
 	tunnel_type = ice_tc_tun_get_type(filter_dev, rule);
 
 	if (tunnel_type == TNL_VXLAN || tunnel_type == TNL_GTP ||
-	    tunnel_type == TNL_GENEVE) {
+#ifdef HAVE_GTP_SUPPORT
+	    tunnel_type == TNL_GTPU || tunnel_type == TNL_GTPC ||
+#endif /* HAVE_GTP_SUPPORT */
+	    tunnel_type == TNL_GENEVE || tunnel_type == TNL_GRETAP) {
 		err = ice_tc_tun_info(pf, f, fltr, tunnel_type);
 		if (err) {
 			dev_err(dev, "Failed to parse tunnel (tunnel_type %u) attributes\n",
@@ -1207,6 +1597,42 @@ ice_tc_tun_parse(struct net_device *filter_dev, struct ice_vsi *vsi,
 	headers->l3_key.ip_proto = IPPROTO_UDP;
 	return err;
 }
+
+#ifdef HAVE_GTP_SUPPORT
+/**
+ * ice_parse_gtp_type - Sets GTP tunnel type to GTP-U or GTP-C
+ * @match: Flow match structure
+ * @fltr: Pointer to filter structure
+ *
+ * GTP-C/GTP-U is selected based on destination port number (enc_dst_port).
+ * Before calling this funtcion, fltr->tunnel_type should be set to TNL_GTPU,
+ * therefore making GTP-U the default choice (when destination port number is
+ * not specified).
+ */
+static int
+ice_parse_gtp_type(struct flow_match_ports match,
+		   struct ice_tc_flower_fltr *fltr)
+{
+	u16 dst_port;
+
+	if (match.key->dst) {
+		dst_port = be16_to_cpu(match.key->dst);
+
+		switch (dst_port) {
+		case GTP1U_PORT:
+			break;
+		case ICE_GTPC_PORT:
+			fltr->tunnel_type = TNL_GTPC;
+			break;
+		default:
+			NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported GTP port number");
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+#endif /* HAVE_GTP_SUPPORT */
 
 /**
  * ice_parse_tunnel_attr - Parse tunnel attributes from TC flower filter
@@ -1249,17 +1675,25 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
 			return -EINVAL;
 	}
 
-#ifdef HAVE_TC_FLOWER_ENC_IP
+#ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_IP
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IP)) {
 		struct flow_match_ip match;
 
 		flow_rule_match_enc_ip(rule, &match);
-		headers->l3_key.tos = match.key->tos;
-		headers->l3_key.ttl = match.key->ttl;
-		headers->l3_mask.tos = match.mask->tos;
-		headers->l3_mask.ttl = match.mask->ttl;
+
+		if (match.mask->tos) {
+			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_IP_TOS;
+			headers->l3_key.tos = match.key->tos;
+			headers->l3_mask.tos = match.mask->tos;
+		}
+
+		if (match.mask->ttl) {
+			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_IP_TTL;
+			headers->l3_key.ttl = match.key->ttl;
+			headers->l3_mask.ttl = match.mask->ttl;
+		}
 	}
-#endif /* HAVE_TC_FLOWER_ENC_IP */
+#endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
 
 	if (fltr->tunnel_type == TNL_GTP &&
 	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)) {
@@ -1270,6 +1704,33 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
 		if (ice_tc_set_port(match, fltr, headers, true))
 			return -EINVAL;
 	}
+
+#ifdef HAVE_GTP_SUPPORT
+	if ((fltr->tunnel_type == TNL_GTPU || fltr->tunnel_type == TNL_GTPC) &&
+	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)) {
+		struct flow_match_ports match;
+
+		flow_rule_match_enc_ports(rule, &match);
+
+		if (ice_parse_gtp_type(match, fltr))
+			return -EINVAL;
+	}
+
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_OPTS)) {
+		struct flow_match_enc_opts match;
+
+		flow_rule_match_enc_opts(rule, &match);
+
+		memcpy(&fltr->gtp_pdu_info_keys, &match.key->data[0],
+		       sizeof(struct gtp_pdu_session_info));
+
+		memcpy(&fltr->gtp_pdu_info_masks, &match.mask->data[0],
+		       sizeof(struct gtp_pdu_session_info));
+
+		fltr->flags |= ICE_TC_FLWR_FIELD_ENC_OPTS;
+	}
+#endif /* HAVE_GTP_SUPPORT */
+
 	return 0;
 }
 #endif /* HAVE_TC_FLOWER_ENC && HAVE_TC_INDIR_BLOCK */
@@ -1298,6 +1759,9 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 	struct flow_rule *rule = flow_cls_offload_flow_rule(f);
 	u16 n_proto_mask = 0, n_proto_key = 0, addr_type = 0;
 	struct flow_dissector *dissector;
+#if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
+	struct net_device *tunnel_dev;
+#endif /* HAVE_TC_FLOWER_ENC && HAVE_TC_INDIR_BLOCK */
 
 	dissector = rule->match.dissector;
 
@@ -1311,6 +1775,9 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 #ifndef HAVE_TC_FLOWER_VLAN_IN_TAGS
 	      BIT(FLOW_DISSECTOR_KEY_VLAN) |
 #endif
+#ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
+	      BIT(FLOW_DISSECTOR_KEY_CVLAN) |
+#endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
 	      BIT(FLOW_DISSECTOR_KEY_IPV4_ADDRS) |
 	      BIT(FLOW_DISSECTOR_KEY_IPV6_ADDRS) |
 #ifdef HAVE_TC_FLOWER_ENC
@@ -1318,33 +1785,32 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 	      BIT(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) |
 	      BIT(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) |
 	      BIT(FLOW_DISSECTOR_KEY_ENC_PORTS) |
+#ifdef HAVE_GTP_SUPPORT
+	      BIT(FLOW_DISSECTOR_KEY_ENC_OPTS) |
+#endif /* HAVE_GTP_SUPPORT */
 	      BIT(FLOW_DISSECTOR_KEY_ENC_CONTROL) |
-#ifdef HAVE_TC_FLOWER_ENC_IP
+#ifdef HAVE_FLOW_DISSECTOR_KEY_IP
+	      BIT(FLOW_DISSECTOR_KEY_IP) |
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
+#ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_IP
 	      BIT(FLOW_DISSECTOR_KEY_ENC_IP) |
-#endif /* HAVE_TC_FLOWER_ENC_IP */
+#endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
 #endif /* HAVE_TC_FLOWER_ENC */
+#ifdef HAVE_FLOW_DISSECTOR_KEY_PPPOE
+	      BIT(FLOW_DISSECTOR_KEY_PPPOE) |
+#endif /* HAVE_FLOW_DISSECTOR_KEY_PPPOE */
 	      BIT(FLOW_DISSECTOR_KEY_PORTS))) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported key used");
 		return -EOPNOTSUPP;
 	}
 
 #if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
-	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) ||
-	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) ||
-	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_KEYID) ||
-#ifdef HAVE_VXLAN_TYPE
-#if IS_ENABLED(CONFIG_VXLAN)
-	    netif_is_vxlan(filter_dev) ||
-#endif
-#endif /* HAVE_VXLAN_TYPE */
-#ifdef HAVE_GENEVE_TYPE
-#if IS_ENABLED(CONFIG_GENEVE)
-	    netif_is_geneve(filter_dev) ||
-#endif
-#endif /* HAVE_GENEVE_TYPE */
-	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)
-	  ) {
+	tunnel_dev = ice_get_tunnel_device(filter_dev, rule);
+
+	if (tunnel_dev) {
 		int err;
+
+		filter_dev = tunnel_dev;
 
 		err = ice_parse_tunnel_attr(filter_dev, vsi, f, fltr, headers);
 		if (err) {
@@ -1470,6 +1936,55 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 	}
 #endif /* HAVE_TC_FLOWER_VLAN_IN_TAGS */
 
+#ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_CVLAN)) {
+		struct flow_match_vlan match;
+
+		if (!ice_is_dvm_ena(&vsi->back->hw)) {
+			NL_SET_ERR_MSG_MOD(fltr->extack,
+					   "Double VLAN mode is not enabled");
+			return -EINVAL;
+		}
+
+		flow_rule_match_cvlan(rule, &match);
+
+		if (match.mask->vlan_id) {
+			if (match.mask->vlan_id == VLAN_VID_MASK) {
+				fltr->flags |= ICE_TC_FLWR_FIELD_CVLAN;
+			} else {
+				NL_SET_ERR_MSG_MOD(fltr->extack,
+						   "Bad CVLAN mask");
+				return -EINVAL;
+			}
+		}
+
+		headers->cvlan_hdr.vlan_id =
+			cpu_to_be16(match.key->vlan_id & VLAN_VID_MASK);
+#ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
+		if (match.mask->vlan_priority)
+			headers->cvlan_hdr.vlan_prio = match.key->vlan_priority;
+#endif
+	}
+#endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_PPPOE
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PPPOE)) {
+		struct flow_match_pppoe match;
+
+		flow_rule_match_pppoe(rule, &match);
+		n_proto_key = ice_tc_set_pppoe(&match, fltr, headers);
+
+		/* If ethertype equals ETH_P_PPP_SES, n_proto might be
+		 * overwritten by encapsulated protocol (ppp_proto field) or set
+		 * to 0. To correct this, flow_match_pppoe provides the type
+		 * field, which contains the actual ethertype (ETH_P_PPP_SES).
+		 */
+		headers->l2_key.n_proto = cpu_to_be16(n_proto_key);
+		headers->l2_mask.n_proto = cpu_to_be16(0xFFFF);
+		fltr->flags |= ICE_TC_FLWR_FIELD_ETH_TYPE_ID;
+	}
+#endif /* HAVE_FLOW_DISSECTOR_KEY_PPPOE */
+
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_CONTROL)) {
 		struct flow_match_control match;
 
@@ -1493,6 +2008,26 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (ice_tc_set_ipv6(&match, fltr, headers, false))
 			return -EINVAL;
 	}
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_IP
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_IP)) {
+		struct flow_match_ip match;
+
+		flow_rule_match_ip(rule, &match);
+
+		if (match.mask->tos) {
+			fltr->flags |= ICE_TC_FLWR_FIELD_IP_TOS;
+			headers->l3_key.tos = match.key->tos;
+			headers->l3_mask.tos = match.mask->tos;
+		}
+
+		if (match.mask->ttl) {
+			fltr->flags |= ICE_TC_FLWR_FIELD_IP_TTL;
+			headers->l3_key.ttl = match.key->ttl;
+			headers->l3_mask.ttl = match.mask->ttl;
+		}
+	}
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PORTS)) {
 		struct flow_match_ports match;
@@ -1782,18 +2317,17 @@ ice_parse_tc_flower_actions(struct ice_vsi *vsi,
 #else
 	list_for_each_entry_safe(tc_act, temp, &(exts)->actions, list) {
 #endif /* HAVE_TCF_EXTS_TO_LIST */
-#ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
 		if (ice_is_eswitch_mode_switchdev(vsi->back)) {
+#ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
 			int err = ice_eswitch_tc_parse_action(fltr, act);
+#else
+			int err = ice_eswitch_tc_parse_action(fltr, tc_act);
+#endif
 
 			if (err)
 				return err;
 			continue;
 		}
-#else
-		if (ice_is_eswitch_mode_switchdev(vsi->back))
-			return -EINVAL;
-#endif /* HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
 		/* Allow only one rule per filter */
 
 		/* Drop action */
@@ -1836,7 +2370,7 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	}
 
 	if (err) {
-		if (err == ICE_ERR_DOES_NOT_EXIST) {
+		if (err == -ENOENT) {
 			NL_SET_ERR_MSG_MOD(fltr->extack, "Filter does not exist");
 			return -ENOENT;
 		}

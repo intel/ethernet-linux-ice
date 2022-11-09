@@ -17,8 +17,8 @@ ice_gnss_do_write(struct ice_pf *pf, unsigned char *buf, unsigned int size)
 {
 	struct ice_aqc_link_topo_addr link_topo;
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status = 0;
 	unsigned int offset = 0;
+	int err;
 
 	memset(&link_topo, 0, sizeof(struct ice_aqc_link_topo_addr));
 	link_topo.topo_params.index = ICE_E810T_GNSS_I2C_BUS;
@@ -33,12 +33,11 @@ ice_gnss_do_write(struct ice_pf *pf, unsigned char *buf, unsigned int size)
 	 * last 2 to 5 bytes write.
 	 */
 	while (size - offset > ICE_GNSS_UBX_WRITE_BYTES + 1) {
-		status = ice_aq_write_i2c(hw, link_topo,
-					  ICE_GNSS_UBX_I2C_BUS_ADDR,
-					  cpu_to_le16(buf[offset]),
-					  ICE_MAX_I2C_WRITE_BYTES,
-					  &buf[offset + 1], NULL);
-		if (status)
+		err = ice_aq_write_i2c(hw, link_topo, ICE_GNSS_UBX_I2C_BUS_ADDR,
+				       cpu_to_le16(buf[offset]),
+				       ICE_MAX_I2C_WRITE_BYTES,
+				       &buf[offset + 1], NULL);
+		if (err)
 			goto exit;
 
 		offset += ICE_GNSS_UBX_WRITE_BYTES;
@@ -46,28 +45,27 @@ ice_gnss_do_write(struct ice_pf *pf, unsigned char *buf, unsigned int size)
 
 	/* Single byte would be written. Write 4 bytes instead of 5. */
 	if (size - offset == ICE_GNSS_UBX_WRITE_BYTES + 1) {
-		status = ice_aq_write_i2c(hw, link_topo,
-					  ICE_GNSS_UBX_I2C_BUS_ADDR,
-					  cpu_to_le16(buf[offset]),
-					  ICE_MAX_I2C_WRITE_BYTES - 1,
-					  &buf[offset + 1], NULL);
-		if (status)
+		err = ice_aq_write_i2c(hw, link_topo, ICE_GNSS_UBX_I2C_BUS_ADDR,
+				       cpu_to_le16(buf[offset]),
+				       ICE_MAX_I2C_WRITE_BYTES - 1,
+				       &buf[offset + 1], NULL);
+		if (err)
 			goto exit;
 
 		offset += ICE_GNSS_UBX_WRITE_BYTES - 1;
 	}
 
 	/* Do the last write, 2 to 5 bytes. */
-	status = ice_aq_write_i2c(hw, link_topo, ICE_GNSS_UBX_I2C_BUS_ADDR,
-				  cpu_to_le16(buf[offset]), size - offset - 1,
-				  &buf[offset + 1], NULL);
-	if (!status)
+	err = ice_aq_write_i2c(hw, link_topo, ICE_GNSS_UBX_I2C_BUS_ADDR,
+			       cpu_to_le16(buf[offset]), size - offset - 1,
+			       &buf[offset + 1], NULL);
+	if (!err)
 		offset = size;
 
 exit:
-	if (status)
-		dev_err(ice_pf_to_dev(pf), "GNSS failed to write, offset=%u, size=%u, status=%s\n",
-			offset, size, ice_stat_str(status));
+	if (err)
+		dev_err(ice_pf_to_dev(pf), "GNSS failed to write, offset=%u, size=%u, status=%d\n",
+			offset, size, err);
 
 	return offset;
 }
@@ -120,7 +118,7 @@ static void ice_gnss_read(struct kthread_work *work)
 	int err = 0;
 
 	pf = gnss->back;
-	if (!pf || !&pf->hw || !gnss->tty || !gnss->tty->port)
+	if (!pf || !gnss->tty || !gnss->tty->port)
 		return;
 
 	hw = &pf->hw;
@@ -143,16 +141,11 @@ static void ice_gnss_read(struct kthread_work *work)
 
 	/* Read data length in a loop, when it's not 0 the data is ready */
 	for (i = 0; i < ICE_MAX_UBX_READ_TRIES; i++) {
-		enum ice_status status;
-
-		status = ice_aq_read_i2c(hw, link_topo,
-					 ICE_GNSS_UBX_I2C_BUS_ADDR,
-					 cpu_to_le16(ICE_GNSS_UBX_DATA_LEN_H),
-					 i2c_params, (u8 *)&data_len_b, NULL);
-		if (status) {
-			err = ice_status_to_errno(status);
+		err = ice_aq_read_i2c(hw, link_topo, ICE_GNSS_UBX_I2C_BUS_ADDR,
+				      cpu_to_le16(ICE_GNSS_UBX_DATA_LEN_H),
+				      i2c_params, (u8 *)&data_len_b, NULL);
+		if (err)
 			goto exit_buf;
-		}
 
 		data_len = be16_to_cpu(data_len_b);
 		if (data_len != 0 && data_len != U16_MAX)
@@ -171,19 +164,15 @@ static void ice_gnss_read(struct kthread_work *work)
 	/* Read received data */
 	for (i = 0; i < data_len; i += bytes_read) {
 		unsigned int bytes_left = data_len - i;
-		enum ice_status status;
 
 		bytes_read = min_t(typeof(bytes_left), bytes_left,
 				   ICE_MAX_I2C_DATA_SIZE);
 
-		status = ice_aq_read_i2c(hw, link_topo,
-					 ICE_GNSS_UBX_I2C_BUS_ADDR,
-					 cpu_to_le16(ICE_GNSS_UBX_EMPTY_DATA),
-					 bytes_read, &buf[i], NULL);
-		if (status) {
-			err = ice_status_to_errno(status);
+		err = ice_aq_read_i2c(hw, link_topo, ICE_GNSS_UBX_I2C_BUS_ADDR,
+				      cpu_to_le16(ICE_GNSS_UBX_EMPTY_DATA),
+				      bytes_read, &buf[i], NULL);
+		if (err)
 			goto exit_buf;
-		}
 	}
 
 	/* Send the data to the tty layer for users to read. This doesn't
@@ -219,7 +208,7 @@ static struct gnss_serial *ice_gnss_struct_init(struct ice_pf *pf, int index)
 	mutex_init(&gnss->gnss_mutex);
 	gnss->open_count = 0;
 	gnss->back = pf;
-	pf->gnss_serial[index] = gnss;
+	pf->gnss_serial = gnss;
 
 	kthread_init_delayed_work(&gnss->read_work, ice_gnss_read);
 	INIT_LIST_HEAD(&gnss->queue);
@@ -258,11 +247,11 @@ static int ice_gnss_tty_open(struct tty_struct *tty, struct file *filp)
 	/* Clear the pointer in case something fails */
 	tty->driver_data = NULL;
 	/* Get the serial object associated with this tty pointer */
-	gnss = pf->gnss_serial[tty->index];
+	gnss = pf->gnss_serial;
 
 	if (!gnss) {
 		/* Initialize GNSS struct on the first device open */
-		gnss = ice_gnss_struct_init(pf,  tty->index);
+		gnss = ice_gnss_struct_init(pf, tty->index);
 		if (!gnss)
 			return -ENOMEM;
 	}
@@ -349,10 +338,6 @@ ice_gnss_tty_write(struct tty_struct *tty, const unsigned char *buf, int count)
 	if (!pf)
 		return -EFAULT;
 
-	/* Allow write only on TTY 0 */
-	if (gnss != pf->gnss_serial[0])
-		return -EIO;
-
 	mutex_lock(&gnss->gnss_mutex);
 
 	if (!gnss->open_count) {
@@ -401,8 +386,7 @@ static int ice_gnss_tty_write_room(struct tty_struct *tty)
 {
 	struct gnss_serial *gnss = tty->driver_data;
 
-	/* Allow write only on TTY 0 */
-	if (!gnss || gnss != gnss->back->gnss_serial[0])
+	if (!gnss)
 #ifndef HAVE_TTY_WRITE_ROOM_UINT
 		return 0;
 #else
@@ -424,11 +408,27 @@ static int ice_gnss_tty_write_room(struct tty_struct *tty)
 	return ICE_GNSS_TTY_WRITE_BUF;
 }
 
+/**
+ * ice_gnss_tty_set_termios - mock for set_termios tty operations
+ * @tty: pointer to the tty_struct
+ * @new_termios: pointer to the new termios parameters
+ */
+static void
+ice_gnss_tty_set_termios(struct tty_struct *tty, struct ktermios *new_termios)
+{
+	/**
+	 * Some 3rd party tools (ex. ubxtool) want to change the TTY parameters.
+	 * In our virtual interface (I2C communication over FW AQ) we don't have
+	 * to change anything, but we need to implement it to unblock tools.
+	 */
+}
+
 static const struct tty_operations tty_gps_ops = {
 	.open =		ice_gnss_tty_open,
 	.close =	ice_gnss_tty_close,
 	.write =	ice_gnss_tty_write,
 	.write_room =	ice_gnss_tty_write_room,
+	.set_termios =	ice_gnss_tty_set_termios,
 };
 
 /**
@@ -438,14 +438,12 @@ static const struct tty_operations tty_gps_ops = {
 static struct tty_driver *ice_gnss_create_tty_driver(struct ice_pf *pf)
 {
 	struct device *dev = ice_pf_to_dev(pf);
-	const int ICE_TTYDRV_NAME_MAX = 14;
+	const int ICE_TTYDRV_NAME_MAX = 12;
 	struct tty_driver *tty_driver;
 	char *ttydrv_name;
-	unsigned int i;
 	int err;
 
-	tty_driver = tty_alloc_driver(ICE_GNSS_TTY_MINOR_DEVICES,
-				      TTY_DRIVER_REAL_RAW);
+	tty_driver = tty_alloc_driver(1, TTY_DRIVER_REAL_RAW);
 	if (IS_ERR(tty_driver)) {
 		dev_err(dev, "Failed to allocate memory for GNSS TTY\n");
 		return NULL;
@@ -457,7 +455,7 @@ static struct tty_driver *ice_gnss_create_tty_driver(struct ice_pf *pf)
 		return NULL;
 	}
 
-	snprintf(ttydrv_name, ICE_TTYDRV_NAME_MAX, "ttyGNSS_%02x%02x_",
+	snprintf(ttydrv_name, ICE_TTYDRV_NAME_MAX, "ttyGNSS_%02x%02x",
 		 (u8)pf->pdev->bus->number, (u8)PCI_SLOT(pf->pdev->devfn));
 
 	/* Initialize the tty driver*/
@@ -477,31 +475,26 @@ static struct tty_driver *ice_gnss_create_tty_driver(struct ice_pf *pf)
 	tty_driver->driver_state = pf;
 	tty_set_operations(tty_driver, &tty_gps_ops);
 
-	for (i = 0; i < ICE_GNSS_TTY_MINOR_DEVICES; i++) {
-		pf->gnss_tty_port[i] = kzalloc(sizeof(*pf->gnss_tty_port[i]),
-					       GFP_KERNEL);
-		pf->gnss_serial[i] = NULL;
+	pf->gnss_tty_port =
+		kzalloc(sizeof(*pf->gnss_tty_port), GFP_KERNEL);
+	pf->gnss_serial = NULL;
 
-		tty_port_init(pf->gnss_tty_port[i]);
-		tty_port_link_device(pf->gnss_tty_port[i], tty_driver, i);
-	}
+	tty_port_init(pf->gnss_tty_port);
+	tty_port_link_device(pf->gnss_tty_port, tty_driver, 0);
 
 	err = tty_register_driver(tty_driver);
 	if (err) {
 		dev_err(dev, "Failed to register TTY driver err=%d\n", err);
 
-		for (i = 0; i < ICE_GNSS_TTY_MINOR_DEVICES; i++) {
-			tty_port_destroy(pf->gnss_tty_port[i]);
-			kfree(pf->gnss_tty_port[i]);
-		}
+		tty_port_destroy(pf->gnss_tty_port);
+		kfree(pf->gnss_tty_port);
 		kfree(ttydrv_name);
 		tty_driver_kref_put(tty_driver);
 
 		return NULL;
 	}
 
-	for (i = 0; i < ICE_GNSS_TTY_MINOR_DEVICES; i++)
-		dev_info(dev, "%s%d registered\n", ttydrv_name, i);
+	dev_info(dev, "%s registered\n", ttydrv_name);
 
 	return tty_driver;
 }
@@ -530,25 +523,21 @@ void ice_gnss_init(struct ice_pf *pf)
  */
 void ice_gnss_exit(struct ice_pf *pf)
 {
-	unsigned int i;
-
 	if (!test_bit(ICE_FLAG_GNSS, pf->flags) || !pf->ice_gnss_tty_driver)
 		return;
 
-	for (i = 0; i < ICE_GNSS_TTY_MINOR_DEVICES; i++) {
-		if (pf->gnss_tty_port[i]) {
-			tty_port_destroy(pf->gnss_tty_port[i]);
-			kfree(pf->gnss_tty_port[i]);
-		}
+	if (pf->gnss_tty_port) {
+		tty_port_destroy(pf->gnss_tty_port);
+		kfree(pf->gnss_tty_port);
+	}
 
-		if (pf->gnss_serial[i]) {
-			struct gnss_serial *gnss = pf->gnss_serial[i];
+	if (pf->gnss_serial) {
+		struct gnss_serial *gnss = pf->gnss_serial;
 
-			kthread_cancel_work_sync(&gnss->write_work);
-			kthread_cancel_delayed_work_sync(&gnss->read_work);
-			kfree(gnss);
-			pf->gnss_serial[i] = NULL;
-		}
+		kthread_cancel_work_sync(&gnss->write_work);
+		kthread_cancel_delayed_work_sync(&gnss->read_work);
+		kfree(gnss);
+		pf->gnss_serial = NULL;
 	}
 
 	tty_unregister_driver(pf->ice_gnss_tty_driver);
@@ -568,7 +557,7 @@ bool ice_gnss_is_gps_present(struct ice_hw *hw)
 		return false;
 
 	if (ice_is_pca9575_present(hw)) {
-		enum ice_status status;
+		int status;
 		u8 data;
 
 		status = ice_read_pca9575_reg_e810t(hw, ICE_PCA9575_P0_IN,

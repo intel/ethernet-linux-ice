@@ -159,7 +159,9 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_EXT_TOPO_DEV_IMG2			0x0083
 #define ICE_AQC_CAPS_EXT_TOPO_DEV_IMG3			0x0084
 #define ICE_AQC_CAPS_TX_SCHED_TOPO_COMP_MODE		0x0085
+#define ICE_AQC_CAPS_NAC_TOPOLOGY			0x0087
 #define ICE_AQC_CAPS_DYN_FLATTENING			0x0090
+#define ICE_AQC_CAPS_ROCEV2_LAG				0x0092
 
 	u8 major_ver;
 	u8 minor_ver;
@@ -1962,6 +1964,7 @@ struct ice_aqc_get_link_topo {
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_PCA9575			0x21
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032		0x24
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384		0x25
+#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_E822_PHY			0x30
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_C827			0x31
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX		0x47
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_GPS			0x48
@@ -2448,14 +2451,25 @@ struct ice_aqc_lldp_get_mib {
 #define ICE_AQ_LLDP_TX_ACTIVE			0
 #define ICE_AQ_LLDP_TX_SUSPENDED		1
 #define ICE_AQ_LLDP_TX_FLUSHED			3
+/* DCBX mode */
+#define ICE_AQ_LLDP_DCBX_S			6
+#define ICE_AQ_LLDP_DCBX_M			(0x3 << ICE_AQ_LLDP_DCBX_S)
+#define ICE_AQ_LLDP_DCBX_NA			0
+#define ICE_AQ_LLDP_DCBX_CEE			1
+#define ICE_AQ_LLDP_DCBX_IEEE			2
 /* The following bytes are reserved for the Get LLDP MIB command (0x0A00)
  * and in the LLDP MIB Change Event (0x0A01). They are valid for the
  * Get LLDP MIB (0x0A00) response only.
  */
-	u8 reserved1;
+	u8 state;
+#define ICE_AQ_LLDP_MIB_CHANGE_STATE_S		0
+#define ICE_AQ_LLDP_MIB_CHANGE_STATE_M		\
+				(0x1 << ICE_AQ_LLDP_MIB_CHANGE_STATE_S)
+#define ICE_AQ_LLDP_MIB_CHANGE_EXECUTED		0
+#define ICE_AQ_LLDP_MIB_CHANGE_PENDING		1
 	__le16 local_len;
 	__le16 remote_len;
-	u8 reserved2[2];
+	u8 reserved[2];
 	__le32 addr_high;
 	__le32 addr_low;
 };
@@ -2466,6 +2480,11 @@ struct ice_aqc_lldp_set_mib_change {
 	u8 command;
 #define ICE_AQ_LLDP_MIB_UPDATE_ENABLE		0x0
 #define ICE_AQ_LLDP_MIB_UPDATE_DIS		0x1
+#define ICE_AQ_LLDP_MIB_PENDING_S		1
+#define ICE_AQ_LLDP_MIB_PENDING_M		\
+				(0x1 << ICE_AQ_LLDP_MIB_PENDING_S)
+#define ICE_AQ_LLDP_MIB_PENDING_DISABLE		0
+#define ICE_AQ_LLDP_MIB_PENDING_ENABLE		1
 	u8 reserved[15];
 };
 
@@ -3243,6 +3262,9 @@ struct ice_aqc_add_rdma_qset_data {
 /* Move RDMA Queue Set (indirect 0x0C34) */
 struct ice_aqc_move_rdma_qset_cmd {
 	u8 num_rdma_qset;	/* Used by commands and response */
+#define ICE_AQC_PF_MODE_SAME_PF		0x0
+#define ICE_AQC_PF_MODE_GIVE_OWNERSHIP	0x1
+#define ICE_AQC_PF_MODE_KEEP_OWNERSHIP	0x2
 	u8 flags;
 	u8 reserved[6];
 	__le32 addr_high;
@@ -3564,6 +3586,8 @@ enum ice_aqc_driver_params {
 	ICE_AQC_DRIVER_PARAM_CLK_IDX_TMR0 = 0,
 	/* OS clock index for PTP timer Domain 1 */
 	ICE_AQC_DRIVER_PARAM_CLK_IDX_TMR1,
+	/* Request ID to recalibrate PHC logic */
+	ICE_AQC_DRIVER_PARAM_PHC_RECALC,
 
 	/* Add new parameters above */
 	ICE_AQC_DRIVER_PARAM_MAX = 16,
@@ -3881,6 +3905,7 @@ struct ice_aq_desc {
 		struct ice_aqc_dis_txqs dis_txqs;
 		struct ice_aqc_move_txqs move_txqs;
 		struct ice_aqc_add_rdma_qset add_rdma_qset;
+		struct ice_aqc_move_rdma_qset_cmd move_rdma_qset;
 		struct ice_aqc_txqs_cleanup txqs_cleanup;
 		struct ice_aqc_add_get_update_free_vsi vsi_cmd;
 		struct ice_aqc_add_update_free_vsi_resp add_update_free_vsi_res;
@@ -4153,6 +4178,7 @@ enum ice_adminq_opc {
 	ice_aqc_opc_lldp_set_local_mib			= 0x0A08,
 	ice_aqc_opc_lldp_stop_start_specific_agent	= 0x0A09,
 	ice_aqc_opc_lldp_filter_ctrl			= 0x0A0A,
+	ice_execute_pending_lldp_mib			= 0x0A0B,
 
 	/* RSS commands */
 	ice_aqc_opc_set_rss_key				= 0x0B02,

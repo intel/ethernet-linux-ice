@@ -66,6 +66,11 @@ static int ice_dcbnl_setets(struct net_device *netdev, struct ieee_ets *ets)
 	int bwcfg = 0, bwrec = 0;
 	int err, i;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return -EINVAL;
+#endif /* HAVE_NETDEV_UPPER_INFO */
+
 	if ((pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) ||
 	    !(pf->dcbx_cap & DCB_CAP_DCBX_VER_IEEE))
 		return -EINVAL;
@@ -166,6 +171,11 @@ static u8 ice_dcbnl_setdcbx(struct net_device *netdev, u8 mode)
 	struct ice_pf *pf = ice_netdev_to_pf(netdev);
 	struct ice_qos_cfg *qos_cfg;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return ICE_DCB_NO_HW_CHG;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	/* if FW LLDP agent is running, DCBNL not allowed to change mode */
 	if (test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags))
 		return ICE_DCB_NO_HW_CHG;
@@ -266,6 +276,12 @@ static int ice_dcbnl_setpfc(struct net_device *netdev, struct ieee_pfc *pfc)
 	struct ice_dcbx_cfg *new_cfg;
 	int err;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return -EINVAL;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+
 	if ((pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) ||
 	    !(pf->dcbx_cap & DCB_CAP_DCBX_VER_IEEE))
 		return -EINVAL;
@@ -335,6 +351,12 @@ static void ice_dcbnl_set_pfc_cfg(struct net_device *netdev, int prio, u8 set)
 	struct ice_pf *pf = ice_netdev_to_pf(netdev);
 	struct ice_dcbx_cfg *new_cfg;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+
 	if ((pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) ||
 	    !(pf->dcbx_cap & DCB_CAP_DCBX_VER_CEE))
 		return;
@@ -393,6 +415,12 @@ static u8 ice_dcbnl_getstate(struct net_device *netdev)
 static u8 ice_dcbnl_setstate(struct net_device *netdev, u8 state)
 {
 	struct ice_pf *pf = ice_netdev_to_pf(netdev);
+
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return ICE_DCB_NO_HW_CHG;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if ((pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) ||
 	    !(pf->dcbx_cap & DCB_CAP_DCBX_VER_CEE))
@@ -463,6 +491,12 @@ ice_dcbnl_set_pg_tc_cfg_tx(struct net_device *netdev, int tc,
 	struct ice_dcbx_cfg *new_cfg;
 	int i;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+
 	if ((pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) ||
 	    !(pf->dcbx_cap & DCB_CAP_DCBX_VER_CEE))
 		return;
@@ -516,6 +550,12 @@ ice_dcbnl_set_pg_bwg_cfg_tx(struct net_device *netdev, int pgid, u8 bw_pct)
 {
 	struct ice_pf *pf = ice_netdev_to_pf(netdev);
 	struct ice_dcbx_cfg *new_cfg;
+
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if ((pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) ||
 	    !(pf->dcbx_cap & DCB_CAP_DCBX_VER_CEE))
@@ -726,6 +766,12 @@ static int ice_dcbnl_setapp(struct net_device *netdev, struct dcb_app *app)
 	u8 max_tc;
 	int ret;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return -EINVAL;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+
 	/* ONLY DSCP APP TLVs have operational significance */
 	if (app->selector != IEEE_8021QAZ_APP_SEL_DSCP)
 		return -EINVAL;
@@ -861,6 +907,12 @@ static int ice_dcbnl_delapp(struct net_device *netdev, struct dcb_app *app)
 	unsigned int i, j;
 	int ret = 0;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return -EINVAL;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+
 	if (pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) {
 		netdev_err(netdev, "can't delete DSCP netlink app when FW DCB agent is active\n");
 		return -EINVAL;
@@ -970,6 +1022,12 @@ static u8 ice_dcbnl_cee_set_all(struct net_device *netdev)
 	struct ice_pf *pf = ice_netdev_to_pf(netdev);
 	struct ice_dcbx_cfg *new_cfg;
 	int err;
+
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag->bonded)
+		return ICE_DCB_NO_HW_CHG;
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if ((pf->dcbx_cap & DCB_CAP_DCBX_LLD_MANAGED) ||
 	    !(pf->dcbx_cap & DCB_CAP_DCBX_VER_CEE))

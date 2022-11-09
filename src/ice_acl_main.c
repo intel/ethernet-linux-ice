@@ -142,7 +142,6 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 	struct ice_flow_seg_info *seg;
 	enum ice_fltr_ptype fltr_type;
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
 	struct device *dev;
 	int err;
 
@@ -213,12 +212,10 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 	/* Adding a profile for the given flow specification with no
 	 * actions (NULL) and zero actions 0.
 	 */
-	status = ice_flow_add_prof(hw, ICE_BLK_ACL, ICE_FLOW_RX, fltr_type,
-				   seg, 1, NULL, 0, &prof);
-	if (status) {
-		err = ice_status_to_errno(status);
+	err = ice_flow_add_prof(hw, ICE_BLK_ACL, ICE_FLOW_RX, fltr_type, seg, 1,
+				NULL, 0, &prof);
+	if (err)
 		goto err_exit;
-	}
 
 	hw_prof->fdir_seg[0] = seg;
 	return 0;
@@ -247,13 +244,12 @@ int ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	struct ice_fd_hw_prof *hw_prof;
 	struct ice_fdir_fltr *input;
 	enum ice_fltr_ptype flow;
-	enum ice_status status;
 	struct device *dev;
 	struct ice_pf *pf;
 	struct ice_hw *hw;
 	u64 entry_h = 0;
 	int act_cnt;
-	int ret = 0;
+	int ret;
 
 	if (!vsi || !cmd)
 		return -EINVAL;
@@ -301,12 +297,11 @@ int ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	flow = ice_ethtool_flow_to_fltr(fsp->flow_type & ~FLOW_EXT);
 	hw_prof = hw->acl_prof[flow];
 
-	status = ice_flow_add_entry(hw, ICE_BLK_ACL, flow, fsp->location,
-				    vsi->idx, ICE_FLOW_PRIO_NORMAL, input, acts,
-				    act_cnt, &entry_h);
-	if (status) {
+	ret = ice_flow_add_entry(hw, ICE_BLK_ACL, flow, fsp->location,
+				 vsi->idx, ICE_FLOW_PRIO_NORMAL, input, acts,
+				 act_cnt, &entry_h);
+	if (ret) {
 		dev_err(dev, "Could not add flow entry %d\n", flow);
-		ret = ice_status_to_errno(status);
 		goto free_input;
 	}
 

@@ -145,7 +145,7 @@ void ice_del_all_adv_switch_fltr(struct ice_vf *vf)
 		rule.vsi_handle = f->dest_vsi_handle;
 		err = ice_rem_adv_rule_by_id(&pf->hw, &rule);
 		if (err) {
-			if (err == ICE_ERR_DOES_NOT_EXIST)
+			if (err == -ENOENT)
 				dev_dbg(dev, "VF %d: filter (rule_id %u) for dest VSI %u DOES NOT EXIST in hw table\n",
 					vf->vf_id, f->rule_id,
 					f->dest_vsi_handle);

@@ -69,7 +69,7 @@ ice_ieps_i2c_write(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 #define ICE_IEPS_I2C_WR_SZ 4
 	for (i = 0; i < rw->data_len; i += ICE_IEPS_I2C_WR_SZ) {
 		struct ice_aqc_i2c *i2c;
-		enum ice_status status;
+		int status;
 
 		remaining = rw->data_len - i;
 		if (remaining > ICE_IEPS_I2C_WR_SZ)
@@ -89,8 +89,8 @@ ice_ieps_i2c_write(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 		i2c->i2c_addr = cpu_to_le16(rw->reg_addr + i);
 		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
-			dev_dbg(ice_pf_to_dev(pf), "ERROR: i2c_wr status=%s\n",
-				ice_stat_str(status));
+			dev_dbg(ice_pf_to_dev(pf), "ERROR: i2c_wr status=%d\n",
+				status);
 			return IEPS_PEER_FW_ERROR;
 		}
 	}
@@ -117,7 +117,7 @@ ice_ieps_i2c_read(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 #define ICE_IEPS_I2C_RD_SZ 15
 	for (i = 0; i < rw->data_len; i += ICE_IEPS_I2C_RD_SZ) {
 		struct ice_aqc_i2c *i2c;
-		enum ice_status status;
+		int status;
 
 		remaining = rw->data_len - i;
 		if (remaining > ICE_IEPS_I2C_RD_SZ)
@@ -135,8 +135,8 @@ ice_ieps_i2c_read(struct ice_pf *pf, struct ieps_peer_i2c *rw)
 		i2c->i2c_addr = cpu_to_le16(rw->reg_addr + i);
 		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
-			dev_dbg(ice_pf_to_dev(pf), "ERROR: i2c_rd status=%s\n",
-				ice_stat_str(status));
+			dev_dbg(ice_pf_to_dev(pf), "ERROR: i2c_rd status=%d\n",
+				status);
 			return IEPS_PEER_FW_ERROR;
 		}
 
@@ -219,7 +219,7 @@ ice_ieps_mdio_read(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 	int i;
 
 	for (i = 0; i < rw->data_len; i++) {
-		enum ice_status status;
+		int status;
 
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_read_mdio);
 		pstatus = ice_ieps_mdio_fill_desc(pf, rw, &desc);
@@ -229,8 +229,8 @@ ice_ieps_mdio_read(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 		desc.params.read_mdio.offset = cpu_to_le16(rw->reg_addr + i);
 		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
-			dev_dbg(ice_pf_to_dev(pf), "ERROR: mdio_rd status=%s\n",
-				ice_stat_str(status));
+			dev_dbg(ice_pf_to_dev(pf), "ERROR: mdio_rd status=%d\n",
+				status);
 			return IEPS_PEER_FW_ERROR;
 		}
 		rw->data[i] = le16_to_cpu(desc.params.read_mdio.data);
@@ -263,7 +263,7 @@ ice_ieps_mdio_write(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 		enum ieps_peer_status pstatus;
 		struct ice_hw *hw = &pf->hw;
 		struct ice_aq_desc desc;
-		enum ice_status status;
+		int status;
 
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_write_mdio);
 		pstatus = ice_ieps_mdio_fill_desc(pf, rw, &desc);
@@ -274,8 +274,8 @@ ice_ieps_mdio_write(struct ice_pf *pf, struct ieps_peer_mdio *rw)
 		desc.params.read_mdio.data = cpu_to_le16(rw->data[i]);
 		status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 		if (status) {
-			dev_err(ice_pf_to_dev(pf), "ERROR: mdio_wr status=%s\n",
-				ice_stat_str(status));
+			dev_err(ice_pf_to_dev(pf), "ERROR: mdio_wr status=%d\n",
+				status);
 			return IEPS_PEER_FW_ERROR;
 		}
 	}
@@ -326,7 +326,7 @@ ice_ieps_sw_gpio_set(struct ice_pf *pf, struct ieps_peer_gpio *io)
 	enum ieps_peer_status pstatus;
 	struct ice_hw *hw = &pf->hw;
 	struct ice_aq_desc desc;
-	enum ice_status status;
+	int status;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_sw_set_gpio);
 	pstatus = ice_ieps_gpio_fill_desc(pf, io, &desc);
@@ -338,8 +338,8 @@ ice_ieps_sw_gpio_set(struct ice_pf *pf, struct ieps_peer_gpio *io)
 
 	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 	if (status) {
-		dev_err(ice_pf_to_dev(pf), "ERROR: sw_gpio_set status=%s\n",
-			ice_stat_str(status));
+		dev_err(ice_pf_to_dev(pf), "ERROR: sw_gpio_set status=%d\n",
+			status);
 		return IEPS_PEER_FW_ERROR;
 	}
 
@@ -357,7 +357,7 @@ ice_ieps_sw_gpio_get(struct ice_pf *pf, struct ieps_peer_gpio *io)
 	enum ieps_peer_status pstatus;
 	struct ice_hw *hw = &pf->hw;
 	struct ice_aq_desc desc;
-	enum ice_status status;
+	int status;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_sw_get_gpio);
 	pstatus = ice_ieps_gpio_fill_desc(pf, io, &desc);
@@ -366,8 +366,8 @@ ice_ieps_sw_gpio_get(struct ice_pf *pf, struct ieps_peer_gpio *io)
 
 	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 	if (status) {
-		dev_err(ice_pf_to_dev(pf), "ERROR: sw_gpio_get status=%s\n",
-			ice_stat_str(status));
+		dev_err(ice_pf_to_dev(pf), "ERROR: sw_gpio_get status=%d\n",
+			status);
 		return IEPS_PEER_FW_ERROR;
 	}
 
@@ -419,7 +419,7 @@ ice_ieps_get_phy_caps(struct ice_pf *pf, u8 report_mode,
 	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
 	struct ice_aqc_get_phy_caps_data *aq_pcaps;
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 
 	aq_pcaps = kzalloc(sizeof(*aq_pcaps), GFP_KERNEL);
 	if (!aq_pcaps)
@@ -473,7 +473,7 @@ ice_ieps_get_phy_status(struct ice_pf *pf, struct ieps_peer_phy_link_status *st)
 	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
 	struct ice_link_status *link;
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 
 	link = kzalloc(sizeof(*link), GFP_KERNEL);
 	if (!link)
@@ -514,8 +514,8 @@ static enum ieps_peer_status
 ice_ieps_set_mode(struct ice_pf *pf, enum ieps_peer_port_mode *mode)
 {
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
 	bool ena_link = false;
+	int status;
 
 	if (*mode >= NUM_IEPS_PEER_PORT_MODE)
 		return IEPS_PEER_INVALID_PORT_MODE;
@@ -525,8 +525,8 @@ ice_ieps_set_mode(struct ice_pf *pf, enum ieps_peer_port_mode *mode)
 
 	status = ice_aq_set_link_restart_an(hw->port_info, ena_link, NULL);
 	if (status) {
-		dev_err(ice_pf_to_dev(pf), "ERROR: set_mode status=%s\n",
-			ice_stat_str(status));
+		dev_err(ice_pf_to_dev(pf), "ERROR: set_mode status=%d\n",
+			status);
 		return IEPS_PEER_FW_ERROR;
 	}
 
@@ -790,7 +790,7 @@ ice_ieps_set_get_attr(struct ice_pf *pf, bool op_set,
 	struct ice_aqc_get_phy_caps_data *pcaps;
 	enum ieps_peer_status pstatus;
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 
 	phy_cfg = kzalloc(sizeof(*phy_cfg), GFP_KERNEL);
 	if (!phy_cfg)
@@ -810,8 +810,8 @@ ice_ieps_set_get_attr(struct ice_pf *pf, bool op_set,
 	status = ice_aq_get_phy_caps(hw->port_info, false,
 				     ICE_AQC_REPORT_ACTIVE_CFG, pcaps, NULL);
 	if (status) {
-		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_attr get_phy_caps status=%s\n",
-			ice_stat_str(status));
+		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_attr get_phy_caps status=%d\n",
+			status);
 		pstatus = IEPS_PEER_FW_ERROR;
 		goto release_exit;
 	}
@@ -835,8 +835,8 @@ ice_ieps_set_get_attr(struct ice_pf *pf, bool op_set,
 
 	status = ice_aq_set_phy_cfg(hw, hw->port_info, phy_cfg, NULL);
 	if (status) {
-		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_phy_caps status=%s\n",
-			ice_stat_str(status));
+		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_phy_caps status=%d\n",
+			status);
 		pstatus = IEPS_PEER_FW_ERROR;
 	}
 
@@ -857,7 +857,7 @@ ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
 {
 	struct ice_sbq_msg_input sbq_msg = {0};
 	struct ice_hw *hw = &pf->hw;
-	enum ice_status status;
+	int status;
 
 #define ICE_IEPS_SBQ_ADDR_HIGH_S 16
 #define ICE_IEPS_SBQ_ADDR_HIGH_M 0xFFFFFFFF
@@ -876,8 +876,8 @@ ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
 
 	status = ice_sbq_rw_reg(hw, &sbq_msg);
 	if (status) {
-		dev_dbg(ice_pf_to_dev(pf), "ERROR: sbq_rw_reg status=%s\n",
-			ice_stat_str(status));
+		dev_dbg(ice_pf_to_dev(pf), "ERROR: sbq_rw_reg status=%d\n",
+			status);
 		return IEPS_PEER_FW_ERROR;
 	}
 
@@ -898,8 +898,8 @@ ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
 	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
 	struct ice_aqc_set_phy_cfg_data *phy_cfg;
 	struct ice_aqc_get_phy_caps_data *pcaps;
-	enum ice_status status = 0;
 	struct ice_hw *hw = &pf->hw;
+	int status;
 
 	phy_cfg = kzalloc(sizeof(*phy_cfg), GFP_KERNEL);
 	if (!phy_cfg)
@@ -914,8 +914,8 @@ ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
 	status = ice_aq_get_phy_caps(hw->port_info, false,
 				     ICE_AQC_REPORT_ACTIVE_CFG, pcaps, NULL);
 	if (status) {
-		dev_dbg(ice_pf_to_dev(pf), "ERROR:get_phy_caps status=%s\n",
-			ice_stat_str(status));
+		dev_dbg(ice_pf_to_dev(pf), "ERROR:get_phy_caps status=%d\n",
+			status);
 		pstatus = IEPS_PEER_FW_ERROR;
 		goto release_exit;
 	}
@@ -934,8 +934,8 @@ ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
 
 	status = ice_aq_set_phy_cfg(hw, hw->port_info, phy_cfg, NULL);
 	if (status) {
-		dev_err(ice_pf_to_dev(pf), "ERROR: lm port config status=%s\n",
-			ice_stat_str(status));
+		dev_err(ice_pf_to_dev(pf), "ERROR: lm port config status=%d\n",
+			status);
 		pstatus = IEPS_PEER_FW_ERROR;
 	}
 
