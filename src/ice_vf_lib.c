@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_vf_lib_private.h"
 #include "ice.h"
@@ -9,7 +9,7 @@
 #include "ice_virtchnl_allowlist.h"
 #include "ice_vf_adq.h"
 
-/* Public functions which may be accessed by core driver files */
+/* Public functions which may be accessed by all driver files */
 
 /**
  * ice_get_vf_by_id - Get pointer to VF by ID
@@ -54,8 +54,8 @@ struct ice_vf *ice_get_vf_by_id(struct ice_pf *pf, u32 vf_id)
 			return found;
 		}
 	}
-
 	rcu_read_unlock();
+
 	return NULL;
 }
 
@@ -437,8 +437,8 @@ void ice_vf_get_promisc_masks(struct ice_vf *vf, struct ice_vsi *vsi,
  *
  * Clear all promiscuous/allmulticast filters for a VF
  */
-static int ice_vf_clear_all_promisc_modes(struct ice_vf *vf,
-					  struct ice_vsi *vsi)
+static int
+ice_vf_clear_all_promisc_modes(struct ice_vf *vf, struct ice_vsi *vsi)
 {
 	struct ice_pf *pf = vf->pf;
 	u8 ucast_m, mcast_m;
@@ -472,13 +472,10 @@ static int ice_vf_clear_all_promisc_modes(struct ice_vf *vf,
 }
 
 /**
- * ice_vf_set_vsi_promisc - Enable promiscuous traffic for a VF VSI
- * @vf: the VF pointer
- * @vsi: the VSI to configure
- * @promisc_m: the promiscuous mask to apply
- *
- * Enable promiscuous traffic to the VF VSI for the provided traffic types in
- * the promisc_m mask.
+ * ice_vf_set_vsi_promisc - Enable promiscuous mode for a VF VSI
+ * @vf: the VF to configure
+ * @vsi: the VF's VSI
+ * @promisc_m: the promiscuous mode to enable
  */
 int
 ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
@@ -507,13 +504,10 @@ ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
 }
 
 /**
- * ice_vf_clear_vsi_promisc - Disable promiscuous traffic for a VF VSI
- * @vf: the VF pointer
- * @vsi: the VSI to configure
- * @promisc_m: the promiscuous mask to apply
- *
- * Disable promiscuous traffic to the VF VSI for the provided traffic types in
- * the promisc_m mask.
+ * ice_vf_clear_vsi_promisc - Disable promiscuous mode for a VF VSI
+ * @vf: the VF to configure
+ * @vsi: the VF's VSI
+ * @promisc_m: the promiscuous mode to disable
  */
 int
 ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
@@ -710,7 +704,10 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 			return -EINVAL;
 		}
 		ice_vsi_stop_lan_tx_rings(vsi, ICE_NO_RESET, vf->vf_id);
-		ice_vsi_stop_all_rx_rings(vsi);
+
+		if (ice_vsi_is_rx_queue_active(vsi))
+			ice_vsi_stop_all_rx_rings(vsi);
+
 		dev_dbg(dev, "VF is already disabled, there is no need for resetting it, telling VM, all is fine %d\n",
 			vf->vf_id);
 		return 0;
@@ -875,10 +872,8 @@ ice_vf_hash_ctx_init(struct ice_vf *vf)
 /**
  * ice_initialize_vf_entry - Initialize a VF entry
  * @vf: pointer to the VF structure
- *
- * Returns 0 on success or an integer error code on failure.
  */
-int ice_initialize_vf_entry(struct ice_vf *vf)
+void ice_initialize_vf_entry(struct ice_vf *vf)
 {
 	struct ice_pf *pf = vf->pf;
 	struct ice_vfs *vfs;
@@ -902,8 +897,6 @@ int ice_initialize_vf_entry(struct ice_vf *vf)
 	ice_vf_fsub_init(vf);
 
 	mutex_init(&vf->cfg_lock);
-
-	return 0;
 }
 
 /**
@@ -1022,8 +1015,6 @@ static int ice_cfg_mac_antispoof(struct ice_vsi *vsi, bool enable)
 /**
  * ice_vsi_ena_spoofchk - enable Tx spoof checking for this VSI
  * @vsi: VSI to enable Tx spoof checking for
- *
- * This also enables Tx filtering of the VLANs for this VSI.
  */
 static int ice_vsi_ena_spoofchk(struct ice_vsi *vsi)
 {
@@ -1042,8 +1033,6 @@ static int ice_vsi_ena_spoofchk(struct ice_vsi *vsi)
 /**
  * ice_vsi_dis_spoofchk - disable Tx spoof checking for this VSI
  * @vsi: VSI to disable Tx spoof checking for
- *
- * This also disables Tx filtering of the VLANs for this VSI
  */
 static int ice_vsi_dis_spoofchk(struct ice_vsi *vsi)
 {

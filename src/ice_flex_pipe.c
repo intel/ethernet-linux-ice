@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_ddp.h"
@@ -1183,7 +1183,7 @@ int ice_vsig_update_xlt2(struct ice_hw *hw, enum ice_block blk)
  * This function will lookup the VSI entry in the XLT2 list and return
  * the VSI group its associated with.
  */
-static int
+int
 ice_vsig_find_vsi(struct ice_hw *hw, enum ice_block blk, u16 vsi, u16 *vsig)
 {
 	if (!vsig || vsi >= ICE_MAX_VSI)
@@ -3350,7 +3350,7 @@ static void ice_disable_fd_swap(struct ice_hw *hw, u16 prof_id)
 	}
 }
 
-/**
+/*
  * ice_add_prof - add profile
  * @hw: pointer to the HW struct
  * @blk: hardware block

@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_tc_lib.h"
@@ -9,117 +9,11 @@
 #ifdef HAVE_GRETAP_TYPE
 #include <net/gre.h>
 #endif /* HAVE_GRETAP_TYPE */
+#ifdef HAVE_TCF_MIRRED_DEV
+#include <net/gtp.h>
+#endif /* HAVE_TCF_MIRRED_DEV */
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
-/**
- * ice_determine_gtp_tun_type - determine TUN type based on user params
- * @pf: Pointer to PF
- * @l4_proto : vale of L4 protocol type
- * @flags: TC filter flags
- * @rule_info: Pointer to rule_info structure
- *
- * Determine TUN type based on user input. For VxLAN and Geneve, it is
- * straight forward. But to detect, correct TUN type for GTP is
- * challenging because there is no native support for GTP in kernel
- * and user may want to filter on
- *          Outer UDP + GTP (optional) + Inner L3 + Inner L4
- * Actual API to add advanced switch filter expects caller to detect
- * and specify correct TUN type and based on TUN type, appropriate
- * type of rule is added in HW.
- */
-static bool
-ice_determine_gtp_tun_type(struct ice_pf *pf, u16 l4_proto, u32 flags,
-			   struct ice_adv_rule_info *rule_info)
-{
-	u8 outer_ipv6 = 0, inner_ipv6 = 0;
-	u8 outer_ipv4 = 0, inner_ipv4 = 0;
-
-	/* if user specified enc IPv6 src/dest/src+dest IP */
-	if (flags & (ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
-		     ICE_TC_FLWR_FIELD_ENC_SRC_IPV6))
-		outer_ipv6 = 1;
-	else if (flags & (ICE_TC_FLWR_FIELD_ENC_DEST_IPV4 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_IPV4))
-		outer_ipv4 = 1;
-
-	if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV6 |
-		     ICE_TC_FLWR_FIELD_SRC_IPV6))
-		inner_ipv6 = 1;
-	else if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV4 |
-			  ICE_TC_FLWR_FIELD_SRC_IPV4))
-		inner_ipv4 = 1;
-	else
-		/* for GTP encap, specifying inner L3 is must at this point,
-		 * inner L4 is optional
-		 */
-		return false;
-
-	/* following block support various protocol combinations for GTP
-	 * (at this pint we know that detected tunnel type is GTP based
-	 * on outer UDP port (2152: GTP_U):
-	 *     Outer IPv4 + Inner IPv4[6] + Inner TCP/UDP
-	 *     Outer IPv4 + Inner IPv4[6]
-	 *     Outer IPv6 + Inner IPv4[6] + Inner TCP/UDP
-	 *     Outer IPv6 + Inner IPv4[6]
-	 */
-	if (!outer_ipv6 && !outer_ipv4) {
-		if (inner_ipv4 && l4_proto == IPPROTO_TCP)
-			rule_info->tun_type = ICE_SW_TUN_GTP_IPV4_TCP;
-		else if (inner_ipv4 && l4_proto == IPPROTO_UDP)
-			rule_info->tun_type = ICE_SW_TUN_GTP_IPV4_UDP;
-		else if (inner_ipv6 && l4_proto == IPPROTO_TCP)
-			rule_info->tun_type = ICE_SW_TUN_GTP_IPV6_TCP;
-		else if (inner_ipv6 && l4_proto == IPPROTO_UDP)
-			rule_info->tun_type = ICE_SW_TUN_GTP_IPV6_UDP;
-		else if (inner_ipv4)
-			rule_info->tun_type = ICE_SW_TUN_GTP_IPV4;
-		else if (inner_ipv6)
-			rule_info->tun_type = ICE_SW_TUN_GTP_IPV6;
-		else
-			/* no reason to proceed, error condition (must to
-			 * specify inner L3 and/or inner L3 + inner L4)
-			 */
-			return false;
-	} else if (outer_ipv4) {
-		if (inner_ipv4 && l4_proto == IPPROTO_TCP)
-			rule_info->tun_type = ICE_SW_TUN_IPV4_GTP_IPV4_TCP;
-		else if (inner_ipv4 && l4_proto == IPPROTO_UDP)
-			rule_info->tun_type = ICE_SW_TUN_IPV4_GTP_IPV4_UDP;
-		else if (inner_ipv6 && l4_proto == IPPROTO_TCP)
-			rule_info->tun_type = ICE_SW_TUN_IPV4_GTP_IPV6_TCP;
-		else if (inner_ipv6 && l4_proto == IPPROTO_UDP)
-			rule_info->tun_type = ICE_SW_TUN_IPV4_GTP_IPV6_UDP;
-		else if (inner_ipv4)
-			rule_info->tun_type = ICE_SW_TUN_IPV4_GTPU_IPV4;
-		else if (inner_ipv6)
-			rule_info->tun_type = ICE_SW_TUN_IPV4_GTPU_IPV6;
-		else
-			/* no reason to proceed, error condition (must to
-			 * specify inner L3 and/or inner L3 + inner L4)
-			 */
-			return false;
-	} else if (outer_ipv6) {
-		if (inner_ipv4 && l4_proto == IPPROTO_TCP)
-			rule_info->tun_type = ICE_SW_TUN_IPV6_GTP_IPV4_TCP;
-		else if (inner_ipv4 && l4_proto == IPPROTO_UDP)
-			rule_info->tun_type = ICE_SW_TUN_IPV6_GTP_IPV4_UDP;
-		else if (inner_ipv6 && l4_proto == IPPROTO_TCP)
-			rule_info->tun_type = ICE_SW_TUN_IPV6_GTP_IPV6_TCP;
-		else if (inner_ipv6 && l4_proto == IPPROTO_UDP)
-			rule_info->tun_type = ICE_SW_TUN_IPV6_GTP_IPV6_UDP;
-		else if (inner_ipv4)
-			rule_info->tun_type = ICE_SW_TUN_IPV6_GTPU_IPV4;
-		else if (inner_ipv6)
-			rule_info->tun_type = ICE_SW_TUN_IPV6_GTPU_IPV6;
-		else
-			/* no reason to proceed, error condition (must to
-			 * specify inner L3 and/or inner L3 + inner L4)
-			 */
-			return false;
-	}
-
-	return true;
-}
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 /**
@@ -134,11 +28,8 @@ static bool ice_is_tunnel_fltr(struct ice_tc_flower_fltr *f)
 	return (f->tunnel_type == TNL_VXLAN ||
 		f->tunnel_type == TNL_GENEVE ||
 		f->tunnel_type == TNL_GRETAP ||
-#ifdef HAVE_GTP_SUPPORT
 		f->tunnel_type == TNL_GTPU ||
-		f->tunnel_type == TNL_GTPC ||
-#endif /* HAVE_GTP_SUPPORT */
-		f->tunnel_type == TNL_GTP);
+		f->tunnel_type == TNL_GTPC);
 }
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 
@@ -215,6 +106,12 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 		lkups_cnt++;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
+#ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+	/* are L2TPv3 options specified? */
+	if (flags & ICE_TC_FLWR_FIELD_L2TPV3_SESSID)
+		lkups_cnt++;
+#endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
+
 	/* is L4 (TCP/UDP/any other L4 protocol fields) specified? */
 	if (flags & (ICE_TC_FLWR_FIELD_DEST_L4_PORT |
 		     ICE_TC_FLWR_FIELD_SRC_L4_PORT))
@@ -265,13 +162,11 @@ ice_proto_type_from_tunnel(enum ice_tunnel_type type)
 		return ICE_GENEVE;
 	case TNL_GRETAP:
 		return ICE_NVGRE;
-#ifdef HAVE_GTP_SUPPORT
 	case TNL_GTPU:
 		/* NO_PAY profiles will not work with GTP-U */
 		return ICE_GTP;
 	case TNL_GTPC:
 		return ICE_GTP_NO_PAY;
-#endif /* HAVE_GTP_SUPPORT */
 	default:
 		return 0;
 	}
@@ -287,16 +182,28 @@ ice_sw_type_from_tunnel(enum ice_tunnel_type type)
 		return ICE_SW_TUN_GENEVE;
 	case TNL_GRETAP:
 		return ICE_SW_TUN_NVGRE;
-#ifdef HAVE_GTP_SUPPORT
 	case TNL_GTPU:
 		return ICE_SW_TUN_GTPU;
 	case TNL_GTPC:
 		return ICE_SW_TUN_GTPC;
-#endif /* HAVE_GTP_SUPPORT */
 	default:
 		return ICE_NON_TUN;
 	}
 }
+
+#ifdef HAVE_TCF_VLAN_TPID
+static u16 ice_check_supported_vlan_tpid(u16 vlan_tpid)
+{
+	switch (vlan_tpid) {
+	case ETH_P_8021Q:
+	case ETH_P_8021AD:
+	case ETH_P_QINQ1:
+		return vlan_tpid;
+	default:
+		return 0;
+	}
+}
+#endif /* HAVE_TCF_VLAN_TPID */
 
 static int
 ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
@@ -323,7 +230,6 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 			       "\xff\xff\xff\xff", 4);
 			i++;
 			break;
-#ifdef HAVE_GTP_SUPPORT
 		case TNL_GTPC:
 		case TNL_GTPU:
 			list[i].h_u.gtp_hdr.teid = fltr->tenant_id;
@@ -331,7 +237,6 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 			       "\xff\xff\xff\xff", 4);
 			i++;
 			break;
-#endif /* HAVE_GTP_SUPPORT */
 		default:
 			break;
 		}
@@ -485,7 +390,14 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
 	bool inner = false;
+#ifdef HAVE_TCF_VLAN_TPID
+	u16 vlan_tpid = 0;
+#endif /* HAVE_TCF_VLAN_TPID */
 	int i = 0;
+
+#ifdef HAVE_TCF_VLAN_TPID
+	rule_info->vlan_type = vlan_tpid;
+#endif /* HAVE_TCF_VLAN_TPID */
 
 	rule_info->tun_type = ice_sw_type_from_tunnel(tc_fltr->tunnel_type);
 	if (tc_fltr->tunnel_type != TNL_LAST) {
@@ -527,6 +439,11 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 	/* copy VLAN info */
 	if (flags & ICE_TC_FLWR_FIELD_VLAN) {
+#ifdef HAVE_TCF_VLAN_TPID
+		vlan_tpid = be16_to_cpu(headers->vlan_hdr.vlan_tpid);
+		rule_info->vlan_type =
+				ice_check_supported_vlan_tpid(vlan_tpid);
+#endif /* HAVE_TCF_VLAN_TPID */
 		list[i].type = ICE_VLAN_OFOS;
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
 		if (flags & ICE_TC_FLWR_FIELD_CVLAN)
@@ -657,8 +574,21 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 		i++;
 	}
-
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+	if (flags & ICE_TC_FLWR_FIELD_L2TPV3_SESSID) {
+		list[i].type = ICE_L2TPV3;
+
+		list[i].h_u.l2tpv3_sess_hdr.session_id =
+			headers->l2tpv3_hdr.session_id;
+		list[i].m_u.l2tpv3_sess_hdr.session_id =
+			cpu_to_be32(0xFFFFFFFF);
+
+		i++;
+	}
+#endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
+
 	/* copy L4 (src, dest) port */
 	if (flags & (ICE_TC_FLWR_FIELD_DEST_L4_PORT |
 		     ICE_TC_FLWR_FIELD_SRC_L4_PORT)) {
@@ -715,13 +645,7 @@ ice_is_tnl_gtp(struct net_device *tunnel_dev, struct flow_rule *rule)
 		 * if 'enc_dst_port' matched with GTP well known port,
 		 * return true from this function.
 		 */
-		if (enc_dst_port != ICE_GTPU_PORT)
-			return false;
-
-		/* all checks passed including outer UDP port to be qualified
-		 * for GTP tunnel
-		 */
-		return true;
+		return enc_dst_port == GTP1U_PORT;
 	}
 	return false;
 }
@@ -793,7 +717,7 @@ ice_tc_tun_get_type(struct net_device *tunnel_dev, struct flow_rule *rule)
 
 	/* detect possibility of GTP tunnel type based on input */
 	if (ice_is_tnl_gtp(tunnel_dev, rule))
-		return TNL_GTP;
+		return TNL_GTPU;
 
 	return TNL_LAST;
 }
@@ -905,19 +829,6 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		ret = -EINVAL;
 		goto exit;
 	}
-
-	if (fltr->tunnel_type == TNL_VXLAN)
-		rule_info.tun_type = ICE_SW_TUN_VXLAN;
-	else if (fltr->tunnel_type == TNL_GENEVE)
-		rule_info.tun_type = ICE_SW_TUN_GENEVE;
-	else if (fltr->tunnel_type == TNL_GRETAP)
-		rule_info.tun_type = ICE_SW_TUN_NVGRE;
-#ifdef HAVE_GTP_SUPPORT
-	else if (fltr->tunnel_type == TNL_GTPU)
-		rule_info.tun_type = ICE_SW_TUN_GTPU;
-	else if (fltr->tunnel_type == TNL_GTPC)
-		rule_info.tun_type = ICE_SW_TUN_GTPC;
-#endif /* HAVE_GTP_SUPPORT */
 
 	/* egress traffic is always redirect to uplink */
 	if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS)
@@ -1234,26 +1145,6 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		goto exit;
 	}
 
-	if (tc_fltr->tunnel_type == TNL_VXLAN)
-		rule_info.tun_type = ICE_SW_TUN_VXLAN;
-	else if (tc_fltr->tunnel_type == TNL_GENEVE)
-		rule_info.tun_type = ICE_SW_TUN_GENEVE;
-
-	/* Now determine correct TUN type of based on encap params */
-	if ((flags & ICE_TC_FLWR_FIELD_TENANT_ID) &&
-	    tc_fltr->tunnel_type == TNL_GTP) {
-		if (!ice_determine_gtp_tun_type(pf, l4_proto, tc_fltr->flags,
-						&rule_info)) {
-			if (vsi->type == ICE_VSI_VF)
-				dev_err(dev, "Unable to add filter because could not determine tun type, VSI %u, vf_id:%u\n",
-					vsi->vsi_num, vsi->vf->vf_id);
-			else
-				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unable to add filter because could not determine TUN type. ");
-			ret = -EINVAL;
-			goto exit;
-		}
-	}
-
 	rule_info.sw_act.fltr_act = tc_fltr->action.fltr_act;
 
 	if (tc_fltr->action.fltr_act == ICE_FWD_TO_VSI) {
@@ -1542,13 +1433,6 @@ ice_tc_tun_info(struct ice_pf *pf, struct flow_cls_offload *f,
 		}
 		fltr->flags |= ICE_TC_FLWR_FIELD_TENANT_ID;
 		fltr->tenant_id = enc_keyid.key->keyid;
-	} else if (tunnel == TNL_GTP) {
-		/* User didn't specify tunnel_key but indicated
-		 * intention about GTP tunnel.
-		 * For GTP tunnel, support for wild-card tunnel-ID
-		 */
-		fltr->flags |= ICE_TC_FLWR_FIELD_TENANT_ID;
-		fltr->tenant_id = 0;
 	}
 
 	return 0;
@@ -1577,11 +1461,9 @@ ice_tc_tun_parse(struct net_device *filter_dev, struct ice_vsi *vsi,
 	dev = ice_pf_to_dev(pf);
 	tunnel_type = ice_tc_tun_get_type(filter_dev, rule);
 
-	if (tunnel_type == TNL_VXLAN || tunnel_type == TNL_GTP ||
-#ifdef HAVE_GTP_SUPPORT
-	    tunnel_type == TNL_GTPU || tunnel_type == TNL_GTPC ||
-#endif /* HAVE_GTP_SUPPORT */
-	    tunnel_type == TNL_GENEVE || tunnel_type == TNL_GRETAP) {
+	if (tunnel_type == TNL_VXLAN || tunnel_type == TNL_GTPU ||
+	    tunnel_type == TNL_GTPC || tunnel_type == TNL_GENEVE ||
+	    tunnel_type == TNL_GRETAP) {
 		err = ice_tc_tun_info(pf, f, fltr, tunnel_type);
 		if (err) {
 			dev_err(dev, "Failed to parse tunnel (tunnel_type %u) attributes\n",
@@ -1598,7 +1480,6 @@ ice_tc_tun_parse(struct net_device *filter_dev, struct ice_vsi *vsi,
 	return err;
 }
 
-#ifdef HAVE_GTP_SUPPORT
 /**
  * ice_parse_gtp_type - Sets GTP tunnel type to GTP-U or GTP-C
  * @match: Flow match structure
@@ -1632,7 +1513,6 @@ ice_parse_gtp_type(struct flow_match_ports match,
 
 	return 0;
 }
-#endif /* HAVE_GTP_SUPPORT */
 
 /**
  * ice_parse_tunnel_attr - Parse tunnel attributes from TC flower filter
@@ -1695,17 +1575,6 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
 
-	if (fltr->tunnel_type == TNL_GTP &&
-	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)) {
-		struct flow_match_ports match;
-
-		flow_rule_match_enc_ports(rule, &match);
-		/* store away outer L4 port info and mark it for tunnel */
-		if (ice_tc_set_port(match, fltr, headers, true))
-			return -EINVAL;
-	}
-
-#ifdef HAVE_GTP_SUPPORT
 	if ((fltr->tunnel_type == TNL_GTPU || fltr->tunnel_type == TNL_GTPC) &&
 	    flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS)) {
 		struct flow_match_ports match;
@@ -1716,6 +1585,7 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
 			return -EINVAL;
 	}
 
+#ifdef HAVE_GTP_SUPPORT
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_OPTS)) {
 		struct flow_match_enc_opts match;
 
@@ -1799,6 +1669,9 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 #ifdef HAVE_FLOW_DISSECTOR_KEY_PPPOE
 	      BIT(FLOW_DISSECTOR_KEY_PPPOE) |
 #endif /* HAVE_FLOW_DISSECTOR_KEY_PPPOE */
+#ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+	      BIT(FLOW_DISSECTOR_KEY_L2TPV3) |
+#endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
 	      BIT(FLOW_DISSECTOR_KEY_PORTS))) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported key used");
 		return -EOPNOTSUPP;
@@ -1837,7 +1710,9 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		n_proto_key = ntohs(match.key->n_proto);
 		n_proto_mask = ntohs(match.mask->n_proto);
 
-		if (n_proto_key == ETH_P_ALL || n_proto_key == 0) {
+		if (n_proto_key == ETH_P_ALL || n_proto_key == 0 ||
+		    fltr->tunnel_type == TNL_GTPU ||
+		    fltr->tunnel_type == TNL_GTPC) {
 			n_proto_key = 0;
 			n_proto_mask = 0;
 		} else {
@@ -1899,6 +1774,10 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (mask->vlan_priority)
 			headers->vlan_hdr.vlan_prio = key->vlan_priority;
 #endif
+#ifdef HAVE_TCF_VLAN_TPID
+		if (mask->vlan_tpid)
+			headers->vlan_hdr.vlan_tpid = key->vlan_tpid;
+#endif /* HAVE_TCF_VLAN_TPID */
 	}
 #else /* !HAVE_TC_FLOWER_VLAN_IN_TAGS */
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_VLAN) ||
@@ -1910,6 +1789,9 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (is_vlan_dev(filter_dev)) {
 			match.key = &key;
 			match.key->vlan_id = vlan_dev_vlan_id(filter_dev);
+#ifdef HAVE_TCF_VLAN_TPID
+			match.key->vlan_tpid = vlan_dev_vlan_proto(filter_dev);
+#endif /* HAVE_TCF_VLAN_TPID */
 			match.key->vlan_priority = 0;
 			match.mask = &mask;
 			memset(match.mask, 0xff, sizeof(*match.mask));
@@ -1933,6 +1815,10 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (match.mask->vlan_priority)
 			headers->vlan_hdr.vlan_prio = match.key->vlan_priority;
 #endif
+#ifdef HAVE_TCF_VLAN_TPID
+		if (match.mask->vlan_tpid)
+			headers->vlan_hdr.vlan_tpid = match.key->vlan_tpid;
+#endif /* HAVE_TCF_VLAN_TPID */
 	}
 #endif /* HAVE_TC_FLOWER_VLAN_IN_TAGS */
 
@@ -2028,6 +1914,17 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		}
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_L2TPV3)) {
+		struct flow_match_l2tpv3 match;
+
+		flow_rule_match_l2tpv3(rule, &match);
+
+		fltr->flags |= ICE_TC_FLWR_FIELD_L2TPV3_SESSID;
+		headers->l2tpv3_hdr.session_id = match.key->session_id;
+	}
+#endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
 
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PORTS)) {
 		struct flow_match_ports match;

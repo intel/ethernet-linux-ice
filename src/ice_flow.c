@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_flow.h"
@@ -3831,6 +3831,7 @@ int ice_rem_vsi_rss_cfg(struct ice_hw *hw, u16 vsi_handle)
 	const enum ice_block blk = ICE_BLK_RSS;
 	struct ice_flow_prof *p, *t;
 	int status = 0;
+	u16 vsig;
 
 	if (!ice_is_vsi_valid(hw, vsi_handle))
 		return -EINVAL;
@@ -3839,7 +3840,16 @@ int ice_rem_vsi_rss_cfg(struct ice_hw *hw, u16 vsi_handle)
 		return 0;
 
 	mutex_lock(&hw->rss_locks);
-	list_for_each_entry_safe(p, t, &hw->fl_profs[blk], l_entry)
+	list_for_each_entry_safe(p, t, &hw->fl_profs[blk], l_entry) {
+		int ret;
+
+		/* check if vsig is already removed */
+		ret = ice_vsig_find_vsi(hw, blk,
+					ice_get_hw_vsi_num(hw, vsi_handle),
+					&vsig);
+		if (!ret && !vsig)
+			break;
+
 		if (test_bit(vsi_handle, p->vsis)) {
 			status = ice_flow_disassoc_prof(hw, blk, p, vsi_handle);
 			if (status)
@@ -3851,6 +3861,7 @@ int ice_rem_vsi_rss_cfg(struct ice_hw *hw, u16 vsi_handle)
 					break;
 			}
 		}
+	}
 	mutex_unlock(&hw->rss_locks);
 
 	return status;

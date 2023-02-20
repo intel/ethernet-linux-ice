@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 /* ethtool support for ice */
 
@@ -260,6 +260,7 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 	ICE_PRIV_FLAG("cgu_fast_lock", ICE_FLAG_DPLL_FAST_LOCK),
 	ICE_PRIV_FLAG("dpll_monitor", ICE_FLAG_DPLL_MONITOR),
 	ICE_PRIV_FLAG("extts_filter", ICE_FLAG_EXTTS_FILTER),
+	ICE_PRIV_FLAG("ptp_wt_enabled", ICE_FLAG_PTP_WT_ENABLED),
 	ICE_PRIV_FLAG("allow-no-fec-modules-in-auto",
 		      ICE_FLAG_ALLOW_FEC_DIS_AUTO),
 };
@@ -316,7 +317,7 @@ ice_get_regs(struct net_device *netdev, struct ethtool_regs *regs, void *p)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_pf *pf = np->vsi->back;
 	struct ice_hw *hw = &pf->hw;
-	u32 *regs_buf = (u32 *)p;
+	u32 *regs_buf = p;
 	unsigned int i;
 
 	regs->version = 1;
@@ -414,16 +415,16 @@ ice_get_eeprom(struct net_device *netdev, struct ethtool_eeprom *eeprom,
 
 	ret = ice_acquire_nvm(hw, ICE_RES_READ);
 	if (ret) {
-		dev_err(dev, "ice_acquire_nvm failed: %d %s\n", ret,
-			ice_aq_str(hw->adminq.sq_last_status));
+		dev_err(dev, "ice_acquire_nvm failed, err %d aq_err %s\n",
+			ret, ice_aq_str(hw->adminq.sq_last_status));
 		goto out;
 	}
 
 	ret = ice_read_flat_nvm(hw, eeprom->offset, &eeprom->len, buf,
 				false);
 	if (ret) {
-		dev_err(dev, "ice_read_flat_nvm failed: %d %s\n", ret,
-			ice_aq_str(hw->adminq.sq_last_status));
+		dev_err(dev, "ice_read_flat_nvm failed, err %d aq_err %s\n",
+			ret, ice_aq_str(hw->adminq.sq_last_status));
 		goto release;
 	}
 
@@ -1172,7 +1173,7 @@ ice_get_xdp_tx_stats(struct ice_vsi *vsi, u64 *data, int *idx)
 
 		ring = READ_ONCE(vsi->xdp_rings[q]);
 
-		stats = !!ring ? &ring->stats : NULL;
+		stats = !!ring ? &ring->ring_stats->stats : NULL;
 
 		data[i++] = !!ring ? stats->pkts : 0;
 		data[i++] = !!ring ? stats->bytes : 0;
@@ -1246,7 +1247,7 @@ ice_get_chnl_tx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
 		return;
 
 	tx_ring = vsi->tx_rings[q];
-	ch_stats = &tx_ring->ch_q_stats;
+	ch_stats = &tx_ring->ring_stats->ch_q_stats;
 	set = set && ch_stats;
 
 	i = *idx; /* start index in data buffer */
@@ -1289,7 +1290,7 @@ ice_get_chnl_rx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
 		return;
 
 	rx_ring = vsi->rx_rings[q];
-	ch_stats = &rx_ring->ch_q_stats;
+	ch_stats = &rx_ring->ring_stats->ch_q_stats;
 	if (rx_ring->q_vector)
 		vector_ch_stats = &rx_ring->q_vector->ch_stats;
 
@@ -2324,6 +2325,12 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 		change_bit(ICE_FLAG_VF_VLAN_PRUNING, pf->flags);
 		ret = -EOPNOTSUPP;
 	}
+
+	if (test_bit(ICE_FLAG_PTP_WT_ENABLED, change_flags) &&
+	    test_bit(ICE_FLAG_PTP_WT_ENABLED, pf->flags)) {
+		dev_err(dev, "ptp_wt_enabled: You cannot reenable PTP workthread, please reload the driver.\n");
+		change_bit(ICE_FLAG_PTP_WT_ENABLED, pf->flags);
+	}
 	if (!test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags) &&
 	    pf->synce_dpll_state != ICE_CGU_STATE_UNKNOWN) {
 		pf->synce_dpll_state = ICE_CGU_STATE_UNKNOWN;
@@ -2476,11 +2483,11 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 
 	ice_for_each_alloc_txq(vsi, j) {
 		ring = READ_ONCE(vsi->tx_rings[j]);
-		if (ring) {
-			data[i++] = ring->stats.pkts;
-			data[i++] = ring->stats.bytes;
+		if (ring && ring->ring_stats) {
+			data[i++] = ring->ring_stats->stats.pkts;
+			data[i++] = ring->ring_stats->stats.bytes;
 #ifdef ICE_ADD_PROBES
-			data[i++] = ring->stats.napi_poll_cnt;
+			data[i++] = ring->ring_stats->stats.napi_poll_cnt;
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_tx_stats(vsi, j, data, &i, true);
@@ -2506,11 +2513,11 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 
 	ice_for_each_alloc_rxq(vsi, j) {
 		ring = READ_ONCE(vsi->rx_rings[j]);
-		if (ring) {
-			data[i++] = ring->stats.pkts;
-			data[i++] = ring->stats.bytes;
+		if (ring && ring->ring_stats) {
+			data[i++] = ring->ring_stats->stats.pkts;
+			data[i++] = ring->ring_stats->stats.bytes;
 #ifdef ICE_ADD_PROBES
-			data[i++] = ring->stats.napi_poll_cnt;
+			data[i++] = ring->ring_stats->stats.napi_poll_cnt;
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_rx_stats(vsi, j, data, &i, true);
@@ -2623,8 +2630,8 @@ ice_get_ethtool_stats(struct net_device *netdev,
  */
 #ifdef HAVE_ETHTOOL_100G_BITS
 static void
-ice_mask_min_supported_speeds(struct ice_hw *hw, u64 phy_types_high,
-			      u64 *phy_types_low)
+ice_mask_min_supported_speeds(struct ice_hw *hw,
+			      u64 phy_types_high, u64 *phy_types_low)
 #else
 static void ice_mask_min_supported_speeds(struct ice_hw *hw, u64 *phy_types_low)
 #endif  /* !HAVE_ETHTOOL_100G_BITS */
@@ -4441,7 +4448,8 @@ process_rx:
 		/* this is to allow wr32 to have something to write to
 		 * during early allocation of Rx buffers
 		 */
-		rx_rings[i].tail = vsi->back->hw.hw_addr + PRTGEN_STATUS;
+		rx_rings[i].tail = ice_get_hw_addr(&vsi->back->hw,
+						   PRTGEN_STATUS);
 
 		err = ice_setup_rx_ring(&rx_rings[i]);
 		if (err)
@@ -5103,13 +5111,13 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 		return -EINVAL;
 	}
 
+	set_bit(ICE_SET_CHANNELS, pf->state);
 	err = ice_vsi_recfg_qs(vsi, new_rx, new_tx);
 	if (err)
 		goto channels_out;
 
 #ifdef IFF_RXFH_CONFIGURED
-	err = netif_is_rxfh_configured(dev);
-	if (!err) {
+	if (!netif_is_rxfh_configured(dev)) {
 		err = ice_vsi_set_dflt_rss_lut(vsi, new_rx);
 		goto channels_out;
 	}
@@ -5129,6 +5137,7 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 	err = ice_vsi_set_dflt_rss_lut(vsi, new_rx);
 #endif /* IFF_RXFH_CONFIGURED */
 channels_out:
+	clear_bit(ICE_SET_CHANNELS, pf->state);
 	set_bit(ICE_FLAG_UNPLUG_AUX_DEV, pf->flags);
 	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
 	return err;
@@ -5186,15 +5195,9 @@ static int ice_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	return 0;
 }
 
-enum ice_container_type {
-	ICE_RX_CONTAINER,
-	ICE_TX_CONTAINER,
-};
-
 /**
  * ice_get_rc_coalesce - get ITR values for specific ring container
  * @ec: ethtool structure to fill with driver's coalesce settings
- * @c_type: container type, Rx or Tx
  * @rc: ring container that the ITR values will come from
  *
  * Query the device for ice_ring_container specific ITR values. This is
@@ -5204,13 +5207,12 @@ enum ice_container_type {
  * Returns 0 on success, negative otherwise.
  */
 static int
-ice_get_rc_coalesce(struct ethtool_coalesce *ec, enum ice_container_type c_type,
-		    struct ice_ring_container *rc)
+ice_get_rc_coalesce(struct ethtool_coalesce *ec, struct ice_ring_container *rc)
 {
 	if (!rc->ring)
 		return -EINVAL;
 
-	switch (c_type) {
+	switch (rc->type) {
 	case ICE_RX_CONTAINER:
 		ec->use_adaptive_rx_coalesce = ITR_IS_DYNAMIC(rc);
 		ec->rx_coalesce_usecs = rc->itr_setting;
@@ -5221,7 +5223,7 @@ ice_get_rc_coalesce(struct ethtool_coalesce *ec, enum ice_container_type c_type,
 		ec->tx_coalesce_usecs = rc->itr_setting;
 		break;
 	default:
-		dev_dbg(ice_pf_to_dev(rc->ring->vsi->back), "Invalid c_type %d\n", c_type);
+		dev_dbg(ice_pf_to_dev(rc->ring->vsi->back), "Invalid c_type %d\n", rc->type);
 		return -EINVAL;
 	}
 
@@ -5242,18 +5244,18 @@ static int
 ice_get_q_coalesce(struct ice_vsi *vsi, struct ethtool_coalesce *ec, int q_num)
 {
 	if (q_num < vsi->num_rxq && q_num < vsi->num_txq) {
-		if (ice_get_rc_coalesce(ec, ICE_RX_CONTAINER,
+		if (ice_get_rc_coalesce(ec,
 					&vsi->rx_rings[q_num]->q_vector->rx))
 			return -EINVAL;
-		if (ice_get_rc_coalesce(ec, ICE_TX_CONTAINER,
+		if (ice_get_rc_coalesce(ec,
 					&vsi->tx_rings[q_num]->q_vector->tx))
 			return -EINVAL;
 	} else if (q_num < vsi->num_rxq) {
-		if (ice_get_rc_coalesce(ec, ICE_RX_CONTAINER,
+		if (ice_get_rc_coalesce(ec,
 					&vsi->rx_rings[q_num]->q_vector->rx))
 			return -EINVAL;
 	} else if (q_num < vsi->num_txq) {
-		if (ice_get_rc_coalesce(ec, ICE_TX_CONTAINER,
+		if (ice_get_rc_coalesce(ec,
 					&vsi->tx_rings[q_num]->q_vector->tx))
 			return -EINVAL;
 	} else {
@@ -5312,7 +5314,6 @@ ice_get_per_q_coalesce(struct net_device *netdev, u32 q_num,
 
 /**
  * ice_set_rc_coalesce - set ITR values for specific ring container
- * @c_type: container type, Rx or Tx
  * @ec: ethtool structure from user to update ITR settings
  * @rc: ring container that the ITR values will come from
  * @vsi: VSI associated to the ring container
@@ -5324,10 +5325,10 @@ ice_get_per_q_coalesce(struct net_device *netdev, u32 q_num,
  * Returns 0 on success, negative otherwise.
  */
 static int
-ice_set_rc_coalesce(enum ice_container_type c_type, struct ethtool_coalesce *ec,
+ice_set_rc_coalesce(struct ethtool_coalesce *ec,
 		    struct ice_ring_container *rc, struct ice_vsi *vsi)
 {
-	const char *c_type_str = (c_type == ICE_RX_CONTAINER) ? "rx" : "tx";
+	const char *c_type_str = (rc->type == ICE_RX_CONTAINER) ? "rx" : "tx";
 	u32 use_adaptive_coalesce, coalesce_usecs;
 	struct ice_pf *pf = vsi->back;
 	u16 itr_setting;
@@ -5335,7 +5336,7 @@ ice_set_rc_coalesce(enum ice_container_type c_type, struct ethtool_coalesce *ec,
 	if (!rc->ring)
 		return -EINVAL;
 
-	switch (c_type) {
+	switch (rc->type) {
 	case ICE_RX_CONTAINER:
 		if (ec->rx_coalesce_usecs_high > ICE_MAX_INTRL ||
 		    (ec->rx_coalesce_usecs_high &&
@@ -5370,7 +5371,7 @@ ice_set_rc_coalesce(enum ice_container_type c_type, struct ethtool_coalesce *ec,
 		break;
 	default:
 		dev_dbg(ice_pf_to_dev(pf), "Invalid container type %d\n",
-			c_type);
+			rc->type);
 		return -EINVAL;
 	}
 
@@ -5419,22 +5420,22 @@ static int
 ice_set_q_coalesce(struct ice_vsi *vsi, struct ethtool_coalesce *ec, int q_num)
 {
 	if (q_num < vsi->num_rxq && q_num < vsi->num_txq) {
-		if (ice_set_rc_coalesce(ICE_RX_CONTAINER, ec,
+		if (ice_set_rc_coalesce(ec,
 					&vsi->rx_rings[q_num]->q_vector->rx,
 					vsi))
 			return -EINVAL;
 
-		if (ice_set_rc_coalesce(ICE_TX_CONTAINER, ec,
+		if (ice_set_rc_coalesce(ec,
 					&vsi->tx_rings[q_num]->q_vector->tx,
 					vsi))
 			return -EINVAL;
 	} else if (q_num < vsi->num_rxq) {
-		if (ice_set_rc_coalesce(ICE_RX_CONTAINER, ec,
+		if (ice_set_rc_coalesce(ec,
 					&vsi->rx_rings[q_num]->q_vector->rx,
 					vsi))
 			return -EINVAL;
 	} else if (q_num < vsi->num_txq) {
-		if (ice_set_rc_coalesce(ICE_TX_CONTAINER, ec,
+		if (ice_set_rc_coalesce(ec,
 					&vsi->tx_rings[q_num]->q_vector->tx,
 					vsi))
 			return -EINVAL;
@@ -5895,7 +5896,7 @@ ice_get_module_eeprom(struct net_device *netdev,
 			}
 
 			/* Make sure we have enough room for the new block */
-			if ((i + SFF_READ_BLOCK_SIZE) < ee->len)
+			if ((i + SFF_READ_BLOCK_SIZE) <= ee->len)
 				memcpy(data + i, value, SFF_READ_BLOCK_SIZE);
 		}
 	}

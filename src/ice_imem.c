@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -216,8 +216,8 @@ static void _imem_alu_init(struct ice_alu *alu, u8 *data)
 static void _imem_parse_item(struct ice_hw *hw, u16 idx, void *item,
 			     void *data, int size)
 {
-	struct ice_imem_item *ii = (struct ice_imem_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_imem_item *ii = item;
+	u8 *buf = data;
 
 	ii->idx = idx;
 

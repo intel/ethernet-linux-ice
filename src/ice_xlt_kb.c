@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 
@@ -110,7 +110,7 @@ static void _kb_entry_init(struct ice_xlt_kb_entry *entry, u8 *data)
  */
 static void _parse_kb_data(struct ice_hw *hw, struct ice_xlt_kb *kb, void *data)
 {
-	u8 *buf = (u8 *)data;
+	u8 *buf = data;
 	int i;
 
 	kb->xlt1_pm = buf[0];

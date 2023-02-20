@@ -1,11 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
 #include "ice_devlink.h"
 #include "ice_eswitch.h"
 #include "ice_fw_update.h"
+#include "ice_common.h"
+#include "ice_adminq_cmd.h"
 
 #ifdef HAVE_DEVLINK_INFO_GET
 /* context for devlink info version reporting */
@@ -845,7 +847,7 @@ ice_devlink_flash_update_params_compat(struct devlink *devlink, const char *file
 		dev_dbg(dev, "ice_devlink_flash_update_notify_compat() returned %d\n",
 			ret);
 #else
-	ret = ice_flash_pldm_image(devlink, params, extack);
+	ret = ice_flash_pldm_image(devlink, &params, extack);
 
 	if (ret)
 		dev_dbg(dev, "ice_flash_pldm_image() returned %d\n", ret);
@@ -941,17 +943,319 @@ ice_devlink_reload_empr_finish(struct devlink *devlink,
 
 	*actions_performed = BIT(DEVLINK_RELOAD_ACTION_FW_ACTIVATE);
 
-	/* It can take a while for the device and driver to complete the reset
-	 * and rebuild process.
-	 */
 	err = ice_wait_for_reset(pf, 60 * HZ);
-	if (err)
+	if (err) {
 		NL_SET_ERR_MSG_MOD(extack, "Device still resetting after 1 minute");
+		return err;
+	}
 
-	return err;
+	return 0;
 }
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 
+#ifdef HAVE_DEVLINK_PORT_SPLIT
+static int ice_active_port_option = -1;
+
+/**
+ * ice_devlink_port_opt_speed_str - convert speed to a string
+ * @speed: speed value
+ */
+static const char *ice_devlink_port_opt_speed_str(u8 speed)
+{
+	switch (speed & ICE_AQC_PORT_OPT_MAX_LANE_M) {
+	case ICE_AQC_PORT_OPT_MAX_LANE_100M:
+		return "0.1";
+	case ICE_AQC_PORT_OPT_MAX_LANE_1G:
+		return "1";
+	case ICE_AQC_PORT_OPT_MAX_LANE_2500M:
+		return "2.5";
+	case ICE_AQC_PORT_OPT_MAX_LANE_5G:
+		return "5";
+	case ICE_AQC_PORT_OPT_MAX_LANE_10G:
+		return "10";
+	case ICE_AQC_PORT_OPT_MAX_LANE_25G:
+		return "25";
+	case ICE_AQC_PORT_OPT_MAX_LANE_50G:
+		return "50";
+	case ICE_AQC_PORT_OPT_MAX_LANE_100G:
+		return "100";
+	}
+
+	return "-";
+}
+
+#define ICE_PORT_OPT_DESC_LEN	50
+/**
+ * ice_devlink_port_options_print - Print available port split options
+ * @pf: the PF to print split port options
+ *
+ * Prints a table with available port split options and max port speeds
+ */
+static void ice_devlink_port_options_print(struct ice_pf *pf)
+{
+	u8 i, j, options_count, cnt, speed, pending_idx, active_idx;
+	struct ice_aqc_get_port_options_elem *options, *opt;
+	struct device *dev = ice_pf_to_dev(pf);
+	bool active_valid, pending_valid;
+	char desc[ICE_PORT_OPT_DESC_LEN];
+	const char *str;
+	int status;
+
+	options = kcalloc(ICE_AQC_PORT_OPT_MAX * ICE_MAX_PORT_PER_PCI_DEV,
+			  sizeof(*options), GFP_KERNEL);
+	if (!options)
+		return;
+
+	for (i = 0; i < ICE_MAX_PORT_PER_PCI_DEV; i++) {
+		opt = options + i * ICE_AQC_PORT_OPT_MAX;
+		options_count = ICE_AQC_PORT_OPT_MAX;
+		active_valid = 0;
+
+		status = ice_aq_get_port_options(&pf->hw, opt, &options_count,
+						 i, true, &active_idx,
+						 &active_valid, &pending_idx,
+						 &pending_valid);
+		if (status) {
+			dev_dbg(dev, "Couldn't read port option for port %d, err %d\n",
+				i, status);
+			goto err;
+		}
+	}
+
+	dev_dbg(dev, "Available port split options and max port speeds (Gbps):\n");
+	dev_dbg(dev, "Status  Split      Quad 0          Quad 1\n");
+	dev_dbg(dev, "        count  L0  L1  L2  L3  L4  L5  L6  L7\n");
+
+	for (i = 0; i < options_count; i++) {
+		cnt = 0;
+
+		if (i == ice_active_port_option)
+			str = "Active";
+		else if ((i == pending_idx) && pending_valid)
+			str = "Pending";
+		else
+			str = "";
+
+		cnt += snprintf(&desc[cnt], ICE_PORT_OPT_DESC_LEN - cnt,
+				"%-8s", str);
+
+		cnt += snprintf(&desc[cnt], ICE_PORT_OPT_DESC_LEN - cnt,
+				"%-6u", options[i].pmd);
+
+		for (j = 0; j < ICE_MAX_PORT_PER_PCI_DEV; ++j) {
+			speed = options[i + j * ICE_AQC_PORT_OPT_MAX]
+					.max_lane_speed;
+			str = ice_devlink_port_opt_speed_str(speed);
+			cnt += snprintf(&desc[cnt], ICE_PORT_OPT_DESC_LEN - cnt,
+					"%3s ", str);
+		}
+
+		dev_dbg(dev, "%s\n", desc);
+	}
+
+err:
+	kfree(options);
+}
+
+/**
+ * ice_devlink_aq_set_port_option - Send set port option admin queue command
+ * @pf: the PF to print split port options
+ * @option_idx: selected port option
+ * @extack: extended netdev ack structure
+ *
+ * Sends set port option admin queue command with selected port option and
+ * calls NVM write activate.
+ */
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+static int
+ice_devlink_aq_set_port_option(struct ice_pf *pf, u8 option_idx,
+			       struct netlink_ext_ack *extack)
+#else
+static int
+ice_devlink_aq_set_port_option(struct ice_pf *pf, u8 option_idx)
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	int status;
+
+	status = ice_aq_set_port_option(&pf->hw, 0, true, option_idx);
+	if (status) {
+		dev_dbg(dev, "ice_aq_set_port_option, err %d aq_err %d\n",
+			status, pf->hw.adminq.sq_last_status);
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+		NL_SET_ERR_MSG_MOD(extack, "Port split request failed");
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+		return -EIO;
+	}
+
+	status = ice_acquire_nvm(&pf->hw, ICE_RES_WRITE);
+	if (status) {
+		dev_dbg(dev, "ice_acquire_nvm failed, err %d aq_err %d\n",
+			status, pf->hw.adminq.sq_last_status);
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+		NL_SET_ERR_MSG_MOD(extack, "Failed to acquire NVM semaphore");
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+		return -EIO;
+	}
+
+	status = ice_nvm_write_activate(&pf->hw, ICE_AQC_NVM_ACTIV_REQ_EMPR,
+					NULL);
+	if (status) {
+		dev_dbg(dev, "ice_nvm_write_activate failed, err %d aq_err %d\n",
+			status, pf->hw.adminq.sq_last_status);
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+		NL_SET_ERR_MSG_MOD(extack, "Port split request failed to save data");
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+		ice_release_nvm(&pf->hw);
+		return -EIO;
+	}
+
+	ice_release_nvm(&pf->hw);
+
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+	NL_SET_ERR_MSG_MOD(extack, "Reboot required to finish port split");
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+	return 0;
+}
+
+/**
+ * ice_devlink_port_split - .port_split devlink handler
+ * @devlink: devlink instance structure
+ * @port: devlink port structure
+ * @count: number of ports to split to
+ * @extack: extended netdev ack structure
+ *
+ * Callback for the devlink .port_split operation.
+ *
+ * Unfortunately, the devlink expression of available options is limited
+ * to just a number, so search for an FW port option which supports
+ * the specified number. As there could be multiple FW port options with
+ * the same port split count, allow switching between them. When the same
+ * port split count request is issued again, switch to the next FW port
+ * option with the same port split count.
+ *
+ * Return: zero on success or an error code on failure.
+ */
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+#ifdef HAVE_DEVLINK_PORT_SPLIT_PORT_STRUCT
+static int
+ice_devlink_port_split(struct devlink *devlink, struct devlink_port *port,
+		       unsigned int count, struct netlink_ext_ack *extack)
+#else
+static int
+ice_devlink_port_split(struct devlink *devlink, unsigned int port_index,
+		       unsigned int count, struct netlink_ext_ack *extack)
+#endif /* HAVE_DEVLINK_PORT_SPLIT_PORT_STRUCT */
+#else
+static int
+ice_devlink_port_split(struct devlink *devlink, unsigned int port_index,
+		       unsigned int count)
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+{
+	struct ice_aqc_get_port_options_elem options[ICE_AQC_PORT_OPT_MAX];
+	u8 i, j, active_idx, pending_idx, new_option;
+	struct ice_pf *pf = devlink_priv(devlink);
+	u8 option_count = ICE_AQC_PORT_OPT_MAX;
+	struct device *dev = ice_pf_to_dev(pf);
+	bool active_valid, pending_valid;
+	int status;
+
+	status = ice_aq_get_port_options(&pf->hw, options, &option_count,
+					 0, true, &active_idx, &active_valid,
+					 &pending_idx, &pending_valid);
+	if (status) {
+		dev_dbg(dev, "Couldn't read port split options, err = %d\n",
+			status);
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+		NL_SET_ERR_MSG_MOD(extack, "Failed to get available port split options");
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+		return -EIO;
+	}
+
+	new_option = ICE_AQC_PORT_OPT_MAX;
+	active_idx = pending_valid ? pending_idx : active_idx;
+	for (i = 1; i <= option_count; i++) {
+		/* In order to allow switching between FW port options with
+		 * the same port split count, search for a new option starting
+		 * from the active/pending option (with array wrap around).
+		 */
+		j = (active_idx + i) % option_count;
+
+		if (count == options[j].pmd) {
+			new_option = j;
+			break;
+		}
+	}
+
+	if (new_option == active_idx) {
+		dev_dbg(dev, "request to split: count: %u is already set and there are no other options\n",
+			count);
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+		NL_SET_ERR_MSG_MOD(extack, "Requested split count is already set");
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+		ice_devlink_port_options_print(pf);
+		return -EINVAL;
+	}
+
+	if (new_option == ICE_AQC_PORT_OPT_MAX) {
+		dev_dbg(dev, "request to split: count: %u not found\n", count);
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+		NL_SET_ERR_MSG_MOD(extack, "Port split requested unsupported port config");
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+		ice_devlink_port_options_print(pf);
+		return -EINVAL;
+	}
+
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+	status = ice_devlink_aq_set_port_option(pf, new_option, extack);
+#else
+	status = ice_devlink_aq_set_port_option(pf, new_option);
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+	if (status)
+		return status;
+
+	ice_devlink_port_options_print(pf);
+
+	return 0;
+}
+
+/**
+ * ice_devlink_port_unsplit - .port_unsplit devlink handler
+ * @devlink: devlink instance structure
+ * @port: devlink port structure
+ * @extack: extended netdev ack structure
+ *
+ * Callback for the devlink .port_unsplit operation.
+ * Calls ice_devlink_port_split with split count set to 1.
+ * There could be no FW option available with split count 1.
+ *
+ * Return: zero on success or an error code on failure.
+ */
+#ifdef HAVE_DEVLINK_PORT_SPLIT_EXTACK
+#ifdef HAVE_DEVLINK_PORT_SPLIT_PORT_STRUCT
+static int
+ice_devlink_port_unsplit(struct devlink *devlink, struct devlink_port *port,
+			 struct netlink_ext_ack *extack)
+{
+	return ice_devlink_port_split(devlink, port, 1, extack);
+}
+#else
+static int
+ice_devlink_port_unsplit(struct devlink *devlink, unsigned int port_index,
+			 struct netlink_ext_ack *extack)
+{
+	return ice_devlink_port_split(devlink, port_index, 1, extack);
+}
+#endif /* HAVE_DEVLINK_PORT_SPLIT_PORT_STRUCT */
+#else
+static int
+ice_devlink_port_unsplit(struct devlink *devlink, unsigned int port_index)
+{
+	return ice_devlink_port_split(devlink, port_index, 1);
+}
+#endif /* HAVE_DEVLINK_PORT_SPLIT_EXTACK */
+
+#endif /* HAVE_DEVLINK_PORT_SPLIT */
 static const struct devlink_ops ice_devlink_ops = {
 #ifdef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
 	.supported_flash_update_params = DEVLINK_SUPPORT_FLASH_UPDATE_OVERWRITE_MASK,
@@ -962,6 +1266,10 @@ static const struct devlink_ops ice_devlink_ops = {
 	.reload_down = ice_devlink_reload_empr_start,
 	.reload_up = ice_devlink_reload_empr_finish,
 #endif
+#ifdef HAVE_DEVLINK_PORT_SPLIT
+	.port_split = ice_devlink_port_split,
+	.port_unsplit = ice_devlink_port_unsplit,
+#endif /* HAVE_DEVLINK_PORT_SPLIT */
 	.eswitch_mode_get = ice_eswitch_mode_get,
 	.eswitch_mode_set = ice_eswitch_mode_set,
 #ifdef HAVE_DEVLINK_INFO_GET
@@ -1112,6 +1420,41 @@ void ice_devlink_unregister_params(struct ice_pf *pf)
 #endif /* HAVE_DEVLINK_PARAMS */
 }
 
+#ifdef HAVE_DEVLINK_PORT_SPLIT
+/**
+ * ice_devlink_set_port_split_options - Set port split options
+ * @pf: the PF to set port split options
+ * @attrs: devlink attributes
+ *
+ * Sets devlink port split options based on available FW port options
+ */
+static void
+ice_devlink_set_port_split_options(struct ice_pf *pf,
+				   struct devlink_port_attrs *attrs)
+{
+	struct ice_aqc_get_port_options_elem options[ICE_AQC_PORT_OPT_MAX];
+	u8 i, active_idx, pending_idx, option_count = ICE_AQC_PORT_OPT_MAX;
+	bool active_valid, pending_valid;
+	int status;
+
+	status = ice_aq_get_port_options(&pf->hw, options, &option_count,
+					 0, true, &active_idx, &active_valid,
+					 &pending_idx, &pending_valid);
+	if (status) {
+		dev_dbg(ice_pf_to_dev(pf), "Couldn't read port split options, err = %d\n",
+			status);
+		return;
+	}
+
+	/* find the biggest available port split count */
+	for (i = 0; i < option_count; i++)
+		attrs->lanes = max_t(int, attrs->lanes, options[i].pmd);
+
+	attrs->splittable = attrs->lanes ? 1 : 0;
+	ice_active_port_option = active_idx;
+}
+
+#endif /* HAVE_DEVLINK_PORT_SPLIT */
 /**
  * ice_devlink_set_switch_id - Set unical switch id based on pci dsn
  * @pf: the PF to create a devlink port for
@@ -1157,6 +1500,14 @@ int ice_devlink_create_pf_port(struct ice_pf *pf)
 	attrs.flavour = DEVLINK_PORT_FLAVOUR_PHYSICAL;
 	attrs.phys.port_number = pf->hw.bus.func;
 
+#ifdef HAVE_DEVLINK_PORT_SPLIT
+	/* As FW supports only port split options for whole device,
+	 * set port split options only for first PF.
+	 */
+	if (pf->hw.pf_id == 0)
+		ice_devlink_set_port_split_options(pf, &attrs);
+
+#endif /* HAVE_DEVLINK_PORT_SPLIT */
 	ice_devlink_set_switch_id(pf, &attrs.switch_id);
 
 	devlink_port_attrs_set(devlink_port, &attrs);
@@ -1450,7 +1801,7 @@ ice_devlink_devcaps_snapshot(struct devlink *devlink,
 		return status;
 	}
 
-	*data = (u8 *)devcaps;
+	*data = devcaps;
 
 	return 0;
 }
@@ -1934,11 +2285,13 @@ ice_devlink_tc_qps_per_poller_validate(struct devlink *devlink, u32 id,
 		return -EINVAL;
 	}
 
+#ifdef HAVE_XDP_SUPPORT
 	if (ice_is_xdp_ena_vsi(ice_get_main_vsi(pf))) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Cannot change qps_per_poller when xdp is enabled");
 		return -EINVAL;
 	}
+#endif /* HAVE_XDP_SUPPORT */
 
 	return 0;
 }
@@ -1965,7 +2318,9 @@ ice_devlink_tc_qps_per_poller_set(struct devlink *devlink, u32 id,
 
 	ch_vsi->ch->qps_per_poller = ctx->val.vu8;
 
+#ifdef HAVE_XDP_SUPPORT
 	ice_ch_vsi_update_ring_vecs(ice_get_main_vsi(pf));
+#endif /* HAVE_XDP_SUPPORT */
 	return 0;
 }
 

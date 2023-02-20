@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver IEPS extensions */
 
@@ -953,7 +953,7 @@ release_exit:
  */
 int ice_ieps_entry(struct iidc_core_dev_info *obj, void *vptr_arg)
 {
-	struct ieps_peer_arg *arg = (struct ieps_peer_arg *)vptr_arg;
+	struct ieps_peer_arg *arg = vptr_arg;
 	struct ice_pf *pf;
 	void *vptr;
 

@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 1.10.1.2.2
+Version: 1.11.14
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
@@ -19,6 +19,8 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-root
 %define pcitable  %find %{_pcitable}
 Requires: kernel, findutils, gawk, bash
 
+%global __strip /bin/true
+
 %if 0%{?BUILD_KERNEL:1}
 %define kernel_ver %{BUILD_KERNEL}
 %define check_aux_args_kernel -b %{BUILD_KERNEL} 
@@ -32,21 +34,22 @@ Requires: kernel, findutils, gawk, bash
 
 %define check_aux_args %check_aux_args_kernel %check_aux_args_ksrc
 
-%define need_aux_rpm %( [ -L /lib/modules/%kernel_ver/source ] && \
-                  (rpm -q --whatprovides /lib/modules/%kernel_ver/source/include/linux/auxiliary_bus.h > /dev/null 2>&1 && echo 0 || echo 2) || \
-                  (rpm -q --whatprovides /lib/modules/%kernel_ver/build/include/linux/auxiliary_bus.h > /dev/null 2>&1 && echo 0 || echo 2) )
+%define need_aux_rpm %( [ -L /lib/modules/%kernel_ver/source ] && (rpm -q --whatprovides /lib/modules/%kernel_ver/source/include/linux/auxiliary_bus.h > /dev/null 2>&1 && echo 0 || echo 2) || (rpm -q --whatprovides /lib/modules/%kernel_ver/build/include/linux/auxiliary_bus.h > /dev/null 2>&1 && echo 0 || echo 2) )
 
 %if (%need_aux_rpm == 2)
 Requires: intel_auxiliary
 %endif
 
-# Check for existence of %kernel_module_package_buildreqs ...
+# Check for existence of variable kernel_module_package_buildreqs ...
 %if 0%{?!kernel_module_package_buildreqs:1}
 # ... and provide a suitable definition if it is not defined
 %define kernel_module_package_buildreqs kernel-devel
 %endif
 
-BuildRequires: %kernel_module_package_buildreqs
+%define kernel_module_package_buildreqs_fixed %(/bin/bash -fc 'if [[ %{kernel_ver} == *uek* ]]; 
+	then echo %kernel_module_package_buildreqs | sed 's/kernel-devel/kernel-uek-devel/g' ; else echo %kernel_module_package_buildreqs ; fi')
+
+BuildRequires: %kernel_module_package_buildreqs_fixed
 
 %description
 This package contains the Intel(R) Ethernet Connection E800 Series Linux Driver.
@@ -59,10 +62,6 @@ make -C src clean
 make -C src
 
 %install
-%define req_aux %( [[ "%name" =~ ^(ice|ice_sw|ice_swx|iavf|i40e)$ ]] && echo 0 || echo 1 )
-
-# install drivers that have auxiliary driver dependency
-%if (%req_aux == 0)
 make -C src INSTALL_MOD_PATH=%{buildroot} MANDIR=%{_mandir} modules_install_no_aux mandocs_install
 # Remove modules files that we do not want to include
 find %{buildroot}/lib/modules/ -name 'modules.*' -exec rm -f {} \;
@@ -82,14 +81,19 @@ if [ "$(%{_builddir}/%{name}-%{version}/scripts/./check_aux_bus %check_aux_args;
 	>>%{_builddir}/%{name}-%{version}/file.list
 fi
 
-# install drivers that do not have auxiliary driver dependency
-%else
-make -C src INSTALL_MOD_PATH=%{buildroot} MANDIR=%{_mandir} modules_install mandocs_install
-# Remove modules files that we do not want to include
-find %{buildroot}/lib/modules/ -name 'modules.*' -exec rm -f {} \;
+export _ksrc=%{_usrsrc}/kernels/%{kernel_ver}
 cd %{buildroot}
-find lib -name "ice.ko" \
-	-fprintf %{_builddir}/%{name}-%{version}/file.list "/%p\n"
+# Sign the modules(s)
+%if %{?_with_modsign:1}%{!?_with_modsign:0}
+%define __strip /bin/true
+%{!?privkey: %define privkey %{_sysconfdir}/pki/SECURE-BOOT-KEY.priv}
+%{!?pubkey: %define pubkey %{_sysconfdir}/pki/SECURE-BOOT-KEY.der}
+%{!?_signfile: %define _signfile ${_ksrc}/scripts/sign-file}
+for module in `find . -type f -name *.ko`;
+do
+strip --strip-debug ${module}
+$(KSRC=${_ksrc} %{_signfile} sha512 %{privkey} %{pubkey} ${module} > /dev/null 2>&1)
+done
 %endif
 
 
@@ -388,6 +392,11 @@ fi
 
 uname -r | grep BOOT || /sbin/depmod -a > /dev/null 2>&1 || true
 
+if [ -x "/usr/sbin/weak-modules" ]; then
+    modules=( $(cat %{_docdir}/%{name}/file.list | grep '\.ko$' | xargs realpath) )
+    printf '%s\n' "${modules[@]}" | /usr/sbin/weak-modules --no-initramfs --add-modules
+fi
+
 if which dracut >/dev/null 2>&1; then
 	echo "Updating initramfs with dracut..."
 	if dracut --force ; then
@@ -413,10 +422,19 @@ else
 fi
 
 %preun
+# save tmp list of installed kernel modules for weak-modules
+cat %{_docdir}/%{name}/file.list | grep '\.ko$' | xargs realpath > /var/run/rpm-%{name}-modules.list
+
 rm -rf /usr/local/share/%{name}
 
 %postun
 uname -r | grep BOOT || /sbin/depmod -a > /dev/null 2>&1 || true
+
+if [ -x "/usr/sbin/weak-modules" ]; then
+    modules=( $(cat /var/run/rpm-%{name}-modules.list) )
+    printf '%s\n' "${modules[@]}" | /usr/sbin/weak-modules --no-initramfs --remove-modules
+fi
+rm /var/run/rpm-%{name}-modules.list
 
 if which dracut >/dev/null 2>&1; then
 	echo "Updating initramfs with dracut..."
@@ -442,16 +460,14 @@ else
 	exit -1
 fi
 
-%if (%need_aux_rpm == 2) && (%req_aux == 0)
+%if (%need_aux_rpm == 2)
 %package -n intel_auxiliary
 Summary: Auxiliary bus driver (backport)
-Version: 1.0.0
+Version: 1.0.1
 
 %description -n intel_auxiliary
 The Auxiliary bus driver (intel_auxiliary.ko), backported from upstream, for use by kernels that don't have auxiliary bus.
 
-# The if is used to hide this whole section. This causes RPM to skip the build
-# of the auxiliary subproject entirely.
 %files -n intel_auxiliary -f aux.list
 %doc aux.list
 %endif

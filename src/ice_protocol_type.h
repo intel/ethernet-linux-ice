@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_PROTOCOL_TYPE_H_
 #define _ICE_PROTOCOL_TYPE_H_
@@ -74,30 +74,8 @@ enum ice_sw_tunnel_type {
 	ICE_SW_IPV4_UDP,
 	ICE_SW_IPV6_TCP,
 	ICE_SW_IPV6_UDP,
-	ICE_SW_TUN_IPV4_GTP_IPV4_TCP,
-	ICE_SW_TUN_IPV4_GTP_IPV4_UDP,
-	ICE_SW_TUN_IPV4_GTP_IPV6_TCP,
-	ICE_SW_TUN_IPV4_GTP_IPV6_UDP,
-	ICE_SW_TUN_IPV6_GTP_IPV4_TCP,
-	ICE_SW_TUN_IPV6_GTP_IPV4_UDP,
-	ICE_SW_TUN_IPV6_GTP_IPV6_TCP,
-	ICE_SW_TUN_IPV6_GTP_IPV6_UDP,
-
-	/* following adds support for GTP, just using inner protocols,
-	 * outer L3 and L4 protocols can be anything
-	 */
-	ICE_SW_TUN_GTP_IPV4_TCP,
-	ICE_SW_TUN_GTP_IPV4_UDP,
-	ICE_SW_TUN_GTP_IPV6_TCP,
-	ICE_SW_TUN_GTP_IPV6_UDP,
 	ICE_SW_TUN_GTPU,
 	ICE_SW_TUN_GTPC,
-	ICE_SW_TUN_IPV4_GTPU_IPV4,
-	ICE_SW_TUN_IPV4_GTPU_IPV6,
-	ICE_SW_TUN_IPV6_GTPU_IPV4,
-	ICE_SW_TUN_IPV6_GTPU_IPV6,
-	ICE_SW_TUN_GTP_IPV4,
-	ICE_SW_TUN_GTP_IPV6,
 	ICE_ALL_TUNNELS /* All tunnel types including NVGRE */
 };
 
@@ -183,8 +161,7 @@ enum ice_prot_id {
  */
 #define ICE_UDP_OF_HW	52 /* UDP Tunnels */
 #define ICE_GRE_OF_HW	64 /* NVGRE */
-#define ICE_PPPOE_HW	103
-#define ICE_META_DATA_ID_HW 255 /* this is used for tunnel type */
+#define ICE_META_DATA_ID_HW 255 /* this is used for tunnel and VLAN type */
 
 #define ICE_MDID_SIZE 2
 #define ICE_TUN_FLAG_MDID 20
@@ -192,8 +169,13 @@ enum ice_prot_id {
 	(ICE_MDID_SIZE * (ICE_TUN_FLAG_MDID + (word)))
 #define ICE_TUN_FLAG_MASK 0xFF
 #define ICE_DIR_FLAG_MASK 0x10
+#define ICE_TUN_FLAG_IN_VLAN_MASK 0x80 /* VLAN inside tunneled header */
 #define ICE_TUN_FLAG_VLAN_MASK 0x01
 #define ICE_TUN_FLAG_FV_IND 2
+
+#define ICE_VLAN_FLAG_MDID 20
+#define ICE_VLAN_FLAG_MDID_OFF (ICE_MDID_SIZE * ICE_VLAN_FLAG_MDID)
+#define ICE_PKT_FLAGS_0_TO_15_VLAN_FLAGS_MASK 0xD000
 
 #define ICE_PROTOCOL_MAX_ENTRIES 16
 

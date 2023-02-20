@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_txrx_lib.h"
 #include "ice_eswitch.h"
@@ -304,7 +304,7 @@ int ice_xmit_xdp_ring(void *data, u16 size, struct ice_ring *xdp_ring)
 	dma_addr_t dma;
 
 	if (!unlikely(ICE_DESC_UNUSED(xdp_ring))) {
-		xdp_ring->tx_stats.tx_busy++;
+		xdp_ring->ring_stats->tx_stats.tx_busy++;
 		return ICE_XDP_CONSUMED;
 	}
 

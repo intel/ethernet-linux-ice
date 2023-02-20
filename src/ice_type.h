@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_TYPE_H_
 #define _ICE_TYPE_H_
@@ -619,7 +619,9 @@ enum ice_time_ref_freq {
 	ICE_TIME_REF_FREQ_156_250	= 4,
 	ICE_TIME_REF_FREQ_245_760	= 5,
 
-	NUM_ICE_TIME_REF_FREQ
+	NUM_ICE_TIME_REF_FREQ,
+
+	ICE_TIME_REF_FREQ_INVALID	= -1,
 };
 
 /* Clock source specification */
@@ -1195,16 +1197,22 @@ struct ice_mbx_data {
 	u16 async_watermark_val;
 };
 
-/* PHY configuration */
-enum ice_phy_cfg {
-	ICE_PHY_E810 = 1,
+/* PHY model */
+enum ice_phy_model {
+	ICE_PHY_UNSUP = -1,
+	ICE_PHY_E810  = 1,
 	ICE_PHY_E822,
 	ICE_PHY_ETH56G,
 };
 
+enum ice_eth56g_mode {
+	ICE_ETH56G_MODE_0,
+	ICE_ETH56G_MODE_1,
+};
+
 /* Port hardware description */
 struct ice_hw {
-	u8 __iomem *hw_addr;
+	u8 *hw_addr;
 	void *back;
 	struct ice_aqc_layer_props *layer_info;
 	struct ice_port_info *port_info;
@@ -1226,7 +1234,17 @@ struct ice_hw {
 	u8 revision_id;
 
 	u8 pf_id;		/* device profile info */
-	enum ice_phy_cfg phy_cfg;
+	enum ice_phy_model phy_model;
+#define ICE_PHYS_PER_CPLX_E824S	1
+#define ICE_PORTS_PER_PHY_E824S	8
+
+#define ICE_PHYS_PER_CPLX_C825X	2
+#define ICE_PORTS_PER_PHY_C825X	4
+
+#define MAX_PHYS_PER_ICE	2
+	u8 num_phys;
+	u8 phy_ports;
+	u8 phy_addr[MAX_PHYS_PER_ICE];		/* PHY address */
 	u8 logical_pf_id;
 
 	u16 max_burst_size;	/* driver sets this value */

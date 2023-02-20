@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_NVM_H_
 #define _ICE_NVM_H_
@@ -63,9 +63,22 @@ union ice_nvm_access_data {
 	struct ice_nvm_features drv_features; /* NVM features */
 };
 
+u32 ice_nvm_access_get_module(struct ice_nvm_access_cmd *cmd);
+u32 ice_nvm_access_get_flags(struct ice_nvm_access_cmd *cmd);
+u32 ice_nvm_access_get_adapter(struct ice_nvm_access_cmd *cmd);
+int
+ice_nvm_access_read(struct ice_hw *hw, struct ice_nvm_access_cmd *cmd,
+		    union ice_nvm_access_data *data);
+int
+ice_nvm_access_write(struct ice_hw *hw, struct ice_nvm_access_cmd *cmd,
+		     union ice_nvm_access_data *data);
+int
+ice_nvm_access_get_features(struct ice_nvm_access_cmd *cmd,
+			    union ice_nvm_access_data *data);
 int
 ice_handle_nvm_access(struct ice_hw *hw, struct ice_nvm_access_cmd *cmd,
 		      union ice_nvm_access_data *data);
+
 int
 ice_acquire_nvm(struct ice_hw *hw, enum ice_aq_res_access_type access);
 void ice_release_nvm(struct ice_hw *hw);

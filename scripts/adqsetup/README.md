@@ -21,6 +21,38 @@ Included with driver:
 
     python scripts/adqsetup/adqsetup.py install
 
+## Usage
+
+The basic usage is: `adqsetup [options] <command> [parameters ...]`  
+Please see the output of `adqsetup help` for a complete list of 
+command line options.
+
+### Commands
+- **help**: _Show help message_
+- **examples**: _Create an 'examples' subdirectory_  
+  The examples subdirectory - created in the current directory - 
+  contains a set of sample config files
+- **apply {filename}**: _Apply a config file_
+  - **{filename}**: _Config file (relative or full path)_  
+    If empty or '-', config file is read from stdin.
+- **create { [{name}] { {key} {value} }... }...**: _Create a config from the command line_  
+    Each section consisting of a bracketed name and one or more {key} {value} pairs.
+    - **[{name}]**: _User-defined name of section_  
+      Must be unique within a configuration, '[globals]' is reserved but can be used.
+    - **{key}** **{value}**: _Configuration Parameter_  
+    One or more space-seperated key and value pairs. 
+    See the above Class Configuration Parameter list for possible keys and values.
+- **reset**: _Remove ADQ traffic classes and filters_  
+  Attempts to perform a cleanup of any ADQ-related setup. 
+  Note: '--priority=skbedit' option must be included to remove the egress filters.
+- **persist {filename}**: _Persist a config file across reboots_  
+  Creates a systemd service unit set to run once on boot after the network is running. 
+  One config per network interface, new configs overwrite old ones.
+  - **{filename}**: _Config file (relative or full path)_  
+    If empty or '-', config file is read from stdin.
+- **install**: _Install the adqsetup script_  
+  Installs the current script at /usr/local/bin
+
 ## Configuration Parameters
 
 ### Globals Section
@@ -59,38 +91,6 @@ default 10000_
 - **queues**: (integer) _Number of queues in traffic class_
 - **remote-addrs**: (string list) _Remote IP addresses of traffic_
 - **remote-ports**: (integer list) _Remote IP ports of traffic_
-
-## Usage
-
-The basic usage is: `adqsetup [options] <command> [parameters ...]`  
-Please see the output of `adqsetup help` for a complete list of 
-command line options.
-
-### Commands
-- **help**: _Show help message_
-- **examples**: _Create an 'examples' subdirectory_  
-  The examples subdirectory - created in the current directory - 
-  contains a set of sample config files
-- **apply {filename}**: _Apply a config file_
-  - **{filename}**: _Config file (relative or full path)_  
-    If empty or '-', config file is read from stdin.
-- **create { [{name}] { {key} {value} }... }...**: _Create a config from the command line_  
-    Each section consisting of a bracketed name and one or more {key} {value} pairs.
-    - **[{name}]**: _User-defined name of section_  
-      Must be unique within a configuration, '[globals]' is reserved but can be used.
-    - **{key}** **{value}**: _Configuration Parameter_  
-    One or more space-seperated key and value pairs. 
-    See the above Class Configuration Parameter list for possible keys and values.
-- **reset**: _Remove ADQ traffic classes and filters_  
-  Attempts to perform a cleanup of any ADQ-related setup. 
-  Note: '--priority=skbedit' option must be included to remove the egress filters.
-- **persist {filename}**: _Persist a config file across reboots_  
-  Creates a systemd service unit set to run once on boot after the network is running. 
-  One config per network interface, new configs overwrite old ones.
-  - **{filename}**: _Config file (relative or full path)_  
-    If empty or '-', config file is read from stdin.
-- **install**: _Install the adqsetup script_  
-  Installs the current script at /usr/local/bin
 
 ## Sample Usage
 
@@ -142,17 +142,36 @@ command line options.
     # run test here
     done
 
+## Sample Usage With Pipes From External Script
+
+    python makeconf.py | adqsetup --json apply
+
+### makeconf.py
+
+    import json
+    conf = {
+        "globals": {
+            "dev": "eth2",
+            "busypull": 10000
+        },
+        "app1": {
+            "queues": 4,
+            "ports": "80,443"
+        }
+    }
+    print(json.dumps(conf))
+
 ## Notes
 
-* To load/use the different device drivers while creating the setup, 
---reload must be called along with --drivers parameter in the syntax. 
-Device driver path is the full path to the .ko file (ex: ice-1.9.x/src/ice.ko). 
-Interface _must_ be set to come up automatically with an ip address 
-(via NetworkManager or other), adqsetup will wait up to three seconds 
-for this to occur before erroring out. Conversely, you can load the driver 
-and setup the interface manually before running the adqsetup.
+* To load/use a different device driver while creating the setup, 
+the `--driver` parameter may be used. Device driver path is the full path 
+to the .ko file (ex: ice-1.9.x/src/ice.ko). Interface _must_ be set to 
+come up automatically with an ip address (via NetworkManager or other). 
+adqsetup will wait up to three seconds for this to occur before erroring out. 
+Conversely, you can load the driver and setup the interface manually 
+before running the adqsetup.
 
-* The independent **pollers** argument passed to this tool doesn’t map directly 
+* The independent **pollers** argument passed to adqsetup doesn’t map directly 
 to the **qps_per_poller** arguments passed to the driver. adqsetup 
 allows the user to specify how many pollers for a particular TC instead of 
 having to specify qps_per_poller.

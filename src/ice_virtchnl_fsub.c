@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_base.h"
 #include "ice_lib.h"
 
-#define to_fltr_conf_from_desc(p) \
+#define to_sub_conf_from_desc(p) \
 	container_of(p, struct ice_flow_sub_conf, fsub_fltr)
 
 struct ice_flow_sub_fltr {
@@ -722,8 +722,8 @@ int ice_vc_flow_sub_fltr(struct ice_vf *vf, u8 *msg)
 
 	fltr->flow_id = conf->flow_id;
 
-	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret,
-				    (u8 *)fltr, sizeof(*fltr));
+	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)fltr,
+				   sizeof(*fltr));
 
 	return ret;
 
@@ -737,13 +737,13 @@ err_exit:
 	if (!stat) {
 		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
 		dev_dbg(dev, "Alloc stat for VF %d failed\n", vf->vf_id);
-		ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, NULL, 0);
+		ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, NULL, 0);
 		return ret;
 	}
 
 	stat->status = status;
-	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret,
-				    (u8 *)stat, sizeof(*stat));
+	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)stat,
+				   sizeof(*stat));
 
 	kfree(stat);
 	return ret;
@@ -799,8 +799,8 @@ int ice_vc_flow_unsub_fltr(struct ice_vf *vf, u8 *msg)
 
 	ice_vc_fsub_remove_entry(vf, conf, fltr->flow_id);
 
-	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret,
-				    (u8 *)fltr, sizeof(*fltr));
+	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)fltr,
+				  sizeof(*fltr));
 
 	kfree(conf->fsub_fltr.list);
 	kfree(conf);
@@ -815,13 +815,13 @@ err_exit:
 	if (!stat) {
 		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
 		dev_dbg(dev, "Alloc stat for VF %d failed\n", vf->vf_id);
-		ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, NULL, 0);
+		ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, NULL, 0);
 		return ret;
 	}
 
 	stat->status = status;
-	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret,
-				    (u8 *)stat, sizeof(*stat));
+	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)stat,
+				   sizeof(*stat));
 
 	kfree(stat);
 	return ret;
@@ -842,8 +842,7 @@ void ice_vf_fsub_exit(struct ice_vf *vf)
 
 	list_for_each_entry_safe(desc, temp, &vf->fsub.fsub_rule_list,
 				 fltr_node) {
-		struct ice_flow_sub_conf *conf =
-				to_fltr_conf_from_desc(desc);
+		struct ice_flow_sub_conf *conf = to_sub_conf_from_desc(desc);
 		int ret = 0;
 
 		rule.rid = conf->fsub_fltr.rule_data.rid;

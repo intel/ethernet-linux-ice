@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2018-2021, Intel Corporation.
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2018-2023 Intel Corporation
 
 # updates for the system pci.ids file
 #
@@ -64,6 +64,7 @@
 	188b  Ethernet Controller E823-C for QSFP
 	188c  Ethernet Controller E823-C for SFP
 		1028 0abd  Ethernet Connection 25G 4P E823-C LOM
+		8086 0001  Ethernet Connection E823-C for SFP
 	188d  Ethernet Connection E823-C/X557-AT 10GBASE-T
 	188e  Ethernet Connection E823-C 1GbE
 	1890  Ethernet Connection E822-C for backplane

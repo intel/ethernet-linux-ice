@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_VF_LIB_H_
 #define _ICE_VF_LIB_H_
@@ -44,6 +44,7 @@ enum ice_vf_states {
 	ICE_VF_STATE_DIS,
 	ICE_VF_STATE_MC_PROMISC,
 	ICE_VF_STATE_UC_PROMISC,
+	ICE_VF_STATE_REPLAY_VC,
 	ICE_VF_STATES_NBITS
 };
 
@@ -142,8 +143,7 @@ struct ice_vf_ops {
 	void (*irq_close)(struct ice_vf *vf);
 	int (*create_vsi)(struct ice_vf *vf);
 	void (*post_vsi_rebuild)(struct ice_vf *vf);
-	struct ice_q_vector* (*get_q_vector)(struct ice_vf *vf,
-					     struct ice_vsi *vsi,
+	struct ice_q_vector* (*get_q_vector)(struct ice_vsi *vsi,
 					     u16 vector_id);
 	void (*cfg_rdma_irq_map)(struct ice_vf *vf,
 				 struct virtchnl_rdma_qv_info *qv_info);
@@ -168,6 +168,7 @@ struct ice_vf_qs_bw {
 	u8 tc;
 };
 
+#define VIRTCHNL_MSG_MAX 1000
 /* VF information structure */
 struct ice_vf {
 	struct hlist_node entry;

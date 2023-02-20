@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include <linux/fs.h>
 #include <linux/debugfs.h>
@@ -340,6 +340,8 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		cnt += snprintf(&buff[cnt], bytes_left - cnt,
 				"DPLL Config ver: %d.%d.%d.%d\n", ver_major,
 				ver_minor, rev, bugfix);
+		cnt += snprintf(&buff[cnt], bytes_left - cnt,
+				"DPLL FW ver: %i\n", cgu_fw_ver);
 	} else if (abilities.cgu_part_num ==
 		   ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384) {
 		cnt = snprintf(buff, bytes_left, "Found SI5383/5384 CGU\n");
@@ -660,7 +662,7 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 					       GFP_KERNEL);
 			if (!vsi_ctx) {
 				ret = -ENOMEM;
-				goto command_write_done;
+				goto command_write_error;
 			}
 			ret = kstrtou16(argv[2], 0, &vsi_ctx->vsi_num);
 			if (ret) {
@@ -684,7 +686,7 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 		if (ret) {
 			ret = -EINVAL;
 			dev_err(dev, "dump switch failed\n");
-			goto command_write_done;
+			goto command_write_error;
 		}
 	} else if (argc == 2 && !strncmp(argv[0], "dump", 4) &&
 		   !strncmp(argv[1], "capabilities", 11)) {
@@ -777,7 +779,7 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 		buff = devm_kzalloc(dev, ICE_LLDPDU_SIZE, GFP_KERNEL);
 		if (!buff) {
 			ret = -ENOMEM;
-			goto command_write_done;
+			goto command_write_error;
 		}
 
 		ret = ice_aq_get_lldp_mib(hw,
@@ -809,23 +811,6 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 		    !strncmp(argv[3], "topology", 8)) {
 			ice_dump_port_topo(hw->port_info);
 		}
-	} else if (argc == 4 && !strncmp(argv[0], "set_ts_pll", 10)) {
-		u8 time_ref_freq;
-		u8 time_ref_sel;
-		u8 src_tmr_mode;
-
-		ret = kstrtou8(argv[1], 0, &time_ref_freq);
-		if (ret)
-			goto command_help;
-		ret = kstrtou8(argv[2], 0, &time_ref_sel);
-		if (ret)
-			goto command_help;
-		ret = kstrtou8(argv[3], 0, &src_tmr_mode);
-		if (ret)
-			goto command_help;
-
-		ice_cfg_cgu_pll_e822(hw, time_ref_freq, time_ref_sel);
-		ice_ptp_update_incval(pf, time_ref_freq, src_tmr_mode);
 	} else {
 command_help:
 		dev_info(dev, "unknown or invalid command '%s'\n", cmd_buf);
@@ -858,16 +843,24 @@ command_help:
 		if (ice_is_feature_supported(pf, ICE_F_PHY_RCLK))
 			dev_info(dev, "\t dump rclk_status\n");
 		ret = -EINVAL;
-		goto command_write_done;
+		goto command_write_error;
 	}
 
 	/* if we get here, nothing went wrong; return bytes copied */
 	ret = (ssize_t)count;
 
-command_write_done:
+command_write_error:
 	argv_free(argv);
 err_copy_from_user:
 	kfree(cmd_buf);
+
+	/* This function always consumes all of the written input, or produces
+	 * an error. Check and enforce this. Otherwise, the write operation
+	 * won't complete properly.
+	 */
+	if (WARN_ON(ret != (ssize_t)count && ret >= 0))
+		ret = -EIO;
+
 	return ret;
 }
 

@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include <linux/device.h>
 #include <linux/module.h>
@@ -13,7 +13,9 @@
 #define VFIO_DEVICE_MIGRATION_OFFSET(x) \
 	(offsetof(struct vfio_device_migration_info, x))
 #define ICE_VFIO_MIG_REGION_INFO_SZ (sizeof(struct vfio_device_migration_info))
-#define ICE_VFIO_MIG_REGION_DATA_SZ (sizeof(struct ice_vfio_pci_regs))
+#define ICE_VFIO_MIG_REGION_DATA_SZ \
+	(struct_size((struct ice_vfio_pci_migration_data *)NULL, \
+		      dev_state, SZ_128K))
 
 /* IAVF registers description */
 #define IAVF_VF_ARQBAH1 0x00006000 /* Reset: EMPR */
@@ -64,10 +66,16 @@ struct ice_vfio_pci_regs {
 	u32 rx_tail[IAVF_QRX_TAIL_MAX];
 };
 
+struct ice_vfio_pci_migration_data {
+	struct ice_vfio_pci_regs regs;
+
+	u8 __aligned(8) dev_state[];
+};
+
 struct ice_vfio_pci_core_device {
 	struct vfio_pci_core_device core_device;
 	struct vfio_device_migration_info mig_info;
-	struct ice_vfio_pci_regs *regs;
+	struct ice_vfio_pci_migration_data *mig_data;
 	u8 __iomem *io_base;
 	void *vf_handle;
 };
@@ -171,8 +179,14 @@ ice_vfio_pci_load_regs(struct ice_vfio_pci_core_device *ice_vdev,
 static int __must_check
 ice_vfio_pci_load_state(struct ice_vfio_pci_core_device *ice_vdev)
 {
-	ice_vfio_pci_load_regs(ice_vdev, ice_vdev->regs);
-	return 0;
+	int ret;
+
+	ice_vfio_pci_load_regs(ice_vdev, &ice_vdev->mig_data->regs);
+	ret = ice_migration_restore_devstate(ice_vdev->vf_handle,
+					     ice_vdev->mig_data->dev_state,
+					     ICE_VFIO_MIG_REGION_DATA_SZ);
+
+	return ret;
 }
 
 /**
@@ -190,9 +204,14 @@ ice_vfio_pci_load_state(struct ice_vfio_pci_core_device *ice_vdev)
 static int __must_check
 ice_vfio_pci_save_state(struct ice_vfio_pci_core_device *ice_vdev)
 {
-	ice_vfio_pci_save_regs(ice_vdev, ice_vdev->regs);
+	int ret = 0;
+
+	ice_vfio_pci_save_regs(ice_vdev, &ice_vdev->mig_data->regs);
+	ret = ice_migration_save_devstate(ice_vdev->vf_handle,
+					  ice_vdev->mig_data->dev_state,
+					  ICE_VFIO_MIG_REGION_DATA_SZ);
 	ice_vdev->mig_info.pending_bytes = ICE_VFIO_MIG_REGION_DATA_SZ;
-	return 0;
+	return ret;
 }
 
 /**
@@ -269,11 +288,13 @@ ice_vfio_pci_mig_rw_data(struct ice_vfio_pci_core_device *ice_vdev,
 		return -EINVAL;
 
 	if (iswrite) {
-		ret = copy_from_user((u8 *)ice_vdev->regs + offset, buf, count);
+		ret = copy_from_user((u8 *)ice_vdev->mig_data + offset,
+				     buf, count);
 		if (ret)
 			return -EFAULT;
 	} else {
-		ret = copy_to_user(buf, (u8 *)ice_vdev->regs + offset, count);
+		ret = copy_to_user(buf, (u8 *)ice_vdev->mig_data + offset,
+				   count);
 		if (ret)
 			return -EFAULT;
 
@@ -518,8 +539,8 @@ static int ice_vfio_migration_init(struct ice_vfio_pci_core_device *ice_vdev)
 	struct pci_dev *pdev = ice_vdev->core_device.pdev;
 	int ret = 0;
 
-	ice_vdev->regs = kzalloc(ICE_VFIO_MIG_REGION_DATA_SZ, GFP_KERNEL);
-	if (!ice_vdev->regs)
+	ice_vdev->mig_data = kzalloc(ICE_VFIO_MIG_REGION_DATA_SZ, GFP_KERNEL);
+	if (!ice_vdev->mig_data)
 		return -ENOMEM;
 
 	mig_info->data_size = ICE_VFIO_MIG_REGION_DATA_SZ;
@@ -531,6 +552,7 @@ static int ice_vfio_migration_init(struct ice_vfio_pci_core_device *ice_vdev)
 		goto err_get_vf_handle;
 	}
 
+	ice_migration_init_vf(ice_vdev->vf_handle);
 	ice_vdev->io_base = (u8 __iomem *)pci_iomap(pdev, 0, 0);
 	if (!ice_vdev->io_base) {
 		ret =  -EFAULT;
@@ -555,7 +577,7 @@ err_dev_region_register:
 	pci_iounmap(pdev, ice_vdev->io_base);
 err_get_vf_handle:
 err_pci_iomap:
-	kfree(ice_vdev->regs);
+	kfree(ice_vdev->mig_data);
 
 	return ret;
 }
@@ -567,7 +589,8 @@ err_pci_iomap:
 static void ice_vfio_migration_uninit(struct ice_vfio_pci_core_device *ice_vdev)
 {
 	pci_iounmap(ice_vdev->core_device.pdev, ice_vdev->io_base);
-	kfree(ice_vdev->regs);
+	ice_migration_uninit_vf(ice_vdev->vf_handle);
+	kfree(ice_vdev->mig_data);
 }
 
 /**

@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_OSDEP_H_
 #define _ICE_OSDEP_H_
@@ -15,10 +15,49 @@
 #include <linux/pci_ids.h>
 #include "kcompat.h"
 
-#define wr32(a, reg, value)	writel((value), ((a)->hw_addr + (reg)))
-#define rd32(a, reg)		readl((a)->hw_addr + (reg))
-#define wr64(a, reg, value)	writeq((value), ((a)->hw_addr + (reg)))
-#define rd64(a, reg)		readq((a)->hw_addr + (reg))
+struct ice_hw;
+
+/**
+ * struct ice_hw_addr_map - a single hardware address memory map
+ * @addr: iomem address of the start of this map
+ * @start: register offset at the start of this map, inclusive bound
+ * @end: register offset at the end of this map, exclusive bound
+ * @bar: the BAR this map is for
+ *
+ * Structure representing one map of a device BAR register space. Stored as
+ * part of the ice_hw_addr structure in an array ordered by the start offset.
+ *
+ * The addr value is an iomem address returned by ioremap. The start indicates
+ * the first register offset this map is valid for. The end indicates the end
+ * of the map, and is an exclusive bound.
+ */
+struct ice_hw_addr_map {
+	void __iomem *addr;
+	resource_size_t start;
+	resource_size_t end;
+	int bar;
+};
+
+/**
+ * struct ice_hw_addr - a list of hardware address memory maps
+ * @nr: the number of maps made
+ * @maps: flexible array of maps made during device initialization
+ *
+ * Structure representing a series of sparse maps of the device BAR 0 address
+ * space to kernel addresses. Users must convert a register offset to an iomem
+ * address using ice_get_hw_addr.
+ */
+struct ice_hw_addr {
+	unsigned int nr;
+	struct ice_hw_addr_map maps[];
+};
+
+void __iomem *ice_get_hw_addr(struct ice_hw *hw, resource_size_t reg);
+
+#define wr32(a, reg, value)	writel((value), ice_get_hw_addr((a), (reg)))
+#define rd32(a, reg)		readl(ice_get_hw_addr((a), (reg)))
+#define wr64(a, reg, value)	writeq((value), ice_get_hw_addr((a), (reg)))
+#define rd64(a, reg)		readq(ice_get_hw_addr((a), (reg)))
 
 #define ice_flush(a)		rd32((a), GLGEN_STAT)
 
@@ -30,7 +69,6 @@ struct ice_dma_mem {
 	size_t size;
 };
 
-struct ice_hw;
 struct device *ice_hw_to_dev(struct ice_hw *hw);
 
 #define ice_info_fwlog(hw, rowsize, groupsize, buf, len)	\

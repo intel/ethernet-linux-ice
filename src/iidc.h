@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _IIDC_H_
 #define _IIDC_H_
@@ -37,6 +37,7 @@ enum iidc_event_type {
 	IIDC_EVENT_CRIT_ERR,
 	IIDC_EVENT_FAILOVER_START,
 	IIDC_EVENT_FAILOVER_FINISH,
+	IIDC_EVENT_WARN_RESET,
 	IIDC_EVENT_NBITS		/* must be last */
 };
 

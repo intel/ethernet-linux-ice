@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -187,8 +187,8 @@ static void _bst_npkb_init(struct ice_np_keybuilder *kb, u32 data)
 static void _bst_parse_item(struct ice_hw *hw, u16 idx, void *item,
 			    void *data, int size)
 {
-	struct ice_bst_tcam_item *ti = (struct ice_bst_tcam_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_bst_tcam_item *ti = item;
+	u8 *buf = data;
 	int i;
 
 	ti->address = *(u16 *)buf;

@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_H_
 #define _ICE_H_
@@ -62,6 +62,11 @@
 #else
 #include "kcompat_dim.h"
 #endif
+#ifdef GNSS_SUPPORT
+#if IS_ENABLED(CONFIG_GNSS)
+#include <linux/gnss.h>
+#endif /* CONFIG_GNSS */
+#endif /* GNSS_SUPPORT */
 #include "ice_ddp.h"
 #include "ice_devids.h"
 #include "ice_type.h"
@@ -125,11 +130,14 @@
 #include "ice_repr.h"
 #include "ice_eswitch.h"
 #include "ice_vsi_vlan_ops.h"
+#ifdef GNSS_SUPPORT
 #include "ice_gnss.h"
+#endif /* GNSS_SUPPORT */
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0			0
-#define ICE_BAR_RDMA_DOORBELL_OFFSET	0x7f0000
+#define ICE_BAR_RDMA_WC_START		0x0800000
+#define ICE_BAR_RDMA_WC_END		0x1000000
 #define ICE_BAR3			3
 #ifdef CONFIG_DEBUG_FS
 #define ICE_MAX_CSR_SPACE	(8 * 1024 * 1024 - 64 * 1024)
@@ -138,12 +146,12 @@ extern const char ice_drv_ver[];
 #define ICE_MIN_NUM_DESC	64
 #define ICE_MAX_NUM_DESC	8160
 #define ICE_DFLT_MIN_RX_DESC	512
+#define ICE_DFLT_NUM_TX_DESC	256
 #ifdef CONFIG_ICE_USE_SKB
 #define ICE_DFLT_NUM_RX_DESC    512
 #else
 #define ICE_DFLT_NUM_RX_DESC	2048
 #endif /* CONFIG_ICE_USE_SKB */
-#define ICE_DFLT_NUM_TX_DESC	256
 
 #define ICE_DFLT_TXQ_VMDQ_VSI	1
 #define ICE_DFLT_RXQ_VMDQ_VSI	1
@@ -160,13 +168,13 @@ extern const char ice_drv_ver[];
 #define ICE_AQ_LEN		192
 #define ICE_MBXSQ_LEN		64
 #define ICE_SBQ_LEN		64
-#define ICE_FDIR_MSIX		2
-#define ICE_ESWITCH_MSIX	1
 #define ICE_MIN_LAN_MSIX	1
 #define ICE_OICR_MSIX		1
+#define ICE_MIN_MSIX		(ICE_MIN_LAN_MSIX + ICE_OICR_MSIX)
+#define ICE_FDIR_MSIX		2
 #define ICE_RDMA_NUM_AEQ_MSIX	4
 #define ICE_MIN_RDMA_MSIX	2
-#define ICE_MIN_MSIX		(ICE_MIN_LAN_MSIX + ICE_OICR_MSIX)
+#define ICE_ESWITCH_MSIX	1
 #define ICE_NO_VSI		0xffff
 #define ICE_VSI_MAP_CONTIG	0
 #define ICE_VSI_MAP_SCATTER	1
@@ -222,12 +230,7 @@ extern const char ice_drv_ver[];
  */
 #define ICE_BW_KBPS_DIVISOR		125
 
-#if defined(HAVE_TCF_MIRRED_DEV) || defined(HAVE_TC_FLOW_RULE_INFRASTRUCTURE)
-#define ICE_GTPU_PORT 2152
-#endif /* HAVE_TCF_MIRRED_DEC || HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
-#ifdef HAVE_GTP_SUPPORT
 #define ICE_GTPC_PORT 2123
-#endif /* HAVE_GTP_SUPPORT */
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 /* prio 5..7 can be used as advanced switch filter priority. Default recipes
@@ -335,6 +338,10 @@ struct ice_channel {
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 
 #define ICE_ADQ_MAX_QPS	256
+#ifndef MAX_DEFAULT_VECTORS
+#define MAX_DEFAULT_VECTORS 64
+#endif /* MAX_DEFAULT_VECTORS */
+#define MIN_DEFAULT_VECTORS 8
 
 struct ice_txq_meta {
 	u32 q_teid;	/* Tx-scheduler element identifier */
@@ -394,6 +401,7 @@ enum ice_pf_state {
 	ICE_EMPR_RECV,		/* set by OICR handler */
 	ICE_SUSPENDED,		/* set on module remove path */
 	ICE_RESET_FAILED,		/* set by reset/rebuild */
+	ICE_SHUTTING_DOWN,
 	ICE_RECOVERY_MODE,		/* set when recovery mode is detected */
 	ICE_PREPPED_RECOVERY_MODE,	/* set on recovery mode transition */
 	/* When checking for the PF to be in a nominal operating state, the
@@ -413,6 +421,7 @@ enum ice_pf_state {
 	ICE_FLTR_OVERFLOW_PROMISC,
 	ICE_VF_DIS,
 	ICE_CFG_BUSY,
+	ICE_SET_CHANNELS,
 	ICE_SERVICE_SCHED,
 	ICE_SERVICE_DIS,
 	ICE_FD_FLUSH_REQ,
@@ -467,6 +476,11 @@ enum ice_chnl_feature {
 enum ice_advanced_state_t {
 	ICE_SWITCH_TO_RSS,
 	ICE_ADVANCED_STATE_LAST, /* this must be last */
+};
+
+struct ice_vsi_stats {
+	struct ice_ring_stats **tx_ring_stats;	/* Tx ring stats array */
+	struct ice_ring_stats **rx_ring_stats;	/* Rx ring stats array */
 };
 
 /* struct that defines a VSI, associated with a dev */
@@ -532,6 +546,7 @@ struct ice_vsi {
 
 	/* VSI stats */
 	struct rtnl_link_stats64 net_stats;
+	struct rtnl_link_stats64 net_stats_prev;
 	struct ice_eth_stats eth_stats;
 	struct ice_eth_stats eth_stats_prev;
 
@@ -790,7 +805,7 @@ enum ice_pf_flags {
 #ifdef HAVE_NDO_DFWD_OPS
 	ICE_FLAG_MACVLAN_ENA,
 #endif /* HAVE_NDO_DFWD_OPS */
-	ICE_FLAG_IWARP_ENA,
+	ICE_FLAG_RDMA_ENA,
 	ICE_FLAG_RSS_ENA,
 	ICE_FLAG_SRIOV_ENA,
 	ICE_FLAG_SRIOV_CAPABLE,
@@ -801,7 +816,7 @@ enum ice_pf_flags {
 	ICE_FLAG_FD_ENA,
 	ICE_FLAG_PTP_SUPPORTED,		/* NVM PTP support */
 	ICE_FLAG_PTP,			/* PTP successfully initialized */
-	ICE_FLAG_AUX_ENA,
+	ICE_FLAG_PTP_WT_ENABLED,	/* PTP workthread enabled */
 	ICE_FLAG_PLUG_AUX_DEV,
 	ICE_FLAG_UNPLUG_AUX_DEV,
 	ICE_FLAG_MTU_CHANGED,
@@ -834,7 +849,9 @@ enum ice_pf_flags {
 	ICE_FLAG_DPLL_FAST_LOCK,
 	ICE_FLAG_DPLL_MONITOR,
 	ICE_FLAG_EXTTS_FILTER,
+#if defined(GNSS_SUPPORT) && !defined(NO_PTP_SUPPORT)
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
+#endif /* GNSS_SUPPORT && !NO_PTP_SUPPORT */
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
@@ -908,7 +925,6 @@ struct ice_mdd_reporter {
 
 struct ice_pf {
 	struct pci_dev *pdev;
-
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_REGIONS
 	struct devlink_region *nvm_region;
@@ -934,6 +950,7 @@ struct ice_pf {
 	u16 ctrl_vsi_idx;		/* control VSI index in pf->vsi array */
 
 	struct ice_vsi **vsi;		/* VSIs created by the driver */
+	struct ice_vsi_stats **vsi_stats;
 	struct ice_sw *first_sw;	/* first switch created by firmware */
 	u16 eswitch_mode;		/* current mode of eswitch */
 #ifdef CONFIG_DEBUG_FS
@@ -956,9 +973,12 @@ struct ice_pf {
 	struct mutex lag_mutex;		/* lock protects the lag struct */
 	u32 msg_enable;
 	struct ice_ptp ptp;
-	struct tty_driver *ice_gnss_tty_driver;
-	struct tty_port *gnss_tty_port;
+#ifdef GNSS_SUPPORT
+#if IS_ENABLED(CONFIG_GNSS)
 	struct gnss_serial *gnss_serial;
+	struct gnss_device *gnss_dev;
+#endif /* CONFIG_GNSS */
+#endif
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
 #ifdef HAVE_NDO_DFWD_OPS
@@ -1597,7 +1617,9 @@ int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx);
 void ice_update_pf_stats(struct ice_pf *pf);
 void ice_update_vsi_stats(struct ice_vsi *vsi);
 int ice_up(struct ice_vsi *vsi);
-void ice_fetch_u64_stats_per_ring(struct ice_ring *ring, u64 *pkts, u64 *bytes);
+void
+ice_fetch_u64_stats_per_ring(struct ice_ring_stats *ring_stat, u64 *pkts,
+			     u64 *bytes);
 int ice_down(struct ice_vsi *vsi);
 int ice_down_up(struct ice_vsi *vsi);
 int ice_vsi_cfg(struct ice_vsi *vsi);
@@ -1637,26 +1659,8 @@ ice_for_each_aux(struct ice_pf *pf, void *data,
 #ifdef CONFIG_PM
 void ice_cdev_info_refresh_msix(struct ice_pf *pf);
 #endif /* CONFIG_PM */
+
 #ifdef HAVE_NETDEV_UPPER_INFO
-/**
- * ice_set_sriov_cap - enable SRIOV in PF flags
- * @pf: PF struct
- */
-static inline void ice_set_sriov_cap(struct ice_pf *pf)
-{
-	if (pf->hw.func_caps.common_cap.sr_iov_1_1)
-		set_bit(ICE_FLAG_SRIOV_CAPABLE, pf->flags);
-}
-
-/**
- * ice_clear_sriov_cap - disable SRIOV in PF flags
- * @pf: PF struct
- */
-static inline void ice_clear_sriov_cap(struct ice_pf *pf)
-{
-	clear_bit(ICE_FLAG_SRIOV_CAPABLE, pf->flags);
-}
-
 /**
  * ice_set_rdma_cap - enable RDMA in PF flags
  * @pf: PF struct
@@ -1664,7 +1668,7 @@ static inline void ice_clear_sriov_cap(struct ice_pf *pf)
 static inline void ice_set_rdma_cap(struct ice_pf *pf)
 {
 	if (pf->hw.func_caps.common_cap.iwarp && pf->num_rdma_msix) {
-		set_bit(ICE_FLAG_IWARP_ENA, pf->flags);
+		set_bit(ICE_FLAG_RDMA_ENA, pf->flags);
 	}
 }
 
@@ -1674,18 +1678,12 @@ static inline void ice_set_rdma_cap(struct ice_pf *pf)
  */
 static inline void ice_clear_rdma_cap(struct ice_pf *pf)
 {
-	clear_bit(ICE_FLAG_IWARP_ENA, pf->flags);
+	clear_bit(ICE_FLAG_RDMA_ENA, pf->flags);
 }
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
-/** ice_chk_rdma_cap - check the status of RDMA if PF flags
- * @pf: PF struct
- */
-static inline bool ice_chk_rdma_cap(struct ice_pf *pf)
-{
-	return test_bit(ICE_FLAG_IWARP_ENA, pf->flags);
-}
 
+int ice_get_num_local_cpus(struct device *dev);
 const char *ice_aq_str(enum ice_aq_err aq_err);
 bool ice_is_wol_supported(struct ice_hw *hw);
 int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
@@ -1722,7 +1720,9 @@ int
 ice_ntuple_update_list_entry(struct ice_pf *pf, struct ice_fdir_fltr *input,
 			     int fltr_idx);
 void ice_update_ring_dest_vsi(struct ice_vsi *vsi, u16 *dest_vsi, u32 *ring);
+#ifdef HAVE_XDP_SUPPORT
 void ice_ch_vsi_update_ring_vecs(struct ice_vsi *vsi);
+#endif /* HAVE_XDP_SUPPORT */
 int ice_open(struct net_device *netdev);
 int ice_open_internal(struct net_device *netdev);
 int ice_stop(struct net_device *netdev);
@@ -1730,4 +1730,5 @@ void ice_service_task_schedule(struct ice_pf *pf);
 int
 ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_init_acl(struct ice_pf *pf);
+
 #endif /* _ICE_H_ */

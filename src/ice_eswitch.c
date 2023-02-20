@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #include "ice.h"
@@ -331,8 +331,7 @@ static int ice_eswitch_setup_reprs(struct ice_pf *pf)
 		if (max_vsi_num < vsi->vsi_num)
 			max_vsi_num = vsi->vsi_num;
 
-		netif_napi_add(vf->repr->netdev, &vf->repr->q_vector->napi, ice_napi_poll,
-			       NAPI_POLL_WEIGHT);
+		netif_napi_add(vf->repr->netdev, &vf->repr->q_vector->napi, ice_napi_poll);
 
 		netif_keep_dst(vf->repr->netdev);
 	}
@@ -629,6 +628,11 @@ int ice_eswitch_mode_set(struct devlink *devlink, u16 mode)
 			return -EOPNOTSUPP;
 		}
 #endif /* HAVE_NDO_DFWD_OPS */
+
+		if (!test_bit(ICE_FLAG_ESWITCH_CAPABLE, pf->flags)) {
+			dev_err(ice_pf_to_dev(pf), "switchdev cannot be configured - eswitch isn't supported in hw or there was not enough msix\n");
+			return -EOPNOTSUPP;
+		}
 
 		dev_info(ice_pf_to_dev(pf), "PF %d changed eswitch mode to switchdev",
 			 pf->hw.pf_id);

@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_eswitch.h"
@@ -154,6 +154,7 @@ static int ice_repr_stop(struct net_device *netdev)
 }
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK) && defined(HAVE_DEVLINK_PORT_ATTR_PCI_VF)
+#ifdef HAVE_NDO_GET_DEVLINK_PORT
 static struct devlink_port *
 ice_repr_get_devlink_port(struct net_device *netdev)
 {
@@ -161,7 +162,8 @@ ice_repr_get_devlink_port(struct net_device *netdev)
 
 	return &repr->vf->devlink_port;
 }
-#endif /* CONFIG_NET_DEVLINK && HAVE_DEVLINK_PORT_ATTR_PCI_VF*/
+#endif /* HAVE_NDO_GET_DEVLINK_PORT */
+#endif /* CONFIG_NET_DEVLINK && HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #if defined(HAVE_NDO_OFFLOAD_STATS) || defined(HAVE_RHEL7_EXTENDED_OFFLOAD_STATS)
 /**
  * ice_repr_sp_stats64 - get slow path stats for port representor
@@ -183,16 +185,16 @@ ice_repr_sp_stats64(const struct net_device *dev,
 	u64 pkts, bytes;
 
 	ring = np->vsi->tx_rings[vf_id];
-	ice_fetch_u64_stats_per_ring(ring, &pkts, &bytes);
+	ice_fetch_u64_stats_per_ring(ring->ring_stats, &pkts, &bytes);
 	stats->rx_packets = pkts;
 	stats->rx_bytes = bytes;
 
 	ring = np->vsi->rx_rings[vf_id];
-	ice_fetch_u64_stats_per_ring(ring, &pkts, &bytes);
+	ice_fetch_u64_stats_per_ring(ring->ring_stats, &pkts, &bytes);
 	stats->tx_packets = pkts;
 	stats->tx_bytes = bytes;
-	stats->tx_dropped = ring->rx_stats.alloc_page_failed +
-			    ring->rx_stats.alloc_buf_failed;
+	stats->tx_dropped = ring->ring_stats->rx_stats.alloc_page_failed +
+			    ring->ring_stats->rx_stats.alloc_buf_failed;
 
 	return 0;
 }
@@ -233,8 +235,8 @@ static int
 ice_repr_setup_tc_block_cb(enum tc_setup_type type, void *type_data,
 			   void *cb_priv)
 {
-	struct flow_cls_offload *flower = (struct flow_cls_offload *)type_data;
-	struct ice_netdev_priv *np = (struct ice_netdev_priv *)cb_priv;
+	struct flow_cls_offload *flower = type_data;
+	struct ice_netdev_priv *np = cb_priv;
 
 	switch (type) {
 	case TC_SETUP_CLSFLOWER:
@@ -264,9 +266,7 @@ ice_repr_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 	struct tc_cls_flower_offload *cls_flower = tc->cls_flower;
 	unsigned int type = tc->type;
 #elif !defined(HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO)
-	struct tc_cls_flower_offload *cls_flower = (struct
-						   tc_cls_flower_offload *)
-						   type_data;
+	struct tc_cls_flower_offload *cls_flower = type_data;
 #endif /* HAVE_NDO_SETUP_TC_REMOVE_TC_TO_NETDEV */
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 
@@ -323,7 +323,9 @@ static const struct net_device_ops ice_repr_netdev_ops = {
 	.ndo_change_mtu = ice_repr_change_mtu,
 #endif /* HAVE_RHEL7_EXTENDED_MIN_MAX_MTU */
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
+#ifdef HAVE_NDO_GET_DEVLINK_PORT
 	.ndo_get_devlink_port = ice_repr_get_devlink_port,
+#endif /* HAVE_NDO_GET_DEVLINK_PORT */
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 #ifdef HAVE_RHEL7_NETDEV_OPS_EXT_NDO_SETUP_TC
@@ -437,13 +439,22 @@ static int ice_repr_add(struct ice_vf *vf)
 #endif /* CONFIG_NET_DEVLINK */
 
 	SET_NETDEV_DEV(repr->netdev, ice_pf_to_dev(vf->pf));
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+#ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
+#ifdef HAVE_SET_NETDEV_DEVLINK_PORT
+	SET_NETDEV_DEVLINK_PORT(repr->netdev, &vf->devlink_port);
+#endif /* HAVE_SET_NETDEV_DEVLINK_PORT */
+#endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
+#endif /* CONFIG_NET_DEVLINK */
 	err = ice_repr_reg_netdev(repr->netdev);
 	if (err)
 		goto err_netdev;
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
+#ifndef HAVE_SET_NETDEV_DEVLINK_PORT
 	devlink_port_type_eth_set(&vf->devlink_port, repr->netdev);
+#endif /* !HAVE_SET_NETDEV_DEVLINK_PORT */
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #endif /* CONFIG_NET_DEVLINK */
 
@@ -481,14 +492,14 @@ static void ice_repr_rem(struct ice_vf *vf)
 	if (!vf->repr)
 		return;
 
+	kfree(vf->repr->q_vector);
+	vf->repr->q_vector = NULL;
+	unregister_netdev(vf->repr->netdev);
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
 	ice_devlink_destroy_vf_port(vf);
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #endif /* CONFIG_NET_DEVLINK */
-	kfree(vf->repr->q_vector);
-	vf->repr->q_vector = NULL;
-	unregister_netdev(vf->repr->netdev);
 	free_netdev(vf->repr->netdev);
 	vf->repr->netdev = NULL;
 	kfree(vf->repr->mac_rule);

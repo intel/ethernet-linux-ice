@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_virtchnl.h"
 #include "ice_vf_lib_private.h"
@@ -510,7 +510,7 @@ void ice_vc_notify_reset(struct ice_pf *pf)
 }
 
 /**
- * ice_vc_send_msg_to_vf - Send message to VF
+ * ice_vc_respond_to_vf - Respond to VF
  * @vf: pointer to the VF info
  * @v_opcode: virtual channel opcode
  * @v_retval: virtual channel return value
@@ -520,8 +520,41 @@ void ice_vc_notify_reset(struct ice_pf *pf)
  * send msg to VF
  */
 int
-ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
-		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen)
+ice_vc_respond_to_vf(struct ice_vf *vf, u32 v_opcode,
+		     enum virtchnl_status_code v_retval, u8 *msg, u16 msglen)
+{
+	struct device *dev;
+	struct ice_pf *pf;
+
+	pf = vf->pf;
+	dev = ice_pf_to_dev(pf);
+
+	if (test_bit(ICE_VF_STATE_REPLAY_VC, vf->vf_states)) {
+		if (v_retval == VIRTCHNL_STATUS_SUCCESS)
+			return 0;
+
+		dev_dbg(dev, "Unable to replay virt channel command, VF ID %d, virtchnl status code %d. op code %d, len %d.\n",
+			vf->vf_id, v_retval, v_opcode, msglen);
+		return -EIO;
+	}
+
+	return ice_vc_send_response_to_vf(vf, v_opcode, v_retval, msg, msglen);
+}
+
+/**
+ * ice_vc_send_response_to_vf - Send response message to VF
+ * @vf: pointer to the VF info
+ * @v_opcode: virtual channel opcode
+ * @v_retval: virtual channel return value
+ * @msg: pointer to the msg buffer
+ * @msglen: msg length
+ *
+ * send msg to VF
+ */
+int
+ice_vc_send_response_to_vf(struct ice_vf *vf, u32 v_opcode,
+			   enum virtchnl_status_code v_retval,
+			   u8 *msg, u16 msglen)
 {
 	struct device *dev;
 	struct ice_pf *pf;
@@ -560,9 +593,9 @@ static int ice_vc_get_ver_msg(struct ice_vf *vf, u8 *msg)
 	if (VF_IS_V10(&vf->vf_ver))
 		info.minor = VIRTCHNL_VERSION_MINOR_NO_VF_CAPS;
 
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_VERSION,
-				     VIRTCHNL_STATUS_SUCCESS, (u8 *)&info,
-				     sizeof(struct virtchnl_version_info));
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_VERSION,
+				    VIRTCHNL_STATUS_SUCCESS, (u8 *)&info,
+				    sizeof(struct virtchnl_version_info));
 }
 
 /**
@@ -789,7 +822,7 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 
 	if (vf->driver_caps & VIRTCHNL_VF_CAP_RDMA &&
 	    vf->vf_ops->cfg_rdma_irq_map && vf->vf_ops->clear_rdma_irq_map &&
-	    ice_chk_rdma_cap(pf) && ice_is_rdma_aux_loaded(pf))
+	    ice_is_aux_ena(pf) && ice_is_rdma_aux_loaded(pf))
 		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_RDMA;
 
 	vfres->num_vsis = 1;
@@ -816,8 +849,8 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 
 err:
 	/* send the response back to the VF */
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_VF_RESOURCES, v_ret,
-				    (u8 *)vfres, len);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_GET_VF_RESOURCES, v_ret,
+				   (u8 *)vfres, len);
 
 	kfree(vfres);
 	return ret;
@@ -942,10 +975,6 @@ ice_vc_validate_pattern(struct ice_vf *vf, struct virtchnl_proto_hdrs *proto)
 	int i = 0;
 	int count;
 	s32 type;
-
-	/* pass the validate for raw pattern */
-	if (proto->tunnel_level == 0 && proto->count == 0)
-		return true;
 
 	if (proto->count > VIRTCHNL_MAX_NUM_PROTO_HDRS +
 			   VIRTCHNL_MAX_NUM_PROTO_HDRS_W_MSK)
@@ -2035,6 +2064,9 @@ ice_parse_raw_rss_pattern(struct ice_vf *vf, struct virtchnl_proto_hdrs *proto,
 	int status = 0;
 
 	pkt_len = proto->raw.pkt_len;
+	if (!pkt_len)
+		return -EINVAL;
+
 	pkt_buf = kzalloc(pkt_len, GFP_KERNEL);
 	msk_buf = kzalloc(pkt_len, GFP_KERNEL);
 	if (!pkt_buf || !msk_buf) {
@@ -2253,11 +2285,6 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 		goto error_param;
 	}
 
-	if (!ice_vc_validate_pattern(vf, &rss_cfg->proto_hdrs)) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		goto error_param;
-	}
-
 	if (rss_cfg->rss_algorithm == VIRTCHNL_RSS_ALG_R_ASYMMETRIC) {
 		hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_XOR :
 				     ICE_AQ_VSI_Q_OPT_RSS_TPLZ;
@@ -2295,6 +2322,12 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 	} else {
 		struct ice_rss_hash_cfg cfg;
 
+		/* Only check for none raw pattern case */
+		if (!ice_vc_validate_pattern(vf, &rss_cfg->proto_hdrs)) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto error_param;
+		}
+
 		cfg.addl_hdrs = ICE_FLOW_SEG_HDR_NONE;
 		cfg.hash_flds = ICE_HASH_INVALID;
 		cfg.hdr_type = ICE_RSS_ANY_HEADERS;
@@ -2315,7 +2348,7 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 	}
 
 error_param:
-	return ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, v_opcode, v_ret, NULL, 0);
 }
 
 /**
@@ -2391,8 +2424,8 @@ static int ice_vc_get_qos_caps(struct ice_vf *vf)
 	}
 
 err:
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_QOS_CAPS, v_ret,
-				    (u8 *)cap_list, len);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_GET_QOS_CAPS, v_ret,
+				   (u8 *)cap_list, len);
 	kfree(cap_list);
 	return ret;
 }
@@ -2550,8 +2583,8 @@ static int ice_vc_cfg_q_tc_map(struct ice_vf *vf, u8 *msg)
 
 err:
 	/* send the response to the VF */
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_QUEUE_TC_MAP,
-				    v_ret, (u8 *)tc_map, len);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_QUEUE_TC_MAP,
+				   v_ret, (u8 *)tc_map, len);
 	kfree(ctx);
 	kfree(tc_map);
 	return ret;
@@ -2689,8 +2722,8 @@ static int ice_vc_config_rss_key(struct ice_vf *vf, u8 *msg)
 	if (ice_set_rss_key(vsi, vrk->key))
 		v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_RSS_KEY, v_ret,
-				     NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_RSS_KEY, v_ret,
+				    NULL, 0);
 }
 
 /**
@@ -2735,8 +2768,8 @@ static int ice_vc_config_rss_lut(struct ice_vf *vf, u8 *msg)
 	if (ice_set_rss_lut(vsi, vrl->lut, vrl->lut_entries))
 		v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_RSS_LUT, v_ret,
-				     NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_RSS_LUT, v_ret,
+				    NULL, 0);
 }
 
 /**
@@ -2871,8 +2904,8 @@ static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -2912,8 +2945,8 @@ static int ice_vc_get_stats_msg(struct ice_vf *vf, u8 *msg)
 
 error_param:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_STATS, v_ret,
-				     (u8 *)&stats, sizeof(stats));
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_GET_STATS, v_ret,
+				    (u8 *)&stats, sizeof(stats));
 }
 
 /**
@@ -3138,8 +3171,8 @@ static int ice_vc_ena_qs_msg(struct ice_vf *vf, u8 *msg)
 
 error_param:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_QUEUES, v_ret,
-				     NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_QUEUES, v_ret,
+				    NULL, 0);
 }
 
 /**
@@ -3351,8 +3384,8 @@ static int ice_vc_dis_qs_msg(struct ice_vf *vf, u8 *msg)
 
 error_param:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_QUEUES, v_ret,
-				     NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_QUEUES, v_ret,
+				    NULL, 0);
 }
 
 /**
@@ -3499,7 +3532,7 @@ static int ice_vc_cfg_irq_map_msg(struct ice_vf *vf, u8 *msg)
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto error_param;
 		}
-		q_vector = vf->vf_ops->get_q_vector(vf, vsi, vector_id_ch);
+		q_vector = vf->vf_ops->get_q_vector(vsi, vector_id_ch);
 
 		if (!q_vector) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -3522,8 +3555,8 @@ static int ice_vc_cfg_irq_map_msg(struct ice_vf *vf, u8 *msg)
 
 error_param:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_IRQ_MAP, v_ret,
-				     NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_IRQ_MAP, v_ret,
+				    NULL, 0);
 }
 
 /**
@@ -3599,8 +3632,8 @@ err_bw:
 
 err:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_QUEUE_BW,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_QUEUE_BW,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -3667,8 +3700,8 @@ static int ice_vc_cfg_q_quanta(struct ice_vf *vf, u8 *msg)
 
 err:
 	/* send the response to the VF */
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_QUANTA,
-				    v_ret, NULL, 0);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_QUANTA,
+				   v_ret, NULL, 0);
 	return ret;
 }
 
@@ -3850,7 +3883,7 @@ skip_non_adq_checks:
 		goto error_param;
 
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,
 				     VIRTCHNL_STATUS_SUCCESS, NULL, 0);
 error_param:
 	/* disable whatever we can */
@@ -3869,8 +3902,8 @@ error_param:
 	}
 
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,
-				     VIRTCHNL_STATUS_ERR_PARAM, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,
+				    VIRTCHNL_STATUS_ERR_PARAM, NULL, 0);
 }
 
 /**
@@ -4169,7 +4202,7 @@ ice_vc_handle_mac_addr_msg(struct ice_vf *vf, u8 *msg, bool set)
 
 handle_mac_exit:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, vc_op, v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, vc_op, v_ret, NULL, 0);
 }
 
 /**
@@ -4254,8 +4287,8 @@ static int ice_vc_request_qs_msg(struct ice_vf *vf, u8 *msg)
 
 error_param:
 	/* send the response to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_REQUEST_QUEUES,
-				     v_ret, (u8 *)vfres, sizeof(*vfres));
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_REQUEST_QUEUES,
+				    v_ret, (u8 *)vfres, sizeof(*vfres));
 }
 
 /**
@@ -4527,11 +4560,11 @@ static int ice_vc_process_vlan_msg(struct ice_vf *vf, u8 *msg, bool add_v)
 error_param:
 	/* send the response to the VF */
 	if (add_v)
-		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_VLAN, v_ret,
-					     NULL, 0);
+		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_VLAN, v_ret,
+					    NULL, 0);
 	else
-		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_VLAN, v_ret,
-					     NULL, 0);
+		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DEL_VLAN, v_ret,
+					    NULL, 0);
 }
 
 /**
@@ -4610,8 +4643,8 @@ static int ice_vc_ena_vlan_stripping(struct ice_vf *vf)
 		vf->vlan_strip_ena |= ICE_INNER_VLAN_STRIP_ENA;
 
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_VLAN_STRIPPING,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_VLAN_STRIPPING,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -4647,8 +4680,8 @@ static int ice_vc_dis_vlan_stripping(struct ice_vf *vf)
 		vf->vlan_strip_ena &= ~ICE_INNER_VLAN_STRIP_ENA;
 
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_STRIPPING,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_STRIPPING,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -4683,8 +4716,8 @@ static int ice_vc_get_rss_hena(struct ice_vf *vf)
 	vrh->hena = ICE_DEFAULT_RSS_HENA;
 err:
 	/* send the response back to the VF */
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_RSS_HENA_CAPS, v_ret,
-				    (u8 *)vrh, len);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_GET_RSS_HENA_CAPS, v_ret,
+				   (u8 *)vrh, len);
 	kfree(vrh);
 	return ret;
 }
@@ -4749,8 +4782,8 @@ static int ice_vc_set_rss_hena(struct ice_vf *vf, u8 *msg)
 
 	/* send the response to the VF */
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_SET_RSS_HENA, v_ret,
-				     NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_SET_RSS_HENA, v_ret,
+				    NULL, 0);
 }
 
 /**
@@ -4854,8 +4887,8 @@ static int ice_vc_cfg_rdma_irq_map_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -4879,8 +4912,8 @@ static int ice_vc_clear_rdma_irq_map(struct ice_vf *vf)
 	ops->clear_rdma_irq_map(vf);
 
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -4935,8 +4968,8 @@ static int ice_vc_query_rxdid(struct ice_vf *vf)
 	pf->supported_rxdids = rxdid->supported_rxdids;
 
 err:
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_SUPPORTED_RXDIDS,
-				    v_ret, (u8 *)rxdid, len);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_GET_SUPPORTED_RXDIDS,
+				   v_ret, (u8 *)rxdid, len);
 	kfree(rxdid);
 	return ret;
 }
@@ -5109,8 +5142,8 @@ static int ice_vc_dcf_vlan_offload_msg(struct ice_vf *vf, u8 *msg)
 err_put_target_vf:
 	ice_put_vf(target_vf);
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_VLAN_OFFLOAD,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_VLAN_OFFLOAD,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -5153,8 +5186,8 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 		return 0;
 
 	if (ice_dcf_pre_aq_send_cmd(vf, aq_desc, aq_buf, aq_buf_size)) {
-		ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_CMD_DESC,
-					    VIRTCHNL_STATUS_SUCCESS,
+		ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_CMD_DESC,
+					   VIRTCHNL_STATUS_SUCCESS,
 					    (u8 *)aq_desc, sizeof(*aq_desc));
 		if (ret || !aq_buf_size)
 			return ret;
@@ -5189,8 +5222,8 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 		}
 	}
 
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_CMD_DESC, v_ret,
-				    (u8 *)aq_desc, sizeof(*aq_desc));
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_CMD_DESC, v_ret,
+				   (u8 *)aq_desc, sizeof(*aq_desc));
 	/* Bail out so we don't send the VIRTCHNL_OP_DCF_CMD_BUFF message
 	 * below if failure happens or no AdminQ command buffer.
 	 */
@@ -5208,7 +5241,7 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 
 	/* send the response back to the VF */
 err:
-	return ice_vc_send_msg_to_vf(vf, v_op, v_ret, v_msg, v_msg_len);
+	return ice_vc_respond_to_vf(vf, v_op, v_ret, v_msg, v_msg_len);
 }
 
 /**
@@ -5275,8 +5308,8 @@ static int ice_vc_dcf_cmd_desc_msg(struct ice_vf *vf, u8 *msg, u16 len)
 
 	/* send the response back to the VF */
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_CMD_DESC,
-				     VIRTCHNL_STATUS_ERR_PARAM, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_CMD_DESC,
+				    VIRTCHNL_STATUS_ERR_PARAM, NULL, 0);
 }
 
 /**
@@ -5298,8 +5331,8 @@ static int ice_vc_dcf_cmd_buff_msg(struct ice_vf *vf, u8 *msg, u16 len)
 
 	/* send the response back to the VF */
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_CMD_BUFF,
-				     VIRTCHNL_STATUS_ERR_PARAM, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_CMD_BUFF,
+				    VIRTCHNL_STATUS_ERR_PARAM, NULL, 0);
 }
 
 /**
@@ -5330,8 +5363,8 @@ static int ice_vc_dis_dcf_cap(struct ice_vf *vf)
 		vf->pf->dcf.vf = NULL;
 	}
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_DISABLE,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_DISABLE,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -5390,8 +5423,8 @@ static int ice_vc_dcf_get_vsi_map(struct ice_vf *vf)
 	mutex_unlock(&pf->vfs.table_lock);
 
 err:
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_GET_VSI_MAP, v_ret,
-				    (u8 *)vsi_map, len);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_GET_VSI_MAP, v_ret,
+				   (u8 *)vsi_map, len);
 	kfree(vsi_map);
 	return ret;
 }
@@ -5439,8 +5472,8 @@ static int ice_vc_dcf_query_pkg_info(struct ice_vf *vf)
 	memcpy(pkg_info->dsn, pf->dcf.dsn, sizeof(pkg_info->dsn));
 
 err:
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_GET_PKG_INFO,
-				    v_ret, (u8 *)pkg_info, len);
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_GET_PKG_INFO,
+				   v_ret, (u8 *)pkg_info, len);
 	kfree(pkg_info);
 	return ret;
 }
@@ -5759,8 +5792,8 @@ static int ice_vc_dcf_config_tc(struct ice_vf *vf, u8 *msg)
 	}
 
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_CONFIG_BW, v_ret,
-				     NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DCF_CONFIG_BW, v_ret,
+				    NULL, 0);
 }
 
 /**
@@ -5799,8 +5832,8 @@ static int ice_vc_get_max_rss_qregion(struct ice_vf *vf)
 		max_rss_qregion->qregion_width = ilog2(ICE_MAX_RSS_QS_PER_LARGE_VF);
 
 error_param:
-	err = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_MAX_RSS_QREGION, v_ret,
-				    (u8 *)max_rss_qregion, len);
+	err = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_GET_MAX_RSS_QREGION, v_ret,
+				   (u8 *)max_rss_qregion, len);
 	kfree(max_rss_qregion);
 	return err;
 }
@@ -5940,8 +5973,8 @@ static int ice_vc_ena_qs_v2_msg(struct ice_vf *vf, u8 *msg)
 	set_bit(ICE_VF_STATE_QS_ENA, vf->vf_states);
 
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_QUEUES_V2,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_QUEUES_V2,
+				    v_ret, NULL, 0);
 }
 
 static int
@@ -6032,8 +6065,8 @@ static int ice_vc_dis_qs_v2_msg(struct ice_vf *vf, u8 *msg)
 		clear_bit(ICE_VF_STATE_QS_ENA, vf->vf_states);
 
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_QUEUES_V2,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_QUEUES_V2,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -6115,7 +6148,7 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 		struct ice_q_vector *q_vector;
 		u16 msix_id;
 
-		q_vector = vf->vf_ops->get_q_vector(vf, vsi,
+		q_vector = vf->vf_ops->get_q_vector(vsi,
 						    qv_map->vector_id);
 		if (!q_vector) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -6135,8 +6168,8 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 error_param:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_MAP_QUEUE_VECTOR,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_MAP_QUEUE_VECTOR,
+				    v_ret, NULL, 0);
 }
 
 static u16 ice_vc_get_max_vlan_fltrs(struct ice_vf *vf)
@@ -6340,8 +6373,8 @@ static int ice_vc_get_offload_vlan_v2_caps(struct ice_vf *vf)
 	memcpy(&vf->vlan_v2_caps, caps, sizeof(*caps));
 
 out:
-	err = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS,
-				    v_ret, (u8 *)caps, len);
+	err = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS,
+				   v_ret, (u8 *)caps, len);
 	kfree(caps);
 	return err;
 }
@@ -6566,8 +6599,8 @@ static int ice_vc_remove_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 
 out:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_VLAN_V2, v_ret, NULL,
-				     0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DEL_VLAN_V2,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -6692,8 +6725,8 @@ static int ice_vc_add_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 
 out:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_VLAN_V2, v_ret, NULL,
-				     0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_VLAN_V2,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -6924,8 +6957,8 @@ static int ice_vc_ena_vlan_stripping_v2_msg(struct ice_vf *vf, u8 *msg)
 		vf->vlan_strip_ena |= ICE_INNER_VLAN_STRIP_ENA;
 
 out:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_VLAN_STRIPPING_V2,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_VLAN_STRIPPING_V2,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -6999,8 +7032,8 @@ static int ice_vc_dis_vlan_stripping_v2_msg(struct ice_vf *vf, u8 *msg)
 		vf->vlan_strip_ena &= ~ICE_INNER_VLAN_STRIP_ENA;
 
 out:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_STRIPPING_V2,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_STRIPPING_V2,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -7058,8 +7091,8 @@ static int ice_vc_ena_vlan_insertion_v2_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 out:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_VLAN_INSERTION_V2,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_VLAN_INSERTION_V2,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -7113,8 +7146,8 @@ static int ice_vc_dis_vlan_insertion_v2_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 out:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2,
+				    v_ret, NULL, 0);
 }
 
 static const struct ice_virtchnl_ops ice_virtchnl_dflt_ops = {
@@ -7244,8 +7277,8 @@ static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg)
 	}
 
 handle_mac_exit:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_ETH_ADDR,
-				     v_ret, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_ETH_ADDR,
+				    v_ret, NULL, 0);
 }
 
 /**
@@ -7264,8 +7297,8 @@ ice_vc_repr_del_mac(struct ice_vf *vf, u8 *msg)
 
 	ice_update_legacy_cached_mac(vf, &al->list[0]);
 
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_ETH_ADDR,
-				     VIRTCHNL_STATUS_SUCCESS, NULL, 0);
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DEL_ETH_ADDR,
+				    VIRTCHNL_STATUS_SUCCESS, NULL, 0);
 }
 
 static int
@@ -7274,8 +7307,8 @@ ice_vc_repr_cfg_promiscuous_mode(struct ice_vf *vf, u8 __always_unused *msg)
 	dev_dbg(ice_pf_to_dev(vf->pf),
 		"Can't config promiscuous mode in switchdev mode for VF %d\n",
 		vf->vf_id);
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE,
-				     VIRTCHNL_STATUS_ERR_NOT_SUPPORTED,
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE,
+				    VIRTCHNL_STATUS_ERR_NOT_SUPPORTED,
 				     NULL, 0);
 }
 
@@ -7353,10 +7386,16 @@ void ice_virtchnl_set_repr_ops(struct ice_vf *vf)
  * @pf: pointer to the PF structure
  * @event: pointer to the AQ event
  *
- * called from the common asq/arq handler to
- * process request from VF
+ * This function will be called from:
+ * 1. the common asq/arq handler to process request from VF
+ * In the first case, the return value is ignored.
+ * 2. replay virtual channel commamds during live migration
+ * In the second case, returns negative indicates failed
+ * to replay vc commands and result in migration failed.
+ *
+ * Return 0 if success, negative for failure.
  */
-void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
+int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 {
 	u32 v_opcode = le32_to_cpu(event->desc.cookie_high);
 	s16 vf_id = le16_to_cpu(event->desc.retval);
@@ -7373,7 +7412,7 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 	if (!vf) {
 		dev_err(dev, "Unable to locate VF for message from VF ID %d, opcode %d, len %d\n",
 			vf_id, v_opcode, msglen);
-		return;
+		return -EINVAL;
 	}
 
 	mutex_lock(&vf->cfg_lock);
@@ -7397,8 +7436,8 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 
 error_handler:
 	if (err) {
-		ice_vc_send_msg_to_vf(vf, v_opcode, VIRTCHNL_STATUS_ERR_PARAM,
-				      NULL, 0);
+		ice_vc_respond_to_vf(vf, v_opcode, VIRTCHNL_STATUS_ERR_PARAM,
+				     NULL, 0);
 		ice_dev_err_errno(dev, err,
 				  "Invalid message from VF %d, opcode %d, len %d",
 				  vf_id, v_opcode, msglen);
@@ -7406,9 +7445,9 @@ error_handler:
 	}
 
 	if (!ice_vc_is_opcode_allowed(vf, v_opcode)) {
-		ice_vc_send_msg_to_vf(vf, v_opcode,
-				      VIRTCHNL_STATUS_ERR_NOT_SUPPORTED, NULL,
-				      0);
+		ice_vc_respond_to_vf(vf, v_opcode,
+				     VIRTCHNL_STATUS_ERR_NOT_SUPPORTED, NULL,
+				     0);
 		goto finish;
 	}
 
@@ -7593,9 +7632,9 @@ error_handler:
 	default:
 		dev_err(dev, "Unsupported opcode %d from VF %d\n", v_opcode,
 			vf_id);
-		err = ice_vc_send_msg_to_vf(vf, v_opcode,
-					    VIRTCHNL_STATUS_ERR_NOT_SUPPORTED,
-					    NULL, 0);
+		err = ice_vc_respond_to_vf(vf, v_opcode,
+					   VIRTCHNL_STATUS_ERR_NOT_SUPPORTED,
+					   NULL, 0);
 		break;
 	}
 	if (err) {
@@ -7609,4 +7648,5 @@ error_handler:
 finish:
 	mutex_unlock(&vf->cfg_lock);
 	ice_put_vf(vf);
+	return err;
 }

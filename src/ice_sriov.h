@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_SRIOV_H_
 #define _ICE_SRIOV_H_
@@ -47,7 +47,7 @@ int ice_set_vf_mac(struct net_device *netdev, int vf_id, u8 *mac);
 int
 ice_get_vf_cfg(struct net_device *netdev, int vf_id, struct ifla_vf_info *ivi);
 void ice_free_vfs(struct ice_pf *pf);
-void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event);
+int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event);
 
 /* VF configuration related iplink handlers */
 void ice_restore_all_vfs_msi_state(struct pci_dev *pdev);
@@ -101,8 +101,11 @@ bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 static inline void ice_dump_all_vfs(struct ice_pf *pf) { }
 static inline void ice_process_vflr_event(struct ice_pf *pf) { }
 static inline void ice_free_vfs(struct ice_pf *pf) { }
-static inline void
-ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event) { }
+static inline int
+ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
+{
+	return -EOPNOTSUPP;
+}
 static inline void
 ice_vf_lan_overflow_event(struct ice_pf *pf,
 			  struct ice_rq_event_info *event) { }

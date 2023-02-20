@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -26,8 +26,8 @@ void ice_mk_grp_dump(struct ice_hw *hw, struct ice_mk_grp_item *item)
 static void _mk_grp_parse_item(struct ice_hw *hw, u16 idx, void *item,
 			       void *data, int size)
 {
-	struct ice_mk_grp_item *grp = (struct ice_mk_grp_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_mk_grp_item *grp = item;
+	u8 *buf = data;
 	int i;
 
 	grp->idx = idx;

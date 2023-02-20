@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_LAN_TX_RX_H_
 #define _ICE_LAN_TX_RX_H_
@@ -161,7 +161,6 @@ struct ice_fltr_desc {
 
 #define ICE_FXD_FLTR_QW1_FDID_PRI_S	25
 #define ICE_FXD_FLTR_QW1_FDID_PRI_M	(0x7ULL << ICE_FXD_FLTR_QW1_FDID_PRI_S)
-#define ICE_FXD_FLTR_QW1_FDID_PRI_ZERO	0x0ULL
 #define ICE_FXD_FLTR_QW1_FDID_PRI_ONE	0x1ULL
 #define ICE_FXD_FLTR_QW1_FDID_PRI_THREE	0x3ULL
 
@@ -823,6 +822,8 @@ enum ice_rx_flex_desc_exstat_bits {
 
 #define ICE_RXQ_CTX_SIZE_DWORDS		8
 #define ICE_RXQ_CTX_SZ			(ICE_RXQ_CTX_SIZE_DWORDS * sizeof(u32))
+#define ICE_TXQ_CTX_SIZE_DWORDS		10
+#define ICE_TXQ_CTX_SZ			(ICE_TXQ_CTX_SIZE_DWORDS * sizeof(u32))
 #define ICE_TX_CMPLTNQ_CTX_SIZE_DWORDS	22
 #define ICE_TX_DRBELL_Q_CTX_SIZE_DWORDS	5
 #define GLTCLAN_CQ_CNTX(i, CQ)		(GLTCLAN_CQ_CNTX0(CQ) + ((i) * 0x0800))
@@ -1084,6 +1085,7 @@ struct ice_tlan_ctx {
 	u8 cache_prof_idx;
 	u8 pkt_shaper_prof_idx;
 	u8 int_q_state;	/* width not needed - internal - DO NOT WRITE!!! */
+	u16 tail;
 };
 
 /* LAN Tx Completion Queue data */
@@ -1112,14 +1114,6 @@ struct ice_tx_cmpltnq_ctx {
 	u8 cpuid;
 	u32 cmpltn_cache[16];
 } __packed;
-
-/* LAN Tx Doorbell Descriptor Format */
-struct ice_tx_drbell_fmt {
-	u16 txq_id;
-	u8 dd;
-	u8 rs;
-	u32 db;
-};
 
 /* LAN Tx Doorbell Queue Context */
 struct ice_tx_drbell_q_ctx {

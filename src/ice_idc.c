@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 /* Inter-Driver Communication */
 #include "ice.h"
@@ -79,7 +79,7 @@ ice_for_each_aux(struct ice_pf *pf, void *data,
 static int
 ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
 {
-	struct iidc_event *event = (struct iidc_event *)data;
+	struct iidc_event *event = data;
 	struct iidc_auxiliary_drv *iadrv;
 	struct ice_pf *pf;
 
@@ -88,10 +88,14 @@ ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
 
 	if (!cdev_info)
 		return -EINVAL;
-	pf = pci_get_drvdata(cdev_info->pdev);
 
+	pf = pci_get_drvdata(cdev_info->pdev);
 	if (!pf)
 		return -EINVAL;
+
+	if (test_bit(ICE_SET_CHANNELS, pf->state))
+		return 0;
+
 	mutex_lock(&pf->adev_mutex);
 
 	if (!cdev_info->adev || !event) {
@@ -116,7 +120,7 @@ ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
  */
 void ice_send_event_to_aux_no_lock(struct iidc_core_dev_info *cdev, void *data)
 {
-	struct iidc_event *event = (struct iidc_event *)data;
+	struct iidc_event *event = data;
 	struct iidc_auxiliary_drv *iadrv;
 
 	iadrv = ice_get_auxiliary_drv(cdev);
@@ -224,7 +228,7 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 	pf = pci_get_drvdata(cdev_info->pdev);
 	dev = ice_pf_to_dev(pf);
 
-	if (!ice_chk_rdma_cap(pf))
+	if (!ice_is_aux_ena(pf))
 		return -EINVAL;
 
 	ice_for_each_traffic_class(i)
@@ -559,7 +563,7 @@ ice_cdev_info_vc_send(struct iidc_core_dev_info *cdev_info, u32 vf_id,
  */
 static int ice_reserve_cdev_info_qvector(struct ice_pf *pf)
 {
-	if (ice_chk_rdma_cap(pf)) {
+	if (ice_is_aux_ena(pf)) {
 		int index;
 
 		index = ice_get_res(pf, pf->irq_tracker, pf->num_rdma_msix, ICE_RES_RDMA_VEC_ID);
@@ -688,7 +692,7 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	struct iidc_auxiliary_dev *iadev;
 	struct auxiliary_device *adev;
 	struct ice_pf *pf;
-	int ret = 0;
+	int ret;
 
 	if (!cdev_info || !name)
 		return -EINVAL;
@@ -697,27 +701,24 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	if (!pf)
 		return -EINVAL;
 
+	if (cdev_info->adev)
+		return 0;
+
 	/* if this PF does not support a technology that requires auxiliary
 	 * devices, then exit gracefully
 	 */
 	if (!ice_is_aux_ena(pf))
-		return ret;
-	mutex_lock(&pf->adev_mutex);
-	if (cdev_info->adev)
-		goto aux_plug_out;
-
-	if (cdev_info->cdev_info_id == IIDC_RDMA_ID && !ice_chk_rdma_cap(pf))
-		goto aux_plug_out;
+		return 0;
 
 	iadev = kzalloc(sizeof(*iadev), GFP_KERNEL);
-	if (!iadev) {
-		ret = -ENOMEM;
-		goto aux_plug_out;
-	}
+	if (!iadev)
+		return -ENOMEM;
 
 	adev = &iadev->adev;
+	mutex_lock(&pf->adev_mutex);
 	cdev_info->adev = adev;
 	iadev->cdev_info = cdev_info;
+	mutex_unlock(&pf->adev_mutex);
 
 	adev->id = pf->aux_idx;
 	adev->dev.release = ice_cdev_info_adev_release;
@@ -726,19 +727,16 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 
 	ret = auxiliary_device_init(adev);
 	if (ret) {
-		cdev_info->adev = NULL;
 		kfree(iadev);
-		goto aux_plug_out;
+		return ret;
 	}
 
 	ret = auxiliary_device_add(adev);
 	if (ret) {
-		cdev_info->adev = NULL;
 		auxiliary_device_uninit(adev);
+		return ret;
 	}
 
-aux_plug_out:
-	mutex_unlock(&pf->adev_mutex);
 	return ret;
 }
 
@@ -889,7 +887,8 @@ int ice_init_aux_devices(struct ice_pf *pf)
 
 		pf->cdev_infos[i] = cdev_info;
 
-		cdev_info->hw_addr = (u8 __iomem *)pf->hw.hw_addr;
+		/* We only pass the lowest memory map here. */
+		cdev_info->hw_addr = (u8 __iomem *)ice_get_hw_addr(&pf->hw, 0);
 		cdev_info->ver.major = IIDC_MAJOR_VER;
 		cdev_info->ver.minor = IIDC_MINOR_VER;
 		cdev_info->cdev_info_id = ice_cdev_ids[i].id;
@@ -902,7 +901,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 		switch (ice_cdev_ids[i].id) {
 
 		case IIDC_RDMA_ID:
-			if (!ice_chk_rdma_cap(pf)) {
+			if (!ice_is_aux_ena(pf)) {
 				pf->cdev_infos[i] = NULL;
 				kfree(cdev_info);
 				continue;

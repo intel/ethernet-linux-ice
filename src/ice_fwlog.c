@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_fwlog.h"
@@ -383,7 +383,7 @@ ice_aq_fwlog_get(struct ice_hw *hw, struct ice_fwlog_cfg *cfg)
 	if (cmd->cmd_flags & ICE_AQC_FW_LOG_QUERY_REGISTERED)
 		cfg->options |= ICE_FWLOG_OPTION_IS_REGISTERED;
 
-	fw_modules = (struct ice_aqc_fw_log_cfg_resp *)buf;
+	fw_modules = buf;
 
 	for (i = 0; i < module_id_cnt; i++) {
 		struct ice_aqc_fw_log_cfg_resp *fw_module = &fw_modules[i];

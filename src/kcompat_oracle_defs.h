@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _KCOMPAT_ORACLE_DEFS_H_
 #define _KCOMPAT_ORACLE_DEFS_H_
@@ -35,7 +35,7 @@
 #endif
 
 #if UEK_KERNEL_VERSION(5, 4, 17, 2136) == UEK_KERNEL_CODE
-#if UEK_MINOR_RELEASE_NUMBER < 301
+#if UEK_MINOR_RELEASE_NUMBER >= 305
 #undef NEED_NET_PREFETCH
 #endif
 #endif

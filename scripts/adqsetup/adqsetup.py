@@ -69,7 +69,7 @@ elif sys.version_info.major == 2:
             raise Exception(os.strerror(get_errno()))
 
 
-_VERSION_ = '2.0'
+_VERSION_ = '2.0.1'
 
 ## public API
 
@@ -2702,7 +2702,7 @@ class ConfigSection(ConfigBase):
                 if skbedit:
                     tc.filter_add(
                         'egress', tcid, protocol, src_addr=addr, 
-                        src_port=port, action='skbedit', priority=1
+                        src_port=port, action='skbedit', priority=tcid
                     )
         else:
             tc.filter_add(
@@ -2711,7 +2711,7 @@ class ConfigSection(ConfigBase):
             if skbedit:
                 tc.filter_add(
                     'egress', tcid, protocol, src_addr=addr, 
-                    action='skbedit', priority=1
+                    action='skbedit', priority=tcid
                 )
 
     @staticmethod
@@ -2849,8 +2849,11 @@ class Config(object):
             # parse traffic class sections
             for key in object:
                 self._sections[key] = ConfigSection(key, object[key])
+            if len(self._sections) > 15:
+                raise Exception(
+                    "the kernel only supports up to 15 user sections")
         except Exception as e:
-            raise Exception("invalid configuration file: " + str(e))
+            raise Exception("invalid configuration: " + str(e))
 
     def _print(self, *args): # type: (...) -> None
         if self.verbose:
@@ -2940,7 +2943,8 @@ class Config(object):
         for sec in self._sections.values():
             # TODO: check for proper power-of-two queue counts for each TC
             requested += sec.queues
-        if requested > self._queues:
+        # if requested > self._queues:
+        if requested > 256:
             raise Exception("Not enough queues available")
         
     def _cleanup(self): # type: () -> None
@@ -3253,8 +3257,13 @@ class Config(object):
             section._validate(self.inventory)
         if self.globals.dev not in self.inventory.devs:
             raise Exception("[globals] network device not found or ineligible")
+        if any([s.pollers for s in self._sections.values()]):
+            self.globals.busypoll = 0
+            self.globals.busyread = 0
+            _printhead("when using pollers, " \
+                "busypoll and/or busyread cannot be enabled - " \
+                "setting both to zero", 93)
         self._assign_auto_cpus(self.inventory)
-        # TODO: check for total queue count
 
     def apply(self): # type: () -> None
         '''
@@ -3346,7 +3355,7 @@ def reload_driver(driver=None, log=None, verbose=False):
             raise Exception("error: %r is not a valid file" % driver)
     if verbose:
         print("- unloading current driver...")
-    _exec(['modprobe', '-vr', 'ice'], log=log, echo=verbose)
+    _exec(['rmmod', 'ice'], log=log, echo=verbose)
     time.sleep(2)
     if log:
         log.write('sleep 2\n')
@@ -3583,8 +3592,8 @@ def _main():
         check_interface(config.globals.dev, args.log, args.verbose)
 
         if args.command in ['apply', 'create']:
-            if args.reload:
-                reload_driver(args.driver, args.log, args.verbose)
+            if args.reload or args.driver:
+                reload_driver(args.driver)
             config.apply()
             _printhead("setup complete", 92)
         elif args.command == 'persist':

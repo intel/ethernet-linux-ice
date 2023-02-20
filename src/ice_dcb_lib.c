@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_dcb_lib.h"
 #include "ice_dcb_nl.h"
@@ -900,6 +900,9 @@ void ice_update_dcb_stats(struct ice_pf *pf)
 	port = hw->port_info->lport;
 	prev_ps = &pf->stats_prev;
 	cur_ps = &pf->stats;
+
+	if (ice_is_reset_in_progress(pf->state))
+		pf->stat_prev_loaded = false;
 
 	for (i = 0; i < 8; i++) {
 		ice_stat_update32(hw, GLPRT_PXOFFRXC(port, i),

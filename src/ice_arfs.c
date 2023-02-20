@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_irq.h"
@@ -312,6 +312,45 @@ ice_arfs_get_cnt_index(struct ice_pf *pf, struct ice_arfs_entry *entry)
 #endif /* ICE_ADD_PROBES */
 
 /**
+ * ice_arfs_cmp - compare flow to a saved ARFS entry's filter info
+ * @fltr_info: filter info of the saved ARFS entry
+ * @fk: flow dissector keys
+ *
+ * Caller must hold all appropriate locks
+ */
+static bool
+ice_arfs_cmp(struct ice_fdir_fltr *fltr_info, const struct flow_keys *fk)
+{
+	bool is_v4;
+
+	if (!fltr_info || !fk)
+		return false;
+
+	is_v4 = (fltr_info->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_UDP ||
+		fltr_info->flow_type == ICE_FLTR_PTYPE_NONF_IPV4_TCP);
+
+	if (fk->basic.n_proto == htons(ETH_P_IP) && is_v4)
+		return (fltr_info->ip.v4.proto == fk->basic.ip_proto &&
+			fltr_info->ip.v4.src_port == fk->ports.src &&
+			fltr_info->ip.v4.dst_port == fk->ports.dst &&
+			fltr_info->ip.v4.src_ip == fk->addrs.v4addrs.src &&
+			fltr_info->ip.v4.dst_ip == fk->addrs.v4addrs.dst);
+
+	else if (fk->basic.n_proto == htons(ETH_P_IPV6) && !is_v4)
+		return (fltr_info->ip.v6.proto == fk->basic.ip_proto &&
+			fltr_info->ip.v6.src_port == fk->ports.src &&
+			fltr_info->ip.v6.dst_port == fk->ports.dst &&
+			!memcmp(&fltr_info->ip.v6.src_ip,
+				&fk->addrs.v6addrs.src,
+				sizeof(struct in6_addr)) &&
+			!memcmp(&fltr_info->ip.v6.dst_ip,
+				&fk->addrs.v6addrs.dst,
+				sizeof(struct in6_addr)));
+
+	return false;
+}
+
+/**
  * ice_arfs_build_entry - builds an aRFS entry based on input
  * @vsi: destination VSI for this flow
  * @fk: flow dissector keys for creating the tuple
@@ -477,17 +516,17 @@ ice_rx_flow_steer(struct net_device *netdev, const struct sk_buff *skb,
 
 	/* choose the aRFS list bucket based on skb hash */
 	idx = skb_get_hash_raw(skb) & ICE_ARFS_LST_MASK;
+
 	/* search for entry in the bucket */
 	spin_lock_bh(&vsi->arfs_lock);
 	hlist_for_each_entry(arfs_entry, &vsi->arfs_fltr_list[idx],
 			     list_entry) {
-		struct ice_fdir_fltr *fltr_info;
+		struct ice_fdir_fltr *fltr_info = &arfs_entry->fltr_info;
 
 		/* keep searching for the already existing arfs_entry flow */
-		if (arfs_entry->flow_id != flow_id)
+		if (!ice_arfs_cmp(fltr_info, &fk))
 			continue;
 
-		fltr_info = &arfs_entry->fltr_info;
 		ret = fltr_info->fltr_id;
 
 		if (fltr_info->q_index == rxq_idx ||

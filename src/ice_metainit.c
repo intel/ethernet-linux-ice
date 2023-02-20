@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -91,8 +91,8 @@ void ice_metainit_dump(struct ice_hw *hw, struct ice_metainit_item *item)
 static void _metainit_parse_item(struct ice_hw *hw, u16 idx, void *item,
 				 void *data, int size)
 {
-	struct ice_metainit_item *mi = (struct ice_metainit_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_metainit_item *mi = item;
+	u8 *buf = data;
 	u64 d64;
 
 	mi->idx = idx;

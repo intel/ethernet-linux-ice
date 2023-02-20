@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 /* The driver transmit and receive code */
 
@@ -174,9 +174,8 @@ void ice_clean_tx_ring(struct ice_ring *tx_ring)
 		return;
 
 	/* Free all the Tx ring sk_buffs */
-	for (i = 0; i < tx_ring->count; i++) {
+	for (i = 0; i < tx_ring->count; i++)
 		ice_unmap_and_free_tx_buf(tx_ring, &tx_ring->tx_buf[i]);
-	}
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 tx_skip_free:
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
@@ -334,7 +333,6 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 	tx_ring->next_to_clean = i;
 
 	ice_update_tx_ring_stats(tx_ring, total_pkts, total_bytes);
-
 #ifdef HAVE_XDP_SUPPORT
 	if (ice_ring_is_xdp(tx_ring))
 		return !!budget;
@@ -352,7 +350,7 @@ static bool ice_clean_tx_irq(struct ice_ring *tx_ring, int napi_budget)
 		if (netif_tx_queue_stopped(txring_txq(tx_ring)) &&
 		    !test_bit(ICE_VSI_DOWN, vsi->state)) {
 			netif_tx_wake_queue(txring_txq(tx_ring));
-			++tx_ring->tx_stats.restart_q;
+			++tx_ring->ring_stats->tx_stats.restart_q;
 		}
 	}
 
@@ -393,7 +391,7 @@ int ice_setup_tx_ring(struct ice_ring *tx_ring)
 
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
-	tx_ring->tx_stats.prev_pkt = -1;
+	tx_ring->ring_stats->tx_stats.prev_pkt = -1;
 	return 0;
 
 err:
@@ -579,7 +577,7 @@ ice_alloc_mapped_skb(struct ice_ring *rx_ring, struct ice_rx_buf *bi)
 			       rx_ring->rx_buf_len,
 			       GFP_ATOMIC | __GFP_NOWARN);
 	if (unlikely(!skb)) {
-		rx_ring->rx_stats.alloc_buf_failed++;
+		rx_ring->ring_stats->rx_stats.alloc_buf_failed++;
 		preempt_enable();
 		return false;
 	}
@@ -592,7 +590,7 @@ ice_alloc_mapped_skb(struct ice_ring *rx_ring, struct ice_rx_buf *bi)
 	 */
 	if (dma_mapping_error(rx_ring->dev, dma)) {
 		dev_kfree_skb_any(skb);
-		rx_ring->rx_stats.alloc_buf_failed++;
+		rx_ring->ring_stats->rx_stats.alloc_buf_failed++;
 		preempt_enable();
 		return false;
 	}
@@ -826,7 +824,7 @@ ice_alloc_mapped_page(struct ice_ring *rx_ring, struct ice_rx_buf *bi)
 	/* since we are recycling buffers we should seldom need to alloc */
 	if (likely(page)) {
 #ifdef ICE_ADD_PROBES
-		rx_ring->rx_stats.page_reuse++;
+		rx_ring->ring_stats->rx_stats.page_reuse++;
 #endif /* ICE_ADD_PROBES */
 		return true;
 	}
@@ -834,7 +832,7 @@ ice_alloc_mapped_page(struct ice_ring *rx_ring, struct ice_rx_buf *bi)
 	/* alloc new page for storage */
 	page = dev_alloc_pages(ice_rx_pg_order(rx_ring));
 	if (unlikely(!page)) {
-		rx_ring->rx_stats.alloc_page_failed++;
+		rx_ring->ring_stats->rx_stats.alloc_page_failed++;
 		return false;
 	}
 
@@ -852,7 +850,7 @@ ice_alloc_mapped_page(struct ice_ring *rx_ring, struct ice_rx_buf *bi)
 	 */
 	if (dma_mapping_error(rx_ring->dev, dma)) {
 		__free_pages(page, ice_rx_pg_order(rx_ring));
-		rx_ring->rx_stats.alloc_page_failed++;
+		rx_ring->ring_stats->rx_stats.alloc_page_failed++;
 		return false;
 	}
 
@@ -1338,7 +1336,7 @@ ice_put_rx_buf(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
 		/* hand second half of page back to the ring */
 		ice_reuse_rx_page(rx_ring, rx_buf);
 #ifdef ICE_ADD_PROBES
-		rx_ring->rx_stats.page_reuse++;
+		rx_ring->ring_stats->rx_stats.page_reuse++;
 #endif /* ICE_ADD_PROBES */
 	} else {
 		/* we are not reusing the buffer so unmap it */
@@ -1380,7 +1378,7 @@ ice_is_non_eop(struct ice_ring *rx_ring, union ice_32b_rx_flex_desc *rx_desc,
 
 	/* place skb in next buffer to be received */
 	rx_ring->rx_buf[rx_ring->next_to_clean].skb = skb;
-	rx_ring->rx_stats.non_eop_descs++;
+	rx_ring->ring_stats->rx_stats.non_eop_descs++;
 
 	return true;
 }
@@ -1503,11 +1501,11 @@ ice_is_ctrl_pkt(struct sk_buff *skb, struct ice_ring *rx_ring,
 
 #ifdef ADQ_PERF_COUNTERS
 	if (flexi_flags & ICE_RX_FLEXI_FLAGS_FIN)
-		rx_ring->ch_q_stats.rx.num_tcp_flags_fin++;
+		rx_ring->ring_stats->ch_q_stats.rx.num_tcp_flags_fin++;
 	else if (flexi_flags & ICE_RX_FLEXI_FLAGS_RST)
-		rx_ring->ch_q_stats.rx.num_tcp_flags_rst++;
+		rx_ring->ring_stats->ch_q_stats.rx.num_tcp_flags_rst++;
 	else if (flexi_flags & ICE_RX_FLEXI_FLAGS_SYN)
-		rx_ring->ch_q_stats.rx.num_tcp_flags_syn++;
+		rx_ring->ring_stats->ch_q_stats.rx.num_tcp_flags_syn++;
 #endif /* ADQ_PERF_COUNTERS */
 
 	/* return the flexi_flags to caller */
@@ -1563,7 +1561,7 @@ ice_rx_queue_override(struct sk_buff *skb, struct ice_ring *rx_ring,
 	 */
 	if (ice_detect_dis_inline_fd_usage(ch->ch_vsi)) {
 #ifdef ADQ_PERF_COUNTERS
-		rx_ring->ch_q_stats.rx.num_rx_queue_bailouts++;
+		rx_ring->ring_stats->ch_q_stats.rx.num_rx_queue_bailouts++;
 #endif /* ADQ_PERF_COUNTERS */
 		return;
 	}
@@ -1588,7 +1586,7 @@ ice_rx_queue_override(struct sk_buff *skb, struct ice_ring *rx_ring,
 	skb_record_rx_queue(skb, queue_to_use);
 
 #ifdef ADQ_PERF_COUNTERS
-	ring->ch_q_stats.rx.num_rx_queue_set++;
+	ring->ring_stats->ch_q_stats.rx.num_rx_queue_set++;
 #endif /* ADQ_PERF_COUNTERS */
 
 	/* mark selected queue:vector for inline filter usage by
@@ -1770,7 +1768,7 @@ construct_skb:
 		}
 		/* exit if we failed to retrieve a buffer */
 		if (!skb) {
-			rx_ring->rx_stats.alloc_buf_failed++;
+			rx_ring->ring_stats->rx_stats.alloc_buf_failed++;
 			if (rx_buf)
 				rx_buf->pagecnt_bias++;
 			break;
@@ -1837,7 +1835,9 @@ construct_skb:
 		ice_finalize_xdp_rx(rx_ring, xdp_xmit);
 #endif /* HAVE_XDP_SUPPORT */
 
-	ice_update_rx_ring_stats(rx_ring, total_rx_pkts, total_rx_bytes);
+	if (rx_ring->ring_stats)
+		ice_update_rx_ring_stats(rx_ring, total_rx_pkts,
+					 total_rx_bytes);
 
 	/* guarantee a trip back through this routine if there was a failure */
 	return failure ? budget : (int)total_rx_pkts;
@@ -1851,8 +1851,13 @@ static void __ice_update_sample(struct ice_q_vector *q_vector,
 	struct ice_ring *ring;
 
 	ice_for_each_ring(ring, *rc) {
-		packets += ring->stats.pkts;
-		bytes += ring->stats.bytes;
+		struct ice_ring_stats *ring_stats;
+
+		ring_stats = ring->ring_stats;
+		if (!ring_stats)
+			continue;
+		packets += ring_stats->stats.pkts;
+		bytes += ring_stats->stats.bytes;
 	}
 
 	dim_update_sample(q_vector->total_events, packets, bytes, sample);
@@ -2390,7 +2395,7 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 
 #ifdef ICE_ADD_PROBES
 		if (!wd) {
-			struct ice_q_stats *stats = &ring->stats;
+			struct ice_q_stats *stats = &ring->ring_stats->stats;
 
 			/* if we are reporting that we are not done, then we
 			 * know napi is going to continue so increment the
@@ -2452,7 +2457,7 @@ int ice_napi_poll(struct napi_struct *napi, int budget)
 		/* if we clean as many as budgeted, we must not be done */
 #ifdef ICE_ADD_PROBES
 		if (cleaned >= budget_per_ring) {
-			struct ice_q_stats *stats = &ring->stats;
+			struct ice_q_stats *stats = &ring->ring_stats->stats;
 
 			/* if we are reporting that we are not done, then we
 			 * know napi is going to continue so increment the
@@ -2606,7 +2611,7 @@ static int __ice_maybe_stop_tx(struct ice_ring *tx_ring, unsigned int size)
 
 	/* A reprieve! - use start_queue because it doesn't call schedule */
 	netif_tx_start_queue(txring_txq(tx_ring));
-	++tx_ring->tx_stats.restart_q;
+	++tx_ring->ring_stats->tx_stats.restart_q;
 	return 0;
 }
 
@@ -3532,32 +3537,34 @@ static void ice_chnl_inline_fd(struct ice_ring *tx_ring, struct sk_buff *skb,
 		if (atomic_dec_if_positive(&qv->inline_fd_cnt) < 0) {
 			/* bailout */
 #ifdef ADQ_PERF_COUNTERS
-			tx_ring->ch_q_stats.tx.num_atr_bailouts++;
+			tx_ring->ring_stats->ch_q_stats.tx.num_atr_bailouts++;
 #endif /* ADQ_PERF_COUNTERS */
 			return;
 		}
 #ifdef ADQ_PERF_COUNTERS
-		tx_ring->ch_q_stats.tx.num_atr_setup++;
+		tx_ring->ring_stats->ch_q_stats.tx.num_atr_setup++;
 #endif /* ADQ_PERF_COUNTERS */
 	} else if (th->syn) {
 #ifdef ADQ_PERF_COUNTERS
 		struct ice_ring *ch_tx_ring;
 		ch_tx_ring = qv->vsi->tx_rings[q_index + ch->base_q];
 		if (ch_tx_ring)
-			ch_tx_ring->ch_q_stats.tx.num_atr_setup++;
+			ch_tx_ring->ring_stats->ch_q_stats.tx.num_atr_setup++;
 #endif /* ADQ_PERF_COUNTERS */
 	} else if (th->fin || th->rst) {
 #ifdef ADQ_PERF_COUNTERS
-		tx_ring->ch_q_stats.tx.num_atr_evict++;
+		tx_ring->ring_stats->ch_q_stats.tx.num_atr_evict++;
 #endif /* ADQ_PERF_COUNTERS */
 	} else {
 #ifdef ADQ_PERF_COUNTERS
-		{
 		struct ice_ring *ch_tx_ring;
 
 		ch_tx_ring = qv->vsi->tx_rings[q_index + ch->base_q];
-		if (ch_tx_ring)
-			ch_tx_ring->ch_q_stats.tx.num_mark_atr_setup++;
+		if (ch_tx_ring) {
+			struct ice_ring_stats *ch_stats;
+
+			ch_stats = ch_tx_ring->ring_stats;
+			ch_stats->ch_q_stats.tx.num_mark_atr_setup++;
 		}
 #endif /* ADQ_PERF_COUNTERS */
 	}
@@ -3652,7 +3659,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 		if (__skb_linearize(skb))
 			goto out_drop;
 		count = ice_txd_use_count(skb->len);
-		tx_ring->tx_stats.tx_linearize++;
+		tx_ring->ring_stats->tx_stats.tx_linearize++;
 	}
 
 	/* need: 1 descriptor per page * PAGE_SIZE/ICE_MAX_DATA_PER_TXD,
@@ -3663,7 +3670,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_ring *tx_ring)
 	 */
 	if (ice_maybe_stop_tx(tx_ring, count + ICE_DESCS_PER_CACHE_LINE +
 			      ICE_DESCS_FOR_CTX_DESC)) {
-		tx_ring->tx_stats.tx_busy++;
+		tx_ring->ring_stats->tx_stats.tx_busy++;
 		return NETDEV_TX_BUSY;
 	}
 
@@ -3758,6 +3765,8 @@ netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	struct ice_ring *tx_ring;
 
 	tx_ring = vsi->tx_rings[skb->queue_mapping];
+	if (!tx_ring)
+		return NETDEV_TX_BUSY;
 
 	/* hardware can't handle really short frames, hardware padding works
 	 * beyond this point

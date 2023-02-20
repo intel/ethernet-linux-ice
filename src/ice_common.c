@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_sched.h"
@@ -8,7 +8,7 @@
 #include "ice_flow.h"
 #include "ice_switch.h"
 
-#define ICE_PF_RESET_WAIT_COUNT	300
+#define ICE_PF_RESET_WAIT_COUNT	500
 #define ICE_SCHED_VALID_SEC_BITS 4
 
 static const char * const ice_link_mode_str_low[] = {
@@ -163,7 +163,7 @@ static int ice_set_mac_type(struct ice_hw *hw)
 	case ICE_DEV_ID_E825C_QSFP:
 	case ICE_DEV_ID_E825C_SFP:
 	case ICE_DEV_ID_E825C_SGMII:
-		hw->mac_type = ICE_MAC_GENERIC;
+		hw->mac_type = ICE_MAC_GENERIC_3K;
 		break;
 	default:
 		hw->mac_type = ICE_MAC_UNKNOWN;
@@ -1025,8 +1025,8 @@ int ice_init_hw(struct ice_hw *hw)
 		return status;
 
 	hw->pf_id = (u8)(rd32(hw, PF_FUNC_RID) &
-			 PF_FUNC_RID_FUNCTION_NUMBER_M) >>
-		PF_FUNC_RID_FUNCTION_NUMBER_S;
+			 PF_FUNC_RID_FUNC_NUM_M) >>
+		PF_FUNC_RID_FUNC_NUM_S;
 
 	status = ice_reset(hw, ICE_RESET_PFR);
 	if (status)
@@ -1309,7 +1309,7 @@ static int ice_pf_reset(struct ice_hw *hw)
 	 * that is occurring during a download package operation.
 	 */
 	for (cnt = 0; cnt < ICE_GLOBAL_CFG_LOCK_TIMEOUT +
-		ICE_PF_RESET_WAIT_COUNT; cnt++) {
+	     ICE_PF_RESET_WAIT_COUNT; cnt++) {
 		reg = rd32(hw, PFGEN_CTRL);
 		if (!(reg & PFGEN_CTRL_PFSWR_M))
 			break;
@@ -1395,6 +1395,37 @@ ice_copy_rxq_ctx_to_hw(struct ice_hw *hw, u8 *ice_rxq_ctx, u32 rxq_index)
 	return 0;
 }
 
+/**
+ * ice_copy_rxq_ctx_from_hw - Copy rxq context register from HW
+ * @hw: pointer to the hardware structure
+ * @ice_rxq_ctx: pointer to the rxq context
+ * @rxq_index: the index of the Rx queue
+ *
+ * Copies rxq context from HW register space to dense structure
+ */
+static int
+ice_copy_rxq_ctx_from_hw(struct ice_hw *hw, u8 *ice_rxq_ctx, u32 rxq_index)
+{
+	u8 i;
+
+	if (!ice_rxq_ctx)
+		return -EINVAL;
+
+	if (rxq_index > QRX_CTRL_MAX_INDEX)
+		return -EINVAL;
+
+	/* Copy each dword separately from HW */
+	for (i = 0; i < ICE_RXQ_CTX_SIZE_DWORDS; i++) {
+		u32 *ctx = (u32 *)(ice_rxq_ctx + (i * sizeof(u32)));
+
+		*ctx = rd32(hw, QRX_CONTEXT(i, rxq_index));
+
+		ice_debug(hw, ICE_DBG_QCTX, "qrxdata[%d]: %08X\n", i, *ctx);
+	}
+
+	return 0;
+}
+
 /* LAN Rx Queue Context */
 static const struct ice_ctx_ele ice_rlan_ctx_info[] = {
 	/* Field		Width	LSB */
@@ -1447,6 +1478,32 @@ ice_write_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
 }
 
 /**
+ * ice_read_rxq_ctx - Read rxq context from HW
+ * @hw: pointer to the hardware structure
+ * @rlan_ctx: pointer to the rxq context
+ * @rxq_index: the index of the Rx queue
+ *
+ * Read rxq context from HW register space and then converts it from dense
+ * structure to sparse
+ */
+int
+ice_read_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
+		 u32 rxq_index)
+{
+	u8 ctx_buf[ICE_RXQ_CTX_SZ] = { 0 };
+	int status;
+
+	if (!rlan_ctx)
+		return -EINVAL;
+
+	status = ice_copy_rxq_ctx_from_hw(hw, ctx_buf, rxq_index);
+	if (status)
+		return status;
+
+	return ice_get_ctx(ctx_buf, (u8 *)rlan_ctx, ice_rlan_ctx_info);
+}
+
+/**
  * ice_clear_rxq_ctx
  * @hw: pointer to the hardware structure
  * @rxq_index: the index of the Rx queue to clear
@@ -1467,7 +1524,9 @@ int ice_clear_rxq_ctx(struct ice_hw *hw, u32 rxq_index)
 	return 0;
 }
 
-/* LAN Tx Queue Context */
+/* LAN Tx Queue Context used for set Tx config by ice_aqc_opc_add_txqs,
+ * Bit[0-175] is valid
+ */
 const struct ice_ctx_ele ice_tlan_ctx_info[] = {
 				    /* Field			Width	LSB */
 	ICE_CTX_STORE(ice_tlan_ctx, base,			57,	0),
@@ -1500,6 +1559,128 @@ const struct ice_ctx_ele ice_tlan_ctx_info[] = {
 	ICE_CTX_STORE(ice_tlan_ctx, int_q_state,		122,	171),
 	{ 0 }
 };
+
+/* LAN Tx Queue Context used for get Tx config from QTXCOMM_CNTX data,
+ * Bit[0-292] is valid, including internal queue state. Since internal
+ * queue state is dynamic field, its value will be cleared once queue
+ * is disabled
+ */
+static const struct ice_ctx_ele ice_tlan_ctx_data_info[] = {
+				    /* Field			Width	LSB */
+	ICE_CTX_STORE(ice_tlan_ctx, base,			57,	0),
+	ICE_CTX_STORE(ice_tlan_ctx, port_num,			3,	57),
+	ICE_CTX_STORE(ice_tlan_ctx, cgd_num,			5,	60),
+	ICE_CTX_STORE(ice_tlan_ctx, pf_num,			3,	65),
+	ICE_CTX_STORE(ice_tlan_ctx, vmvf_num,			10,	68),
+	ICE_CTX_STORE(ice_tlan_ctx, vmvf_type,			2,	78),
+	ICE_CTX_STORE(ice_tlan_ctx, src_vsi,			10,	80),
+	ICE_CTX_STORE(ice_tlan_ctx, tsyn_ena,			1,	90),
+	ICE_CTX_STORE(ice_tlan_ctx, internal_usage_flag,	1,	91),
+	ICE_CTX_STORE(ice_tlan_ctx, alt_vlan,			1,	92),
+	ICE_CTX_STORE(ice_tlan_ctx, cpuid,			8,	93),
+	ICE_CTX_STORE(ice_tlan_ctx, wb_mode,			1,	101),
+	ICE_CTX_STORE(ice_tlan_ctx, tphrd_desc,			1,	102),
+	ICE_CTX_STORE(ice_tlan_ctx, tphrd,			1,	103),
+	ICE_CTX_STORE(ice_tlan_ctx, tphwr_desc,			1,	104),
+	ICE_CTX_STORE(ice_tlan_ctx, cmpq_id,			9,	105),
+	ICE_CTX_STORE(ice_tlan_ctx, qnum_in_func,		14,	114),
+	ICE_CTX_STORE(ice_tlan_ctx, itr_notification_mode,	1,	128),
+	ICE_CTX_STORE(ice_tlan_ctx, adjust_prof_id,		6,	129),
+	ICE_CTX_STORE(ice_tlan_ctx, qlen,			13,	135),
+	ICE_CTX_STORE(ice_tlan_ctx, quanta_prof_idx,		4,	148),
+	ICE_CTX_STORE(ice_tlan_ctx, tso_ena,			1,	152),
+	ICE_CTX_STORE(ice_tlan_ctx, tso_qnum,			11,	153),
+	ICE_CTX_STORE(ice_tlan_ctx, legacy_int,			1,	164),
+	ICE_CTX_STORE(ice_tlan_ctx, drop_ena,			1,	165),
+	ICE_CTX_STORE(ice_tlan_ctx, cache_prof_idx,		2,	166),
+	ICE_CTX_STORE(ice_tlan_ctx, pkt_shaper_prof_idx,	3,	168),
+	ICE_CTX_STORE(ice_tlan_ctx, tail,			13,	184),
+	{ 0 }
+};
+
+/**
+ * ice_copy_txq_ctx_from_hw - Copy txq context register from HW
+ * @hw: pointer to the hardware structure
+ * @ice_txq_ctx: pointer to the txq context
+ *
+ * Copies txq context from HW register space to dense structure
+ */
+static int
+ice_copy_txq_ctx_from_hw(struct ice_hw *hw, u8 *ice_txq_ctx)
+{
+	u8 i;
+
+	if (!ice_txq_ctx)
+		return -EINVAL;
+
+	/* Copy each dword separately from HW */
+	for (i = 0; i < ICE_TXQ_CTX_SIZE_DWORDS; i++) {
+		u32 *ctx = (u32 *)(ice_txq_ctx + (i * sizeof(u32)));
+
+		*ctx = rd32(hw, GLCOMM_QTX_CNTX_DATA(i));
+
+		ice_debug(hw, ICE_DBG_QCTX, "qtxdata[%d]: %08X\n", i, *ctx);
+	}
+
+	return 0;
+}
+
+/* Global TXQ Context Lock should be acquired by a specific PF device driver
+ * to prevent other PF device (within the same card) from accessing the
+ * GLCOMM_QTX_CNTX_CTL register, which is globally visible by all PFs within
+ * one card.
+ */
+static DEFINE_MUTEX(ice_global_txq_ctx_lock);
+
+/**
+ * ice_read_txq_ctx - Read txq context from HW
+ * @hw: pointer to the hardware structure
+ * @tlan_ctx: pointer to the txq context
+ * @txq_index: the index of the Tx queue
+ *
+ * Read txq context from HW register space and then converts it from dense
+ * structure to sparse
+ */
+int
+ice_read_txq_ctx(struct ice_hw *hw, struct ice_tlan_ctx *tlan_ctx,
+		 u32 txq_index)
+{
+	u8 ctx_buf[ICE_TXQ_CTX_SZ] = { 0 };
+	int status;
+	u32 txq_base;
+	u32 reg;
+
+	if (!tlan_ctx)
+		return -EINVAL;
+
+	if (txq_index > QTX_COMM_HEAD_MAX_INDEX)
+		return -EINVAL;
+
+	/* Get TXQ base within card space */
+	txq_base = rd32(hw, PFLAN_TX_QALLOC + 0x4 * hw->pf_id);
+	txq_base = (txq_base & PFLAN_TX_QALLOC_FIRSTQ_M) >>
+		   PFLAN_TX_QALLOC_FIRSTQ_S;
+
+	reg = GLCOMM_QTX_CNTX_CTL_CMD_EXEC_M |
+	      (((txq_base + txq_index) << GLCOMM_QTX_CNTX_CTL_QUEUE_ID_S) &
+	       GLCOMM_QTX_CNTX_CTL_QUEUE_ID_M);
+
+	mutex_lock(&ice_global_txq_ctx_lock);
+
+	/* Kick off the operation by writing value with CMD_EXEC flag */
+	wr32(hw, GLCOMM_QTX_CNTX_CTL, reg);
+	ice_flush(hw);
+
+	status = ice_copy_txq_ctx_from_hw(hw, ctx_buf);
+	if (status) {
+		mutex_unlock(&ice_global_txq_ctx_lock);
+		return status;
+	}
+
+	mutex_unlock(&ice_global_txq_ctx_lock);
+
+	return ice_get_ctx(ctx_buf, (u8 *)tlan_ctx, ice_tlan_ctx_data_info);
+}
 
 /**
  * ice_copy_tx_cmpltnq_ctx_to_hw
@@ -2889,6 +3070,7 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 		  info->clk_src);
 }
 
+static void
 /**
  * ice_parse_fdir_func_caps - Parse ICE_AQC_CAPS_FD function caps
  * @hw: pointer to the HW struct
@@ -2896,7 +3078,6 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
  *
  * Extract function capabilities for ICE_AQC_CAPS_FD.
  */
-static void
 ice_parse_fdir_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p)
 {
 	u32 reg_val, val;
@@ -3474,7 +3655,6 @@ int
 ice_aq_set_port_params(struct ice_port_info *pi, u16 bad_frame_vsi,
 		       bool save_bad_pac, bool pad_short_pac, bool double_vlan,
 		       struct ice_sq_cd *cd)
-
 {
 	struct ice_aqc_set_port_params *cmd;
 	struct ice_hw *hw = pi->hw;
@@ -3526,8 +3706,8 @@ bool ice_is_100m_speed_supported(struct ice_hw *hw)
  * Note: In the structure of [phy_type_low, phy_type_high], there should
  * be one bit set, as this function will convert one PHY type to its
  * speed.
- * If no bit gets set, 0 will be returned
- * If more than one bit gets set, 0 will be returned
+ * If no bit gets set, ICE_AQ_LINK_SPEED_UNKNOWN will be returned
+ * If more than one bit gets set, ICE_AQ_LINK_SPEED_UNKNOWN will be returned
  */
 static u16
 ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high)
@@ -5542,6 +5722,221 @@ void ice_dump_port_info(struct ice_port_info *pi)
 }
 
 /**
+ * ice_read_byte - read context byte into struct
+ * @src_ctx:  the context structure to read from
+ * @dest_ctx: the context to be written to
+ * @ce_info:  a description of the struct to be filled
+ */
+static void
+ice_read_byte(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+{
+	u8 dest_byte, mask;
+	u8 *src, *target;
+	u16 shift_width;
+
+	/* prepare the bits and mask */
+	shift_width = ce_info->lsb % 8;
+	mask = (u8)(BIT(ce_info->width) - 1);
+
+	/* shift to correct alignment */
+	mask <<= shift_width;
+
+	/* get the current bits from the src bit string */
+	src = src_ctx + (ce_info->lsb / 8);
+
+	memcpy(&dest_byte, src, sizeof(dest_byte));
+
+	dest_byte &= mask;
+
+	dest_byte >>= shift_width;
+
+	/* get the address from the struct field */
+	target = dest_ctx + ce_info->offset;
+
+	/* put it back in the struct */
+	memcpy(target, &dest_byte, sizeof(dest_byte));
+}
+
+/**
+ * ice_read_word - read context word into struct
+ * @src_ctx:  the context structure to read from
+ * @dest_ctx: the context to be written to
+ * @ce_info:  a description of the struct to be filled
+ */
+static void
+ice_read_word(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+{
+	u16 dest_word, mask;
+	u8 *src, *target;
+	__le16 src_word;
+	u16 shift_width;
+
+	/* prepare the bits and mask */
+	shift_width = ce_info->lsb % 8;
+	mask = BIT(ce_info->width) - 1;
+
+	/* shift to correct alignment */
+	mask <<= shift_width;
+
+	/* get the current bits from the src bit string */
+	src = src_ctx + (ce_info->lsb / 8);
+
+	memcpy(&src_word, src, sizeof(src_word));
+
+	/* the data in the memory is stored as little endian so mask it
+	 * correctly
+	 */
+	src_word &= cpu_to_le16(mask);
+
+	/* get the data back into host order before shifting */
+	dest_word = le16_to_cpu(src_word);
+
+	dest_word >>= shift_width;
+
+	/* get the address from the struct field */
+	target = dest_ctx + ce_info->offset;
+
+	/* put it back in the struct */
+	memcpy(target, &dest_word, sizeof(dest_word));
+}
+
+/**
+ * ice_read_dword - read context dword into struct
+ * @src_ctx:  the context structure to read from
+ * @dest_ctx: the context to be written to
+ * @ce_info:  a description of the struct to be filled
+ */
+static void
+ice_read_dword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+{
+	u32 dest_dword, mask;
+	__le32 src_dword;
+	u8 *src, *target;
+	u16 shift_width;
+
+	/* prepare the bits and mask */
+	shift_width = ce_info->lsb % 8;
+
+	/* if the field width is exactly 32 on an x86 machine, then the shift
+	 * operation will not work because the SHL instructions count is masked
+	 * to 5 bits so the shift will do nothing
+	 */
+	if (ce_info->width < 32)
+		mask = BIT(ce_info->width) - 1;
+	else
+		mask = (u32)~0;
+
+	/* shift to correct alignment */
+	mask <<= shift_width;
+
+	/* get the current bits from the src bit string */
+	src = src_ctx + (ce_info->lsb / 8);
+
+	memcpy(&src_dword, src, sizeof(src_dword));
+
+	/* the data in the memory is stored as little endian so mask it
+	 * correctly
+	 */
+	src_dword &= cpu_to_le32(mask);
+
+	/* get the data back into host order before shifting */
+	dest_dword = le32_to_cpu(src_dword);
+
+	dest_dword >>= shift_width;
+
+	/* get the address from the struct field */
+	target = dest_ctx + ce_info->offset;
+
+	/* put it back in the struct */
+	memcpy(target, &dest_dword, sizeof(dest_dword));
+}
+
+/**
+ * ice_read_qword - read context qword into struct
+ * @src_ctx:  the context structure to read from
+ * @dest_ctx: the context to be written to
+ * @ce_info:  a description of the struct to be filled
+ */
+static void
+ice_read_qword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+{
+	u64 dest_qword, mask;
+	__le64 src_qword;
+	u8 *src, *target;
+	u16 shift_width;
+
+	/* prepare the bits and mask */
+	shift_width = ce_info->lsb % 8;
+
+	/* if the field width is exactly 64 on an x86 machine, then the shift
+	 * operation will not work because the SHL instructions count is masked
+	 * to 6 bits so the shift will do nothing
+	 */
+	if (ce_info->width < 64)
+		mask = BIT_ULL(ce_info->width) - 1;
+	else
+		mask = (u64)~0;
+
+	/* shift to correct alignment */
+	mask <<= shift_width;
+
+	/* get the current bits from the src bit string */
+	src = src_ctx + (ce_info->lsb / 8);
+
+	memcpy(&src_qword, src, sizeof(src_qword));
+
+	/* the data in the memory is stored as little endian so mask it
+	 * correctly
+	 */
+	src_qword &= cpu_to_le64(mask);
+
+	/* get the data back into host order before shifting */
+	dest_qword = le64_to_cpu(src_qword);
+
+	dest_qword >>= shift_width;
+
+	/* get the address from the struct field */
+	target = dest_ctx + ce_info->offset;
+
+	/* put it back in the struct */
+	memcpy(target, &dest_qword, sizeof(dest_qword));
+}
+
+/**
+ * ice_get_ctx - extract context bits from a packed structure
+ * @src_ctx:  pointer to a generic packed context structure
+ * @dest_ctx: pointer to a generic non-packed context structure
+ * @ce_info:  a description of the structure to be read from
+ */
+int
+ice_get_ctx(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+{
+	int f;
+
+	for (f = 0; ce_info[f].width; f++) {
+		switch (ce_info[f].size_of) {
+		case 1:
+			ice_read_byte(src_ctx, dest_ctx, &ce_info[f]);
+			break;
+		case 2:
+			ice_read_word(src_ctx, dest_ctx, &ce_info[f]);
+			break;
+		case 4:
+			ice_read_dword(src_ctx, dest_ctx, &ce_info[f]);
+			break;
+		case 8:
+			ice_read_qword(src_ctx, dest_ctx, &ce_info[f]);
+			break;
+		default:
+			/* nothing to do, just keep going */
+			break;
+		}
+	}
+
+	return 0;
+}
+
+/**
  * ice_get_lan_q_ctx - get the LAN queue context for the given VSI and TC
  * @hw: pointer to the HW struct
  * @vsi_handle: software VSI handle
@@ -7083,6 +7478,8 @@ ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,
  *               when PF owns more than 1 port it must be true
  * @active_option_idx: index of active port option in returned buffer
  * @active_option_valid: active option in returned buffer is valid
+ * @pending_option_idx: index of pending port option in returned buffer
+ * @pending_option_valid: pending option in returned buffer is valid
  *
  * Calls Get Port Options AQC (0x06ea) and verifies result.
  */
@@ -7090,12 +7487,11 @@ int
 ice_aq_get_port_options(struct ice_hw *hw,
 			struct ice_aqc_get_port_options_elem *options,
 			u8 *option_count, u8 lport, bool lport_valid,
-			u8 *active_option_idx, bool *active_option_valid)
+			u8 *active_option_idx, bool *active_option_valid,
+			u8 *pending_option_idx, bool *pending_option_valid)
 {
 	struct ice_aqc_get_port_options *cmd;
 	struct ice_aq_desc desc;
-	u8 pmd_count;
-	u8 max_speed;
 	int status;
 	u8 i;
 
@@ -7106,8 +7502,7 @@ ice_aq_get_port_options(struct ice_hw *hw,
 	cmd = &desc.params.get_port_options;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_port_options);
 
-	if (lport_valid)
-		cmd->lport_num = lport;
+	cmd->lport_num = lport;
 	cmd->lport_num_valid = lport_valid;
 
 	status = ice_aq_send_cmd(hw, &desc, options,
@@ -7128,32 +7523,57 @@ ice_aq_get_port_options(struct ice_hw *hw,
 			  *active_option_idx);
 	}
 
-	/* verify indirect FW response & mask output options fields */
+	*pending_option_valid = cmd->pending_port_option_status &
+				ICE_AQC_PENDING_PORT_OPT_VALID;
+	if (*pending_option_valid) {
+		*pending_option_idx = cmd->pending_port_option_status &
+				      ICE_AQC_PENDING_PORT_OPT_IDX_M;
+		if (*pending_option_idx > (*option_count - 1))
+			return -EIO;
+		ice_debug(hw, ICE_DBG_PHY, "pending idx: %x\n",
+			  *pending_option_idx);
+	}
+
+	/* mask output options fields */
 	for (i = 0; i < *option_count; i++) {
 		options[i].pmd &= ICE_AQC_PORT_OPT_PMD_COUNT_M;
 		options[i].max_lane_speed &= ICE_AQC_PORT_OPT_MAX_LANE_M;
-		pmd_count = options[i].pmd;
-		max_speed = options[i].max_lane_speed;
 		ice_debug(hw, ICE_DBG_PHY, "pmds: %x max speed: %x\n",
-			  pmd_count, max_speed);
-
-		/* check only entries containing valid max pmd speed values,
-		 * other reserved values may be returned, when logical port
-		 * used is unrelated to specific option
-		 */
-		if (max_speed <= ICE_AQC_PORT_OPT_MAX_LANE_100G) {
-			if (pmd_count > ICE_MAX_PORT_PER_PCI_DEV)
-				return -EIO;
-			if (pmd_count > 2 &&
-			    max_speed > ICE_AQC_PORT_OPT_MAX_LANE_25G)
-				return -EIO;
-			if (pmd_count > 7 &&
-			    max_speed > ICE_AQC_PORT_OPT_MAX_LANE_10G)
-				return -EIO;
-		}
+			  options[i].pmd, options[i].max_lane_speed);
 	}
 
 	return 0;
+}
+
+/**
+ * ice_aq_set_port_option
+ * @hw: pointer to the hw struct
+ * @lport: logical port to call the command with
+ * @lport_valid: when false, FW uses port owned by the PF instead of lport,
+ *               when PF owns more than 1 port it must be true
+ * @new_option: new port option to be written
+ *
+ * Calls Set Port Options AQC (0x06eb).
+ */
+int
+ice_aq_set_port_option(struct ice_hw *hw, u8 lport, u8 lport_valid,
+		       u8 new_option)
+{
+	struct ice_aqc_set_port_option *cmd;
+	struct ice_aq_desc desc;
+
+	if (new_option >= ICE_AQC_PORT_OPT_COUNT_M)
+		return -EINVAL;
+
+	cmd = &desc.params.set_port_option;
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_port_option);
+
+	cmd->lport_num = lport;
+
+	cmd->lport_num_valid = lport_valid;
+	cmd->selected_port_option = new_option;
+
+	return ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 }
 
 /**
@@ -7253,6 +7673,42 @@ bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw)
 	return ice_is_fw_api_min_ver(hw, ICE_FW_API_REPORT_DFLT_CFG_MAJ,
 				     ICE_FW_API_REPORT_DFLT_CFG_MIN,
 				     ICE_FW_API_REPORT_DFLT_CFG_PATCH);
+}
+
+/* each of the indexes into the following array match the speed of a return
+ * value from the list of AQ returned speeds like the range:
+ * ICE_AQ_LINK_SPEED_10MB .. ICE_AQ_LINK_SPEED_100GB excluding
+ * ICE_AQ_LINK_SPEED_UNKNOWN which is BIT(15) The array is defined as 15
+ * elements long because the link_speed returned by the firmware is a 16 bit
+ * value, but is indexed by [fls(speed) - 1]
+ */
+static const u32 ice_aq_to_link_speed[15] = {
+	SPEED_10,	/* BIT(0) */
+	SPEED_100,
+	SPEED_1000,
+	SPEED_2500,
+	SPEED_5000,
+	SPEED_10000,
+	SPEED_20000,
+	SPEED_25000,
+	SPEED_40000,
+	SPEED_50000,
+	SPEED_100000,	/* BIT(10) */
+	0,
+	0,
+	0,
+	0		/* BIT(14) */
+};
+
+/**
+ * ice_get_link_speed - get integer speed from table
+ * @index: array index from fls(aq speed) - 1
+ *
+ * Returns: u32 value containing integer speed
+ */
+u32 ice_get_link_speed(u16 index)
+{
+	return ice_aq_to_link_speed[index];
 }
 
 /**

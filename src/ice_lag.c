@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 /* Link Aggregation code */
 
@@ -9,15 +9,6 @@
 #include "ice_lag.h"
 
 static DEFINE_IDA(ice_lag_ida);
-
-/**
- * ice_lag_nop_handler - no-op Rx handler to disable LAG
- * @pskb: pointer to skb pointer
- */
-rx_handler_result_t ice_lag_nop_handler(struct sk_buff __always_unused **pskb)
-{
-	return RX_HANDLER_PASS;
-}
 
 /**
  * netif_is_same_ice - determine if netdev is on the same ice NIC as local PF
@@ -661,7 +652,7 @@ static void ice_lag_chk_rdma(struct ice_lag *lag, void *ptr)
 	if (event_upper != lag->upper_netdev)
 		return;
 
-	info = (struct netdev_notifier_bonding_info *)ptr;
+	info = ptr;
 	bonding_info = &info->bonding_info;
 	lag->bond_mode = bonding_info->master.bond_mode;
 
@@ -1027,7 +1018,6 @@ static void ice_lag_link(struct ice_lag *lag)
 		dev_warn(ice_pf_to_dev(pf), "%s Already part of a bond\n",
 			 netdev_name(lag->netdev));
 
-	ice_clear_sriov_cap(pf);
 	cdev = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
 	if (cdev && lag->primary)
 		cdev->rdma_active_port = lag->pf->hw.port_info->lport;
@@ -1084,7 +1074,6 @@ static void ice_lag_unlink(struct ice_lag *lag)
 	lag->bonded = false;
 	lag->role = ICE_LAG_NONE;
 	lag->upper_netdev = NULL;
-	ice_set_sriov_cap(pf);
 	ice_set_rdma_cap(pf);
 	cdev = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
 	if (cdev) {
@@ -1161,33 +1150,6 @@ static void ice_lag_changeupper_event(struct ice_lag *lag, void *ptr)
 }
 
 /**
- * ice_lag_chk_unlink - checks bond for RDMA compliance when netdev leaves
- * @lag: local lag struct
- * @ptr: opaque pointer data
- */
-static void ice_lag_chk_unlink(struct ice_lag *lag, void *ptr)
-{
-	struct netdev_notifier_changeupper_info *info;
-	struct iidc_core_dev_info *cdev;
-
-	info = (struct netdev_notifier_changeupper_info *)ptr;
-	if (!lag->primary || info->linking ||
-	    info->upper_dev != lag->upper_netdev)
-		return;
-
-	cdev = ice_find_cdev_info_by_id(lag->pf, IIDC_RDMA_ID);
-	if (!cdev)
-		return;
-
-	if (lag->bond_mode == BOND_MODE_ACTIVEBACKUP &&
-	    ice_is_bond_rdma_cap(lag) &&
-	    cdev->rdma_protocol == IIDC_RDMA_PROTOCOL_ROCEV2) {
-		ice_set_rdma_cap(lag->pf);
-		ice_plug_aux_dev_lock(cdev, IIDC_RDMA_ROCE_NAME, lag);
-	}
-}
-
-/**
  * ice_lag_monitor_link - main PF detect if nodes need to move on unlink
  * @lag: lag info struct
  * @ptr: opaque data containing notifier event
@@ -1223,7 +1185,7 @@ static void ice_lag_monitor_link(struct ice_lag *lag, void *ptr)
 	prim_hw = &lag->pf->hw;
 	prim_port = prim_hw->port_info->lport;
 
-	info = (struct netdev_notifier_changeupper_info *)ptr;
+	info = ptr;
 	if (info->linking) {
 		struct net_device *event_upper;
 
@@ -1283,7 +1245,7 @@ static void ice_lag_monitor_link(struct ice_lag *lag, void *ptr)
 	}
 
 	/* End of linking functionality */
-	if (info->linking || !ice_chk_rdma_cap(lag->pf))
+	if (info->linking || !ice_is_aux_ena(lag->pf))
 		return;
 
 	cdev = ice_find_cdev_info_by_id(lag->pf, IIDC_RDMA_ID);
@@ -1399,7 +1361,7 @@ static void ice_lag_monitor_active(struct ice_lag *lag, void *ptr)
 	event_port = event_pf->hw.port_info->lport;
 	prim_port = lag->pf->hw.port_info->lport;
 
-	info = (struct netdev_notifier_bonding_info *)ptr;
+	info = ptr;
 	bonding_info = &info->bonding_info;
 
 	/* first time setting active port for this aggregate */
@@ -1486,12 +1448,9 @@ static void ice_lag_process_event(struct work_struct *work)
 
 	switch (lag_work->event) {
 	case NETDEV_CHANGEUPPER:
-		if (ice_is_feature_supported(lag_work->lag->pf, ICE_F_LAG)) {
+		if (ice_is_feature_supported(lag_work->lag->pf, ICE_F_LAG))
 			ice_lag_monitor_link(lag_work->lag,
 					     &lag_work->info.changeupper_info);
-			ice_lag_chk_unlink(lag_work->lag,
-					   &lag_work->info.changeupper_info);
-		}
 		ice_lag_changeupper_event(lag_work->lag,
 					  &lag_work->info.changeupper_info);
 		break;
@@ -1507,7 +1466,8 @@ static void ice_lag_process_event(struct work_struct *work)
 	case NETDEV_UNREGISTER:
 		netdev = lag_work->info.bonding_info.info.dev;
 		if (netdev == lag_work->lag->netdev && lag_work->lag->bonded &&
-		    netdev_unregistering(lag_work->lag->upper_netdev))
+		    lag_work->lag->upper_netdev->reg_state ==
+		    NETREG_UNREGISTERING)
 			ice_lag_unlink(lag_work->lag);
 		break;
 	default:

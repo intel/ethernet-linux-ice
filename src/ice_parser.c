@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -91,7 +91,7 @@ void *ice_parser_sect_item_get(u32 sect_type, void *section,
 		return NULL;
 	}
 
-	hdr = (struct ice_pkg_sect_hdr *)section;
+	hdr = section;
 	if (index >= le16_to_cpu(hdr->count))
 		return NULL;
 

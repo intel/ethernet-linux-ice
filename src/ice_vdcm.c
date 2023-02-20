@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_vdcm.h"
 
@@ -849,7 +849,7 @@ ice_vdcm_vfio_device_get_irq_info(struct ice_vdcm *ivdm, unsigned long arg)
  */
 static irqreturn_t ice_vdcm_msix_handler(int irq, void *arg)
 {
-	struct ice_vdcm_irq_ctx *ctx = (struct ice_vdcm_irq_ctx *)arg;
+	struct ice_vdcm_irq_ctx *ctx = arg;
 
 	eventfd_signal(ctx->trigger, 1);
 	return IRQ_HANDLED;
@@ -1033,7 +1033,7 @@ ice_vdcm_set_msix_trigger(struct ice_vdcm *ivdm, struct vfio_irq_set *hdr,
 	}
 
 	if (hdr->flags & VFIO_IRQ_SET_DATA_EVENTFD) {
-		int *fds = (int *)data;
+		int *fds = data;
 		int err;
 
 		if (ivdm->irq_type == hdr->index)
@@ -1068,7 +1068,7 @@ ice_vdcm_set_msix_trigger(struct ice_vdcm *ivdm, struct vfio_irq_set *hdr,
  */
 void ice_vdcm_pre_rebuild_irqctx(void *token)
 {
-	struct ice_vdcm *ivdm = (struct ice_vdcm *)token;
+	struct ice_vdcm *ivdm = token;
 	int vector;
 
 	if (WARN_ON(!ivdm))
@@ -1103,7 +1103,7 @@ void ice_vdcm_pre_rebuild_irqctx(void *token)
  */
 int ice_vdcm_rebuild_irqctx(void *token)
 {
-	struct ice_vdcm *ivdm = (struct ice_vdcm *)token;
+	struct ice_vdcm *ivdm = token;
 	int irq, vector;
 	int err;
 
@@ -1220,7 +1220,7 @@ ice_vdcm_vfio_device_set_irqs(struct ice_vdcm *ivdm, unsigned long arg)
  */
 int ice_vdcm_zap(void *token)
 {
-	struct ice_vdcm *ivdm = (struct ice_vdcm *)token;
+	struct ice_vdcm *ivdm = token;
 	struct ice_vdcm_mmap_vma *mmap_vma, *tmp;
 
 	if (!ivdm)

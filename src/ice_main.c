@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver */
 
@@ -26,10 +26,10 @@
 #include "ice_irq.h"
 
 #define DRV_VERSION_MAJOR 1
-#define DRV_VERSION_MINOR 10
-#define DRV_VERSION_BUILD 1
+#define DRV_VERSION_MINOR 11
+#define DRV_VERSION_BUILD 14
 
-#define DRV_VERSION	"1.10.1.2.2"
+#define DRV_VERSION	"1.11.14"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -39,7 +39,7 @@
 
 const char ice_drv_ver[] = DRV_VERSION DRV_VERSION_EXTRA;
 static const char ice_driver_string[] = DRV_SUMMARY;
-static const char ice_copyright[] = "Copyright (C) 2018-2021, Intel Corporation.";
+static const char ice_copyright[] = "Copyright (C) 2018-2023 Intel Corporation";
 
 /* DDP Package file located in firmware search paths (e.g. /lib/firmware/) */
 #if UTS_UBUNTU_RELEASE_ABI
@@ -437,10 +437,16 @@ static void ice_check_for_hang_subtask(struct ice_pf *pf)
 
 	for (i = 0; i < vsi->num_txq; i++) {
 		struct ice_ring *tx_ring = vsi->tx_rings[i];
+		struct ice_ring_stats *ring_stats;
 
 		if (!tx_ring)
 			continue;
 		if (ice_ring_ch_enabled(tx_ring))
+			continue;
+
+		ring_stats = tx_ring->ring_stats;
+
+		if (!ring_stats)
 			continue;
 
 		if (tx_ring->desc) {
@@ -451,8 +457,8 @@ static void ice_check_for_hang_subtask(struct ice_pf *pf)
 			 * prev_pkt would be negative if there was no
 			 * pending work.
 			 */
-			packets = tx_ring->stats.pkts & INT_MAX;
-			if (tx_ring->tx_stats.prev_pkt == packets) {
+			packets = ring_stats->stats.pkts & INT_MAX;
+			if (ring_stats->tx_stats.prev_pkt == packets) {
 				/* Trigger sw interrupt to revive the queue */
 				ice_trigger_sw_intr(hw, tx_ring->q_vector);
 				continue;
@@ -462,8 +468,8 @@ static void ice_check_for_hang_subtask(struct ice_pf *pf)
 			 * to ice_get_tx_pending()
 			 */
 			smp_rmb();
-			tx_ring->tx_stats.prev_pkt =
-			    ice_get_tx_pending(tx_ring) ? packets : -1;
+			ring_stats->tx_stats.prev_pkt =
+				ice_get_tx_pending(tx_ring) ? packets : -1;
 		}
 	}
 }
@@ -745,7 +751,7 @@ static int ice_vsi_sync_fltr(struct ice_vsi *vsi)
 					IFF_PROMISC;
 				goto out_promisc;
 			}
-			if (vsi->current_netdev_flags &
+			if (vsi->netdev->features &
 				NETIF_F_HW_VLAN_CTAG_FILTER)
 				vlan_ops->ena_rx_filtering(vsi);
 		}
@@ -934,6 +940,7 @@ static void
 ice_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 {
 	struct ice_hw *hw = &pf->hw;
+	struct iidc_event *event;
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 	struct ice_vsi *vsi;
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
@@ -946,6 +953,17 @@ ice_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (test_bit(ICE_PREPARED_FOR_RESET, pf->state))
 		return;
 
+	/* if alloc of event fails, we still need to perform the reset,
+	 * can't fail on this, so warn on failure and move on
+	 **/
+	event = kzalloc(sizeof(*event), GFP_KERNEL);
+	if (event) {
+		set_bit(IIDC_EVENT_WARN_RESET, event->type);
+		ice_send_event_to_auxs(pf, event);
+		kfree(event);
+	} else {
+		dev_warn(ice_pf_to_dev(pf), "Failed to notify auxiliary drivers of reset\n");
+	}
 	ice_unplug_aux_devs(pf);
 
 	/* Notify VFs of impending reset */
@@ -1012,15 +1030,172 @@ skip:
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_prepare_for_reset(pf);
 
+#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_exit(pf);
 
+#endif /* GNSS_SUPPORT */
 	if (hw->port_info)
 		ice_sched_clear_port(hw->port_info);
 
 	ice_shutdown_all_ctrlq(hw, false);
 
 	set_bit(ICE_PREPARED_FOR_RESET, pf->state);
+}
+
+/**
+ * ice_get_hw_addr - Get memory address for a given device register
+ * @hw: pointer to the HW struct
+ * @reg: the register to get address of
+ *
+ * Convert a register offset into the appropriate memory mapped kernel
+ * address.
+ *
+ * Returns the pointer address or an ERR_PTR on failure.
+ */
+void __iomem *ice_get_hw_addr(struct ice_hw *hw, resource_size_t reg)
+{
+	struct ice_hw_addr *hw_addr = (struct ice_hw_addr *)hw->hw_addr;
+	struct ice_hw_addr_map *map;
+	unsigned int i;
+
+	if (WARN_ON(!hw_addr))
+		return (void __iomem *)ERR_PTR(-EIO);
+
+	for (i = 0, map = hw_addr->maps; i < hw_addr->nr; i++, map++)
+		if (reg >= map->start && reg < map->end)
+			return (u8 __iomem *)map->addr + (reg - map->start);
+
+	WARN_ONCE(1, "Unable to map register address 0x%0llx to kernel address",
+		  reg);
+
+	return (void __iomem *)ERR_PTR(-EFAULT);
+}
+
+/**
+ * ice_map_hw_addr - map a region of device registers to memory
+ * @pdev: the PCI device
+ * @map: the address map structure
+ *
+ * Map the specified section of the hardware registers into memory, storing
+ * the memory mapped address in the provided structure.
+ *
+ * Returns 0 on success or an error code on failure.
+ */
+static int ice_map_hw_addr(struct pci_dev *pdev, struct ice_hw_addr_map *map)
+{
+	struct device *dev = &pdev->dev;
+	resource_size_t size, base;
+	void __iomem *addr;
+
+	if (WARN_ON(map->end <= map->start))
+		return -EIO;
+
+	size = map->end - map->start;
+	base = pci_resource_start(pdev, map->bar) + map->start;
+	addr = ioremap(base, size);
+	if (!addr) {
+		dev_err(dev, "%s: remap at offset %llu failed\n",
+			__func__, map->start);
+		return -EIO;
+	}
+
+	map->addr = addr;
+
+	return 0;
+}
+
+/**
+ * ice_map_all_hw_addr - Request and map PCI BAR memory
+ * @pf: pointer to the PF structure
+ *
+ * Request and reserve all PCI BAR regions. Memory map chunks of the PCI BAR
+ * 0 into a sparse memory map to allow the RDMA region to be mapped with write
+ * combining.
+ *
+ * Returns 0 on success or an error code on failure.
+ */
+static int ice_map_all_hw_addr(struct ice_pf *pf)
+{
+	struct pci_dev *pdev = pf->pdev;
+	struct device *dev = &pdev->dev;
+	struct ice_hw_addr *hw_addr;
+	resource_size_t bar_len;
+	unsigned int nr_maps;
+	int err;
+
+	bar_len = pci_resource_len(pdev, 0);
+	if (bar_len > ICE_BAR_RDMA_WC_END)
+		nr_maps = 2;
+	else
+		nr_maps = 1;
+
+	hw_addr = kzalloc(struct_size(hw_addr, maps, nr_maps), GFP_KERNEL);
+	if (!hw_addr)
+		return -ENOMEM;
+
+	hw_addr->nr = nr_maps;
+
+	err = pci_request_mem_regions(pdev, dev_driver_string(dev));
+	if (err) {
+		ice_dev_err_errno(dev, err, "pci_request_mem_regions failed");
+		goto err_free_hw_addr;
+	}
+
+	/* Map the start of the BAR as uncachable */
+	hw_addr->maps[0].bar = 0;
+	hw_addr->maps[0].start = 0;
+	hw_addr->maps[0].end = min_t(resource_size_t, bar_len,
+				     ICE_BAR_RDMA_WC_START);
+	err = ice_map_hw_addr(pdev, &hw_addr->maps[0]);
+	if (err)
+		goto err_release_mem_regions;
+
+	/* Map everything past the RDMA section as uncachable */
+	if (nr_maps > 1) {
+		hw_addr->maps[1].bar = 0;
+		hw_addr->maps[1].start = ICE_BAR_RDMA_WC_END;
+		hw_addr->maps[1].end = bar_len;
+		err = ice_map_hw_addr(pdev, &hw_addr->maps[1]);
+		if (err)
+			goto err_unmap_bar_start;
+	}
+
+	pf->hw.hw_addr = (typeof(pf->hw.hw_addr))hw_addr;
+
+	return 0;
+
+err_unmap_bar_start:
+	iounmap(hw_addr->maps[0].addr);
+err_release_mem_regions:
+	pci_release_mem_regions(pdev);
+err_free_hw_addr:
+	kfree(hw_addr);
+
+	return err;
+}
+
+/**
+ * ice_unmap_all_hw_addr - Release device register memory maps
+ * @pf: pointer to the PF structure
+ *
+ * Release all PCI memory maps and regions.
+ */
+static void ice_unmap_all_hw_addr(struct ice_pf *pf)
+{
+	struct ice_hw_addr *hw_addr = (struct ice_hw_addr *)pf->hw.hw_addr;
+	struct pci_dev *pdev = pf->pdev;
+	unsigned int i;
+
+	if (WARN_ON(!hw_addr))
+		return;
+
+	pf->hw.hw_addr = NULL;
+	for (i = 0; i < hw_addr->nr; i++)
+		iounmap(hw_addr->maps[i].addr);
+	kfree(hw_addr);
+
+	pci_release_mem_regions(pdev);
 }
 
 /**
@@ -1078,6 +1253,7 @@ static void ice_remove_recovery_mode(struct ice_pf *pf)
 	}
 
 	ice_reset(&pf->hw, ICE_RESET_PFR);
+	ice_unmap_all_hw_addr(pf);
 	pci_disable_pcie_error_reporting(pf->pdev);
 #ifndef HAVE_DEVLINK_NOTIFY_REGISTER
 	ice_devlink_unregister(pf);
@@ -3475,9 +3651,6 @@ int ice_vsi_req_single_irq_msix(struct ice_vsi *vsi, char *basename,
 		irq_set_affinity_notifier(irq_num, affinity_notify);
 	}
 
-	/* assign the mask for this irq */
-	irq_set_affinity_hint(irq_num, &q_vector->affinity_mask);
-
 	return 0;
 }
 
@@ -3517,7 +3690,6 @@ free_q_irqs:
 		irq_num = ice_get_irq_num(pf, base + vector);
 		if (!IS_ENABLED(CONFIG_RFS_ACCEL))
 			irq_set_affinity_notifier(irq_num, NULL);
-		irq_set_affinity_hint(irq_num, NULL);
 		devm_free_irq(dev, irq_num, &vsi->q_vectors[vector]);
 	}
 	return err;
@@ -3537,13 +3709,21 @@ static int ice_xdp_alloc_setup_rings(struct ice_vsi *vsi)
 
 	for (i = 0; i < vsi->num_xdp_txq; i++) {
 		u16 xdp_q_idx = vsi->alloc_txq + i;
+		struct ice_ring_stats *ring_stats;
 		struct ice_ring *xdp_ring;
 
 		xdp_ring = kzalloc(sizeof(*xdp_ring), GFP_KERNEL);
-
 		if (!xdp_ring)
 			goto free_xdp_rings;
 
+		ring_stats = kzalloc(sizeof(*ring_stats), GFP_KERNEL);
+		if (!ring_stats) {
+			ice_free_tx_ring(xdp_ring);
+			kfree(xdp_ring);
+			goto free_xdp_rings;
+		}
+
+		xdp_ring->ring_stats = ring_stats;
 		xdp_ring->q_index = xdp_q_idx;
 		xdp_ring->reg_idx = vsi->txq_map[xdp_q_idx];
 		xdp_ring->vsi = vsi;
@@ -3562,9 +3742,13 @@ static int ice_xdp_alloc_setup_rings(struct ice_vsi *vsi)
 	return 0;
 
 free_xdp_rings:
-	for (; i >= 0; i--)
-		if (vsi->xdp_rings[i] && vsi->xdp_rings[i]->desc)
+	for (; i >= 0; i--) {
+		if (vsi->xdp_rings[i] && vsi->xdp_rings[i]->desc) {
+			kfree_rcu(vsi->xdp_rings[i]->ring_stats, rcu);
+			vsi->xdp_rings[i]->ring_stats = NULL;
 			ice_free_tx_ring(vsi->xdp_rings[i]);
+		}
+	}
 	return -ENOMEM;
 }
 
@@ -3866,6 +4050,8 @@ free_qmap:
 		if (vsi->xdp_rings[i]) {
 			if (vsi->xdp_rings[i]->desc)
 				ice_free_tx_ring(vsi->xdp_rings[i]);
+			kfree_rcu(vsi->xdp_rings[i]->ring_stats, rcu);
+			vsi->xdp_rings[i]->ring_stats = NULL;
 			kfree_rcu(vsi->xdp_rings[i], rcu);
 			vsi->xdp_rings[i] = NULL;
 		}
@@ -4089,7 +4275,7 @@ static void ice_ena_misc_vector(struct ice_pf *pf)
  */
 static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 {
-	struct ice_pf *pf = (struct ice_pf *)data;
+	struct ice_pf *pf = data;
 	struct ice_hw *hw = &pf->hw;
 	irqreturn_t ret = IRQ_NONE;
 	struct device *dev;
@@ -4187,7 +4373,10 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 						     GLTSYN_STAT_EVENT1_M |
 						     GLTSYN_STAT_EVENT2_M);
 		ena_mask &= ~PFINT_OICR_TSYN_EVNT_M;
-		kthread_queue_work(pf->ptp.kworker, &pf->ptp.extts_work);
+
+		if (pf->ptp.kworker_extts)
+			kthread_queue_work(pf->ptp.kworker_extts,
+					   &pf->ptp.extts_work);
 	}
 	if (oicr & (PFINT_OICR_PE_CRITERR_M | PFINT_OICR_HMC_ERR_M | PFINT_OICR_PE_PUSH_M)) {
 		pf->oicr_err_reg |= oicr;
@@ -4226,18 +4415,15 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
  */
 static irqreturn_t ice_misc_intr_thread_fn(int __always_unused irq, void *data)
 {
-	struct ice_pf *pf = (struct ice_pf *)data;
-	irqreturn_t ret = IRQ_HANDLED;
-	bool irq_handled;
+	struct ice_pf *pf = data;
 
 	if (ice_is_reset_in_progress(pf->state))
-		return ret;
+		return IRQ_HANDLED;
 
-	irq_handled = ice_ptp_process_ts(pf);
-	if (!irq_handled)
-		ret = IRQ_WAKE_THREAD;
+	while (!ice_ptp_process_ts(pf))
+		usleep_range(50, 100);
 
-	return ret;
+	return IRQ_HANDLED;
 }
 
 /**
@@ -4391,7 +4577,7 @@ static void ice_napi_add(struct ice_vsi *vsi)
 
 	ice_for_each_q_vector(vsi, v_idx)
 		netif_napi_add(vsi->netdev, &vsi->q_vectors[v_idx]->napi,
-			       ice_napi_poll, NAPI_POLL_WEIGHT);
+			       ice_napi_poll);
 }
 
 /**
@@ -4800,41 +4986,6 @@ finish:
 	return ret;
 }
 
-/**
- * ice_pf_reset_stats - Reset all of the stats for the given PF
- * @pf: board private structure
- */
-static void ice_pf_reset_stats(struct ice_pf *pf)
-{
-	memset(&pf->stats, 0, sizeof(pf->stats));
-	memset(&pf->stats_prev, 0, sizeof(pf->stats_prev));
-	pf->stat_prev_loaded = false;
-
-	pf->hw_csum_rx_error = 0;
-#ifdef ICE_ADD_PROBES
-	pf->tcp_segs = 0;
-	pf->udp_segs = 0;
-	pf->tx_tcp_cso = 0;
-	pf->tx_udp_cso = 0;
-	pf->tx_sctp_cso = 0;
-	pf->tx_ip4_cso = 0;
-	pf->tx_l3_cso_err = 0;
-	pf->tx_l4_cso_err = 0;
-	pf->rx_tcp_cso = 0;
-	pf->rx_udp_cso = 0;
-	pf->rx_sctp_cso = 0;
-	pf->rx_ip4_cso = 0;
-	pf->rx_ip4_cso_err = 0;
-	pf->rx_tcp_cso_err = 0;
-	pf->rx_udp_cso_err = 0;
-	pf->rx_sctp_cso_err = 0;
-	pf->tx_q_vlano = 0;
-	pf->rx_q_vlano = 0;
-	pf->tx_ad_vlano = 0;
-	pf->rx_ad_vlano = 0;
-#endif
-}
-
 #ifdef HAVE_TC_INDIR_BLOCK
 #ifdef HAVE_FLOW_BLOCK_API
 /**
@@ -5101,13 +5252,9 @@ static void ice_set_pf_caps(struct ice_pf *pf)
 	clear_bit(ICE_FLAG_VMDQ_ENA, pf->flags);
 	if (func_caps->common_cap.vmdq)
 		set_bit(ICE_FLAG_VMDQ_ENA, pf->flags);
-	clear_bit(ICE_FLAG_IWARP_ENA, pf->flags);
-	clear_bit(ICE_FLAG_AUX_ENA, pf->flags);
-	if (func_caps->common_cap.iwarp) {
-		set_bit(ICE_FLAG_IWARP_ENA, pf->flags);
-		set_bit(ICE_FLAG_AUX_ENA, pf->flags);
-	}
-	set_bit(ICE_FLAG_AUX_ENA, pf->flags);
+	clear_bit(ICE_FLAG_RDMA_ENA, pf->flags);
+	if (func_caps->common_cap.iwarp)
+		set_bit(ICE_FLAG_RDMA_ENA, pf->flags);
 	clear_bit(ICE_FLAG_DCB_CAPABLE, pf->flags);
 	if (func_caps->common_cap.dcb)
 		set_bit(ICE_FLAG_DCB_CAPABLE, pf->flags);
@@ -5800,6 +5947,9 @@ static int ice_register_netdev(struct ice_pf *pf)
 	if (!vsi || !vsi->netdev)
 		return -EIO;
 
+#ifdef HAVE_SET_NETDEV_DEVLINK_PORT
+	SET_NETDEV_DEVLINK_PORT(vsi->netdev, &pf->devlink_port);
+#endif /* HAVE_SET_NETDEV_DEVLINK_PORT */
 	err = register_netdev(vsi->netdev);
 	if (err)
 		goto err_register_netdev;
@@ -5808,19 +5958,12 @@ static int ice_register_netdev(struct ice_pf *pf)
 	netif_carrier_off(vsi->netdev);
 	netif_tx_stop_all_queues(vsi->netdev);
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
-	err = ice_devlink_create_pf_port(pf);
-	if (err)
-		goto err_devlink_create;
-
+#ifndef HAVE_SET_NETDEV_DEVLINK_PORT
 	devlink_port_type_eth_set(&pf->devlink_port, vsi->netdev);
+#endif /* !HAVE_SET_NETDEV_DEVLINK_PORT */
 #endif /* CONFIG_NET_DEVLINK */
 
 	return 0;
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-err_devlink_create:
-	unregister_netdev(vsi->netdev);
-	clear_bit(ICE_VSI_NETDEV_REGISTERED, vsi->state);
-#endif /* CONFIG_NET_DEVLINK */
 err_register_netdev:
 	free_netdev(vsi->netdev);
 	vsi->netdev = NULL;
@@ -5978,17 +6121,18 @@ ice_init_tx_topology(struct ice_hw *hw, const struct firmware *firmware)
 		 */
 		ice_deinit_hw(hw);
 		err = ice_init_hw(hw);
-		if (err) {
-			kfree(buf_copy);
-			return -EIO;
-		}
+
+		/* in this case we're not allowing safe mode */
+		kfree(buf_copy);
+
+		return err;
+
 	} else if (err == -EIO) {
 		dev_info(dev, "DDP package does not support transmit balancing feature - please update to the latest DDP package and try again\n");
 	}
 
 	kfree(buf_copy);
 
-	/* This feature is opt-in so we return 0 */
 	return 0;
 }
 
@@ -6050,12 +6194,6 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (err)
 		return err;
 
-	err = pci_request_mem_regions(pdev, dev_driver_string(dev));
-	if (err) {
-		dev_err(dev, "pci_request_mem_regions failed %d\n", err);
-		return err;
-	}
-
 	pf = ice_allocate_pf(dev);
 	if (!pf)
 		return -ENOMEM;
@@ -6078,16 +6216,9 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 
 	hw = &pf->hw;
 
-	/* Map only upto RDMA doorbell offset in the BAR.
-	 * This will all be UC.
-	 */
-	hw->hw_addr = (u8 __iomem *)ioremap(pci_resource_start(pdev, 0),
-				    ICE_BAR_RDMA_DOORBELL_OFFSET);
-	if (!hw->hw_addr) {
-		err = -EIO;
-		dev_err(dev, "ioremap failed\n");
+	err = ice_map_all_hw_addr(pf);
+	if (err)
 		goto err_init_iomap_fail;
-	}
 
 	pci_save_state(pdev);
 
@@ -6097,8 +6228,10 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	pci_read_config_byte(pdev, PCI_REVISION_ID, &hw->revision_id);
 	hw->subsystem_vendor_id = pdev->subsystem_vendor;
 	hw->subsystem_device_id = pdev->subsystem_device;
+	hw->bus.bus_num = pdev->bus->number;
 	hw->bus.device = PCI_SLOT(pdev->devfn);
 	hw->bus.func = PCI_FUNC(pdev->devfn);
+
 	ice_set_ctrlq_len(hw);
 
 	pf->msg_enable = netif_msg_init(debug, ICE_DFLT_NETIF_M);
@@ -6116,7 +6249,7 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (ice_get_fw_mode(hw) == ICE_FW_MODE_REC) {
 		err = ice_probe_recovery_mode(pf);
 		if (err)
-			goto err_rec_mode;
+			goto err_init_hw_addr_unroll;
 
 		return 0;
 	}
@@ -6126,14 +6259,14 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (ice_pf_fwlog_init(pf, &user_input)) {
 		ice_dev_err_errno(dev, err, "failed to initialize FW logging");
 		err = -EIO;
-		goto err_exit_unroll;
+		goto err_init_hw_addr_unroll;
 	}
 
 	err = ice_init_hw(hw);
 	if (err) {
 		dev_err(dev, "ice_init_hw failed: %d\n", err);
 		err = -EIO;
-		goto err_exit_unroll;
+		goto err_init_hw_addr_unroll;
 	}
 
 	ice_init_feature_support(pf);
@@ -6207,12 +6340,20 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 		goto err_init_pf_unroll;
 	}
 
+	pf->vsi_stats = devm_kcalloc(dev, pf->num_alloc_vsi,
+				     sizeof(*pf->vsi_stats), GFP_KERNEL);
+
+	if (!pf->vsi_stats) {
+		err = -ENOMEM;
+		goto err_init_vsi_unroll;
+	}
+
 	err = ice_init_interrupt_scheme(pf);
 	if (err) {
 		ice_dev_err_errno(dev, err,
 				  "ice_init_interrupt_scheme failed");
 		err = -EIO;
-		goto err_init_vsi_unroll;
+		goto err_init_vsi_stats_unroll;
 	}
 
 	/* In case of MSIX we are going to setup the misc vector right here
@@ -6329,9 +6470,11 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_init(pf);
 
+#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_init(pf);
 
+#endif /* GNSS_SUPPORT */
 	/* Note: Flow director init failure is non-fatal to load */
 	if (ice_init_fdir(pf))
 		dev_err(dev, "could not initialize flow director\n");
@@ -6365,6 +6508,12 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	pcie_print_link_status(pf->pdev);
 
 probe_done:
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	err = ice_devlink_create_pf_port(pf);
+	if (err)
+		goto err_create_pf_port;
+
+#endif /* CONFIG_NET_DEVLINK */
 	err = ice_register_netdev(pf);
 	if (err)
 		goto err_netdev_reg;
@@ -6377,16 +6526,14 @@ probe_done:
 
 	/* ready to go, so clear down state bit */
 	clear_bit(ICE_DOWN, pf->state);
+	pf->cdev_infos = devm_kcalloc(dev, IIDC_MAX_NUM_AUX,
+				      sizeof(*pf->cdev_infos), GFP_KERNEL);
+	if (!pf->cdev_infos) {
+		err = -ENOMEM;
+		goto err_init_aux_unroll;
+	}
 	/* init peers only if supported */
 	if (ice_is_aux_ena(pf)) {
-		pf->cdev_infos = devm_kcalloc(dev, IIDC_MAX_NUM_AUX,
-					      sizeof(*pf->cdev_infos),
-					      GFP_KERNEL);
-		if (!pf->cdev_infos) {
-			err = -ENOMEM;
-			goto err_devlink_reg_param;
-		}
-
 		err = ice_init_aux_devices(pf);
 		if (err) {
 			dev_err(dev, "Failed to initialize aux devs: %d\n",
@@ -6412,9 +6559,14 @@ err_init_aux_unroll:
 		ice_for_each_aux(pf, NULL, ice_unroll_cdev_info);
 		pf->cdev_infos = NULL;
 	}
-err_devlink_reg_param:
+	devm_kfree(dev, pf->cdev_infos);
+	pf->cdev_infos = NULL;
 	ice_devlink_unregister_params(pf);
 err_netdev_reg:
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	ice_devlink_destroy_pf_port(pf);
+err_create_pf_port:
+#endif /* CONFIG_NET_DEVLINK */
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_release(pf);
 err_send_version_unroll:
@@ -6428,27 +6580,27 @@ err_msix_misc_unroll:
 	ice_free_irq_msix_misc(pf);
 err_init_interrupt_unroll:
 	ice_clear_interrupt_scheme(pf);
+err_init_vsi_stats_unroll:
+	devm_kfree(dev, pf->vsi_stats);
+	pf->vsi_stats = NULL;
 err_init_vsi_unroll:
 	devm_kfree(dev, pf->vsi);
 	pf->vsi = NULL;
 err_init_pf_unroll:
 	ice_deinit_pf(pf);
-	iounmap(hw->hw_addr);
-err_init_iomap_fail:
 #ifdef HAVE_DEVLINK_HEALTH
 	ice_devlink_destroy_mdd_reporter(pf);
 #endif /* HAVE_DEVLINK_HEALTH */
 	ice_devlink_destroy_regions(pf);
 	ice_deinit_hw(hw);
-	hw->hw_addr = NULL;
-err_exit_unroll:
 	ice_debugfs_pf_exit(pf);
-err_rec_mode:
+err_init_hw_addr_unroll:
+	ice_unmap_all_hw_addr(pf);
+err_init_iomap_fail:
 #ifndef HAVE_DEVLINK_NOTIFY_REGISTER
 	ice_devlink_unregister(pf);
 #endif /* !HAVE_DEVLINK_NOTIFY_REGISTER */
 	pci_disable_pcie_error_reporting(pdev);
-	pci_release_mem_regions(pdev);
 	pci_disable_device(pdev);
 	return err;
 }
@@ -6529,6 +6681,7 @@ static void ice_remove(struct pci_dev *pdev)
 		return;
 
 	hw = &pf->hw;
+	set_bit(ICE_SHUTTING_DOWN, pf->state);
 	/* ICE_PREPPED_RECOVERY_MODE is set when the up and running
 	 * driver transitions to recovery mode. If this is not set
 	 * it means that the driver went into recovery mode on load.
@@ -6573,10 +6726,12 @@ static void ice_remove(struct pci_dev *pdev)
 		wr32(hw, GL_MBX_PASID, val);
 		clear_bit(ICE_FLAG_SIOV_ENA, pf->flags);
 	}
-	ice_unplug_aux_devs(pf);
-	ice_for_each_aux(pf, NULL, ice_unroll_cdev_info);
+	if (ice_is_aux_ena(pf)) {
+		ice_unplug_aux_devs(pf);
+		ice_for_each_aux(pf, NULL, ice_unroll_cdev_info);
+	}
 	devm_kfree(dev, pf->cdev_infos);
-
+	pf->cdev_infos = NULL;
 	ice_service_task_stop(pf);
 
 	ice_aq_cancel_waiting_tasks(pf);
@@ -6591,12 +6746,17 @@ static void ice_remove(struct pci_dev *pdev)
 #endif /* HAVE_NETDEV_UPPER_INFO */
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_release(pf);
+#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_exit(pf);
+#endif /* GNSS_SUPPORT */
 	if (!ice_is_safe_mode(pf))
 		ice_remove_arfs(pf);
 	ice_setup_mc_magic_wake(pf);
 	ice_vsi_release_all(pf);
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	ice_devlink_destroy_pf_port(pf);
+#endif /* CONFIG_NET_DEVLINK */
 	ice_set_wake(pf);
 	ice_free_irq_msix_misc(pf);
 	ice_for_each_vsi(pf, i) {
@@ -6605,6 +6765,8 @@ static void ice_remove(struct pci_dev *pdev)
 		ice_vsi_free_q_vectors(pf->vsi[i]);
 	}
 
+	devm_kfree(&pdev->dev, pf->vsi_stats);
+	pf->vsi_stats = NULL;
 	ice_deinit_pf(pf);
 #ifdef HAVE_DEVLINK_HEALTH
 	ice_devlink_destroy_mdd_reporter(pf);
@@ -6622,11 +6784,11 @@ static void ice_remove(struct pci_dev *pdev)
 	 * and the service task is already stopped.
 	 */
 	ice_reset(hw, ICE_RESET_PFR);
-	iounmap(hw->hw_addr);
+
 	pci_wait_for_pending_transaction(pdev);
+	ice_unmap_all_hw_addr(pf);
 	ice_clear_interrupt_scheme(pf);
 	pci_disable_pcie_error_reporting(pdev);
-	pci_release_mem_regions(pdev);
 	pci_disable_device(pdev);
 }
 
@@ -7592,7 +7754,7 @@ set_sb_channel_err:
  */
 static void ice_fwd_del_macvlan(struct net_device *netdev, void *accel_priv)
 {
-	struct ice_macvlan *mv = (struct ice_macvlan *)accel_priv;
+	struct ice_macvlan *mv = accel_priv;
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *parent_vsi = np->vsi;
 	struct ice_pf *pf = parent_vsi->back;
@@ -8375,7 +8537,7 @@ int ice_up(struct ice_vsi *vsi)
 
 /**
  * ice_fetch_u64_stats_per_ring - get packets and bytes stats per ring
- * @ring: Tx or Rx ring to read stats from
+ * @ring_stat: Tx or Rx stats to read from
  * @pkts: packets stats counter
  * @bytes: bytes stats counter
  *
@@ -8383,19 +8545,20 @@ int ice_up(struct ice_vsi *vsi)
  * that needs to be performed to read u64 values in 32 bit machine.
  */
 void
-ice_fetch_u64_stats_per_ring(struct ice_ring *ring, u64 *pkts, u64 *bytes)
+ice_fetch_u64_stats_per_ring(struct ice_ring_stats *ring_stat, u64 *pkts,
+			     u64 *bytes)
 {
 	unsigned int start;
 	*pkts = 0;
 	*bytes = 0;
 
-	if (!ring)
+	if (!ring_stat)
 		return;
 	do {
-		start = u64_stats_fetch_begin_irq(&ring->syncp);
-		*pkts = ring->stats.pkts;
-		*bytes = ring->stats.bytes;
-	} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
+		start = u64_stats_fetch_begin_irq(&ring_stat->syncp);
+		*pkts = ring_stat->stats.pkts;
+		*bytes = ring_stat->stats.bytes;
+	} while (u64_stats_fetch_retry_irq(&ring_stat->syncp, start));
 }
 
 /**
@@ -8418,13 +8581,13 @@ ice_update_vsi_tx_ring_stats(struct ice_vsi *vsi,
 		u64 pkts, bytes;
 
 		ring = READ_ONCE(rings[i]);
-		ice_fetch_u64_stats_per_ring(ring, &pkts, &bytes);
+		ice_fetch_u64_stats_per_ring(ring->ring_stats, &pkts,
+					     &bytes);
 		vsi_stats->tx_packets += pkts;
 		vsi_stats->tx_bytes += bytes;
-
-		vsi->tx_restart += ring->tx_stats.restart_q;
-		vsi->tx_busy += ring->tx_stats.tx_busy;
-		vsi->tx_linearize += ring->tx_stats.tx_linearize;
+		vsi->tx_restart += ring->ring_stats->tx_stats.restart_q;
+		vsi->tx_busy += ring->ring_stats->tx_stats.tx_busy;
+		vsi->tx_linearize += ring->ring_stats->tx_stats.tx_linearize;
 	}
 }
 
@@ -8434,6 +8597,7 @@ ice_update_vsi_tx_ring_stats(struct ice_vsi *vsi,
  */
 static void ice_update_vsi_ring_stats(struct ice_vsi *vsi)
 {
+	struct rtnl_link_stats64 *net_stats, *stats_prev;
 	struct rtnl_link_stats64 *vsi_stats;
 	int i;
 
@@ -8460,15 +8624,17 @@ static void ice_update_vsi_ring_stats(struct ice_vsi *vsi)
 	/* update Rx rings counters */
 	ice_for_each_rxq(vsi, i) {
 		struct ice_ring *ring = READ_ONCE(vsi->rx_rings[i]);
+		struct ice_ring_stats *ring_stats;
 		u64 pkts, bytes;
 
-		ice_fetch_u64_stats_per_ring(ring, &pkts, &bytes);
+		ring_stats = ring->ring_stats;
+		ice_fetch_u64_stats_per_ring(ring_stats, &pkts, &bytes);
 		vsi_stats->rx_packets += pkts;
 		vsi_stats->rx_bytes += bytes;
-		vsi->rx_buf_failed += ring->rx_stats.alloc_buf_failed;
-		vsi->rx_page_failed += ring->rx_stats.alloc_page_failed;
+		vsi->rx_buf_failed += ring_stats->rx_stats.alloc_buf_failed;
+		vsi->rx_page_failed += ring_stats->rx_stats.alloc_page_failed;
 #ifdef ICE_ADD_PROBES
-		vsi->rx_page_reuse += ring->rx_stats.page_reuse;
+		vsi->rx_page_reuse += ring_stats->rx_stats.page_reuse;
 #endif /* ICE_ADD_PROBES */
 	}
 
@@ -8481,10 +8647,28 @@ static void ice_update_vsi_ring_stats(struct ice_vsi *vsi)
 #endif /* HAVE_XDP_SUPPORT */
 	rcu_read_unlock();
 
-	vsi->net_stats.tx_packets = vsi_stats->tx_packets;
-	vsi->net_stats.tx_bytes = vsi_stats->tx_bytes;
-	vsi->net_stats.rx_packets = vsi_stats->rx_packets;
-	vsi->net_stats.rx_bytes = vsi_stats->rx_bytes;
+	net_stats = &vsi->net_stats;
+	stats_prev = &vsi->net_stats_prev;
+
+	/* clear prev counters after reset */
+	if (vsi_stats->tx_packets < stats_prev->tx_packets ||
+	    vsi_stats->rx_packets < stats_prev->rx_packets) {
+		stats_prev->tx_packets = 0;
+		stats_prev->tx_bytes = 0;
+		stats_prev->rx_packets = 0;
+		stats_prev->rx_bytes = 0;
+	}
+
+	/* update netdev counters */
+	net_stats->tx_packets += vsi_stats->tx_packets - stats_prev->tx_packets;
+	net_stats->tx_bytes += vsi_stats->tx_bytes - stats_prev->tx_bytes;
+	net_stats->rx_packets += vsi_stats->rx_packets - stats_prev->rx_packets;
+	net_stats->rx_bytes += vsi_stats->rx_bytes - stats_prev->rx_bytes;
+
+	stats_prev->tx_packets = vsi_stats->tx_packets;
+	stats_prev->tx_bytes = vsi_stats->tx_bytes;
+	stats_prev->rx_packets = vsi_stats->rx_packets;
+	stats_prev->rx_bytes = vsi_stats->rx_bytes;
 
 	kfree(vsi_stats);
 }
@@ -8545,6 +8729,9 @@ void ice_update_pf_stats(struct ice_pf *pf)
 	port = hw->port_info->lport;
 	prev_ps = &pf->stats_prev;
 	cur_ps = &pf->stats;
+
+	if (ice_is_reset_in_progress(pf->state))
+		pf->stat_prev_loaded = false;
 
 	ice_stat_update40(hw, GLPRT_GORCL(port), pf->stat_prev_loaded,
 			  &prev_ps->eth.rx_bytes,
@@ -9221,7 +9408,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 
 	dev_dbg(dev, "rebuilding PF after reset_type=%d\n", reset_type);
 
-#define ICE_EMP_RESET_SLEEP 5000
+#define ICE_EMP_RESET_SLEEP_MS 5000
 	if (reset_type == ICE_RESET_EMPR) {
 		/* If an EMP reset has occurred, any previously pending flash
 		 * update will have completed. We no longer know whether or
@@ -9229,7 +9416,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 		 */
 		pf->fw_emp_reset_disabled = false;
 
-		msleep(ICE_EMP_RESET_SLEEP);
+		msleep(ICE_EMP_RESET_SLEEP_MS);
 	}
 
 	err = ice_init_all_ctrlq(hw);
@@ -9309,8 +9496,6 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (err)
 		goto err_sched_init_port;
 
-	ice_pf_reset_stats(pf);
-
 	/* start misc vector */
 	err = ice_req_irq_msix_misc(pf);
 	if (err) {
@@ -9343,8 +9528,11 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_reset(pf);
 
+#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_init(pf);
+
+#endif /* GNSS_SUPPORT */
 
 	/* rebuild PF VSI */
 	err = ice_vsi_rebuild_by_type(pf, ICE_VSI_PF);
@@ -11393,9 +11581,7 @@ ice_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 	struct tc_cls_flower_offload *cls_flower = tc->cls_flower;
 	unsigned int type = tc->type;
 #elif !defined(HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO)
-	struct tc_cls_flower_offload *cls_flower = (struct
-						   tc_cls_flower_offload *)
-						   type_data;
+	struct tc_cls_flower_offload *cls_flower = type_data;
 #endif /* HAVE_NDO_SETUP_TC_REMOVE_TC_TO_NETDEV */
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO

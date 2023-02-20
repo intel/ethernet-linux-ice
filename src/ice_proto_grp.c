@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -57,8 +57,8 @@ static void _proto_off_parse(struct ice_proto_off *po, u32 data)
 static void _proto_grp_parse_item(struct ice_hw *hw, u16 idx, void *item,
 				  void *data, int size)
 {
-	struct ice_proto_grp_item *grp = (struct ice_proto_grp_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_proto_grp_item *grp = item;
+	u8 *buf = data;
 	u32 d32;
 
 	grp->idx = idx;

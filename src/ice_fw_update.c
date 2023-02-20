@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include <asm/unaligned.h>
 #include <linux/uuid.h>
@@ -324,7 +324,7 @@ int ice_write_one_nvm_block(struct ice_pf *pf, u16 module, u32 offset,
 	 * is conservative and is intended to prevent failure to update when
 	 * firmware is slow to respond.
 	 */
-	err = ice_aq_wait_for_event(pf, ice_aqc_opc_nvm_write, 15*HZ, &event);
+	err = ice_aq_wait_for_event(pf, ice_aqc_opc_nvm_write, 15 * HZ, &event);
 	if (err) {
 		ice_dev_err_errno(dev, err,
 				  "Timed out while trying to flash module 0x%02x with block of size %u at offset %u",
@@ -599,13 +599,7 @@ ice_switch_flash_banks(struct ice_pf *pf, u8 activate_flags,
 		}
 	}
 
-	/* In most cases, we expect firmware to respond with a completion
-	 * within a few milliseconds. However, it has been observed in
-	 * practice that firmware may sometimes take longer. The wait time
-	 * here is conservative to reduce the risk of a failed update simply
-	 * because we did not wait long enough for firmware to respond.
-	 */
-	err = ice_aq_wait_for_event(pf, ice_aqc_opc_nvm_write_activate, 30*HZ,
+	err = ice_aq_wait_for_event(pf, ice_aqc_opc_nvm_write_activate, 30 * HZ,
 				    &event);
 	if (err) {
 		ice_dev_err_errno(dev, err,

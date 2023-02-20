@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_TC_LIB_H_
 #define _ICE_TC_LIB_H_
@@ -37,6 +37,9 @@
 #define ICE_TC_FLWR_FIELD_PPPOE_SESSID		BIT(23)
 #define ICE_TC_FLWR_FIELD_PPP_PROTO		BIT(24)
 #define ICE_TC_FLWR_FIELD_CVLAN			BIT(25)
+#ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+#define ICE_TC_FLWR_FIELD_L2TPV3_SESSID		BIT(26)
+#endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
 
 /* TC flower supported filter match */
 #define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC		ICE_TC_FLWR_FIELD_DST_MAC
@@ -92,6 +95,9 @@ struct ice_tc_vlan_hdr {
 #ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
 	u16 vlan_prio; /* Only last 3 bits valid (valid values: 0..7) */
 #endif
+#ifdef HAVE_TCF_VLAN_TPID
+	__be16 vlan_tpid;
+#endif /* HAVE_TCF_VLAN_TPID */
 };
 
 struct ice_tc_pppoe_hdr {
@@ -128,6 +134,12 @@ struct ice_tc_l3_hdr {
 	u8 ttl;
 };
 
+#ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+struct ice_tc_l2tpv3_hdr {
+	__be32 session_id;
+};
+#endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
+
 struct ice_tc_l4_hdr {
 	__be16 dst_port;
 	__be16 src_port;
@@ -140,6 +152,9 @@ struct ice_tc_flower_lyr_2_4_hdrs {
 	struct ice_tc_vlan_hdr vlan_hdr;
 	struct ice_tc_vlan_hdr cvlan_hdr;
 	struct ice_tc_pppoe_hdr pppoe_hdr;
+#ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+	struct ice_tc_l2tpv3_hdr l2tpv3_hdr;
+#endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
 	/* L3 (IPv4[6]) layer fields with their mask */
 	struct ice_tc_l3_hdr l3_key;
 	struct ice_tc_l3_hdr l3_mask;

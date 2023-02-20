@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -26,7 +26,7 @@ void ice_flg_rd_dump(struct ice_hw *hw, struct ice_flg_rd_item *item)
 static void _flg_rd_parse_item(struct ice_hw *hw, u16 idx, void *item,
 			       void *data, int size)
 {
-	struct ice_flg_rd_item *rdi = (struct ice_flg_rd_item *)item;
+	struct ice_flg_rd_item *rdi = item;
 	u8 d8 = *(u8 *)data;
 
 	rdi->idx = idx;

@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _KCOMPAT_STD_DEFS_H_
 #define _KCOMPAT_STD_DEFS_H_
@@ -32,6 +32,13 @@
 #endif
 
 /*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0))
+#else /* >= 3,10,0 */
+#define NEED_NETIF_NAPI_ADD_NO_WEIGHT
+#define NEED_ETHTOOL_SPRINTF
+#endif /* 3,10,0 */
+
+/*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0))
 #define NEED_DEVM_KASPRINTF
 #else /* >= 3,17,0 */
@@ -58,10 +65,17 @@
 #endif /* 4,3,0 */
 
 /*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0))
+#else /* >= 4,6,0 */
+#define HAVE_DEVLINK_PORT_SPLIT
+#endif /* 4,6,0 */
+
+/*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,8,0))
 #else /* >= 4,8,0 */
 #define HAVE_TCF_EXTS_TO_LIST
 #define HAVE_PCI_ALLOC_IRQ
+#define HAVE_NDO_UDP_TUNNEL_CALLBACK
 #endif /* 4,8,0 */
 
 /*****************************************************************************/
@@ -122,6 +136,7 @@
 #define NEED_MACVLAN_SUPPORTS_DEST_FILTER
 #else /* >= 4,18,0 */
 #define HAVE_DEVLINK_PORT_ATTRS_SET_PORT_FLAVOUR
+#define HAVE_DEVLINK_PORT_SPLIT_EXTACK
 #endif /* 4,18,0 */
 
 /*****************************************************************************/
@@ -149,6 +164,7 @@
 #define NEED_INDIRECT_CALL_WRAPPER_MACROS
 #else /* >= 5.0.0 */
 #define HAVE_GRETAP_TYPE
+#define HAVE_GENEVE_TYPE
 #define HAVE_INDIRECT_CALL_WRAPPER_HEADER
 #endif /* 5.0.0 */
 
@@ -211,6 +227,7 @@
 #else /* >= 5.7.0 */
 #define HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
 #define HAVE_DEVLINK_REGION_OPS_SNAPSHOT
+#define HAVE_PTP_FIND_PIN_UNLOCKED
 #endif /* 5.7.0 */
 
 /*****************************************************************************/
@@ -259,6 +276,8 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,12,0))
 #define NEED_EXPORT_INDIRECT_CALLABLE
 #else /* >= 5.12.0 */
+#undef HAVE_NDO_UDP_TUNNEL_CALLBACK
+#define HAVE_DEVLINK_OPS_CREATE_DEL
 #endif /* 5.12.0 */
 
 /*****************************************************************************/
@@ -274,6 +293,7 @@
 #define HAVE_DEV_IN_MDEV_API
 #else /* >= 5.13.0 */
 #define HAVE_XPS_MAP_TYPE
+#undef NEED_ETHTOOL_SPRINTF
 #endif /* 5.13.0 */
 
 /*****************************************************************************/
@@ -293,6 +313,7 @@
 #define HAVE_DEVICE_IN_MDEV_PARENT_OPS
 #define HAVE_LMV1_SUPPORT
 #define NEED_PCI_IOV_VF_ID
+#define HAVE_DEVLINK_SET_STATE_3_PARAM
 #endif /* 5.15.0 */
 
 /*****************************************************************************/
@@ -303,6 +324,7 @@
 #define HAVE_DEVLINK_NOTIFY_REGISTER
 #undef HAVE_DEVLINK_RELOAD_ENABLE_DISABLE
 #undef HAVE_DEVLINK_PARAMS_PUBLISH
+#define HAVE_XSK_BATCHED_RX_ALLOC
 #endif /* 5.16.0 */
 
 /*****************************************************************************/
@@ -320,12 +342,14 @@
 #undef NEED_PCI_IOV_VF_ID
 #define HAVE_GTP_SUPPORT
 #undef HAVE_XSK_TX_PEEK_RELEASE_DESC_BATCH_3_PARAMS
+#define HAVE_DEVLINK_PORT_SPLIT_PORT_STRUCT
 #endif /* 5.18.0 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,19,0))
 #else /* >=5.19.0 */
 #define HAVE_NDO_FDB_DEL_EXTACK
+#define HAVE_NETIF_SET_TSO_MAX
 #endif /* 5.19.0 */
 
 /*****************************************************************************/
@@ -338,6 +362,14 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6,1,0))
 #else /* >=6.1.0 */
 #define HAVE_FLOW_DISSECTOR_KEY_L2TPV3
+#undef NEED_NETIF_NAPI_ADD_NO_WEIGHT
+#define HAVE_TTY_TERMIOS_CONST_STRUCT
 #endif /* 6.1.0 */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
+#else /* >=6.2.0 */
+#define HAVE_SET_NETDEV_DEVLINK_PORT
+#undef HAVE_NDO_GET_DEVLINK_PORT
+#endif /* 6.2.0 */
 
 #endif /* _KCOMPAT_STD_DEFS_H_ */

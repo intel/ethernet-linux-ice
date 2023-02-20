@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_vf_lib_private.h"
@@ -835,8 +835,7 @@ static void ice_sriov_post_vsi_rebuild(struct ice_vf *vf)
 	wr32(&vf->pf->hw, VFGEN_RSTAT(vf->vf_id), VIRTCHNL_VFR_VFACTIVE);
 }
 
-static struct ice_q_vector *ice_sriov_get_q_vector(struct ice_vf *vf,
-						   struct ice_vsi *vsi,
+static struct ice_q_vector *ice_sriov_get_q_vector(struct ice_vsi *vsi,
 						   u16 vector_id)
 {
 	if (!vsi || !vsi->q_vectors)
@@ -993,7 +992,6 @@ static const struct ice_vf_ops ice_sriov_vf_ops = {
  */
 static int ice_create_vf_entries(struct ice_pf *pf, u16 num_vfs)
 {
-	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_vfs *vfs = &pf->vfs;
 	struct ice_vf *vf;
 	u16 vf_id;
@@ -1015,11 +1013,7 @@ static int ice_create_vf_entries(struct ice_pf *pf, u16 num_vfs)
 		/* set sriov vf ops for VFs created during SRIOV flow */
 		vf->vf_ops = &ice_sriov_vf_ops;
 
-		err = ice_initialize_vf_entry(vf);
-		if (err) {
-			dev_err(dev, "Failed to initialize the VF entry for SRIOV VF\n");
-			goto err_free_entries;
-		}
+		ice_initialize_vf_entry(vf);
 
 		vf->vf_sw_id = pf->first_sw;
 
@@ -1195,10 +1189,6 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 		if (!pci_vfs_assigned(pdev)) {
 			ice_free_vfs(pf);
 			ice_mbx_deinit_snapshot(&pf->hw);
-#ifdef HAVE_NETDEV_UPPER_INFO
-			if (pf->lag)
-				ice_enable_lag(pf->lag);
-#endif /* HAVE_NETDEV_UPPER_INFO */
 			return 0;
 		}
 
@@ -1216,10 +1206,6 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 		return err;
 	}
 
-#ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag)
-		ice_disable_lag(pf->lag);
-#endif /* HAVE_NETDEV_UPPER_INFO */
 	return num_vfs;
 }
 
@@ -1750,15 +1736,6 @@ int ice_set_vf_bw(struct net_device *netdev, int vf_id, int max_tx_rate)
 	}
 
 #ifdef HAVE_NDO_SET_VF_MIN_MAX_TX_RATE
-	/* when max_tx_rate is zero that means no max Tx rate limiting, so only
-	 * check if max_tx_rate is non-zero
-	 */
-	if (max_tx_rate && min_tx_rate > max_tx_rate) {
-		dev_err(dev, "Cannot set min Tx rate %d Mbps greater than max Tx rate %d Mbps\n",
-			min_tx_rate, max_tx_rate);
-		ret = -EINVAL;
-		goto out_put_vf;
-	}
 
 #ifdef NETIF_F_HW_TC
 	if (min_tx_rate && ice_is_adq_active(pf)) {
@@ -2133,6 +2110,67 @@ out_put_vf:
 	return malvf;
 }
 
+static void ice_dump_vf_vsi_qctx(struct ice_vsi *vsi)
+{
+	struct ice_pf *pf = vsi->vf->pf;
+	struct device *dev;
+	struct ice_hw *hw;
+	int i;
+
+	dev = ice_pf_to_dev(pf);
+	hw = &pf->hw;
+
+	ice_for_each_rxq(vsi, i) {
+		struct ice_ring *rx_ring = vsi->rx_rings[i];
+		struct ice_rlan_ctx rlan_ctx = {0};
+		int status;
+		u16 pf_q;
+		u32 reg;
+
+		pf_q = rx_ring->reg_idx;
+		status = ice_read_rxq_ctx(hw, &rlan_ctx, pf_q);
+		if (status) {
+			dev_err(dev, "Failed to read RXQ[%d] context, err=%d\n",
+				rx_ring->q_index, status);
+			continue;
+		}
+
+		reg = rd32(hw, QRX_TAIL(pf_q));
+		reg = FIELD_GET(QRX_TAIL_TAIL_M, reg);
+
+		dev_info(dev, "\tRXQ[%d]:\n", rx_ring->q_index);
+		dev_info(dev, "\t\trx head = 0x%04x\n", rlan_ctx.head);
+		dev_info(dev, "\t\trx tail = 0x%04x\n", reg);
+		dev_info(dev, "\t\trx base = 0x%016llx\n",
+			 rlan_ctx.base << ICE_RLAN_BASE_S);
+		dev_info(dev, "\t\trx qlen = 0x%04x\n", rlan_ctx.qlen);
+	}
+
+	ice_for_each_txq(vsi, i) {
+		struct ice_ring *tx_ring = vsi->tx_rings[i];
+		struct ice_tlan_ctx tlan_ctx = {0};
+		int status;
+		u16 pf_q;
+		u32 reg;
+
+		pf_q = tx_ring->reg_idx;
+		status = ice_read_txq_ctx(hw, &tlan_ctx, pf_q);
+		if (status) {
+			dev_err(dev, "Failed to read TXQ[%d] context, err=%d\n",
+				tx_ring->q_index, status);
+			continue;
+		}
+		reg = rd32(hw, QTX_COMM_HEAD(pf_q));
+		reg = FIELD_GET(QTX_COMM_HEAD_HEAD_M, reg);
+		dev_info(dev, "\tTXQ[%d]:\n", tx_ring->q_index);
+		dev_info(dev, "\t\ttx head = 0x%04x\n", reg);
+		dev_info(dev, "\t\ttx tail = 0x%04x\n", tlan_ctx.tail);
+		dev_info(dev, "\t\ttx base = 0x%016llx\n",
+			 tlan_ctx.base << ICE_TLAN_CTX_BASE_S);
+		dev_info(dev, "\t\ttx qlen = 0x%04x\n", tlan_ctx.qlen);
+	}
+}
+
 static void ice_dump_vf(struct ice_vf *vf)
 {
 	struct ice_vsi *vsi;
@@ -2168,6 +2206,7 @@ static void ice_dump_vf(struct ice_vf *vf)
 		 vsi, vsi->idx, vsi->vsi_num);
 	dev_info(dev, "\tlan_vsi_idx = %d\n", vf->lan_vsi_idx);
 	dev_info(dev, "\tlan_vsi_num = %d\n", vf->lan_vsi_num);
+	ice_dump_vf_vsi_qctx(vsi);
 	dev_info(dev, "\tnum_mac = %d\n", vf->num_mac);
 	dev_info(dev, "\tdev_lan_addr = %pM\n", &vf->dev_lan_addr.addr[0]);
 	dev_info(dev, "\thw_lan_addr = %pM\n", &vf->hw_lan_addr.addr[0]);

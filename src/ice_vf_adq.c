@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -1008,7 +1008,7 @@ int ice_vc_del_switch_filter(struct ice_vf *vf, u8 *msg)
 	v_ret = VIRTCHNL_STATUS_SUCCESS;
 err:
 	/* send the response back to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_CLOUD_FILTER, v_ret,
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DEL_CLOUD_FILTER, v_ret,
 				     NULL, 0);
 }
 
@@ -1098,7 +1098,7 @@ int ice_vc_add_switch_filter(struct ice_vf *vf, u8 *msg)
 
 err:
 	/* send the response back to the VF */
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_CLOUD_FILTER, v_ret,
+	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_CLOUD_FILTER, v_ret,
 				     NULL, 0);
 }
 
@@ -1322,10 +1322,10 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 	/* send the response to the VF */
 err:
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2)
-		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
+		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
 					     v_ret, (u8 *)tci, sizeof(*tci));
 	else
-		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
+		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
 					     v_ret, NULL, 0);
 }
 
@@ -1439,11 +1439,11 @@ int ice_vc_del_qch_msg(struct ice_vf *vf, u8 *msg)
 	/* send the response to the VF */
 err:
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2)
-		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
+		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
 					     v_ret, msg,
 					     sizeof(struct virtchnl_tc_info));
 	else
-		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
+		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
 					     v_ret, NULL, 0);
 }
 

@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_base.h"
 #include "ice_lib.h"
@@ -115,6 +115,8 @@ static int ice_vsi_alloc_q_vector(struct ice_vsi *vsi, u16 v_idx)
 	q_vector->rx.itr_setting = ICE_DFLT_RX_ITR;
 	q_vector->tx.itr_mode = ITR_DYNAMIC;
 	q_vector->rx.itr_mode = ITR_DYNAMIC;
+	q_vector->tx.type = ICE_TX_CONTAINER;
+	q_vector->rx.type = ICE_RX_CONTAINER;
 
 	if (vsi->type == ICE_VSI_VF)
 		goto out;
@@ -127,8 +129,7 @@ static int ice_vsi_alloc_q_vector(struct ice_vsi *vsi, u16 v_idx)
 	 * handler here (i.e. resume, reset/rebuild, etc.)
 	 */
 	if (vsi->netdev)
-		netif_napi_add(vsi->netdev, &q_vector->napi, ice_napi_poll,
-			       NAPI_POLL_WEIGHT);
+		netif_napi_add(vsi->netdev, &q_vector->napi, ice_napi_poll);
 
 out:
 	/* tie q_vector and VSI together */
@@ -280,6 +281,50 @@ static void ice_cfg_xps_tx_ring(struct ice_ring *ring)
 }
 
 /**
+ * ice_set_txq_ctx_vmvf - set queue context VM/VF type and number by VSI type
+ * @ring: The Tx ring to configure
+ * @vmvf_type: VM/VF type
+ * @vmvf_num: VM/VF number
+ */
+static int
+ice_set_txq_ctx_vmvf(struct ice_ring *ring, u8 *vmvf_type, u16 *vmvf_num)
+{
+	struct ice_vsi *vsi = ring->vsi;
+	struct ice_hw *hw;
+
+	hw = &vsi->back->hw;
+
+	switch (vsi->type) {
+	case ICE_VSI_LB:
+	case ICE_VSI_CTRL:
+	case ICE_VSI_PF:
+		if (ring->ch)
+			*vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
+		else
+			*vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_PF;
+		break;
+	case ICE_VSI_VF:
+		/* Firmware expects vmvf_num to be absolute VF ID */
+		*vmvf_num = hw->func_caps.vf_base_id + vsi->vf->vf_id;
+		*vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VF;
+		break;
+	case ICE_VSI_ADI:
+	case ICE_VSI_OFFLOAD_MACVLAN:
+	case ICE_VSI_VMDQ2:
+	case ICE_VSI_SWITCHDEV_CTRL:
+		*vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
+		break;
+	default:
+		dev_info(ice_pf_to_dev(vsi->back),
+			 "Unable to set VMVF type for VSI type %d\n",
+			 vsi->type);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
  * ice_setup_tx_ctx - setup a struct ice_tlan_ctx instance
  * @ring: The Tx ring to configure
  * @tlan_ctx: Pointer to the Tx LAN queue context structure to be initialized
@@ -305,35 +350,9 @@ ice_setup_tx_ctx(struct ice_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 	/* PF number */
 	tlan_ctx->pf_num = hw->pf_id;
 
-	/* queue belongs to a specific VSI type
-	 * VF / VM index should be programmed per vmvf_type setting:
-	 * for vmvf_type = VF, it is VF number between 0-256
-	 * for vmvf_type = VM, it is VM number between 0-767
-	 * for PF or EMP this field should be set to zero
-	 */
-	switch (vsi->type) {
-	case ICE_VSI_LB:
-	case ICE_VSI_CTRL:
-	case ICE_VSI_PF:
-		if (ring->ch)
-			tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
-		else
-			tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_PF;
-		break;
-	case ICE_VSI_VF:
-		/* Firmware expects vmvf_num to be absolute VF ID */
-		tlan_ctx->vmvf_num = hw->func_caps.vf_base_id + vsi->vf->vf_id;
-		tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VF;
-		break;
-	case ICE_VSI_ADI:
-	case ICE_VSI_OFFLOAD_MACVLAN:
-	case ICE_VSI_VMDQ2:
-	case ICE_VSI_SWITCHDEV_CTRL:
-		tlan_ctx->vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
-		break;
-	default:
+	if (ice_set_txq_ctx_vmvf(ring, &tlan_ctx->vmvf_type,
+				 &tlan_ctx->vmvf_num))
 		return;
-	}
 
 	/* make sure the context is associated with the right VSI */
 	if (ring->ch)
@@ -389,7 +408,7 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 	 * Indicates the starting address of the descriptor queue defined in
 	 * 128 Byte units.
 	 */
-	rlan_ctx.base = ring->dma >> 7;
+	rlan_ctx.base = ring->dma >> ICE_RLAN_BASE_S;
 
 	rlan_ctx.qlen = ring->count;
 
@@ -495,7 +514,7 @@ static int ice_setup_rx_ctx(struct ice_ring *ring)
 		ice_set_ring_build_skb_ena(ring);
 
 	/* init queue specific tail register */
-	ring->tail = hw->hw_addr + QRX_TAIL(pf_q);
+	ring->tail = ice_get_hw_addr(hw, QRX_TAIL(pf_q));
 	writel(0, ring->tail);
 
 	return 0;
@@ -854,7 +873,7 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_ring *tx_ring,
 	/* init queue specific tail reg. It is referred as
 	 * transmit comm scheduler queue doorbell.
 	 */
-	tx_ring->tail = hw->hw_addr + QTX_COMM_DBELL(pf_q);
+	tx_ring->tail = ice_get_hw_addr(hw, QTX_COMM_DBELL(pf_q));
 	if (IS_ENABLED(CONFIG_DCB))
 		tc = tx_ring->dcb_tc;
 	else
@@ -1018,7 +1037,7 @@ ice_vsi_stop_tx_ring(struct ice_vsi *vsi, enum ice_disq_rst_src rst_src,
 	 * associated to the queue to schedule NAPI handler
 	 */
 	q_vector = ring->q_vector;
-	if (q_vector)
+	if (q_vector && !(vsi->vf && ice_is_vf_disabled(vsi->vf)))
 		ice_trigger_sw_intr(hw, q_vector);
 
 	status = ice_dis_vsi_txq(vsi->port_info, txq_meta->vsi_idx,

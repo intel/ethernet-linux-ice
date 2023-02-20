@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_SWITCH_H_
 #define _ICE_SWITCH_H_
@@ -227,6 +227,7 @@ struct ice_adv_rule_info {
 	u8 add_dir_lkup;
 	u16 fltr_rule_id;
 	u16 lg_id;
+	u16 vlan_type;
 	struct ice_adv_rule_flags_info flags_info;
 };
 
@@ -452,8 +453,7 @@ ice_aq_get_res_descs(struct ice_hw *hw, u16 num_entries,
 		     bool res_shared, u16 *desc_id, struct ice_sq_cd *cd);
 int
 ice_add_vlan(struct ice_hw *hw, struct list_head *m_list);
-int
-ice_remove_vlan(struct ice_hw *hw, struct list_head *v_list);
+int ice_remove_vlan(struct ice_hw *hw, struct list_head *v_list);
 void ice_rem_all_sw_rules_info(struct ice_hw *hw);
 int ice_add_mac(struct ice_hw *hw, struct list_head *m_lst);
 int ice_remove_mac(struct ice_hw *hw, struct list_head *m_lst);

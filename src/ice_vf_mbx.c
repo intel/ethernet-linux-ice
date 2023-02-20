@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_vf_mbx.h"
@@ -39,6 +39,24 @@ ice_aq_send_msg_to_vf(struct ice_hw *hw, u16 vfid, u32 v_opcode, u32 v_retval,
 	return ice_sq_send_cmd(hw, &hw->mailboxq, &desc, msg, msglen, cd);
 }
 
+static const u32 ice_legacy_aq_to_vc_speed[15] = {
+	VIRTCHNL_LINK_SPEED_100MB,	/* BIT(0) */
+	VIRTCHNL_LINK_SPEED_100MB,
+	VIRTCHNL_LINK_SPEED_1GB,
+	VIRTCHNL_LINK_SPEED_1GB,
+	VIRTCHNL_LINK_SPEED_1GB,
+	VIRTCHNL_LINK_SPEED_10GB,
+	VIRTCHNL_LINK_SPEED_20GB,
+	VIRTCHNL_LINK_SPEED_25GB,
+	VIRTCHNL_LINK_SPEED_40GB,
+	VIRTCHNL_LINK_SPEED_40GB,
+	VIRTCHNL_LINK_SPEED_40GB,
+	VIRTCHNL_LINK_SPEED_UNKNOWN,
+	VIRTCHNL_LINK_SPEED_UNKNOWN,
+	VIRTCHNL_LINK_SPEED_UNKNOWN,
+	VIRTCHNL_LINK_SPEED_UNKNOWN	/* BIT(14) */
+};
+
 /**
  * ice_conv_link_speed_to_virtchnl
  * @adv_link_support: determines the format of the returned link speed
@@ -55,79 +73,17 @@ u32 ice_conv_link_speed_to_virtchnl(bool adv_link_support, u16 link_speed)
 {
 	u32 speed;
 
-	if (adv_link_support)
-		switch (link_speed) {
-		case ICE_AQ_LINK_SPEED_10MB:
-			speed = SPEED_10;
-			break;
-		case ICE_AQ_LINK_SPEED_100MB:
-			speed = SPEED_100;
-			break;
-		case ICE_AQ_LINK_SPEED_1000MB:
-			speed = SPEED_1000;
-			break;
-		case ICE_AQ_LINK_SPEED_2500MB:
-			speed = SPEED_2500;
-			break;
-		case ICE_AQ_LINK_SPEED_5GB:
-			speed = SPEED_5000;
-			break;
-		case ICE_AQ_LINK_SPEED_10GB:
-			speed = SPEED_10000;
-			break;
-		case ICE_AQ_LINK_SPEED_20GB:
-			speed = SPEED_20000;
-			break;
-		case ICE_AQ_LINK_SPEED_25GB:
-			speed = SPEED_25000;
-			break;
-		case ICE_AQ_LINK_SPEED_40GB:
-			speed = SPEED_40000;
-			break;
-		case ICE_AQ_LINK_SPEED_50GB:
-			speed = SPEED_50000;
-			break;
-		case ICE_AQ_LINK_SPEED_100GB:
-			speed = SPEED_100000;
-			break;
-		default:
-			speed = 0;
-			break;
-		}
-	else
+	if (adv_link_support) {
+		/* convert a BIT() value into an array index */
+		speed = ice_get_link_speed(fls(link_speed) - 1);
+	} else {
 		/* Virtchnl speeds are not defined for every speed supported in
 		 * the hardware. To maintain compatibility with older AVF
 		 * drivers, while reporting the speed the new speed values are
 		 * resolved to the closest known virtchnl speeds
 		 */
-		switch (link_speed) {
-		case ICE_AQ_LINK_SPEED_10MB:
-		case ICE_AQ_LINK_SPEED_100MB:
-			speed = (u32)VIRTCHNL_LINK_SPEED_100MB;
-			break;
-		case ICE_AQ_LINK_SPEED_1000MB:
-		case ICE_AQ_LINK_SPEED_2500MB:
-		case ICE_AQ_LINK_SPEED_5GB:
-			speed = (u32)VIRTCHNL_LINK_SPEED_1GB;
-			break;
-		case ICE_AQ_LINK_SPEED_10GB:
-			speed = (u32)VIRTCHNL_LINK_SPEED_10GB;
-			break;
-		case ICE_AQ_LINK_SPEED_20GB:
-			speed = (u32)VIRTCHNL_LINK_SPEED_20GB;
-			break;
-		case ICE_AQ_LINK_SPEED_25GB:
-			speed = (u32)VIRTCHNL_LINK_SPEED_25GB;
-			break;
-		case ICE_AQ_LINK_SPEED_40GB:
-		case ICE_AQ_LINK_SPEED_50GB:
-		case ICE_AQ_LINK_SPEED_100GB:
-			speed = (u32)VIRTCHNL_LINK_SPEED_40GB;
-			break;
-		default:
-			speed = (u32)VIRTCHNL_LINK_SPEED_UNKNOWN;
-			break;
-		}
+		speed = ice_legacy_aq_to_vc_speed[fls(link_speed) - 1];
+	}
 
 	return speed;
 }

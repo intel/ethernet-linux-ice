@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_TXRX_H_
 #define _ICE_TXRX_H_
@@ -248,6 +248,19 @@ struct ice_rxq_stats {
 #endif /* ICE_ADD_PROBES */
 };
 
+struct ice_ring_stats {
+	struct rcu_head rcu;	/* to avoid race on free */
+	struct ice_q_stats stats;
+	struct u64_stats_sync syncp;
+	union {
+		struct ice_txq_stats tx_stats;
+		struct ice_rxq_stats rx_stats;
+	};
+#ifdef ADQ_PERF_COUNTERS
+	struct ice_ch_q_stats ch_q_stats;
+#endif /* ADQ_PERF_COUNTERS */
+};
+
 enum ice_ring_state_t {
 	ICE_TX_XPS_INIT_DONE,
 	ICE_TX_NBITS,
@@ -334,7 +347,7 @@ struct ice_ring {
 	struct net_device *netdev;	/* netdev ring maps to */
 	struct ice_vsi *vsi;		/* Backreference to associated VSI */
 	struct ice_q_vector *q_vector;	/* Backreference to associated vector */
-	u8 __iomem *tail;
+	void __iomem *tail;
 	union {
 		struct ice_tx_buf *tx_buf;
 		struct ice_rx_buf *rx_buf;
@@ -368,13 +381,7 @@ struct ice_ring {
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 #endif /* HAVE_XDP_SUPPORT */
 
-	/* stats structs */
-	struct ice_q_stats	stats;
-	struct u64_stats_sync syncp;
-	union {
-		struct ice_txq_stats tx_stats;
-		struct ice_rxq_stats rx_stats;
-	};
+	struct ice_ring_stats *ring_stats;
 
 	/* --- cacheline 2 boundary (128 bytes) was 8 bytes ago --- */
 	struct rcu_head rcu;		/* to avoid race on free */
@@ -417,9 +424,6 @@ struct ice_ring {
 	/* cacheline - the below items are only accessed infrequently and
 	 * should be in their own cache line if possible
 	 */
-#ifdef ADQ_PERF_COUNTERS
-	struct ice_ch_q_stats ch_q_stats;
-#endif /* ADQ_PERF_COUNTERS */
 } ____cacheline_internodealigned_in_smp;
 
 static inline bool ice_ring_uses_build_skb(struct ice_ring *ring)
@@ -449,6 +453,11 @@ static inline bool ice_ring_is_xdp(struct ice_ring *ring)
 }
 #endif /* HAVE_XDP_SUPPORT */
 
+enum ice_container_type {
+	ICE_RX_CONTAINER,
+	ICE_TX_CONTAINER,
+};
+
 struct ice_ring_container {
 	/* head of linked-list of rings */
 	struct ice_ring *ring;
@@ -465,6 +474,7 @@ struct ice_ring_container {
 		};
 		u16 itr_settings;
 	};
+	enum ice_container_type type;
 };
 
 struct ice_coalesce_stored {

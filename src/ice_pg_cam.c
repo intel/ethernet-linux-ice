@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -165,8 +165,8 @@ static void _pg_cam_key_init(struct ice_pg_cam_key *key, u8 *data)
 static void _pg_cam_parse_item(struct ice_hw *hw, u16 idx, void *item,
 			       void *data, int size)
 {
-	struct ice_pg_cam_item *ci = (struct ice_pg_cam_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_pg_cam_item *ci = item;
+	u8 *buf = data;
 	u64 d64;
 
 	ci->idx = idx;
@@ -186,8 +186,8 @@ static void _pg_cam_parse_item(struct ice_hw *hw, u16 idx, void *item,
 static void _pg_sp_cam_parse_item(struct ice_hw *hw, u16 idx, void *item,
 				  void *data, int size)
 {
-	struct ice_pg_cam_item *ci = (struct ice_pg_cam_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_pg_cam_item *ci = item;
+	u8 *buf = data;
 	u64 d64;
 
 	ci->idx = idx;
@@ -207,8 +207,8 @@ static void _pg_sp_cam_parse_item(struct ice_hw *hw, u16 idx, void *item,
 static void _pg_nm_cam_parse_item(struct ice_hw *hw, u16 idx, void *item,
 				  void *data, int size)
 {
-	struct ice_pg_nm_cam_item *ci = (struct ice_pg_nm_cam_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_pg_nm_cam_item *ci = item;
+	u8 *buf = data;
 	u64 d64;
 
 	ci->idx = idx;
@@ -229,8 +229,8 @@ static void _pg_nm_cam_parse_item(struct ice_hw *hw, u16 idx, void *item,
 static void _pg_nm_sp_cam_parse_item(struct ice_hw *hw, u16 idx, void *item,
 				     void *data, int size)
 {
-	struct ice_pg_nm_cam_item *ci = (struct ice_pg_nm_cam_item *)item;
-	u8 *buf = (u8 *)data;
+	struct ice_pg_nm_cam_item *ci = item;
+	u8 *buf = data;
 	u64 d64;
 
 	ci->idx = idx;

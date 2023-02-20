@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_FLEX_PIPE_H_
 #define _ICE_FLEX_PIPE_H_
@@ -45,6 +45,8 @@ void ice_ptg_free(struct ice_hw *hw, enum ice_block blk, u8 ptg);
 
 /* XLT2/VSI group functions */
 int ice_vsig_update_xlt2(struct ice_hw *hw, enum ice_block blk);
+int
+ice_vsig_find_vsi(struct ice_hw *hw, enum ice_block blk, u16 vsi, u16 *vsig);
 int
 ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id,
 	     unsigned long *ptypes, const struct ice_ptype_attributes *attr,

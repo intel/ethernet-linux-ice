@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_SBQ_CMD_H_
 #define _ICE_SBQ_CMD_H_
@@ -47,6 +47,8 @@ struct ice_sbq_evt_desc {
 };
 
 enum ice_sbq_msg_dev {
+	eth56g_dev_0 = 2,
+	eth56g_dev_1 = 13,
 	rmn_0	= 0x02,
 	rmn_1	= 0x03,
 	rmn_2	= 0x04,

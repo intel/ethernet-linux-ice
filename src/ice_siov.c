@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -143,7 +143,7 @@ static int ice_vsi_configure_pasid(struct ice_vf *vf, u32 pasid, bool ena)
 		dev_err(dev, "Failed to update pasid id in VSI context, err %d aq_err %s\n",
 			status, ice_aq_str(hw->adminq.sq_last_status));
 	} else {
-		vsi->info.pasid_id = pasid;
+		vsi->info.pasid_id = cpu_to_le32(pasid);
 		priv->pasid = pasid;
 	}
 
@@ -574,8 +574,7 @@ static void ice_siov_clear_reset_trigger(struct ice_vf *vf)
 	ice_flush(hw);
 }
 
-static struct ice_q_vector *ice_siov_get_q_vector(struct ice_vf *vf,
-						  struct ice_vsi *vsi,
+static struct ice_q_vector *ice_siov_get_q_vector(struct ice_vsi *vsi,
 						  u16 vector_id)
 {
 	if (!vsi || !vsi->q_vectors)
@@ -669,10 +668,7 @@ static struct ice_adi_priv *ice_create_adi(struct ice_pf *pf)
 
 	/* set S-IOV specific vf ops for VFs created during S-IOV flow */
 	vf->vf_ops = &ice_siov_vf_ops;
-	if (ice_initialize_vf_entry(vf)) {
-		dev_err(dev, "Failed to initialize the VF entry for SIOV VF\n");
-		goto init_vf_err;
-	}
+	ice_initialize_vf_entry(vf);
 	INIT_WORK(&priv->update_hash_entry, ice_siov_update_hash_entry);
 
 	vf->vf_sw_id = pf->first_sw;

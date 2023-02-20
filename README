@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ===============================================================================
 
-September 9, 2022
+February 13, 2023
 
 ===============================================================================
 
@@ -24,9 +24,9 @@ This driver supports kernel versions 3.10.0 and newer. However, some features
 may require a newer kernel version. The associated Virtual Function (VF) driver
 for this driver is iavf. The associated RDMA driver for this driver is irdma.
 
-Driver information can be obtained using ethtool, lspci, and ip. Instructions
-on updating ethtool can be found in the section Additional Configurations later
-in this document.
+Driver information can be obtained using ethtool, devlink, lspci, and ip.
+Instructions on updating ethtool can be found in the section Additional
+Configurations later in this document.
 
 This driver is only supported as a loadable module at this time. Intel is not
 supplying patches against the kernel source to allow for static linking of the
@@ -97,13 +97,12 @@ from it.
 
 Important notes for SR-IOV, RDMA, and Link Aggregation
 ------------------------------------------------------
-Link aggregation (LAG) is mutually exclusive with SR-IOV and may not be
-compatible with RDMA.
+The VF driver will not block teaming/bonding/link aggregation, but this is not
+a supported feature. Do not expect failover or load balancing on the VF
+interface.
 
-- LAG and RDMA are compatible only in certain conditions. See the "RDMA (Remote
+LAG and RDMA are compatible only in certain conditions. See the "RDMA (Remote
 Direct Memory Access)" section later in this README for more information.
-- If LAG is active, SR-IOV VFs cannot be created on the PF.
-- If SR-IOV is active, you cannot set up LAG on the interface.
 
 Bridging and MACVLAN are also affected by this. If you wish to use bridging or
 MACVLAN with RDMA/SR-IOV, you must set up bridging or MACVLAN before enabling
@@ -171,6 +170,13 @@ To manually build the driver
    # make -j<nproc> CFLAGS_EXTRA='-DADQ_PERF_COUNTERS' install
 
    (This will also apply the above 'make install' command.)
+
+   NOTE: You may see warnings from depmod related to unknown RDMA symbols
+   during the make of the OOT base driver. These warnings are normal and
+   appear because the in-tree RDMA driver will not work with the OOT base
+   driver. To address the issue, you need to install the latest OOT versions
+   of the base and RDMA drivers.
+
 
 5. Load the module using the modprobe command.
 
@@ -1178,11 +1184,9 @@ The maximum number of VFs for the ice driver is 256 total (all ports). To check
 how many VFs each PF supports, use the following command:
 
 # cat /sys/class/net/<ethX>/device/sriov_totalvfs
-
-Note: You cannot use SR-IOV when link aggregation (LAG)/bonding is active, and
-vice versa. To enforce this, on kernels 4.5 and above, the driver checks for
-this mutual exclusion. On kernels older than 4.5, the driver cannot check for
-this exclusion and is unaware of bonding events.
+The VF driver will not block teaming/bonding/link aggregation, but this is not
+a supported feature. Do not expect failover or load balancing on the VF
+interface.
 
 
 Intel(R) Scalable I/O Virtualization Support
@@ -1194,15 +1198,14 @@ with different address domains using different abstractions. For example,
 application processes may access a device using system calls and VMs may access
 a device through virtual device interfaces.
 
-Intel Scalable IOV and SR-IOV (Single Root I/O Virtualization) are mutually
-exclusive. If both are enabled on your system, and all of the Intel Scalable
-IOV requirements are met, the PF driver will use Intel Scalable IOV. If the
-Intel Scalable IOV requirements are not met, the PF driver will use SR-IOV.
-
 For more information, please refer to the Intel Scalable I/O Virtualization
 Technical Specification
 <https://software.intel.com/sites/default/files/managed/cc/0e/intel-scalable-io-
 virtualization-technical-specification.pdf> (login required)
+
+The VF driver will not block teaming/bonding/link aggregation, but this is not
+a supported feature. Do not expect failover or load balancing on the VF
+interface.
 
 Intel Scalable IOV is not available in the kernel driver. Download and install
 the current ice driver to use this feature. Refer to the SUPPORT section for
@@ -1462,7 +1465,7 @@ The driver loads in legacy mode by default. You can configure eSwitch modes
 independently per physical port using the devlink command. You can change
 between eSwitch modes only if no VFs have been created. If SR-IOV is enabled
 and VFs are bound to the PF, you must do the following before changing between
-switchdev or legacy mode:
+switchdev and legacy mode:
 - Unload all VFs that were bound
 - Set the number of VFs on the PF to zero
 
@@ -1489,12 +1492,14 @@ To check the current eSwitch mode:
 
 The ice driver supports the following hardware offloads in switchdev mode:
 - Supported filter conditions:
-    L2: EtherType, src/dst MAC addresses, VLAN ID, VLAN priority, VLAN TPID
-    L3: src/dst IP addresses (IPv4 and IPv6), IP protocol
-    L4: src/dst port
-    VXLAN/GENEVE/GRETAP tunnel: VNI/GRE key, dst IP addresses,
-        inner src/dst IP addresses, inner src/dst port
-    GTP tunnel: TEID, PDU type, QFI, outer dst IP, outer src IP
+    L2: Source/Destination MAC addresses, VLAN ID
+    L3: Source/Destination IP addresses (IPv4, IPv6), IP protocol (TCP, UDP),
+        ToS (IPv4), Traffic Class (IPv6), TTL (IPv4)
+    L4: Source and Destination port
+    VXLAN/GRETAP/GENEVE: VNI/GRE Key, Outer Destination IP, Inner Source IP,
+        Inner Destination IP, Inner Destination MAC, TCP/UDP Source port and
+        Destination port
+    GTP: TEID, PDU type, QFI, Outer Destination IP, Outer Source IP
 - Supported filter actions: redirect, drop
 
 NOTE: GTP support requires kernel 5.18 and iproute2 5.18 or newer. On older
@@ -1700,7 +1705,7 @@ For devices to benefit from this feature, link partners must have FEC enabled.
 If you enable the flag 'allow-no-fec-modules-in-auto', Auto FEC negotiation
 will include 'No FEC' in case your link partner does not have FEC enabled or is
 not FEC capable.
-# ethtool --set-priv-flags <ethX> vallow-no-fec-modules-in-auto on
+# ethtool --set-priv-flags <ethX> allow-no-fec-modules-in-auto on
 
 NOTE:
 
@@ -1713,6 +1718,27 @@ On kernel 4.14 or later, use ethtool to get/set the following FEC modes:
   Auto FEC
   BASE-R FEC
   RS-FEC
+
+
+GNSS/GPS Support
+----------------
+GNSS/GPS support depends on CONFIG_GNSS being enabled in the kernel. At this
+time, the kernel in RHEL distributions do not support CONFIG_GNSS.
+For SLES distributions, the kernel in SLES 15 SP2, and later, supports
+CONFIG_GNSS. However the requisite gnss*.ko modules are not included
+in the 'kernel-default' package. You must install the 'kernel-default-extra'
+RPM (found in "Product-WE" module) to obtain the gnss*.ko modules.
+
+To enable GNSS/GPS support in your driver, add the
+CFLAGS_EXTRA="-DGNSS_SUPPORT" option during compilation.
+
+For example:
+  # make CFLAGS_EXTRA="-DGNSS_SUPPORT"
+
+If CONFIG_GNSS is not enabled in your kernel configuration, i.e. CONFIG_GNSS=n,
+then adding CFLAGS_EXTRA="-DGNSS_SUPPORT" will have no effect and GNSS/GPS
+support
+will not be included in the driver.
 
 
 Link-Level Flow Control (LFC)
@@ -2138,6 +2164,29 @@ optimization is required, we recommend experimenting with the following
 settings.
 
 
+Transmit/Receive Queue Allocation
+---------------------------------
+The driver allocates a number of transmit/receive queue pairs equal to the
+number of local node CPU threads with the following constraints:
+* The driver will allocate a minimum of 8 queue pairs, or the total number of
+CPUs, whichever is lower
+* The driver will allocate a maximum of 64 queue pairs
+
+You can set the number of queues symmetrical or asymmetrical using the ethtool
+-L command. For example:
+Setting 16 queue pairs for the interface
+   # ethtool -L <ethX> combined 16
+   # ethtool -L <ethX> tx 16 rx 16
+
+Setting 16 Tx queues and 8 Rx queues
+   # ethtool -L <ethX> tx 16 rx 8
+
+NOTE: You cannot configure less than 1 Rx or 1 Tx queue. Attempts to do so will
+be rejected by the driver.
+NOTE: You cannot configure more Tx/Rx queues than there are MSI-X interrupts
+available. Attempts to do so will be rejected by the driver.
+
+
 IRQ to Adapter Queue Alignment
 ------------------------------
 Pin the adapter's IRQs to specific cores by disabling the irqbalance service
@@ -2515,7 +2564,7 @@ St - Fifth Floor, Boston, MA 02110-1301 USA.
 The full GNU General Public License is included in this distribution in the
 file called "COPYING".
 
-Copyright(c) 2017 - 2022 Intel Corporation.
+Copyright(c) 2017 - 2023 Intel Corporation.
 
 
 Trademarks

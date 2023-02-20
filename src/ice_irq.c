@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -104,7 +104,7 @@ static int ice_adq_max_qps(struct ice_pf *pf)
 	if (pf->hw.func_caps.common_cap.num_msix_vectors >= 1024)
 		return ICE_ADQ_MAX_QPS;
 
-	return num_online_cpus();
+	return ice_normalize_cpu_count(num_online_cpus());
 }
 
 /**
@@ -118,6 +118,8 @@ static int ice_adq_max_qps(struct ice_pf *pf)
  * number for the step. If any of the steps is lower than received number, then
  * return the number of MSI-X. If any of the steps is greater, then check next
  * one. If received value is lower than irqs value in last step return error.
+ * Please note that for the below steps the value range of num_online_cpus() is
+ * normalized to a certain range.
  *
  * Step [0]: Enable the best-case scenario MSI-X vectors.
  *
@@ -151,34 +153,42 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 #define ICE_ADJ_VEC_STEPS 8
 #define ICE_ADJ_VEC_WORST_CASE 0
 #define ICE_ADJ_VEC_BEST_CASE (ICE_ADJ_VEC_STEPS - 1)
-	int num_cpus = num_online_cpus();
+	struct device *dev = ice_pf_to_dev(pf);
+	int num_local_cpus = ice_get_num_local_cpus(dev);
+	int default_rdma_ceq = ice_normalize_cpu_count(num_local_cpus);
 	int rdma_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_MIN_RDMA_MSIX,
-		num_cpus / 4 > ICE_MIN_RDMA_MSIX ?
-			num_cpus / 4 + ICE_RDMA_NUM_AEQ_MSIX :
+		default_rdma_ceq / 4 > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq / 4 + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
-		num_cpus / 2 > ICE_MIN_RDMA_MSIX ?
-			num_cpus / 2 + ICE_RDMA_NUM_AEQ_MSIX :
+		default_rdma_ceq / 2 > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq / 2 + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
-		num_cpus > ICE_MIN_RDMA_MSIX ?
-			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
-		num_cpus > ICE_MIN_RDMA_MSIX ?
-			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
-		num_cpus > ICE_MIN_RDMA_MSIX ?
-			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
-		num_cpus > ICE_MIN_RDMA_MSIX ?
-			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
-		num_cpus > ICE_MIN_RDMA_MSIX ?
-			num_cpus + ICE_RDMA_NUM_AEQ_MSIX : ICE_MIN_RDMA_MSIX,
+		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+			ICE_MIN_RDMA_MSIX,
+		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+			ICE_MIN_RDMA_MSIX,
+		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+			ICE_MIN_RDMA_MSIX,
+		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+			ICE_MIN_RDMA_MSIX,
+		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+			ICE_MIN_RDMA_MSIX,
 	};
+	int default_lan_qp = ice_normalize_cpu_count(num_local_cpus);
 	int lan_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_MIN_LAN_MSIX,
-		max_t(int, num_cpus / 4, ICE_MIN_LAN_MSIX),
-		max_t(int, num_cpus / 2, ICE_MIN_LAN_MSIX),
-		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
-		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
-		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
-		max_t(int, num_cpus, ICE_MIN_LAN_MSIX),
+		max_t(int, default_lan_qp / 4, ICE_MIN_LAN_MSIX),
+		max_t(int, default_lan_qp / 2, ICE_MIN_LAN_MSIX),
+		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
+		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
+		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
+		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
 		max_t(int, ice_adq_max_qps(pf), ICE_MIN_LAN_MSIX),
 	};
 	int fdir_adj_vec[ICE_ADJ_VEC_STEPS] = {
@@ -211,7 +221,6 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL,
 		ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL,
 	};
-	struct device *dev = ice_pf_to_dev(pf);
 	int adj_step = ICE_ADJ_VEC_BEST_CASE;
 	int err = -ENOSPC;
 	int v_actual, i;
@@ -238,7 +247,7 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	}
 #endif /* OFFLOAD_MACVLAN_SUPPORT */
 
-	if (ice_chk_rdma_cap(pf)) {
+	if (ice_is_aux_ena(pf)) {
 		needed += rdma_adj_vec[ICE_ADJ_VEC_BEST_CASE];
 		ice_adj_vec_sum(adj_vec, rdma_adj_vec, ICE_ADJ_VEC_STEPS);
 	} else {

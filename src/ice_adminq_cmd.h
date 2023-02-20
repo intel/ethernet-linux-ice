@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2018-2021, Intel Corporation. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2018-2023 Intel Corporation */
 
 #ifndef _ICE_ADMINQ_CMD_H_
 #define _ICE_ADMINQ_CMD_H_
@@ -1924,7 +1924,9 @@ struct ice_aqc_link_topo_params {
 #define ICE_AQC_LINK_TOPO_NODE_TYPE_ID_EEPROM	8
 #define ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL	9
 #define ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_MUX	10
+#ifdef GNSS_SUPPORT
 #define ICE_AQC_LINK_TOPO_NODE_TYPE_GPS		11
+#endif /* GNSS_SUPPORT */
 #define ICE_AQC_LINK_TOPO_NODE_CTX_S		4
 #define ICE_AQC_LINK_TOPO_NODE_CTX_M		\
 				(0xF << ICE_AQC_LINK_TOPO_NODE_CTX_S)
@@ -1967,7 +1969,9 @@ struct ice_aqc_get_link_topo {
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_E822_PHY			0x30
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_C827			0x31
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX		0x47
+#ifdef GNSS_SUPPORT
 #define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_GPS			0x48
+#endif /* GNSS_SUPPORT */
 	u8 rsvd[9];
 };
 
@@ -1995,6 +1999,7 @@ struct ice_aqc_get_link_topo_pin {
 #define ICE_AQC_LINK_TOPO_IO_FUNC_RED_LED	12
 #define ICE_AQC_LINK_TOPO_IO_FUNC_GREEN_LED	13
 #define ICE_AQC_LINK_TOPO_IO_FUNC_BLUE_LED	14
+#define ICE_AQC_LINK_TOPO_IO_FUNC_CLK_IN	20
 #define ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_S	5
 #define ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_M	\
 			(0x7 << ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_S)
@@ -2119,6 +2124,7 @@ struct ice_aqc_get_port_options {
 	u8 port_options_count;
 #define ICE_AQC_PORT_OPT_COUNT_S	0
 #define ICE_AQC_PORT_OPT_COUNT_M	(0xF << ICE_AQC_PORT_OPT_COUNT_S)
+#define ICE_AQC_PORT_OPT_MAX		16
 	u8 innermost_phy_index;
 	u8 port_options;
 #define ICE_AQC_PORT_OPT_ACTIVE_S	0
@@ -3588,6 +3594,8 @@ enum ice_aqc_driver_params {
 	ICE_AQC_DRIVER_PARAM_CLK_IDX_TMR1,
 	/* Request ID to recalibrate PHC logic */
 	ICE_AQC_DRIVER_PARAM_PHC_RECALC,
+	/* Indicates that PTP clock controller failed */
+	ICE_AQC_DRIVER_PARAM_PTP_CC_FAILED,
 
 	/* Add new parameters above */
 	ICE_AQC_DRIVER_PARAM_MAX = 16,

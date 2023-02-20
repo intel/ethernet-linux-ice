@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: GPL-2.0
-# Copyright (C) 2018-2021, Intel Corporation.
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2018-2023 Intel Corporation
 
 # When the make command line has the goal 'all' or no goal specified (i.e.
 # when compiling the driver) a sub-make of the kernel's Makefile includes
@@ -43,7 +43,6 @@ ice-y := ice_main.o	\
 	 ice_pf_vsi_vlan_ops.o \
 	 ice_vsi_vlan_ops.o \
 	 ice_vsi_vlan_lib.o \
-	 ice_gnss.o	\
 	 ice_tc_lib.o	\
 	 ice_fdir.o	\
 	 ice_ethtool_fdir.o	\
@@ -90,6 +89,7 @@ ifneq (${ENABLE_SIOV_SUPPORT},)
 ice-$(CONFIG_VFIO_MDEV:m=y) += ice_vdcm.o ice_siov.o
 endif
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o
+ice-$(CONFIG_GNSS:m=y) += ice_gnss.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
 ice-$(CONFIG_XDP_SOCKETS) += ice_xsk.o
