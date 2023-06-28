@@ -62,11 +62,11 @@
 #else
 #include "kcompat_dim.h"
 #endif
-#ifdef GNSS_SUPPORT
-#if IS_ENABLED(CONFIG_GNSS)
+#if defined(HAVE_GNSS_MODULE) && IS_ENABLED(CONFIG_GNSS)
 #include <linux/gnss.h>
-#endif /* CONFIG_GNSS */
-#endif /* GNSS_SUPPORT */
+#else /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
+#include "kcompat_gnss.h"
+#endif /* HAVE_GNSS_MODULE && IS_ENABLED(CONFIG_GNSS) */
 #include "ice_ddp.h"
 #include "ice_devids.h"
 #include "ice_type.h"
@@ -130,9 +130,7 @@
 #include "ice_repr.h"
 #include "ice_eswitch.h"
 #include "ice_vsi_vlan_ops.h"
-#ifdef GNSS_SUPPORT
 #include "ice_gnss.h"
-#endif /* GNSS_SUPPORT */
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0			0
@@ -849,9 +847,7 @@ enum ice_pf_flags {
 	ICE_FLAG_DPLL_FAST_LOCK,
 	ICE_FLAG_DPLL_MONITOR,
 	ICE_FLAG_EXTTS_FILTER,
-#if defined(GNSS_SUPPORT) && !defined(NO_PTP_SUPPORT)
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
-#endif /* GNSS_SUPPORT && !NO_PTP_SUPPORT */
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
@@ -973,12 +969,8 @@ struct ice_pf {
 	struct mutex lag_mutex;		/* lock protects the lag struct */
 	u32 msg_enable;
 	struct ice_ptp ptp;
-#ifdef GNSS_SUPPORT
-#if IS_ENABLED(CONFIG_GNSS)
 	struct gnss_serial *gnss_serial;
 	struct gnss_device *gnss_dev;
-#endif /* CONFIG_GNSS */
-#endif
 	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
 #ifdef HAVE_NDO_DFWD_OPS
@@ -1000,6 +992,7 @@ struct ice_pf {
 	u32 hw_csum_rx_error;
 	u32 oicr_err_reg;
 	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
+	u16 oicr_misc;		/* Misc interrupts to handle in bottom half */
 	u16 num_avail_sw_msix;	/* remaining MSIX SW vectors left unclaimed */
 	u16 max_pf_txqs;	/* Total Tx queues PF wide */
 	u16 max_pf_rxqs;	/* Total Rx queues PF wide */

@@ -203,6 +203,14 @@
 #endif /* 8.7 */
 
 /*****************************************************************************/
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8,8))
+#else /* >= 8.8 */
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9,0))
+#undef NEED_NETIF_NAPI_ADD_NO_WEIGHT
+#endif /* < 9.0 */
+#endif /* 8.8 */
+
+/*****************************************************************************/
 #if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9,0))
 #else /* >= 9.0 */
 #define HAVE_XDP_BUFF_RXQ
@@ -222,5 +230,12 @@
 #define HAVE_ETHTOOL_COALESCE_EXTACK
 #define HAVE_XDP_DO_FLUSH
 #endif /* 9.1 */
+
+/*****************************************************************************/
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9,2))
+#else /* >= 9.2 */
+#define HAVE_DEVLINK_PORT_SPLIT_PORT_STRUCT
+#undef NEED_NETIF_NAPI_ADD_NO_WEIGHT
+#endif /* 9.2 */
 
 #endif /* _KCOMPAT_RHEL_DEFS_H_ */

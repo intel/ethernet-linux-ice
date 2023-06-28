@@ -98,6 +98,7 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0))
 #else /* >= 4,12,0 */
 #define HAVE_NAPI_BUSY_LOOP
+#define HAVE_CDEV_DEVICE
 #endif /* 4,12,0 */
 
 /*****************************************************************************/
@@ -121,6 +122,8 @@
 #else /* >= 4,16,0 */
 #define HAVE_XDP_BUFF_RXQ
 #define HAVE_XDP_RXQ_INFO_REG_3_PARAMS
+#define HAVE_POLL_T
+
 #endif /* 4,16,0 */
 
 /*****************************************************************************/
@@ -149,6 +152,7 @@
 #define HAVE_TC_ETF_QOPT_OFFLOAD
 #define HAVE_DEVLINK_PARAMS
 #define HAVE_FLOW_DISSECTOR_KEY_ENC_IP
+#define HAVE_GNSS_MODULE
 #endif /* 4,19,0 */
 
 /*****************************************************************************/
@@ -176,6 +180,7 @@
 #define HAVE_ETHTOOL_NEW_100G_BITS
 #define HAVE_DEVLINK_PARAMS_PUBLISH
 #define HAVE_DEVLINK_HEALTH
+#define HAVE_STREAM_OPEN
 #endif /* 5.1.0 */
 
 /*****************************************************************************/
@@ -369,6 +374,7 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
 #else /* >=6.2.0 */
 #define HAVE_SET_NETDEV_DEVLINK_PORT
+#define HAVE_DEV_UEVENT_CONST
 #undef HAVE_NDO_GET_DEVLINK_PORT
 #endif /* 6.2.0 */
 

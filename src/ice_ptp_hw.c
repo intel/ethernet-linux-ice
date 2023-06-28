@@ -5031,7 +5031,6 @@ int ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx)
 	return 0;
 }
 
-#ifdef GNSS_SUPPORT
 /**
  * ice_is_gps_present_e810t
  * @hw: pointer to the hw struct
@@ -5047,7 +5046,6 @@ bool ice_is_gps_present_e810t(struct ice_hw *hw)
 	return true;
 }
 
-#endif /* GNSS_SUPPORT */
 /**
  * ice_read_pca9575_reg_e810t
  * @hw: pointer to the hw struct

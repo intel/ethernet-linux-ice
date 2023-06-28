@@ -3313,7 +3313,7 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 		u8 *keys, *inverts;
 		u16 entry_idx;
 
-		keys = (u8 *)e->entry;
+		keys = e->entry;
 		inverts = keys + (e->entry_sz / 2);
 		prio = ice_flow_acl_convert_to_acl_prio(e->priority);
 

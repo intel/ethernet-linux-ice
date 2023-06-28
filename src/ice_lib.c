@@ -5103,11 +5103,9 @@ void ice_init_feature_support(struct ice_pf *pf)
 			ice_set_feature_support(pf, ICE_F_SMA_CTRL);
 		if (ice_is_cgu_present(&pf->hw))
 			ice_set_feature_support(pf, ICE_F_CGU);
-#ifdef GNSS_SUPPORT
 		if (ice_is_gps_present_e810t(&pf->hw) &&
 		    ice_gnss_is_gps_present(&pf->hw))
 			ice_set_feature_support(pf, ICE_F_GNSS);
-#endif /* GNSS_SUPPORT */
 		if (ice_is_e810t(&pf->hw))
 			ice_set_feature_support(pf, ICE_F_FIXED_TIMING_PINS);
 #endif /* CONFIG_PTP_1588_CLOCK */

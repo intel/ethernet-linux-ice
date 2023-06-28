@@ -67,6 +67,7 @@ ice-y := ice_main.o	\
 	 ice_lag.o		\
 	 ice_fwlog.o		\
 	 ice_ieps.o		\
+	 ice_gnss.o		\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
@@ -89,7 +90,6 @@ ifneq (${ENABLE_SIOV_SUPPORT},)
 ice-$(CONFIG_VFIO_MDEV:m=y) += ice_vdcm.o ice_siov.o
 endif
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o
-ice-$(CONFIG_GNSS:m=y) += ice_gnss.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
 ice-$(CONFIG_XDP_SOCKETS) += ice_xsk.o
@@ -101,6 +101,16 @@ endif
 # Use kcompat DIMLIB if kernel doesn't provide it
 ifndef CONFIG_DIMLIB
 ice-y += kcompat_dim.o kcompat_net_dim.o
+endif
+# Use kcompat GNSS if kernel doesn't provide it
+ifneq (${CONFIG_GNSS}, y)
+ifneq (${CONFIG_GNSS}, m)
+ice-y += kcompat_gnss.o
+endif
+endif
+
+ifeq (${CONFIG_SUSE_KERNEL}, y)
+ice-y += kcompat_gnss.o
 endif
 
 

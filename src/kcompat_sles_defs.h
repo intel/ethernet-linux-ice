@@ -150,6 +150,7 @@
 /*****************************************************************************/
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,8,2))
 #else /* >= 5.3.8-2 */
+#undef HAVE_GNSS_MODULE
 #undef NEED_BUS_FIND_DEVICE_CONST_DATA
 #undef NEED_FLOW_INDR_BLOCK_CB_REGISTER
 #undef NEED_SKB_FRAG_OFF

@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2023 Intel Corporation */
 
-#ifdef GNSS_SUPPORT
 #ifndef _ICE_GNSS_H_
 #define _ICE_GNSS_H_
 
@@ -39,6 +38,8 @@ struct gnss_write_buf {
  * @write_work: write_work function for handling GNSS writes
  * @queue: write buffers queue
  * @buf: write buffer for a single u8, negative if empty
+ * @gnss_module_owner: flag informing whether current driver is responsible
+ * for module deinitialization
  */
 struct gnss_serial {
 	struct ice_pf *back;
@@ -46,19 +47,12 @@ struct gnss_serial {
 	struct kthread_delayed_work read_work;
 	struct kthread_work write_work;
 	struct list_head queue;
+#if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
+	bool gnss_module_owner;
+#endif /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 };
 
-#if IS_ENABLED(CONFIG_GNSS)
 void ice_gnss_init(struct ice_pf *pf);
 void ice_gnss_exit(struct ice_pf *pf);
 bool ice_gnss_is_gps_present(struct ice_hw *hw);
-#else
-static inline void ice_gnss_init(struct ice_pf *pf) { }
-static inline void ice_gnss_exit(struct ice_pf *pf) { }
-static inline bool ice_gnss_is_gps_present(struct ice_hw *hw)
-{
-	return false;
-}
-#endif /* IS_ENABLED(CONFIG_GNSS) */
 #endif /* _ICE_GNSS_H_ */
-#endif /* GNSS_SUPPORT */

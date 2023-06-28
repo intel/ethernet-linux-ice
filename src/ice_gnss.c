@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2023 Intel Corporation */
 
-#ifdef GNSS_SUPPORT
 #include "ice.h"
 #include "ice_lib.h"
+
+#if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
+static bool gnss_module_initialized;
+#endif /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 
 /**
  * ice_gnss_do_write - Write data to internal GNSS receiver
@@ -91,7 +94,7 @@ static void ice_gnss_write_pending(struct kthread_work *work)
 	if (!test_bit(ICE_FLAG_GNSS, pf->flags))
 		return;
 
-	if (!list_empty(&gnss->queue)) {
+	while (!list_empty(&gnss->queue)) {
 		struct gnss_write_buf *write_buf = NULL;
 		unsigned int bytes;
 
@@ -184,15 +187,10 @@ static void ice_gnss_read(struct kthread_work *work)
 			goto exit_buf;
 	}
 
-	if (IS_REACHABLE(CONFIG_GNSS)) {
-		count = gnss_insert_raw(pf->gnss_dev, buf, i);
-		if (count != i)
-			dev_warn(ice_pf_to_dev(pf),
-				 "gnss_insert_raw ret=%d size=%d\n",
-				 count, i);
-	} else {
-		dev_warn(ice_pf_to_dev(pf), "gnss module not reachable\n");
-	}
+	count = gnss_insert_raw(pf->gnss_dev, buf, i);
+	if (count != i)
+		dev_warn(ice_pf_to_dev(pf), "gnss_insert_raw ret=%d size=%d\n",
+			 count, i);
 
 exit_buf:
 	free_page((unsigned long)buf);
@@ -366,13 +364,7 @@ static int ice_gnss_register(struct ice_pf *pf)
 	struct gnss_device *gdev = NULL;
 	int ret;
 
-	if (IS_REACHABLE(CONFIG_GNSS)) {
-		gdev = gnss_allocate_device(ice_pf_to_dev(pf));
-	} else {
-		dev_warn(ice_pf_to_dev(pf), "gnss module not reachable\n");
-		return -ENODEV;
-	}
-
+	gdev = gnss_allocate_device(ice_pf_to_dev(pf));
 	if (!gdev) {
 		dev_err(ice_pf_to_dev(pf),
 			"gnss_allocate_device returns NULL\n");
@@ -402,10 +394,8 @@ static int ice_gnss_register(struct ice_pf *pf)
 static void ice_gnss_deregister(struct ice_pf *pf)
 {
 	if (pf->gnss_dev) {
-		if (IS_REACHABLE(CONFIG_GNSS)) {
-			gnss_deregister_device(pf->gnss_dev);
-			gnss_put_device(pf->gnss_dev);
-		}
+		gnss_deregister_device(pf->gnss_dev);
+		gnss_put_device(pf->gnss_dev);
 		pf->gnss_dev = NULL;
 	}
 }
@@ -422,6 +412,20 @@ void ice_gnss_init(struct ice_pf *pf)
 	if (!pf->gnss_serial)
 		return;
 
+#if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
+	if (!gnss_module_initialized) {
+		gnss_module_initialized = true;
+		ret = gnss_module_init();
+		if (ret < 0) {
+			gnss_module_initialized = false;
+			dev_err(ice_pf_to_dev(pf),
+				"GNSS module init failure\n");
+			return;
+		}
+
+		pf->gnss_serial->gnss_module_owner = true;
+	}
+#endif /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 	ret = ice_gnss_register(pf);
 	if (!ret) {
 		set_bit(ICE_FLAG_GNSS, pf->flags);
@@ -448,6 +452,11 @@ void ice_gnss_exit(struct ice_pf *pf)
 		kthread_cancel_delayed_work_sync(&gnss->read_work);
 		kthread_destroy_worker(gnss->kworker);
 		gnss->kworker = NULL;
+
+#if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
+		if (gnss->gnss_module_owner)
+			gnss_module_exit();
+#endif /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 
 		kfree(gnss);
 		pf->gnss_serial = NULL;
@@ -481,4 +490,3 @@ bool ice_gnss_is_gps_present(struct ice_hw *hw)
 	return false;
 #endif /* CONFIG_PTP_1588_CLOCK */
 }
-#endif /* GNSS_SUPPORT */

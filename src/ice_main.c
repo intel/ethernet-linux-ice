@@ -27,9 +27,9 @@
 
 #define DRV_VERSION_MAJOR 1
 #define DRV_VERSION_MINOR 11
-#define DRV_VERSION_BUILD 14
+#define DRV_VERSION_BUILD 17
 
-#define DRV_VERSION	"1.11.14"
+#define DRV_VERSION	"1.11.17.1"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -1030,11 +1030,9 @@ skip:
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_prepare_for_reset(pf);
 
-#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_exit(pf);
 
-#endif /* GNSS_SUPPORT */
 	if (hw->port_info)
 		ice_sched_clear_port(hw->port_info);
 
@@ -4277,7 +4275,6 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 {
 	struct ice_pf *pf = data;
 	struct ice_hw *hw = &pf->hw;
-	irqreturn_t ret = IRQ_NONE;
 	struct device *dev;
 	u32 oicr, ena_mask;
 
@@ -4361,22 +4358,24 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 	if (oicr & PFINT_OICR_TSYN_TX_M) {
 		ena_mask &= ~PFINT_OICR_TSYN_TX_M;
 		if (!hw->reset_ongoing)
-			ret = IRQ_WAKE_THREAD;
+			pf->oicr_misc |= PFINT_OICR_TSYN_TX_M;
 	}
 
 	if (oicr & PFINT_OICR_TSYN_EVNT_M) {
 		u8 tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 		u32 gltsyn_stat = rd32(hw, GLTSYN_STAT(tmr_idx));
 
-		/* Save EVENTs from GTSYN register */
-		pf->ptp.ext_ts_irq |= gltsyn_stat & (GLTSYN_STAT_EVENT0_M |
-						     GLTSYN_STAT_EVENT1_M |
-						     GLTSYN_STAT_EVENT2_M);
 		ena_mask &= ~PFINT_OICR_TSYN_EVNT_M;
 
-		if (pf->ptp.kworker_extts)
-			kthread_queue_work(pf->ptp.kworker_extts,
-					   &pf->ptp.extts_work);
+		if (hw->func_caps.ts_func_info.src_tmr_owned) {
+			/* Save EVENTs from GLTSYN register */
+			pf->ptp.ext_ts_irq |= gltsyn_stat &
+					      (GLTSYN_STAT_EVENT0_M |
+					       GLTSYN_STAT_EVENT1_M |
+					       GLTSYN_STAT_EVENT2_M);
+
+			pf->oicr_misc |= PFINT_OICR_TSYN_EVNT_M;
+		}
 	}
 	if (oicr & (PFINT_OICR_PE_CRITERR_M | PFINT_OICR_HMC_ERR_M | PFINT_OICR_PE_PUSH_M)) {
 		pf->oicr_err_reg |= oicr;
@@ -4396,16 +4395,12 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 		if (oicr & (PFINT_OICR_PCI_EXCEPTION_M |
 			    PFINT_OICR_ECC_ERR_M)) {
 			set_bit(ICE_PFR_REQ, pf->state);
-			ice_service_task_schedule(pf);
 		}
 	}
-	if (!ret)
-		ret = IRQ_HANDLED;
 
-	ice_service_task_schedule(pf);
 	ice_irq_dynamic_ena(hw, NULL, NULL);
 
-	return ret;
+	return IRQ_WAKE_THREAD;
 }
 
 /**
@@ -4420,8 +4415,22 @@ static irqreturn_t ice_misc_intr_thread_fn(int __always_unused irq, void *data)
 	if (ice_is_reset_in_progress(pf->state))
 		return IRQ_HANDLED;
 
-	while (!ice_ptp_process_ts(pf))
-		usleep_range(50, 100);
+	ice_service_task_schedule(pf);
+
+	if (pf->oicr_misc & PFINT_OICR_TSYN_EVNT_M) {
+		
+		if (pf->ptp.kworker_extts)
+			kthread_queue_work(pf->ptp.kworker_extts,
+					&pf->ptp.extts_work);
+
+		pf->oicr_misc &= ~PFINT_OICR_TSYN_EVNT_M;
+	}
+
+	if (pf->oicr_misc & PFINT_OICR_TSYN_TX_M) {
+		while (!ice_ptp_process_ts(pf))
+			usleep_range(50, 100);
+		pf->oicr_misc &= ~PFINT_OICR_TSYN_TX_M;
+	}
 
 	return IRQ_HANDLED;
 }
@@ -6197,6 +6206,7 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	pf = ice_allocate_pf(dev);
 	if (!pf)
 		return -ENOMEM;
+	pf->oicr_misc = 0;
 
 	/* set up for high or low DMA */
 	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
@@ -6470,11 +6480,9 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_init(pf);
 
-#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_init(pf);
 
-#endif /* GNSS_SUPPORT */
 	/* Note: Flow director init failure is non-fatal to load */
 	if (ice_init_fdir(pf))
 		dev_err(dev, "could not initialize flow director\n");
@@ -6746,10 +6754,8 @@ static void ice_remove(struct pci_dev *pdev)
 #endif /* HAVE_NETDEV_UPPER_INFO */
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_release(pf);
-#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_exit(pf);
-#endif /* GNSS_SUPPORT */
 	if (!ice_is_safe_mode(pf))
 		ice_remove_arfs(pf);
 	ice_setup_mc_magic_wake(pf);
@@ -9528,11 +9534,8 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_reset(pf);
 
-#ifdef GNSS_SUPPORT
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_init(pf);
-
-#endif /* GNSS_SUPPORT */
 
 	/* rebuild PF VSI */
 	err = ice_vsi_rebuild_by_type(pf, ICE_VSI_PF);

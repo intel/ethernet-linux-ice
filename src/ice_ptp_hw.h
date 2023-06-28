@@ -321,9 +321,7 @@ ice_phy_cfg_intr_e822(struct ice_hw *hw, u8 quad, bool ena, u8 threshold);
 bool ice_is_phy_rclk_present(struct ice_hw *hw);
 bool ice_is_clock_mux_present_e810t(struct ice_hw *hw);
 int ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx);
-#ifdef GNSS_SUPPORT
 bool ice_is_gps_present_e810t(struct ice_hw *hw);
-#endif /* GNSS_SUPPORT */
 int ice_ptp_init_phy_e810(struct ice_hw *hw);
 int
 ice_read_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 *data);
