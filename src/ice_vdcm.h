@@ -97,7 +97,7 @@ struct ice_adi {
 				    u64 *offset, u64 *size);
 };
 
-#if IS_ENABLED(CONFIG_VFIO_MDEV) && defined(HAVE_PASID_SUPPORT)
+#if IS_ENABLED(CONFIG_VFIO_MDEV) && defined(HAVE_PASID_SUPPORT) && defined(HAVE_IOMMU_DEV_FEAT_AUX)
 struct ice_adi *ice_vdcm_alloc_adi(struct device *dev, void *token);
 void ice_vdcm_free_adi(struct ice_adi *adi);
 void ice_vdcm_pre_rebuild_irqctx(void *token);
@@ -112,6 +112,6 @@ static inline int ice_vdcm_init(struct pci_dev *pdev)
 }
 
 static inline void ice_vdcm_deinit(struct pci_dev *pdev) { }
-#endif /* CONFIG_VFIO_MDEV && HAVE_PASID_SUPPORT */
+#endif /* CONFIG_VFIO_MDEV && HAVE_PASID_SUPPORT && HAVE_IOMMU_DEV_FEAT_AUX */
 
 #endif /* _ICE_VDCM_H_ */

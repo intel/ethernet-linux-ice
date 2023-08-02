@@ -705,7 +705,10 @@ int ice_vc_flow_sub_fltr(struct ice_vf *vf, u8 *msg)
 			       &conf->fsub_fltr.rule_data);
 	if (ret) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		status = VIRTCHNL_FSUB_FAILURE_RULE_INVALID;
+		if (ret == -EEXIST)
+			status = VIRTCHNL_FSUB_FAILURE_RULE_EXIST;
+		else
+			status = VIRTCHNL_FSUB_FAILURE_RULE_INVALID;
 		dev_dbg(dev,
 			"Subscribe flow rule failed from VF %d, ret = %08x\n",
 			vf->vf_id, ret);

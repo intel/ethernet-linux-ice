@@ -40,7 +40,6 @@
 #define IAVF_VFINT_ITRN_NUM 3
 #define IAVF_QRX_TAIL1(_Q) \
 	(0x00002000 + ((_Q) * 4)) /* _Q=0...256 */ /* Reset: CORER */
-#define IAVF_QRX_TAIL_MAX 256
 
 /* Registers for saving and loading during live Migration */
 struct ice_vfio_pci_regs {
@@ -78,6 +77,8 @@ struct ice_vfio_pci_core_device {
 	struct ice_vfio_pci_migration_data *mig_data;
 	u8 __iomem *io_base;
 	void *vf_handle;
+	struct kvm *kvm;
+	struct notifier_block group_notifier;
 };
 
 /**
@@ -184,7 +185,8 @@ ice_vfio_pci_load_state(struct ice_vfio_pci_core_device *ice_vdev)
 	ice_vfio_pci_load_regs(ice_vdev, &ice_vdev->mig_data->regs);
 	ret = ice_migration_restore_devstate(ice_vdev->vf_handle,
 					     ice_vdev->mig_data->dev_state,
-					     ICE_VFIO_MIG_REGION_DATA_SZ);
+					     ICE_VFIO_MIG_REGION_DATA_SZ,
+					     ice_vdev->kvm);
 
 	return ret;
 }
@@ -236,6 +238,7 @@ ice_vfio_pci_set_device_state(struct ice_vfio_pci_core_device *ice_vdev,
 			      u32 state)
 {
 	struct vfio_device_migration_info *mig_info = &ice_vdev->mig_info;
+	struct device *dev = &ice_vdev->core_device.pdev->dev;
 	int ret = 0;
 
 	if (state == mig_info->device_state)
@@ -247,9 +250,14 @@ ice_vfio_pci_set_device_state(struct ice_vfio_pci_core_device *ice_vdev,
 			ret = ice_vfio_pci_load_state(ice_vdev);
 		break;
 	case VFIO_DEVICE_STATE_RUNNING | VFIO_DEVICE_STATE_SAVING:
+		dev_info(dev, "Live migration begins\n");
 		break;
 	case VFIO_DEVICE_STATE_SAVING:
+		ret = ice_migration_suspend_vf(ice_vdev->vf_handle);
+		if (ret)
+			return ret;
 		ret = ice_vfio_pci_save_state(ice_vdev);
+		dev_info(dev, "Live migration ends\n");
 		break;
 	case VFIO_DEVICE_STATE_STOP:
 		ice_vfio_pci_reset_mig(ice_vdev);
@@ -528,6 +536,36 @@ static struct vfio_pci_regops ice_vfio_pci_regops = {
 };
 
 /**
+ * ice_vfio_group_notifier - Callback function when set kvm event occur
+ * @nb: pointer to notifier_block structure
+ * @action: the event used by notifier block
+ * @opaque: pointer to kvm structure
+ *
+ * Returns 0 on success, negative value on error
+ */
+static int ice_vfio_group_notifier(struct notifier_block *nb,
+				   unsigned long action, void *opaque)
+{
+	struct ice_vfio_pci_core_device *ice_vdev =
+	    container_of(nb,
+			 struct ice_vfio_pci_core_device,
+			 group_notifier);
+	struct device *dev = &ice_vdev->core_device.pdev->dev;
+
+	if (action == VFIO_GROUP_NOTIFY_SET_KVM)
+		ice_vdev->kvm = opaque;
+	else
+		return NOTIFY_DONE;
+
+	if (!ice_vdev->kvm) {
+		dev_err(dev, "NULL kvm pointer\n");
+		return NOTIFY_DONE;
+	}
+
+	return NOTIFY_OK;
+}
+
+/**
  * ice_vfio_migration_init - Initialization for live migration function
  * @ice_vdev: pointer to ice vfio pci core device structure
  *
@@ -536,7 +574,9 @@ static struct vfio_pci_regops ice_vfio_pci_regops = {
 static int ice_vfio_migration_init(struct ice_vfio_pci_core_device *ice_vdev)
 {
 	struct vfio_device_migration_info *mig_info = &ice_vdev->mig_info;
+	struct device *dev = &ice_vdev->core_device.pdev->dev;
 	struct pci_dev *pdev = ice_vdev->core_device.pdev;
+	unsigned long events;
 	int ret = 0;
 
 	ice_vdev->mig_data = kzalloc(ICE_VFIO_MIG_REGION_DATA_SZ, GFP_KERNEL);
@@ -559,6 +599,17 @@ static int ice_vfio_migration_init(struct ice_vfio_pci_core_device *ice_vdev)
 		goto err_pci_iomap;
 	}
 
+	ice_vdev->group_notifier.notifier_call = ice_vfio_group_notifier;
+
+	events = VFIO_GROUP_NOTIFY_SET_KVM;
+	ret = vfio_register_notifier(dev, VFIO_GROUP_NOTIFY, &events,
+				     &ice_vdev->group_notifier);
+	if (ret) {
+		dev_err(dev, "register group notifier failed %d\n", ret);
+		ret = -EINVAL;
+		goto err_register_notifier;
+	}
+
 	ret = vfio_pci_register_dev_region(&ice_vdev->core_device,
 					   VFIO_REGION_TYPE_MIGRATION,
 					   VFIO_REGION_SUBTYPE_MIGRATION,
@@ -574,6 +625,9 @@ static int ice_vfio_migration_init(struct ice_vfio_pci_core_device *ice_vdev)
 	return ret;
 
 err_dev_region_register:
+	vfio_unregister_notifier(dev, VFIO_GROUP_NOTIFY,
+				 &ice_vdev->group_notifier);
+err_register_notifier:
 	pci_iounmap(pdev, ice_vdev->io_base);
 err_get_vf_handle:
 err_pci_iomap:
@@ -588,6 +642,10 @@ err_pci_iomap:
  */
 static void ice_vfio_migration_uninit(struct ice_vfio_pci_core_device *ice_vdev)
 {
+	struct device *dev = &ice_vdev->core_device.pdev->dev;
+
+	vfio_unregister_notifier(dev, VFIO_GROUP_NOTIFY,
+				 &ice_vdev->group_notifier);
 	pci_iounmap(ice_vdev->core_device.pdev, ice_vdev->io_base);
 	ice_migration_uninit_vf(ice_vdev->vf_handle);
 	kfree(ice_vdev->mig_data);
@@ -711,7 +769,7 @@ static const struct pci_device_id ice_vfio_pci_table[] = {
 MODULE_DEVICE_TABLE(pci, ice_vfio_pci_table);
 
 static struct pci_driver ice_vfio_pci_driver = {
-	.name			= KBUILD_MODNAME,
+	.name			= "ice-vfio-pci",
 	.id_table		= ice_vfio_pci_table,
 	.probe			= ice_vfio_pci_probe,
 	.remove			= ice_vfio_pci_remove,

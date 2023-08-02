@@ -82,12 +82,12 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 		lkups_cnt++;
 
 	/* is VLAN specified? */
-	if (flags & ICE_TC_FLWR_FIELD_VLAN)
+	if (flags & (ICE_TC_FLWR_FIELD_VLAN | ICE_TC_FLWR_FIELD_VLAN_PRIO))
 		lkups_cnt++;
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
 	/* is CVLAN specified? */
-	if (flags & ICE_TC_FLWR_FIELD_CVLAN)
+	if (flags & (ICE_TC_FLWR_FIELD_CVLAN | ICE_TC_FLWR_FIELD_CVLAN_PRIO))
 		lkups_cnt++;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
 
@@ -438,7 +438,7 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	}
 
 	/* copy VLAN info */
-	if (flags & ICE_TC_FLWR_FIELD_VLAN) {
+	if (flags & (ICE_TC_FLWR_FIELD_VLAN | ICE_TC_FLWR_FIELD_VLAN_PRIO)) {
 #ifdef HAVE_TCF_VLAN_TPID
 		vlan_tpid = be16_to_cpu(headers->vlan_hdr.vlan_tpid);
 		rule_info->vlan_type =
@@ -449,16 +449,38 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		if (flags & ICE_TC_FLWR_FIELD_CVLAN)
 			list[i].type = ICE_VLAN_EX;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
-		list[i].h_u.vlan_hdr.vlan = headers->vlan_hdr.vlan_id;
-		list[i].m_u.vlan_hdr.vlan = cpu_to_be16(0xFFFF);
+
+		if (flags & ICE_TC_FLWR_FIELD_VLAN) {
+			list[i].h_u.vlan_hdr.vlan = headers->vlan_hdr.vlan_id;
+			list[i].m_u.vlan_hdr.vlan = cpu_to_be16(VLAN_VID_MASK);
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_VLAN_PRIO) {
+			list[i].m_u.vlan_hdr.vlan |=
+				cpu_to_be16(VLAN_PRIO_MASK);
+			list[i].h_u.vlan_hdr.vlan |=
+				headers->vlan_hdr.vlan_prio;
+		}
+
 		i++;
 	}
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
-	if (flags & ICE_TC_FLWR_FIELD_CVLAN) {
+	if (flags & (ICE_TC_FLWR_FIELD_CVLAN | ICE_TC_FLWR_FIELD_CVLAN_PRIO)) {
 		list[i].type = ICE_VLAN_IN;
-		list[i].h_u.vlan_hdr.vlan = headers->cvlan_hdr.vlan_id;
-		list[i].m_u.vlan_hdr.vlan = cpu_to_be16(0xFFFF);
+
+		if (flags & ICE_TC_FLWR_FIELD_CVLAN) {
+			list[i].h_u.vlan_hdr.vlan = headers->cvlan_hdr.vlan_id;
+			list[i].m_u.vlan_hdr.vlan = cpu_to_be16(VLAN_VID_MASK);
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_CVLAN_PRIO) {
+			list[i].m_u.vlan_hdr.vlan |=
+				cpu_to_be16(VLAN_PRIO_MASK);
+			list[i].h_u.vlan_hdr.vlan |=
+				headers->cvlan_hdr.vlan_prio;
+		}
+
 		i++;
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
@@ -849,6 +871,8 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		rule_info.sw_act.flag |= ICE_FLTR_RX;
 		rule_info.sw_act.src = hw->pf_id;
 		rule_info.rx = true;
+		rule_info.flags_info.act = ICE_SINGLE_ACT_LB_ENABLE;
+		rule_info.flags_info.act_valid = true;
 	} else {
 		rule_info.sw_act.flag |= ICE_FLTR_TX;
 		rule_info.sw_act.src = vsi->idx;
@@ -887,24 +911,18 @@ exit:
 /**
  * ice_locate_vsi_using_queue - locate VSI using queue (forward to queue)
  * @vsi: Pointer to VSI
- * @tc_fltr: Pointer to tc_flower_filter
+ * @queue: Queue index
  *
- * Locate the VSI using specified "queue" (which is part of tc_fltr). When ADQ
- * is not enabled, always return input VSI, otherwise locate corresponding
+ * Locate the VSI using specified "queue". When ADQ is not enabled,
+ * always return input VSI, otherwise locate corresponding
  * VSI based on per channel "offset" and "qcount"
  */
-static struct ice_vsi *
-ice_locate_vsi_using_queue(struct ice_vsi *vsi,
-			   struct ice_tc_flower_fltr *tc_fltr)
+struct ice_vsi *
+ice_locate_vsi_using_queue(struct ice_vsi *vsi, int queue)
 {
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 	int num_tc, tc;
-	int queue;
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
-
-	/* verify action is forward to queue */
-	if (tc_fltr->action.fltr_act != ICE_FWD_TO_Q)
-		return NULL;
 
 	/* if ADQ is not active, passed VSI is the candidate VSI */
 	if (!ice_is_adq_active(vsi->back))
@@ -915,7 +933,6 @@ ice_locate_vsi_using_queue(struct ice_vsi *vsi,
 	 * depending upon "queue number")
 	 */
 	num_tc = vsi->mqprio_qopt.qopt.num_tc;
-	queue = (int)tc_fltr->action.fwd.q.queue;
 
 	for (tc = 0; tc < num_tc; tc++) {
 		int qcount = vsi->mqprio_qopt.qopt.count[tc];
@@ -933,7 +950,7 @@ ice_locate_vsi_using_queue(struct ice_vsi *vsi,
 	return NULL;
 }
 
-static struct ice_ring *
+static struct ice_rx_ring *
 ice_locate_rx_ring_using_queue(struct ice_vsi *vsi,
 			       struct ice_tc_flower_fltr *tc_fltr)
 {
@@ -990,12 +1007,12 @@ ice_locate_rx_ring_using_queue(struct ice_vsi *vsi,
  */
 static int
 ice_tc_forward_action(struct ice_vsi *vsi, struct ice_tc_flower_fltr *tc_fltr,
-		      struct ice_ring **rx_ring, struct ice_vsi **dest_vsi)
+		      struct ice_rx_ring **rx_ring, struct ice_vsi **dest_vsi)
 {
 	struct ice_channel_vf *vf_ch = NULL;
 	struct ice_vsi *ch_vsi = NULL;
 	struct ice_pf *pf = vsi->back;
-	struct ice_ring *ring = NULL;
+	struct ice_rx_ring *ring = NULL;
 	struct ice_vf *vf = NULL;
 	struct device *dev;
 	u16 tc_class = 0;
@@ -1066,7 +1083,9 @@ ice_tc_forward_action(struct ice_vsi *vsi, struct ice_tc_flower_fltr *tc_fltr,
 				return -EINVAL;
 			}
 		} else {
-			ch_vsi = ice_locate_vsi_using_queue(vsi, tc_fltr);
+			int q = tc_fltr->action.fwd.q.queue;
+
+			ch_vsi = ice_locate_vsi_using_queue(vsi, q);
 		}
 	} else {
 		dev_err(dev,
@@ -1102,7 +1121,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
 	struct ice_adv_rule_info rule_info = {0};
 	struct ice_rule_query_data rule_added;
-	struct ice_ring *rx_ring = NULL;
+	struct ice_rx_ring *rx_ring = NULL;
 	struct ice_adv_lkup_elem *list;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
@@ -1763,17 +1782,21 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (mask->vlan_id) {
 			if (mask->vlan_id == VLAN_VID_MASK) {
 				fltr->flags |= ICE_TC_FLWR_FIELD_VLAN;
+				headers->vlan_hdr.vlan_id =
+					cpu_to_be16(key->vlan_id &
+						    VLAN_VID_MASK);
 			} else {
 				NL_SET_ERR_MSG_MOD(fltr->extack, "Bad VLAN mask");
 				return -EINVAL;
 			}
 		}
-		headers->vlan_hdr.vlan_id =
-				cpu_to_be16(key->vlan_id & VLAN_VID_MASK);
-#ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
-		if (mask->vlan_priority)
-			headers->vlan_hdr.vlan_prio = key->vlan_priority;
-#endif
+
+		if (match.mask->vlan_priority) {
+			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_PRIO;
+			headers->vlan_hdr.vlan_prio =
+				cpu_to_be16((match.key->vlan_priority <<
+					     VLAN_PRIO_SHIFT) & VLAN_PRIO_MASK);
+		}
 #ifdef HAVE_TCF_VLAN_TPID
 		if (mask->vlan_tpid)
 			headers->vlan_hdr.vlan_tpid = key->vlan_tpid;
@@ -1803,18 +1826,21 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (match.mask->vlan_id) {
 			if (match.mask->vlan_id == VLAN_VID_MASK) {
 				fltr->flags |= ICE_TC_FLWR_FIELD_VLAN;
+				headers->vlan_hdr.vlan_id =
+					cpu_to_be16(match.key->vlan_id &
+						    VLAN_VID_MASK);
 			} else {
 				NL_SET_ERR_MSG_MOD(fltr->extack, "Bad VLAN mask");
 				return -EINVAL;
 			}
 		}
 
-		headers->vlan_hdr.vlan_id =
-				cpu_to_be16(match.key->vlan_id & VLAN_VID_MASK);
-#ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
-		if (match.mask->vlan_priority)
-			headers->vlan_hdr.vlan_prio = match.key->vlan_priority;
-#endif
+		if (match.mask->vlan_priority) {
+			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_PRIO;
+			headers->vlan_hdr.vlan_prio =
+				cpu_to_be16((match.key->vlan_priority <<
+					     VLAN_PRIO_SHIFT) & VLAN_PRIO_MASK);
+		}
 #ifdef HAVE_TCF_VLAN_TPID
 		if (match.mask->vlan_tpid)
 			headers->vlan_hdr.vlan_tpid = match.key->vlan_tpid;
@@ -1837,6 +1863,9 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (match.mask->vlan_id) {
 			if (match.mask->vlan_id == VLAN_VID_MASK) {
 				fltr->flags |= ICE_TC_FLWR_FIELD_CVLAN;
+				headers->cvlan_hdr.vlan_id =
+					cpu_to_be16(match.key->vlan_id &
+						    VLAN_VID_MASK);
 			} else {
 				NL_SET_ERR_MSG_MOD(fltr->extack,
 						   "Bad CVLAN mask");
@@ -1844,12 +1873,12 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 			}
 		}
 
-		headers->cvlan_hdr.vlan_id =
-			cpu_to_be16(match.key->vlan_id & VLAN_VID_MASK);
-#ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
-		if (match.mask->vlan_priority)
-			headers->cvlan_hdr.vlan_prio = match.key->vlan_priority;
-#endif
+		if (match.mask->vlan_priority) {
+			fltr->flags |= ICE_TC_FLWR_FIELD_CVLAN_PRIO;
+			headers->cvlan_hdr.vlan_prio =
+				cpu_to_be16((match.key->vlan_priority <<
+					     VLAN_PRIO_SHIFT) & VLAN_PRIO_MASK);
+		}
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
 

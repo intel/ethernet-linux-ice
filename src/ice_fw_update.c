@@ -414,6 +414,8 @@ ice_write_nvm_module(struct ice_pf *pf, u16 module, const char *component,
 
 	dev_dbg(dev, "Beginning write of flash component '%s', module 0x%02x\n", component, module);
 
+	ice_block_ptp_workthreads_global(pf, true);
+
 	devlink = priv_to_devlink(pf);
 
 	devlink_flash_update_status_notify(devlink, "Flashing",

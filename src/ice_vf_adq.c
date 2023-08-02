@@ -225,11 +225,17 @@ void ice_vf_adq_release(struct ice_vf *vf)
  */
 static struct ice_vsi *ice_vf_adq_vsi_setup(struct ice_vf *vf, u8 tc)
 {
-	struct ice_port_info *pi = ice_vf_get_port_info(vf);
+	struct ice_vsi_cfg_params params = {};
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 
-	vsi = ice_vsi_setup(pf, pi, ICE_VSI_VF, vf, NULL, tc);
+	params.type = ICE_VSI_VF;
+	params.pi = ice_vf_get_port_info(vf);
+	params.vf = vf;
+	params.tc = tc;
+	params.flags = ICE_VSI_FLAG_INIT;
+
+	vsi = ice_vsi_setup(pf, &params);
 	if (!vsi) {
 		dev_err(ice_pf_to_dev(pf), "Failed to create VF ADQ VSI for TC %d\n",
 			tc);
@@ -460,7 +466,7 @@ int ice_vf_rebuild_adq_vsi(struct ice_vf *vf)
 			continue;
 
 		vsi = ice_get_vf_adq_vsi(vf, tc);
-		ret = ice_vsi_rebuild(vsi, true);
+		ret = ice_vsi_rebuild(vsi, ICE_VSI_FLAG_INIT);
 		if (ret) {
 			dev_err(ice_pf_to_dev(pf), "failed to rebuild ADQ VSI for VF %u, disabling VF ADQ VSI\n",
 				vf->vf_id);

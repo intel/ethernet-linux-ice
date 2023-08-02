@@ -164,8 +164,7 @@ ice_aq_update_nvm(struct ice_hw *hw, u16 module_typeid, u32 offset,
  *
  * Erase the NVM sector using the admin queue commands (0x0702)
  */
-int
-ice_aq_erase_nvm(struct ice_hw *hw, u16 module_typeid, struct ice_sq_cd *cd)
+int ice_aq_erase_nvm(struct ice_hw *hw, u16 module_typeid, struct ice_sq_cd *cd)
 {
 	struct ice_aq_desc desc;
 	struct ice_aqc_nvm *cmd;
@@ -200,8 +199,7 @@ ice_aq_erase_nvm(struct ice_hw *hw, u16 module_typeid, struct ice_sq_cd *cd)
  *
  * Reads one 16 bit word from the Shadow RAM using ice_read_flat_nvm.
  */
-static int
-ice_read_sr_word_aq(struct ice_hw *hw, u16 offset, u16 *data)
+static int ice_read_sr_word_aq(struct ice_hw *hw, u16 offset, u16 *data)
 {
 	u32 bytes = sizeof(u16);
 	__le16 data_local;
@@ -227,8 +225,7 @@ ice_read_sr_word_aq(struct ice_hw *hw, u16 offset, u16 *data)
  *
  * This function will request NVM ownership.
  */
-int
-ice_acquire_nvm(struct ice_hw *hw, enum ice_aq_res_access_type access)
+int ice_acquire_nvm(struct ice_hw *hw, enum ice_aq_res_access_type access)
 {
 	if (hw->flash.blank_nvm_mode)
 		return 0;
@@ -588,8 +585,7 @@ ice_get_pfa_module_tlv(struct ice_hw *hw, u16 *module_tlv, u16 *module_tlv_len,
  *
  * Reads the part number string from the NVM.
  */
-int
-ice_read_pba_string(struct ice_hw *hw, u8 *pba_num, u32 pba_num_size)
+int ice_read_pba_string(struct ice_hw *hw, u8 *pba_num, u32 pba_num_size)
 {
 	u16 pba_tlv, pba_tlv_len;
 	u16 pba_word, pba_size;
@@ -673,7 +669,7 @@ static int ice_get_nvm_srev(struct ice_hw *hw, enum ice_bank_select bank, u32 *s
  * @nvm: pointer to NVM info structure
  *
  * Read the NVM EETRACK ID and map version of the main NVM image bank, filling
- * in the nvm info structure.
+ * in the NVM info structure.
  */
 static int
 ice_get_nvm_ver_info(struct ice_hw *hw, enum ice_bank_select bank, struct ice_nvm_info *nvm)
@@ -806,7 +802,7 @@ ice_get_orom_civd_data(struct ice_hw *hw, enum ice_bank_select bank,
 				       orom_data, hw->flash.banks.orom_size);
 	if (status) {
 		ice_debug(hw, ICE_DBG_NVM, "Unable to read Option ROM data\n");
-		return status;
+		goto exit_error;
 	}
 
 	/* Scan the memory buffer to locate the CIVD data section */
@@ -830,7 +826,8 @@ ice_get_orom_civd_data(struct ice_hw *hw, enum ice_bank_select bank,
 		if (sum) {
 			ice_debug(hw, ICE_DBG_NVM, "Found CIVD data with invalid checksum of %u\n",
 				  sum);
-			goto err_invalid_checksum;
+			status = -EIO;
+			goto exit_error;
 		}
 
 		*civd = *tmp;
@@ -838,11 +835,12 @@ ice_get_orom_civd_data(struct ice_hw *hw, enum ice_bank_select bank,
 		return 0;
 	}
 
+	status = -EIO;
 	ice_debug(hw, ICE_DBG_NVM, "Unable to locate CIVD data within the Option ROM\n");
 
-err_invalid_checksum:
+exit_error:
 	vfree(orom_data);
-	return -EIO;
+	return status;
 }
 
 /**
@@ -989,7 +987,7 @@ int ice_get_inactive_netlist_ver(struct ice_hw *hw, struct ice_netlist_info *net
 }
 
 /**
- * ice_discover_flash_size - Discover the available flash size.
+ * ice_discover_flash_size - Discover the available flash size
  * @hw: pointer to the HW struct
  *
  * The device flash could be up to 16MB in size. However, it is possible that
@@ -1051,8 +1049,7 @@ err_read_flat_nvm:
  * sector size by using the highest bit. The reported pointer value will be in
  * bytes, intended for flat NVM reads.
  */
-static int
-ice_read_sr_pointer(struct ice_hw *hw, u16 offset, u32 *pointer)
+static int ice_read_sr_pointer(struct ice_hw *hw, u16 offset, u32 *pointer)
 {
 	int status;
 	u16 value;
@@ -1083,8 +1080,7 @@ ice_read_sr_pointer(struct ice_hw *hw, u16 offset, u32 *pointer)
  * Each area size word is specified in 4KB sector units. This function reports
  * the size in bytes, intended for flat NVM reads.
  */
-static int
-ice_read_sr_area_size(struct ice_hw *hw, u16 offset, u32 *size)
+static int ice_read_sr_area_size(struct ice_hw *hw, u16 offset, u32 *size)
 {
 	int status;
 	u16 value;
@@ -1109,8 +1105,7 @@ ice_read_sr_area_size(struct ice_hw *hw, u16 offset, u32 *size)
  * structure for later use in order to calculate the correct offset to read
  * from the active module.
  */
-static int
-ice_determine_active_flash_banks(struct ice_hw *hw)
+static int ice_determine_active_flash_banks(struct ice_hw *hw)
 {
 	struct ice_bank_info *banks = &hw->flash.banks;
 	u16 ctrl_word;
@@ -1242,6 +1237,7 @@ int ice_init_nvm(struct ice_hw *hw)
 	status = ice_get_netlist_info(hw, ICE_ACTIVE_FLASH_BANK, &flash->netlist);
 	if (status)
 		ice_debug(hw, ICE_DBG_INIT, "Failed to read netlist info.\n");
+
 	return 0;
 }
 
@@ -1267,7 +1263,6 @@ int ice_nvm_validate_checksum(struct ice_hw *hw)
 	cmd->flags = ICE_AQC_NVM_CHECKSUM_VERIFY;
 
 	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
-
 	ice_release_nvm(hw);
 
 	if (!status)
@@ -1325,24 +1320,23 @@ int ice_nvm_recalculate_checksum(struct ice_hw *hw)
  * is updated with the flags reported by firmware indicating certain status,
  * such as whether EMP reset is enabled.
  */
-int
-ice_nvm_write_activate(struct ice_hw *hw, u16 cmd_flags, u8 *response_flags)
+int ice_nvm_write_activate(struct ice_hw *hw, u16 cmd_flags, u8 *response_flags)
 {
 	struct ice_aqc_nvm *cmd;
 	struct ice_aq_desc desc;
-	int status;
+	int err;
 
 	cmd = &desc.params.nvm;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_nvm_write_activate);
 
-	cmd->cmd_flags = ICE_LO_BYTE(cmd_flags);
-	cmd->offset_high = ICE_HI_BYTE(cmd_flags);
+	cmd->cmd_flags = (u8)(cmd_flags & 0xFF);
+	cmd->offset_high = (u8)((cmd_flags >> 8) & 0xFF);
 
-	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
-	if (!status && response_flags)
+	err = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+	if (!err && response_flags)
 		*response_flags = cmd->cmd_flags;
 
-	return status;
+	return err;
 }
 
 /**
@@ -1788,4 +1782,3 @@ ice_nvm_pass_component_tbl(struct ice_hw *hw, u8 *data, u16 length,
 	}
 	return status;
 }
-

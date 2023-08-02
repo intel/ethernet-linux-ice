@@ -64,6 +64,7 @@ ice-y := ice_main.o	\
 	 ice_flg_rd.o		\
 	 ice_xlt_kb.o		\
 	 ice_parser_rt.o	\
+	ice_peer_support.o	\
 	 ice_lag.o		\
 	 ice_fwlog.o		\
 	 ice_ieps.o		\
@@ -71,6 +72,7 @@ ice-y := ice_main.o	\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
+ice-y += ice_peer_support.o
 ice-y += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
 
@@ -113,6 +115,12 @@ ifeq (${CONFIG_SUSE_KERNEL}, y)
 ice-y += kcompat_gnss.o
 endif
 
+ifneq (${ENABLE_LM_SUPPORT},)
+obj-$(CONFIG_VFIO_PCI_CORE:y=m) += ice-vfio-pci.o
+
+ice-vfio-pci-y := ice_vfio_pci.o
+ice-$(CONFIG_VFIO_PCI_CORE:m=y) += ice_migration.o
+endif
 
 
 ifeq (${NEED_AUX_BUS},2)
@@ -139,9 +147,16 @@ $(call minimum_kver_check,3,10,0)
 # PASID support. Do not even try to build SIOV support if the kernel lacks
 # the necessary infrastructure.
 ifeq ($(call is_kcompat_defined,HAVE_PASID_SUPPORT),1)
+ifeq ($(call is_kcompat_defined,HAVE_IOMMU_DEV_FEAT_AUX),1)
 export ENABLE_SIOV_SUPPORT := 1
 endif
+endif
 
+# LM support is only enabled if the kernel has features for LM v1 protocol.
+# If the kernel lacks the necessary infrastructure, LM support will be disabled.
+ifeq ($(call is_kcompat_defined,HAVE_LMV1_SUPPORT),1)
+export ENABLE_LM_SUPPORT := 1
+endif
 
 # Command to update initramfs or display a warning message
 ifeq (${cmd_initrd},)

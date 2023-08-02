@@ -196,7 +196,7 @@ struct ice_flow_field_info ice_flds_info[ICE_FLOW_FIELD_IDX_MAX] = {
 	/* ICE_FLOW_FIELD_IDX_GTPU_DWN_QFI */
 	ICE_FLOW_FLD_INFO_MSK(ICE_FLOW_SEG_HDR_GTPU_DWN, 22,
 			      ICE_FLOW_FLD_SZ_GTP_QFI, 0x3f00),
-	/* PPPOE */
+	/* PPPoE */
 	/* ICE_FLOW_FIELD_IDX_PPPOE_SESS_ID */
 	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_PPPOE, 2,
 			  ICE_FLOW_FLD_SZ_PPPOE_SESS_ID),
@@ -798,7 +798,7 @@ static const u32 ice_ptypes_gtpu[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
-/* Packet types for pppoe */
+/* Packet types for PPPoE */
 static const u32 ice_ptypes_pppoe[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -834,7 +834,7 @@ static const u32 ice_ptypes_pfcp_session[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
-/* Packet types for l2tpv3 */
+/* Packet types for L2TPv3 */
 static const u32 ice_ptypes_l2tpv3[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -846,7 +846,7 @@ static const u32 ice_ptypes_l2tpv3[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
-/* Packet types for esp */
+/* Packet types for ESP */
 static const u32 ice_ptypes_esp[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000003, 0x00000000, 0x00000000,
@@ -858,7 +858,7 @@ static const u32 ice_ptypes_esp[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
-/* Packet types for ah */
+/* Packet types for AH */
 static const u32 ice_ptypes_ah[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x0000000C, 0x00000000, 0x00000000,
@@ -1000,12 +1000,11 @@ struct ice_flow_prof_params {
 	ICE_FLOW_SEG_HDR_L2TPV2 | ICE_FLOW_SEG_HDR_PPP)
 
 #define ICE_FLOW_SEG_HDRS_L3_MASK	\
-	(ICE_FLOW_SEG_HDR_IPV4 | ICE_FLOW_SEG_HDR_IPV6 | \
-	 ICE_FLOW_SEG_HDR_ARP)
+	(ICE_FLOW_SEG_HDR_IPV4 | ICE_FLOW_SEG_HDR_IPV6 | ICE_FLOW_SEG_HDR_ARP)
 #define ICE_FLOW_SEG_HDRS_L4_MASK	\
 	(ICE_FLOW_SEG_HDR_ICMP | ICE_FLOW_SEG_HDR_TCP | ICE_FLOW_SEG_HDR_UDP | \
 	 ICE_FLOW_SEG_HDR_SCTP)
-/* mask for L4 protocols that are NOT part of IPV4/6 OTHER PTYPE groups */
+/* mask for L4 protocols that are NOT part of IPv4/6 OTHER PTYPE groups */
 #define ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER	\
 	(ICE_FLOW_SEG_HDR_TCP | ICE_FLOW_SEG_HDR_UDP | ICE_FLOW_SEG_HDR_SCTP)
 
@@ -1014,8 +1013,7 @@ struct ice_flow_prof_params {
  * @segs: array of one or more packet segments that describe the flow
  * @segs_cnt: number of packet segments provided
  */
-static int
-ice_flow_val_hdrs(struct ice_flow_seg_info *segs, u8 segs_cnt)
+static int ice_flow_val_hdrs(struct ice_flow_seg_info *segs, u8 segs_cnt)
 {
 	u8 i;
 
@@ -1066,7 +1064,7 @@ static u16 ice_flow_calc_seg_sz(struct ice_flow_prof_params *params, u8 seg)
 	else if (params->prof->segs[seg].hdrs & ICE_FLOW_SEG_HDR_ARP)
 		sz += ICE_FLOW_PROT_HDR_SZ_ARP;
 	else if (params->prof->segs[seg].hdrs & ICE_FLOW_SEG_HDRS_L4_MASK)
-		/* A L3 header is required if L4 is specified */
+		/* An L3 header is required if L4 is specified */
 		return 0;
 
 	/* L4 headers */
@@ -1132,15 +1130,13 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 
 		if ((hdrs & ICE_FLOW_SEG_HDR_IPV4) &&
 		    (hdrs & ICE_FLOW_SEG_HDR_IPV_OTHER)) {
-			src = i ?
-				(const unsigned long *)ice_ptypes_ipv4_il :
+			src = i ? (const unsigned long *)ice_ptypes_ipv4_il :
 				(const unsigned long *)ice_ptypes_ipv4_ofos_all;
 			bitmap_and(params->ptypes, params->ptypes, src,
 				   ICE_FLOW_PTYPE_MAX);
 		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV6) &&
 			   (hdrs & ICE_FLOW_SEG_HDR_IPV_OTHER)) {
-			src = i ?
-				(const unsigned long *)ice_ptypes_ipv6_il :
+			src = i ? (const unsigned long *)ice_ptypes_ipv6_il :
 				(const unsigned long *)ice_ptypes_ipv6_ofos_all;
 			bitmap_and(params->ptypes, params->ptypes, src,
 				   ICE_FLOW_PTYPE_MAX);
@@ -1191,6 +1187,7 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 			bitmap_andnot(params->ptypes, params->ptypes, src,
 				      ICE_FLOW_PTYPE_MAX);
 		}
+
 		if (hdrs & ICE_FLOW_SEG_HDR_UDP) {
 			src = (const unsigned long *)ice_ptypes_udp_il;
 			bitmap_and(params->ptypes, params->ptypes, src,
@@ -1296,11 +1293,9 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 
 		if (hdrs & ICE_FLOW_SEG_HDR_PFCP) {
 			if (hdrs & ICE_FLOW_SEG_HDR_PFCP_NODE)
-				src =
-				(const unsigned long *)ice_ptypes_pfcp_node;
+				src = (const unsigned long *)ice_ptypes_pfcp_node;
 			else
-				src =
-				(const unsigned long *)ice_ptypes_pfcp_session;
+				src = (const unsigned long *)ice_ptypes_pfcp_session;
 
 			bitmap_and(params->ptypes, params->ptypes, src,
 				   ICE_FLOW_PTYPE_MAX);
@@ -1368,7 +1363,7 @@ ice_flow_xtract_pkt_flags(struct ice_hw *hw,
  */
 static int
 ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
-		    u8 seg, enum ice_flow_field fld, u64 match)
+		    u8 seg, enum ice_flow_field fld, unsigned long *match)
 {
 	enum ice_flow_field sib = ICE_FLOW_FIELD_IDX_MAX;
 	u8 fv_words = (u8)hw->blk[params->blk].es.fvw;
@@ -1416,7 +1411,7 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 		/* If the sibling field is also included, that field's
 		 * mask needs to be included.
 		 */
-		if (match & BIT(sib))
+		if (test_bit(sib, match))
 			sib_mask = ice_flds_info[sib].mask;
 		break;
 	case ICE_FLOW_FIELD_IDX_IPV6_TTL:
@@ -1438,7 +1433,7 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 		/* If the sibling field is also included, that field's
 		 * mask needs to be included.
 		 */
-		if (match & BIT(sib))
+		if (test_bit(sib, match))
 			sib_mask = ice_flds_info[sib].mask;
 		break;
 	case ICE_FLOW_FIELD_IDX_IPV4_SA:
@@ -1534,8 +1529,7 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 	case ICE_FLOW_FIELD_IDX_ICMP_TYPE:
 	case ICE_FLOW_FIELD_IDX_ICMP_CODE:
 		/* ICMP type and code share the same extraction seq. entry */
-		prot_id = (params->prof->segs[seg].hdrs &
-			   ICE_FLOW_SEG_HDR_IPV4) ?
+		prot_id = (params->prof->segs[seg].hdrs & ICE_FLOW_SEG_HDR_IPV4) ?
 			ICE_PROT_ICMP_IL : ICE_PROT_ICMPV6_IL;
 		sib = fld == ICE_FLOW_FIELD_IDX_ICMP_TYPE ?
 			ICE_FLOW_FIELD_IDX_ICMP_CODE :
@@ -1703,15 +1697,16 @@ ice_flow_create_xtrct_seq(struct ice_hw *hw,
 	}
 
 	for (i = 0; i < params->prof->segs_cnt; i++) {
-		u64 match = params->prof->segs[i].match;
+		DECLARE_BITMAP(match, ICE_FLOW_FIELD_IDX_MAX);
 		enum ice_flow_field j;
 
-		for_each_set_bit(j, (unsigned long *)&match,
-				 ICE_FLOW_FIELD_IDX_MAX) {
+		bitmap_copy(match, params->prof->segs[i].match,
+			    ICE_FLOW_FIELD_IDX_MAX);
+		for_each_set_bit(j, match, ICE_FLOW_FIELD_IDX_MAX) {
 			status = ice_flow_xtract_fld(hw, params, i, j, match);
 			if (status)
 				return status;
-			clear_bit(j, (unsigned long *)&match);
+			clear_bit(j, match);
 		}
 
 		/* Process raw matching bytes */
@@ -1770,8 +1765,7 @@ ice_flow_acl_def_entry_frmt(struct ice_flow_prof_params *params)
 		struct ice_flow_seg_info *seg = &params->prof->segs[i];
 		u16 j;
 
-		for_each_set_bit(j, (unsigned long *)&seg->match,
-				 (u16)ICE_FLOW_FIELD_IDX_MAX) {
+		for_each_set_bit(j, seg->match, (u16)ICE_FLOW_FIELD_IDX_MAX) {
 			struct ice_flow_fld_info *fld = &seg->fields[j];
 
 			fld->entry.mask = ICE_FLOW_FLD_OFF_INVAL;
@@ -1909,7 +1903,8 @@ ice_flow_find_prof_conds(struct ice_hw *hw, enum ice_block blk,
 			for (i = 0; i < segs_cnt; i++)
 				if (segs[i].hdrs != p->segs[i].hdrs ||
 				    ((conds & ICE_FLOW_FIND_PROF_CHK_FLDS) &&
-				     segs[i].match != p->segs[i].match))
+				     (bitmap_equal(segs[i].match, p->segs[i].match, ICE_FLOW_FIELD_IDX_MAX) ==
+				       false)))
 					break;
 
 			/* A match is found if all segments are matched */
@@ -2408,7 +2403,7 @@ ice_flow_acl_set_xtrct_seq(struct ice_hw *hw, struct ice_flow_prof *prof)
 			struct ice_flow_seg_info *seg = &prof->segs[i];
 			u16 j;
 
-			for_each_set_bit(j, (unsigned long *)&seg->match,
+			for_each_set_bit(j, seg->match,
 					 ICE_FLOW_FIELD_IDX_MAX) {
 				info = &seg->fields[j];
 
@@ -2978,8 +2973,7 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 		struct ice_flow_seg_info *seg = &prof->segs[i];
 		u16 j;
 
-		for_each_set_bit(j, (unsigned long *)&seg->match,
-				 (u16)ICE_FLOW_FIELD_IDX_MAX) {
+		for_each_set_bit(j, seg->match, (u16)ICE_FLOW_FIELD_IDX_MAX) {
 			struct ice_flow_fld_info *info = &seg->fields[j];
 
 			if (info->type == ICE_FLOW_FLD_TYPE_RANGE)
@@ -3553,11 +3547,9 @@ ice_flow_set_fld_ext(struct ice_flow_seg_info *seg, enum ice_flow_field fld,
 		     enum ice_flow_fld_match_type field_type, u16 val_loc,
 		     u16 mask_loc, u16 last_loc)
 {
-	u64 bit = BIT_ULL(fld);
-
-	seg->match |= bit;
+	set_bit(fld, seg->match);
 	if (field_type == ICE_FLOW_FLD_TYPE_RANGE)
-		seg->range |= bit;
+		set_bit(fld, seg->range);
 
 	seg->fields[fld].type = field_type;
 	seg->fields[fld].src.val = val_loc;
@@ -3762,20 +3754,20 @@ ice_flow_set_rss_seg_info(struct ice_flow_seg_info *segs, u8 seg_cnt,
 	/* set outer most header */
 	if (cfg->hdr_type == ICE_RSS_INNER_HEADERS_W_OUTER_IPV4)
 		segs[ICE_RSS_OUTER_HEADERS].hdrs |= ICE_FLOW_SEG_HDR_IPV4 |
-						   ICE_FLOW_SEG_HDR_IPV_FRAG |
-						   ICE_FLOW_SEG_HDR_IPV_OTHER;
+						    ICE_FLOW_SEG_HDR_IPV_FRAG |
+						    ICE_FLOW_SEG_HDR_IPV_OTHER;
 	else if (cfg->hdr_type == ICE_RSS_INNER_HEADERS_W_OUTER_IPV6)
 		segs[ICE_RSS_OUTER_HEADERS].hdrs |= ICE_FLOW_SEG_HDR_IPV6 |
-						   ICE_FLOW_SEG_HDR_IPV_FRAG |
-						   ICE_FLOW_SEG_HDR_IPV_OTHER;
+						    ICE_FLOW_SEG_HDR_IPV_FRAG |
+						    ICE_FLOW_SEG_HDR_IPV_OTHER;
 	else if (cfg->hdr_type == ICE_RSS_INNER_HEADERS_W_OUTER_IPV4_GRE)
 		segs[ICE_RSS_OUTER_HEADERS].hdrs |= ICE_FLOW_SEG_HDR_IPV4 |
-						   ICE_FLOW_SEG_HDR_GRE |
-						   ICE_FLOW_SEG_HDR_IPV_OTHER;
+						    ICE_FLOW_SEG_HDR_GRE |
+						    ICE_FLOW_SEG_HDR_IPV_OTHER;
 	else if (cfg->hdr_type == ICE_RSS_INNER_HEADERS_W_OUTER_IPV6_GRE)
 		segs[ICE_RSS_OUTER_HEADERS].hdrs |= ICE_FLOW_SEG_HDR_IPV6 |
-						   ICE_FLOW_SEG_HDR_GRE |
-						   ICE_FLOW_SEG_HDR_IPV_OTHER;
+						    ICE_FLOW_SEG_HDR_GRE |
+						    ICE_FLOW_SEG_HDR_IPV_OTHER;
 
 	if (seg->hdrs & ~ICE_FLOW_RSS_SEG_HDR_VAL_MASKS &
 	    ~ICE_FLOW_RSS_HDRS_INNER_MASK & ~ICE_FLOW_SEG_HDR_IPV_OTHER &
@@ -3879,11 +3871,14 @@ ice_get_rss_hdr_type(struct ice_flow_prof *prof)
 	if (prof->segs_cnt == ICE_FLOW_SEG_SINGLE) {
 		hdr_type = ICE_RSS_OUTER_HEADERS;
 	} else if (prof->segs_cnt == ICE_FLOW_SEG_MAX) {
-		if (prof->segs[ICE_RSS_OUTER_HEADERS].hdrs == ICE_FLOW_SEG_HDR_NONE)
+		const struct ice_flow_seg_info *s;
+
+		s = &prof->segs[ICE_RSS_OUTER_HEADERS];
+		if (s->hdrs == ICE_FLOW_SEG_HDR_NONE)
 			hdr_type = ICE_RSS_INNER_HEADERS;
-		if (prof->segs[ICE_RSS_OUTER_HEADERS].hdrs & ICE_FLOW_SEG_HDR_IPV4)
+		if (s->hdrs & ICE_FLOW_SEG_HDR_IPV4)
 			hdr_type = ICE_RSS_INNER_HEADERS_W_OUTER_IPV4;
-		if (prof->segs[ICE_RSS_OUTER_HEADERS].hdrs & ICE_FLOW_SEG_HDR_IPV6)
+		if (s->hdrs & ICE_FLOW_SEG_HDR_IPV6)
 			hdr_type = ICE_RSS_INNER_HEADERS_W_OUTER_IPV6;
 	}
 
@@ -3903,6 +3898,14 @@ ice_rem_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 {
 	enum ice_rss_cfg_hdr_type hdr_type;
 	struct ice_rss_cfg *r, *tmp;
+	u64 seg_match = 0;
+	u16 i;
+
+	/* convert match bitmap to u64 for hash field comparison */
+	for_each_set_bit(i, prof->segs[prof->segs_cnt - 1].match,
+		         ICE_FLOW_FIELD_IDX_MAX) {
+		seg_match |= 1ULL << i;
+	}
 
 	/* Search for RSS hash fields associated to the VSI that match the
 	 * hash configurations associated to the flow profile. If found
@@ -3910,7 +3913,7 @@ ice_rem_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 	 */
 	hdr_type = ice_get_rss_hdr_type(prof);
 	list_for_each_entry_safe(r, tmp, &hw->rss_list_head, l_entry)
-		if (r->hash.hash_flds == prof->segs[prof->segs_cnt - 1].match &&
+		if (r->hash.hash_flds == seg_match &&
 		    r->hash.addl_hdrs == prof->segs[prof->segs_cnt - 1].hdrs &&
 		    r->hash.hdr_type == hdr_type) {
 			clear_bit(vsi_handle, r->vsis);
@@ -3935,10 +3938,17 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 {
 	enum ice_rss_cfg_hdr_type hdr_type;
 	struct ice_rss_cfg *r, *rss_cfg;
+	u64 seg_match = 0;
+	u16 i;
+
+	for_each_set_bit(i, prof->segs[prof->segs_cnt - 1].match,
+			 ICE_FLOW_FIELD_IDX_MAX) {
+		seg_match |= 1ULL << i;
+	}
 
 	hdr_type = ice_get_rss_hdr_type(prof);
 	list_for_each_entry(r, &hw->rss_list_head, l_entry)
-		if (r->hash.hash_flds == prof->segs[prof->segs_cnt - 1].match &&
+		if (r->hash.hash_flds == seg_match &&
 		    r->hash.addl_hdrs == prof->segs[prof->segs_cnt - 1].hdrs &&
 		    r->hash.hdr_type == hdr_type) {
 			set_bit(vsi_handle, r->vsis);
@@ -3950,7 +3960,7 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 	if (!rss_cfg)
 		return -ENOMEM;
 
-	rss_cfg->hash.hash_flds = prof->segs[prof->segs_cnt - 1].match;
+	rss_cfg->hash.hash_flds = seg_match;
 	rss_cfg->hash.addl_hdrs = prof->segs[prof->segs_cnt - 1].hdrs;
 	rss_cfg->hash.hdr_type = hdr_type;
 	rss_cfg->hash.symm = prof->cfg.symm;
@@ -3974,13 +3984,14 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
  * [62:63] - Encapsulation flag:
  *	     0 if non-tunneled
  *	     1 if tunneled
- *	     2 for tunneled with outer ipv4
- *	     3 for tunneled with outer ipv6
+ *	     2 for tunneled with outer IPv4
+ *	     3 for tunneled with outer IPv6
  */
-#define ICE_FLOW_GEN_PROFID(hash, hdr, encap) \
-	((u64)(((u64)(hash) & ICE_FLOW_PROF_HASH_M) | \
+#define ICE_FLOW_GEN_PROFID(hash, hdr, encap)                                \
+	((u64)(((u64)(hash) & ICE_FLOW_PROF_HASH_M) |                        \
 	       (((u64)(hdr) << ICE_FLOW_PROF_HDR_S) & ICE_FLOW_PROF_HDR_M) | \
-	       (((u64)(encap) << ICE_FLOW_PROF_ENCAP_S) & ICE_FLOW_PROF_ENCAP_M)))
+	       (((u64)(encap) << ICE_FLOW_PROF_ENCAP_S) &                    \
+		ICE_FLOW_PROF_ENCAP_M)))
 
 static void
 ice_rss_config_xor_word(struct ice_hw *hw, u8 prof_id, u8 src, u8 dst)
@@ -4219,7 +4230,8 @@ ice_add_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle,
 	int status;
 
 	segs_cnt = (cfg->hdr_type == ICE_RSS_OUTER_HEADERS) ?
-			ICE_FLOW_SEG_SINGLE : ICE_FLOW_SEG_MAX;
+			   ICE_FLOW_SEG_SINGLE :
+			   ICE_FLOW_SEG_MAX;
 
 	segs = devm_kcalloc(ice_hw_to_dev(hw), segs_cnt, sizeof(*segs),
 			    GFP_KERNEL);
@@ -4338,18 +4350,16 @@ ice_add_rss_cfg(struct ice_hw *hw, u16 vsi_handle,
 	struct ice_rss_hash_cfg local_cfg;
 	int status;
 
-	if (!ice_is_vsi_valid(hw, vsi_handle) ||
-	    !cfg || cfg->hdr_type > ICE_RSS_ANY_HEADERS ||
+	if (!ice_is_vsi_valid(hw, vsi_handle) || !cfg ||
+	    cfg->hdr_type > ICE_RSS_ANY_HEADERS ||
 	    cfg->hash_flds == ICE_HASH_INVALID)
 		return -EINVAL;
 
+	mutex_lock(&hw->rss_locks);
 	local_cfg = *cfg;
 	if (cfg->hdr_type < ICE_RSS_ANY_HEADERS) {
-		mutex_lock(&hw->rss_locks);
 		status = ice_add_rss_cfg_sync(hw, vsi_handle, &local_cfg);
-		mutex_unlock(&hw->rss_locks);
 	} else {
-		mutex_lock(&hw->rss_locks);
 		local_cfg.hdr_type = ICE_RSS_OUTER_HEADERS;
 		status = ice_add_rss_cfg_sync(hw, vsi_handle, &local_cfg);
 		if (!status) {
@@ -4357,8 +4367,8 @@ ice_add_rss_cfg(struct ice_hw *hw, u16 vsi_handle,
 			status = ice_add_rss_cfg_sync(hw, vsi_handle,
 						      &local_cfg);
 		}
-		mutex_unlock(&hw->rss_locks);
 	}
+	mutex_unlock(&hw->rss_locks);
 
 	return status;
 }
@@ -4382,7 +4392,8 @@ ice_rem_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle,
 	int status;
 
 	segs_cnt = (cfg->hdr_type == ICE_RSS_OUTER_HEADERS) ?
-			ICE_FLOW_SEG_SINGLE : ICE_FLOW_SEG_MAX;
+			   ICE_FLOW_SEG_SINGLE :
+			   ICE_FLOW_SEG_MAX;
 	segs = devm_kcalloc(ice_hw_to_dev(hw), segs_cnt, sizeof(*segs),
 			    GFP_KERNEL);
 	if (!segs)
@@ -4437,8 +4448,8 @@ ice_rem_rss_cfg(struct ice_hw *hw, u16 vsi_handle,
 	struct ice_rss_hash_cfg local_cfg;
 	int status;
 
-	if (!ice_is_vsi_valid(hw, vsi_handle) ||
-	    !cfg || cfg->hdr_type > ICE_RSS_ANY_HEADERS ||
+	if (!ice_is_vsi_valid(hw, vsi_handle) || !cfg ||
+	    cfg->hdr_type > ICE_RSS_ANY_HEADERS ||
 	    cfg->hash_flds == ICE_HASH_INVALID)
 		return -EINVAL;
 
@@ -4449,7 +4460,6 @@ ice_rem_rss_cfg(struct ice_hw *hw, u16 vsi_handle,
 	} else {
 		local_cfg.hdr_type = ICE_RSS_OUTER_HEADERS;
 		status = ice_rem_rss_cfg_sync(hw, vsi_handle, &local_cfg);
-
 		if (!status) {
 			local_cfg.hdr_type = ICE_RSS_INNER_HEADERS;
 			status = ice_rem_rss_cfg_sync(hw, vsi_handle,
@@ -4503,8 +4513,7 @@ ice_rem_rss_cfg(struct ice_hw *hw, u16 vsi_handle,
  * message, convert it to ICE-compatible values, and configure RSS flow
  * profiles.
  */
-int
-ice_add_avf_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 avf_hash)
+int ice_add_avf_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 avf_hash)
 {
 	struct ice_rss_hash_cfg hcfg;
 	int status = 0;

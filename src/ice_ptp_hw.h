@@ -121,6 +121,13 @@ struct ice_cgu_pll_params_e822 {
 extern const struct
 ice_cgu_pll_params_e822 e822_cgu_params[NUM_ICE_TIME_REF_FREQ];
 
+enum ice_e825c_ref_clk {
+	ICE_REF_CLK_ENET = 1,
+	ICE_REF_CLK_EREF0,
+	ICE_REF_CLK_SYNCE,
+	ICE_REF_CLK_MAX,
+};
+
 enum ice_e810t_cgu_dpll {
 	ICE_CGU_DPLL_SYNCE,
 	ICE_CGU_DPLL_PTP,
@@ -222,6 +229,7 @@ int
 ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx);
 void ice_ptp_reset_ts_memory(struct ice_hw *hw);
 int ice_ptp_init_phc(struct ice_hw *hw);
+bool refsync_pin_id_valid(struct ice_hw *hw, u8 id);
 int
 ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready);
 int
@@ -260,6 +268,18 @@ void ice_ptp_reset_ts_memory_quad_e822(struct ice_hw *hw, u8 quad);
 int
 ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
 		     enum ice_clk_src *clk_src);
+int
+ice_cfg_cgu_pll_e825c(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
+		      enum ice_clk_src *clk_src);
+int
+ice_cgu_ts_pll_lost_lock_e825c(struct ice_hw *hw, bool *lost_lock);
+int ice_cgu_ts_pll_restart_e825c(struct ice_hw *hw);
+int
+ice_cgu_bypass_mux_port_active_e825c(struct ice_hw *hw, u8 port, bool *active);
+int
+ice_cfg_cgu_bypass_mux_e825c(struct ice_hw *hw, u8 port_num, bool clock_1588,
+			     unsigned int ena);
+int ice_cfg_synce_ethdiv_e825c(struct ice_hw *hw, u8 *divider);
 
 /**
  * ice_e822_time_ref - Get the current TIME_REF from capabilities
@@ -331,6 +351,10 @@ int ice_read_sma_ctrl_e810t(struct ice_hw *hw, u8 *data);
 int ice_write_sma_ctrl_e810t(struct ice_hw *hw, u8 data);
 bool ice_is_pca9575_present(struct ice_hw *hw);
 
+int
+ice_change_tx_clk_eth56g(struct ice_hw *hw, u8 port,
+			 enum ice_e825c_ref_clk clk);
+int ice_enable_all_clk_refs(struct ice_hw *hw);
 void
 ice_ptp_process_cgu_err(struct ice_hw *hw, struct ice_rq_event_info *event);
 bool ice_is_cgu_present(struct ice_hw *hw);
@@ -440,7 +464,6 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 			return ICE_ETH56G_NOMINAL_INCVAL;
 		else
 			return LOCKED_INCVAL_E822;
-
 	case ICE_PHY_E810:
 		return ICE_PTP_NOMINAL_INCVAL_E810;
 	case ICE_PHY_E822:
@@ -658,7 +681,7 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 #define ETH_GLTSYN_SHADJ_H(_i)		(0x0300037C + ((_i) * 32))
 
 /* E810 timer command register */
-#define ETH_GLTSYN_CMD			0x03000344
+#define E810_ETH_GLTSYN_CMD		0x03000344
 
 /* Source timer incval macros */
 #define INCVAL_HIGH_M			0xFF
@@ -677,6 +700,7 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 
 /* Tx timestamp low latency read definitions */
 #define TS_LL_READ_RETRIES		200
+#define TS_LL_READ_TS_INTR		BIT(30)
 #define TS_LL_READ_TS			BIT(31)
 #define TS_LL_READ_TS_IDX_S		24
 #define TS_LL_READ_TS_IDX_M		ICE_M(0x3F, 0)

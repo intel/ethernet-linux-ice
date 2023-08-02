@@ -8,6 +8,9 @@
 #include "ice_dcb_lib.h"
 #include "ice_ptp.h"
 #include "ice_ieps.h"
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+#include "ice_devlink.h"
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 
 static DEFINE_IDA(ice_cdev_info_ida);
 
@@ -154,16 +157,14 @@ void ice_send_event_to_auxs(struct ice_pf *pf, struct iidc_event *event)
  * @data: ptr to opaque data
  *
  * This function releases resources for cdev_info objects.
- * Meant to be called from a ice_for_each_aux invocation
+ * Meant to be called from a ice_for_each_aux invocation, which means it needs
+ * to return an int so that it's function signature matches the other
+ * functions.
  */
 int ice_unroll_cdev_info(struct iidc_core_dev_info *cdev_info,
 			 void __always_unused *data)
 {
-	if (!cdev_info)
-		return 0;
-
 	kfree(cdev_info);
-
 	return 0;
 }
 
@@ -188,7 +189,7 @@ void ice_cdev_info_refresh_msix(struct ice_pf *pf)
 
 		switch (cdev_info->cdev_info_id) {
 		case IIDC_RDMA_ID:
-			cdev_info->msix_count = pf->num_rdma_msix;
+			cdev_info->msix_count = pf->msix.rdma;
 			cdev_info->msix_entries =
 				&pf->msix_entries[pf->rdma_base_vector];
 			break;
@@ -388,7 +389,8 @@ ice_free_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 		return -EINVAL;
 
 #ifdef HAVE_NETDEV_UPPER_INFO
-	memset(&pf->lag->rdma_qset[qset->tc], 0, sizeof(*qset));
+	if (pf->lag)
+		memset(&pf->lag->rdma_qset[qset->tc], 0, sizeof(*qset));
 #endif /* HAVE_NETDEV_UPPER_INFO */
 	return 0;
 }
@@ -566,10 +568,10 @@ static int ice_reserve_cdev_info_qvector(struct ice_pf *pf)
 	if (ice_is_aux_ena(pf)) {
 		int index;
 
-		index = ice_get_res(pf, pf->irq_tracker, pf->num_rdma_msix, ICE_RES_RDMA_VEC_ID);
+		index = ice_get_res(pf, pf->irq_tracker, pf->msix.rdma,
+				    ICE_RES_RDMA_VEC_ID);
 		if (index < 0)
 			return index;
-		pf->num_avail_sw_msix -= pf->num_rdma_msix;
 		pf->rdma_base_vector = (u16)index;
 	}
 	return 0;
@@ -691,6 +693,9 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 {
 	struct iidc_auxiliary_dev *iadev;
 	struct auxiliary_device *adev;
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	struct device *dev;
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	struct ice_pf *pf;
 	int ret;
 
@@ -700,7 +705,9 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	pf = pci_get_drvdata(cdev_info->pdev);
 	if (!pf)
 		return -EINVAL;
-
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	dev = &pf->pdev->dev;
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	if (cdev_info->adev)
 		return 0;
 
@@ -709,6 +716,15 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	 */
 	if (!ice_is_aux_ena(pf))
 		return 0;
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	if (pf->hw.port_info->is_custom_tx_enabled &&
+	    cdev_info->cdev_info_id == IIDC_RDMA_ID) {
+		dev_err(dev, "Cannot enable feature RDMA because HQoS HW offload mode is currently enabled\n");
+		return -EBUSY;
+	}
+
+	ice_tear_down_devlink_rate_tree(pf);
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 
 	iadev = kzalloc(sizeof(*iadev), GFP_KERNEL);
 	if (!iadev)
@@ -766,13 +782,14 @@ void ice_unplug_aux_dev(struct iidc_core_dev_info *cdev_info)
 
 /* ice_plug_aux_devs - allocate and register aux dev for cdev_info
  * @pf: pointer to pf struct
- *
- * The PFs cdev_infos array must be setup before calling this function
  */
 int ice_plug_aux_devs(struct ice_pf *pf)
 {
 	int ret;
 	u8 i;
+
+	if (!pf->cdev_infos)
+		return 0;
 
 	for (i = 0; i < ARRAY_SIZE(ice_cdev_ids); i++) {
 		const char *name;
@@ -804,6 +821,9 @@ int ice_plug_aux_devs(struct ice_pf *pf)
 void ice_unplug_aux_devs(struct ice_pf *pf)
 {
 	u8 i;
+
+	if (!pf->cdev_infos)
+		return;
 
 	for (i = 0; i < ARRAY_SIZE(ice_cdev_ids); i++) {
 		ice_unplug_aux_dev(pf->cdev_infos[i]);
@@ -921,7 +941,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 			/* make sure peer specific resources such as msix_count
 			 * and msix_entries are initialized
 			 */
-			cdev_info->msix_count = pf->num_rdma_msix;
+			cdev_info->msix_count = pf->msix.rdma;
 			entry = &pf->msix_entries[pf->rdma_base_vector];
 			break;
 		default:

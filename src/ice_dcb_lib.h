@@ -21,6 +21,9 @@ bool ice_is_pfc_causing_hung_q(struct ice_pf *pf, unsigned int txqueue);
 #ifdef HAVE_NDO_SET_TX_MAXRATE
 u8 ice_dcb_get_tc(struct ice_vsi *vsi, int queue_index);
 #endif /* HAVE_NDO_SET_TX_MAXRATE */
+bool
+ice_dcb_need_recfg(struct ice_pf *pf, struct ice_dcbx_cfg *old_cfg,
+		   struct ice_dcbx_cfg *new_cfg);
 int
 ice_pf_dcb_cfg(struct ice_pf *pf, struct ice_dcbx_cfg *new_cfg, bool locked);
 int ice_dcb_bwchk(struct ice_pf *pf, struct ice_dcbx_cfg *dcbcfg);
@@ -29,7 +32,7 @@ void ice_vsi_cfg_dcb_rings(struct ice_vsi *vsi);
 int ice_init_pf_dcb(struct ice_pf *pf, bool locked);
 void ice_update_dcb_stats(struct ice_pf *pf);
 void
-ice_tx_prepare_vlan_flags_dcb(struct ice_ring *tx_ring,
+ice_tx_prepare_vlan_flags_dcb(struct ice_tx_ring *tx_ring,
 			      struct ice_tx_buf *first);
 void
 ice_setup_dcb_qos_info(struct ice_pf *pf, struct iidc_qos_params *qos_info);
@@ -51,9 +54,9 @@ static inline bool ice_find_q_in_range(u16 low, u16 high, unsigned int tx_q)
 }
 
 static inline void
-ice_set_cgd_num(struct ice_tlan_ctx *tlan_ctx, struct ice_ring *ring)
+ice_set_cgd_num(struct ice_tlan_ctx *tlan_ctx, u8 dcb_tc)
 {
-	tlan_ctx->cgd_num = ring->dcb_tc;
+	tlan_ctx->cgd_num = dcb_tc;
 }
 
 static inline bool ice_is_dcb_active(struct ice_pf *pf)
@@ -105,7 +108,7 @@ ice_pf_dcb_cfg(struct ice_pf __always_unused *pf,
 }
 
 static inline int
-ice_tx_prepare_vlan_flags_dcb(struct ice_ring __always_unused *tx_ring,
+ice_tx_prepare_vlan_flags_dcb(struct ice_tx_ring __always_unused *tx_ring,
 			      struct ice_tx_buf __always_unused *first)
 {
 	return 0;
@@ -137,7 +140,7 @@ static inline void
 ice_dcb_process_lldp_set_mib_change(struct ice_pf *pf,
 				    struct ice_rq_event_info *event) { }
 static inline void
-ice_set_cgd_num(struct ice_tlan_ctx *tlan_ctx, struct ice_ring *ring) { }
+ice_set_cgd_num(struct ice_tlan_ctx *tlan_ctx, u8 dcb_tc) { }
 #endif /* CONFIG_DCB */
 
 #endif /* _ICE_DCB_LIB_H_ */

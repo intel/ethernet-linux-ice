@@ -22,8 +22,8 @@ static void ice_dump_pf(struct ice_pf *pf)
 	dev_info(dev, "\tnum_lan_rx = %d\n", pf->num_lan_rx);
 	dev_info(dev, "\tnum_avail_tx = %d\n", ice_get_avail_txq_count(pf));
 	dev_info(dev, "\tnum_avail_rx = %d\n", ice_get_avail_rxq_count(pf));
-	dev_info(dev, "\tnum_lan_msix = %d\n", pf->num_lan_msix);
-	dev_info(dev, "\tnum_rdma_msix = %d\n", pf->num_rdma_msix);
+	dev_info(dev, "\tmsix.eth = %d\n", pf->msix.eth);
+	dev_info(dev, "\tmsix.rdma = %d\n", pf->msix.rdma);
 	dev_info(dev, "\trdma_base_vector = %d\n", pf->rdma_base_vector);
 #ifdef HAVE_NDO_DFWD_OPS
 	dev_info(dev, "\tnum_macvlan = %d\n", pf->num_macvlan);
@@ -102,20 +102,20 @@ static void ice_dump_pf_fdir(struct ice_pf *pf)
 	}
 
 	dev_info(dev, "Flow Director filter usage:\n");
-	dev_info(dev, "\tPF guaranteed used = %d\n",
+	dev_info(dev, "\tPF guaranteed used = %ld\n",
 		 (pf_fltr_cnt & PFQF_FD_CNT_FD_GCNT_M) >>
 		 PFQF_FD_CNT_FD_GCNT_S);
-	dev_info(dev, "\tPF best_effort used = %d\n",
+	dev_info(dev, "\tPF best_effort used = %ld\n",
 		 (pf_fltr_cnt & PFQF_FD_CNT_FD_BCNT_M) >>
 		 PFQF_FD_CNT_FD_BCNT_S);
-	dev_info(dev, "\tdevice guaranteed used = %d\n",
+	dev_info(dev, "\tdevice guaranteed used = %ld\n",
 		 (dev_fltr_cnt & GLQF_FD_CNT_FD_GCNT_M) >>
 		 GLQF_FD_CNT_FD_GCNT_S);
-	dev_info(dev, "\tdevice best_effort used = %d\n",
+	dev_info(dev, "\tdevice best_effort used = %ld\n",
 		 (dev_fltr_cnt & GLQF_FD_CNT_FD_BCNT_M) >>
 		 GLQF_FD_CNT_FD_BCNT_S);
 	dev_info(dev, "\tPF guaranteed pool = %d\n", pf_guar_pool);
-	dev_info(dev, "\tdevice guaranteed pool = %d\n",
+	dev_info(dev, "\tdevice guaranteed pool = %ld\n",
 		 (dev_fltr_size & GLQF_FD_SIZE_FD_GSIZE_M) >>
 		 GLQF_FD_SIZE_FD_GSIZE_S);
 	dev_info(dev, "\tdevice best_effort pool = %d\n",
@@ -387,10 +387,12 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		/* if all flags are cleared, the pin is valid */
 		} else {
 			pin_state = ICE_DPLL_PIN_STATE_VALID;
-			esync_en = !!(cfg.flags2 &
-				      ICE_AQC_GET_CGU_IN_CFG_FLG2_ESYNC_EN);
+			esync_en = (cfg.flags2 &
+			    ICE_AQC_GET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN) ==
+			   (ICE_AQC_GET_CGU_IN_CFG_ESYNC_EN <<
+			    ICE_AQC_GET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN_SHIFT);
 			esync_fail = !!(cfg.status &
-				      ICE_AQC_GET_CGU_IN_CFG_STATUS_ESYNC_FAIL);
+			    ICE_AQC_GET_CGU_IN_CFG_STATUS_ESYNC_FAIL);
 		}
 
 		cnt += snprintf(&buff[cnt], bytes_left - cnt,

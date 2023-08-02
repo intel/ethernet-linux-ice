@@ -59,6 +59,28 @@ struct ice_vf *ice_get_vf_by_id(struct ice_pf *pf, u32 vf_id)
 	return NULL;
 }
 
+struct ice_vf *ice_get_vf_by_dev(struct device *dev)
+{
+	struct pci_dev *vfdev;
+	struct pci_dev *pdev;
+	struct ice_pf *pf;
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	vfdev = container_of(dev, struct pci_dev, dev);
+	pdev = vfdev->physfn;
+	pf = pci_get_drvdata(pdev);
+
+	rcu_read_lock();
+	ice_for_each_vf_rcu(pf, bkt, vf) {
+		if (vf->vfdev == vfdev)
+			break;
+	}
+	rcu_read_unlock();
+
+	return vf;
+}
+
 /**
  * ice_release_vf - Release VF associated with a refcount
  * @ref: the kref decremented to zero
@@ -69,6 +91,9 @@ struct ice_vf *ice_get_vf_by_id(struct ice_pf *pf, u32 vf_id)
 static void ice_release_vf(struct kref *ref)
 {
 	struct ice_vf *vf = container_of(ref, struct ice_vf, refcnt);
+
+	if (vf->migration_active)
+		ice_migration_uninit_vf(vf);
 
 	vf->vf_ops->free(vf);
 }
@@ -286,6 +311,10 @@ static void ice_vf_pre_vsi_rebuild(struct ice_vf *vf)
 	if (vf->vf_ops->irq_close)
 		vf->vf_ops->irq_close(vf);
 
+	if (vf->migration_active) {
+		ice_migration_uninit_vf(vf);
+		ice_migration_init_vf(vf);
+	}
 	/* Remove switch rules associated with the reset VF */
 	ice_rm_dcf_sw_vsi_rule(vf->pf, vf->lan_vsi_num);
 
@@ -345,7 +374,7 @@ static int ice_vf_rebuild_vsi(struct ice_vf *vf)
 	if (WARN_ON(!vsi))
 		return -EINVAL;
 
-	if (ice_vsi_rebuild(vsi, true)) {
+	if (ice_vsi_rebuild(vsi, ICE_VSI_FLAG_INIT)) {
 		dev_err(ice_pf_to_dev(pf), "failed to rebuild VF %d VSI\n",
 			vf->vf_id);
 		return -EIO;
@@ -418,15 +447,15 @@ bool ice_is_any_vf_in_unicast_promisc(struct ice_pf *pf)
  * based on presence of VLANs
  */
 void ice_vf_get_promisc_masks(struct ice_vf *vf, struct ice_vsi *vsi,
-			      u8 *ucast_m, u8 *mcast_m)
+			      unsigned long *ucast_m, unsigned long *mcast_m)
 {
 	if (ice_vf_is_port_vlan_ena(vf) ||
 	    ice_vsi_has_non_zero_vlans(vsi)) {
-		*mcast_m = ICE_MCAST_VLAN_PROMISC_BITS;
-		*ucast_m = ICE_VF_UCAST_VLAN_PROMISC_BITS;
+		ice_set_mcast_vlan_promisc_bits(mcast_m);
+		ice_set_vf_ucast_vlan_promisc_bits(ucast_m);
 	} else {
-		*mcast_m = ICE_MCAST_PROMISC_BITS;
-		*ucast_m = ICE_VF_UCAST_PROMISC_BITS;
+		ice_set_mcast_promisc_bits(mcast_m);
+		ice_set_vf_ucast_promisc_bits(ucast_m);
 	}
 }
 
@@ -440,11 +469,12 @@ void ice_vf_get_promisc_masks(struct ice_vf *vf, struct ice_vsi *vsi,
 static int
 ice_vf_clear_all_promisc_modes(struct ice_vf *vf, struct ice_vsi *vsi)
 {
+	DECLARE_BITMAP(ucast_m, ICE_PROMISC_MAX) = {};
+	DECLARE_BITMAP(mcast_m, ICE_PROMISC_MAX) = {};
 	struct ice_pf *pf = vf->pf;
-	u8 ucast_m, mcast_m;
 	int ret = 0;
 
-	ice_vf_get_promisc_masks(vf, vsi, &ucast_m, &mcast_m);
+	ice_vf_get_promisc_masks(vf, vsi, ucast_m, mcast_m);
 	if (test_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states)) {
 		if (!test_bit(ICE_FLAG_VF_TRUE_PROMISC_ENA, pf->flags))
 			ret = ice_clear_dflt_vsi(vsi);
@@ -478,7 +508,8 @@ ice_vf_clear_all_promisc_modes(struct ice_vf *vf, struct ice_vsi *vsi)
  * @promisc_m: the promiscuous mode to enable
  */
 int
-ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
+ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
+		       unsigned long *promisc_m)
 {
 	struct ice_hw *hw = &vsi->back->hw;
 	u8 lport = vsi->port_info->lport;
@@ -510,7 +541,8 @@ ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
  * @promisc_m: the promiscuous mode to disable
  */
 int
-ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
+ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
+			 unsigned long *promisc_m)
 {
 	struct ice_hw *hw = &vsi->back->hw;
 	u8 lport = vsi->port_info->lport;
@@ -561,10 +593,7 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 
 	/* clear all malicious info if the VFs are getting reset */
 	ice_for_each_vf(pf, bkt, vf)
-		if (ice_mbx_clear_malvf(&hw->mbx_snapshot, pf->vfs.malvfs,
-					ICE_MAX_SRIOV_VFS, vf->vf_id))
-			dev_dbg(dev, "failed to clear malicious VF state for VF %u\n",
-				vf->vf_id);
+		ice_mbx_clear_malvf(&vf->mbx_info);
 
 	/* If VFs have been disabled, there is no need to reset */
 	if (test_and_set_bit(ICE_VF_DIS, pf->state)) {
@@ -681,12 +710,10 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 	struct device *dev;
-	struct ice_hw *hw;
 	int err = 0;
 	bool rsd;
 
 	dev = ice_pf_to_dev(pf);
-	hw = &pf->hw;
 
 	if (flags & ICE_VF_RESET_NOTIFY)
 		ice_notify_vf_reset(vf);
@@ -721,7 +748,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	/* Set VF disable bit state here, before triggering reset */
 	set_bit(ICE_VF_STATE_DIS, vf->vf_states);
 	ice_send_vf_reset_to_aux(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID),
-				 ice_abs_vf_id(hw, vf->vf_id));
+				 ice_abs_vf_id(&pf->hw, vf->vf_id));
 	ice_trigger_vf_reset(vf, flags & ICE_VF_RESET_VFLR, false);
 
 	if (ice_dcf_get_state(pf) == ICE_DCF_STATE_ON)
@@ -837,10 +864,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	}
 
 	/* if the VF has been reset allow it to come up again */
-	if (ice_mbx_clear_malvf(&hw->mbx_snapshot, pf->vfs.malvfs,
-				ICE_MAX_SRIOV_VFS, vf->vf_id))
-		dev_dbg(dev, "failed to clear malicious VF state for VF %u\n",
-			vf->vf_id);
+	ice_mbx_clear_malvf(&vf->mbx_info);
 
 out_unlock:
 	if (flags & ICE_VF_RESET_LOCK)
@@ -869,6 +893,67 @@ ice_vf_hash_ctx_init(struct ice_vf *vf)
 	memset(&vf->hash_ctx, 0, sizeof(vf->hash_ctx));
 }
 
+static ssize_t
+rss_lut_vf_attr_show(struct device *dev, struct device_attribute *attr,
+		     char *buf)
+{
+	struct ice_vf *vf = ice_get_vf_by_dev(dev);
+	struct ice_vsi *vsi;
+
+	if (!vf)
+		return -ENOENT;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		dev_err(dev, "%s: VSI for this VF is null!", __func__);
+		return -ENOENT;
+	}
+
+	return sysfs_emit(buf, "%u\n", vsi->rss_table_size);
+}
+
+static ssize_t
+rss_lut_vf_attr_store(struct device *dev, struct device_attribute *attr,
+		      const char *buf, size_t count)
+{
+	struct pci_dev *vfdev = container_of(dev, struct pci_dev, dev);
+	struct ice_vf *vf = ice_get_vf_by_dev(dev);
+	struct pci_dev *pdev = vfdev->physfn;
+	struct ice_vsi *vsi;
+	struct ice_pf *pf;
+	struct ice_hw *hw;
+
+	if (!vf)
+		return -ENOENT;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		dev_err(dev, "%s: VSI for this VF is null!", __func__);
+		return -ENOENT;
+	}
+
+	pf = pci_get_drvdata(pdev);
+	hw = &pf->hw;
+
+	return ice_vsi_alloc_rss_lut(hw, dev, vsi, buf, count);
+}
+
+int ice_init_vf_sysfs(struct ice_vf *vf)
+{
+	struct device_attribute tmp = __ATTR(rss_lut_vf_attr, 0644,
+					     rss_lut_vf_attr_show,
+					     rss_lut_vf_attr_store);
+
+	if (!vf->vfdev) {
+		dev_err(ice_pf_to_dev(vf->pf), "%s: no vfdev", __func__);
+		return -ENOENT;
+	}
+
+	vf->rss_lut_attr = tmp;
+
+	return device_create_file(&vf->vfdev->dev, &vf->rss_lut_attr);
+}
+
 /**
  * ice_initialize_vf_entry - Initialize a VF entry
  * @vf: pointer to the VF structure
@@ -883,6 +968,8 @@ void ice_initialize_vf_entry(struct ice_vf *vf)
 	/* assign default capabilities */
 	vf->spoofchk = true;
 	vf->num_vf_qs = vfs->num_qps_per;
+	/* set default number of MSI-X */
+	vf->num_msix = pf->vfs.num_msix_per;
 	ice_vc_set_default_allowlist(vf);
 	ice_virtchnl_set_dflt_ops(vf);
 
@@ -895,6 +982,9 @@ void ice_initialize_vf_entry(struct ice_vf *vf)
 	ice_vf_hash_ctx_init(vf);
 
 	ice_vf_fsub_init(vf);
+
+	/* Initialize mailbox info for this VF */
+	ice_mbx_init_vf_info(&pf->hw, &vf->mbx_info);
 
 	mutex_init(&vf->cfg_lock);
 }
@@ -1454,11 +1544,16 @@ void ice_vf_ctrl_vsi_release(struct ice_vf *vf)
  */
 struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf)
 {
-	struct ice_port_info *pi = ice_vf_get_port_info(vf);
+	struct ice_vsi_cfg_params params = {};
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 
-	vsi = ice_vsi_setup(pf, pi, ICE_VSI_CTRL, vf, NULL, 0);
+	params.type = ICE_VSI_CTRL;
+	params.pi = ice_vf_get_port_info(vf);
+	params.vf = vf;
+	params.flags = ICE_VSI_FLAG_INIT;
+
+	vsi = ice_vsi_setup(pf, &params);
 
 	if (!vsi) {
 		dev_err(ice_pf_to_dev(pf), "Failed to create VF control VSI\n");
@@ -1511,4 +1606,5 @@ void ice_vf_set_initialized(struct ice_vf *vf)
 	clear_bit(ICE_VF_STATE_DIS, vf->vf_states);
 	set_bit(ICE_VF_STATE_INIT, vf->vf_states);
 	memset(&vf->vlan_v2_caps, 0, sizeof(vf->vlan_v2_caps));
+	vf->vm_vsi_num = vf->lan_vsi_num;
 }

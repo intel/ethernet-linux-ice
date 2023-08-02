@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 1.11.17.1
+Version: 1.12.6
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
@@ -68,6 +68,8 @@ find %{buildroot}/lib/modules/ -name 'modules.*' -exec rm -f {} \;
 cd %{buildroot}
 find lib -name "ice.ko" -printf "/%p\n" \
 	>%{_builddir}/%{name}-%{version}/file.list
+find lib -name "ice-vfio-pci.ko" -printf "/%p\n" \
+	>>%{_builddir}/%{name}-%{version}/file.list
 %if (%need_aux_rpm == 2)
 make -C %{_builddir}/%{name}-%{version}/src INSTALL_MOD_PATH=%{buildroot} auxiliary_install
 
@@ -75,11 +77,11 @@ find lib -path "*extern-symvers/intel_auxiliary.symvers" -printf "/%p\n" \
 	>%{_builddir}/%{name}-%{version}/aux.list
 find * -name "auxiliary_bus.h" -printf "/%p\n" \
 	>>%{_builddir}/%{name}-%{version}/aux.list
+find lib -name "intel_auxiliary.ko" -printf "/%p\n" \
+	>>%{_builddir}/%{name}-%{version}/aux.list
+%else
+find lib -name "intel_auxiliary.ko" -type f -delete
 %endif
-if [ "$(%{_builddir}/%{name}-%{version}/scripts/./check_aux_bus %check_aux_args; echo $?)" == "2" ] ; then
-	find lib -name "intel_auxiliary.ko" -printf "/%p\n" \
-	>>%{_builddir}/%{name}-%{version}/file.list
-fi
 
 export _ksrc=%{_usrsrc}/kernels/%{kernel_ver}
 cd %{buildroot}
@@ -139,7 +141,7 @@ bash -s %{pciids} \
 	%{name} \
 <<"END"
 #! /bin/bash
-# Copyright (C) 2017 Intel Corporation
+# Copyright (C) 2017 - 2023 Intel Corporation
 # For licensing information, see the file 'LICENSE' in the root folder
 # $1 = system pci.ids file to update
 # $2 = system pcitable file to update

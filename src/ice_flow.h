@@ -6,6 +6,7 @@
 
 #include "ice_flex_type.h"
 #include "ice_acl.h"
+#include "ice_parser.h"
 
 #define ICE_IPV4_MAKE_PREFIX_MASK(prefix) ((u32)(~0) << (32 - (prefix)))
 #define ICE_FLOW_PROF_ID_INVAL		0xfffffffffffffffful
@@ -369,14 +370,14 @@ enum ice_flow_avf_hdr_field {
 enum ice_rss_cfg_hdr_type {
 	ICE_RSS_OUTER_HEADERS, /* take outer headers as inputset. */
 	ICE_RSS_INNER_HEADERS, /* take inner headers as inputset. */
-	/* take inner headers as inputset for packet with outer ipv4. */
+	/* take inner headers as inputset for packet with outer IPv4. */
 	ICE_RSS_INNER_HEADERS_W_OUTER_IPV4,
-	/* take inner headers as inputset for packet with outer ipv6. */
+	/* take inner headers as inputset for packet with outer IPv6. */
 	ICE_RSS_INNER_HEADERS_W_OUTER_IPV6,
 	/* take outer headers first then inner headers as inputset */
-	/* take inner as inputset for GTPoGRE with outer ipv4 + gre. */
+	/* take inner as inputset for GTPoGRE with outer IPv4 + GRE. */
 	ICE_RSS_INNER_HEADERS_W_OUTER_IPV4_GRE,
-	/* take inner as inputset for GTPoGRE with outer ipv6 + gre. */
+	/* take inner as inputset for GTPoGRE with outer IPv6 + GRE. */
 	ICE_RSS_INNER_HEADERS_W_OUTER_IPV6_GRE,
 	ICE_RSS_ANY_HEADERS
 };
@@ -451,8 +452,10 @@ struct ice_flow_seg_fld_raw {
 
 struct ice_flow_seg_info {
 	u32 hdrs;	/* Bitmask indicating protocol headers present */
-	u64 match;	/* Bitmask indicating header fields to be matched */
-	u64 range;	/* Bitmask indicating header fields matched as ranges */
+	/* Bitmask indicating header fields to be matched */
+	DECLARE_BITMAP(match, ICE_FLOW_FIELD_IDX_MAX);
+	/* Bitmask indicating header fields matched as ranges */
+	DECLARE_BITMAP(range, ICE_FLOW_FIELD_IDX_MAX);
 
 	struct ice_flow_fld_info fields[ICE_FLOW_FIELD_IDX_MAX];
 

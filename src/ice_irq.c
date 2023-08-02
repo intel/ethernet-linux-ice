@@ -156,6 +156,7 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	struct device *dev = ice_pf_to_dev(pf);
 	int num_local_cpus = ice_get_num_local_cpus(dev);
 	int default_rdma_ceq = ice_normalize_cpu_count(num_local_cpus);
+	int req_rdma_ceq = num_online_cpus();
 	int rdma_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_MIN_RDMA_MSIX,
 		default_rdma_ceq / 4 > ICE_MIN_RDMA_MSIX ?
@@ -173,11 +174,11 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
 			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
-		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
-			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+		req_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			req_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
-		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
-			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+		req_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			req_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
 	};
 	int default_lan_qp = ice_normalize_cpu_count(num_local_cpus);
@@ -222,6 +223,7 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL,
 	};
 	int adj_step = ICE_ADJ_VEC_BEST_CASE;
+	int total_msix = 0;
 	int err = -ENOSPC;
 	int v_actual, i;
 	int needed = 0;
@@ -283,32 +285,52 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 			break;
 		}
 	}
-
-	pf->num_lan_msix = lan_adj_vec[adj_step];
-	pf->num_rdma_msix = rdma_adj_vec[adj_step];
+	pf->msix.misc = ICE_OICR_MSIX;
+	pf->msix.eth = lan_adj_vec[adj_step];
+	total_msix += pf->msix.eth;
+	pf->msix.rdma = rdma_adj_vec[adj_step];
+	total_msix += pf->msix.rdma;
 	if (test_bit(ICE_FLAG_ESWITCH_CAPABLE, pf->flags) &&
 	    !eswitch_adj_vec[adj_step]) {
 		dev_warn(dev, "Not enough MSI-X for eswitch support, disabling feature\n");
 		clear_bit(ICE_FLAG_ESWITCH_CAPABLE, pf->flags);
 	}
+	pf->msix.misc += eswitch_adj_vec[adj_step];
 #ifdef HAVE_NDO_DFWD_OPS
 	if (test_bit(ICE_FLAG_VMDQ_ENA, pf->flags) &&
 	    !macvlan_adj_vec[adj_step]) {
 		dev_warn(dev, "Not enough MSI-X for hardware MACVLAN support, disabling feature\n");
 		clear_bit(ICE_FLAG_VMDQ_ENA, pf->flags);
 	}
-#endif /* OFFLOAD_MACVLAN_SUPPORT */
-	pf->max_adq_qps = lan_adj_vec[adj_step];
+	pf->msix.misc += macvlan_adj_vec[adj_step];
+#endif /* HAVE_NDO_DFWD_OPS */
+	pf->max_adq_qps = !ice_is_safe_mode(pf) ? lan_adj_vec[adj_step] : 1;
+	pf->msix.misc += fdir_adj_vec[ICE_ADJ_VEC_BEST_CASE];
 	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags) &&
 	    !scalable_adj_vec[adj_step]) {
 		dev_warn(dev, "Not enough MSI-X for Scalable IOV support, disabling feature\n");
 		clear_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags);
 	}
-	return v_actual;
+	pf->msix.siov += scalable_adj_vec[adj_step];
+	total_msix += pf->msix.siov;
+	total_msix += pf->msix.misc;
+
+	return total_msix;
 
 err:
 	dev_err(dev, "Failed to enable MSI-X vectors\n");
 	return  err;
+}
+
+static int ice_ena_msix_req(struct ice_pf *pf)
+{
+	int vectors = ice_ena_msix(pf, pf->req_msix.all_host);
+
+	if (vectors != pf->req_msix.all_host)
+		return -EOPNOTSUPP;
+
+	pf->msix = pf->req_msix;
+	return vectors;
 }
 
 /**
@@ -317,7 +339,12 @@ err:
  */
 int ice_init_interrupt_scheme(struct ice_pf *pf)
 {
-	int vectors = ice_ena_msix_range(pf);
+	int vectors;
+
+	if (pf->req_msix.all_host)
+		vectors = ice_ena_msix_req(pf);
+	else
+		vectors = ice_ena_msix_range(pf);
 
 	if (vectors < 0)
 		return vectors;
@@ -332,19 +359,19 @@ int ice_init_interrupt_scheme(struct ice_pf *pf)
 	}
 #endif /* HAVE_PCI_ALLOC_IRQ */
 	/* set up vector assignment tracking */
-	pf->irq_tracker =
-		devm_kzalloc(ice_pf_to_dev(pf),
-			     struct_size(pf->irq_tracker, list, vectors),
-			     GFP_KERNEL);
+	pf->irq_tracker = ice_alloc_res_tracker(vectors);
 	if (!pf->irq_tracker) {
 		ice_dis_msix(pf);
 		return -ENOMEM;
 	}
 
 	/* populate SW interrupts pool with number of OS granted IRQs. */
-	pf->num_avail_sw_msix = (u16)vectors;
-	pf->irq_tracker->num_entries = (u16)vectors;
-	pf->irq_tracker->end = pf->irq_tracker->num_entries;
+	if (!pf->msix.all_host) {
+		pf->msix.all_host = (u16)vectors;
+		pf->msix.vf = pf->hw.func_caps.common_cap.num_msix_vectors -
+			pf->msix.all_host;
+		pf->req_msix = pf->msix;
+	}
 
 	return 0;
 }
@@ -362,10 +389,7 @@ void ice_clear_interrupt_scheme(struct ice_pf *pf)
 #endif /* PEER_SUPPORT */
 	ice_dis_msix(pf);
 
-	if (pf->irq_tracker) {
-		devm_kfree(ice_pf_to_dev(pf), pf->irq_tracker);
-		pf->irq_tracker = NULL;
-	}
+	kfree(pf->irq_tracker);
 }
 
 /**

@@ -589,7 +589,7 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 				*phy_type = i;
 				phy_type_found = true;
 
-				if (type_low >> (i + 1))
+				if (type_low & ~BIT_ULL(i))
 					phy_type_multi = true;
 
 				break;
@@ -608,7 +608,7 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 				*phy_type = ICE_PHY_TYPE_LOW_MAX_INDEX + 1 + i;
 				phy_type_found = true;
 
-				if (type_high >> (i + 1))
+				if (type_high & ~BIT_ULL(i))
 					phy_type_multi = true;
 
 				break;

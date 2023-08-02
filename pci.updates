@@ -64,9 +64,11 @@
 	188b  Ethernet Controller E823-C for QSFP
 	188c  Ethernet Controller E823-C for SFP
 		1028 0abd  Ethernet Connection 25G 4P E823-C LOM
+		17aa 405e  E823 25G/10G Ethernet LOM Controller
 		8086 0001  Ethernet Connection E823-C for SFP
 	188d  Ethernet Connection E823-C/X557-AT 10GBASE-T
 	188e  Ethernet Connection E823-C 1GbE
+		17aa 405f  E823 1G Ethernet LOM Controller
 	1890  Ethernet Connection E822-C for backplane
 	1891  Ethernet Controller E822-C for QSFP
 	1892  Ethernet Controller E822-C for SFP

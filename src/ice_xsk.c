@@ -15,6 +15,13 @@
 #include "ice_irq.h"
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+static struct xdp_buff **ice_xdp_buf(struct ice_rx_ring *rx_ring, u32 idx)
+{
+	return &rx_ring->xdp_buf[idx];
+}
+#endif /* HAVE_XSK_BATCHED_RX_ALLOC */
+
 /**
  * ice_qp_reset_stats - Resets all stats for rings of given index
  * @vsi: VSI that contains rings of interest
@@ -84,7 +91,7 @@ ice_qvec_toggle_napi(struct ice_vsi *vsi, struct ice_q_vector *q_vector,
  * @q_vector: queue vector
  */
 static void
-ice_qvec_dis_irq(struct ice_vsi *vsi, struct ice_ring *rx_ring,
+ice_qvec_dis_irq(struct ice_vsi *vsi, struct ice_rx_ring *rx_ring,
 		 struct ice_q_vector *q_vector)
 {
 	struct ice_pf *pf = vsi->back;
@@ -122,16 +129,17 @@ ice_qvec_cfg_msix(struct ice_vsi *vsi, struct ice_q_vector *q_vector)
 	u16 reg_idx = q_vector->reg_idx;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
-	struct ice_ring *ring;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
 
 	ice_cfg_itr(hw, q_vector);
 
-	ice_for_each_ring(ring, q_vector->tx)
-		ice_cfg_txq_interrupt(vsi, ring->reg_idx, reg_idx,
+	ice_for_each_tx_ring(tx_ring, q_vector->tx)
+		ice_cfg_txq_interrupt(vsi, tx_ring->reg_idx, reg_idx,
 				      q_vector->tx.itr_idx);
 
-	ice_for_each_ring(ring, q_vector->rx)
-		ice_cfg_rxq_interrupt(vsi, ring->reg_idx, reg_idx,
+	ice_for_each_rx_ring(rx_ring, q_vector->rx)
+		ice_cfg_rxq_interrupt(vsi, rx_ring->reg_idx, reg_idx,
 				      q_vector->rx.itr_idx);
 
 	ice_flush(hw);
@@ -162,8 +170,9 @@ static void ice_qvec_ena_irq(struct ice_vsi *vsi, struct ice_q_vector *q_vector)
 static int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 {
 	struct ice_txq_meta txq_meta = { };
-	struct ice_ring *tx_ring, *rx_ring;
 	struct ice_q_vector *q_vector;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
 	int timeout = 50;
 	int err;
 
@@ -189,7 +198,7 @@ static int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 	if (err)
 		return err;
 	if (ice_is_xdp_ena_vsi(vsi)) {
-		struct ice_ring *xdp_ring = vsi->xdp_rings[q_idx];
+		struct ice_tx_ring *xdp_ring = vsi->xdp_rings[q_idx];
 
 		memset(&txq_meta, 0, sizeof(txq_meta));
 		ice_fill_txq_meta(vsi, xdp_ring, &txq_meta);
@@ -201,7 +210,9 @@ static int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 	err = ice_vsi_ctrl_one_rx_ring(vsi, false, q_idx, true);
 	if (err)
 		return err;
-
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+	ice_clean_rx_ring(rx_ring);
+#endif
 	ice_qvec_toggle_napi(vsi, q_vector, false);
 	ice_qp_clean_rings(vsi, q_idx);
 	ice_qp_reset_stats(vsi, q_idx);
@@ -219,8 +230,9 @@ static int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 {
 	struct ice_aqc_add_tx_qgrp *qg_buf;
-	struct ice_ring *tx_ring, *rx_ring;
 	struct ice_q_vector *q_vector;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
 	u16 size;
 	int err;
 
@@ -233,6 +245,7 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 		return -ENOMEM;
 
 	qg_buf->num_txqs = 1;
+
 	tx_ring = vsi->tx_rings[q_idx];
 	rx_ring = vsi->rx_rings[q_idx];
 	q_vector = rx_ring->q_vector;
@@ -242,7 +255,7 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 		goto free_buf;
 
 	if (ice_is_xdp_ena_vsi(vsi)) {
-		struct ice_ring *xdp_ring = vsi->xdp_rings[q_idx];
+		struct ice_tx_ring *xdp_ring = vsi->xdp_rings[q_idx];
 
 		memset(qg_buf, 0, size);
 		qg_buf->num_txqs = 1;
@@ -250,7 +263,7 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 		if (err)
 			goto free_buf;
 		ice_set_ring_xdp(xdp_ring);
-		xdp_ring->xsk_pool = ice_xsk_pool(xdp_ring);
+		xdp_ring->xsk_pool = ice_tx_xsk_pool(xdp_ring);
 	}
 
 	err = ice_vsi_cfg_rxq(rx_ring);
@@ -408,7 +421,6 @@ static int ice_xsk_pool_disable(struct ice_vsi *vsi, u16 qid)
 		return -EINVAL;
 
 	clear_bit(qid, vsi->af_xdp_zc_qps);
-
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 	ice_xsk_umem_dma_unmap(vsi, pool);
 #else
@@ -487,6 +499,73 @@ ice_xsk_pool_enable(struct ice_vsi *vsi, struct xdp_umem *pool, u16 qid)
 	return 0;
 }
 
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+/**
+ * ice_realloc_rx_xdp_bufs - reallocate for either XSK or normal buffer
+ * @rx_ring: RX ring
+ * @pool_present: is pool for XSK present
+ *
+ * Try allocating memory and return ENOMEM, if failed to allocate.
+ * If allocation was successful, substitute buffer with allocated one.
+ * Returns 0 on success, negative on failure
+ */
+static int ice_realloc_rx_xdp_bufs(struct ice_rx_ring *rx_ring,
+				   bool pool_present)
+{
+	size_t elem_size = pool_present ? sizeof(*rx_ring->xdp_buf) :
+					  sizeof(*rx_ring->rx_buf);
+	void *sw_ring = kcalloc(rx_ring->count, elem_size, GFP_KERNEL);
+
+	if (!sw_ring)
+		return -ENOMEM;
+
+	if (pool_present) {
+		kfree(rx_ring->rx_buf);
+		rx_ring->rx_buf = NULL;
+		rx_ring->xdp_buf = sw_ring;
+	} else {
+		kfree(rx_ring->xdp_buf);
+		rx_ring->xdp_buf = NULL;
+		rx_ring->rx_buf = sw_ring;
+	}
+
+	return 0;
+}
+
+/**
+ * ice_realloc_zc_buf - reallocate xdp zc queue pairs
+ * @vsi: Current VSI
+ * @zc: is zero copy set
+ *
+ * Reallocate buffer for rx_rings that might be used by XSK.
+ * XDP requires more memory, than rx_buf provides.
+ * Returns 0 on success, negative on failure
+ */
+int ice_realloc_zc_buf(struct ice_vsi *vsi, bool zc)
+{
+	unsigned long q;
+
+	for_each_set_bit(q, vsi->af_xdp_zc_qps,
+			 max_t(int, vsi->alloc_txq, vsi->alloc_rxq)) {
+		struct ice_rx_ring *rx_ring;
+
+		rx_ring = vsi->rx_rings[q];
+		if (ice_realloc_rx_xdp_bufs(rx_ring, zc)) {
+			unsigned long qid = q;
+
+			for_each_set_bit(q, vsi->af_xdp_zc_qps, qid) {
+				rx_ring = vsi->rx_rings[q];
+				zc ? kfree(rx_ring->xdp_buf) :
+				     kfree(rx_ring->rx_buf);
+			}
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+#endif /* HAVE_XSK_BATCHED_RX_ALLOC */
+
 /**
  * ice_xsk_pool_setup - enable/disable a buffer pool region depending on its state
  * @vsi: Current VSI
@@ -513,11 +592,20 @@ int ice_xsk_umem_setup(struct ice_vsi *vsi, struct xdp_umem *pool, u16 qid)
 	if_running = netif_running(vsi->netdev) && ice_is_xdp_ena_vsi(vsi);
 
 	if (if_running) {
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+		struct ice_rx_ring *rx_ring = vsi->rx_rings[qid];
+#endif
 		ret = ice_qp_dis(vsi, qid);
 		if (ret) {
 			netdev_err(vsi->netdev, "ice_qp_dis error = %d\n", ret);
 			goto xsk_pool_if_up;
 		}
+
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+		ret = ice_realloc_rx_xdp_bufs(rx_ring, pool_present);
+		if (ret)
+			goto xsk_pool_if_up;
+#endif
 	}
 
 	pool_failure = pool_present ? ice_xsk_pool_enable(vsi, pool, qid) :
@@ -594,13 +682,13 @@ int ice_xsk_umem_query(struct ice_vsi *vsi, struct xdp_umem **umem, u16 qid)
  */
 void ice_zca_free(struct zero_copy_allocator *zca, unsigned long handle)
 {
+	struct ice_rx_ring *rx_ring;
 	struct ice_rx_buf *rx_buf;
-	struct ice_ring *rx_ring;
 	struct xdp_umem *umem;
 	u64 hr, mask;
 	u16 nta;
 
-	rx_ring = container_of(zca, struct ice_ring, zca);
+	rx_ring = container_of(zca, struct ice_rx_ring, zca);
 	umem = rx_ring->xsk_pool;
 	hr = umem->headroom + XDP_PACKET_HEADROOM;
 
@@ -638,7 +726,7 @@ void ice_zca_free(struct zero_copy_allocator *zca, unsigned long handle)
  * Returns true if an assignment was successful, false if not.
  */
 static __always_inline bool
-ice_alloc_buf_fast_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
+ice_alloc_buf_fast_zc(struct ice_rx_ring *rx_ring, struct ice_rx_buf *rx_buf)
 {
 	struct xdp_umem *umem = rx_ring->xsk_pool;
 	void *addr = rx_buf->addr;
@@ -681,7 +769,7 @@ ice_alloc_buf_fast_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
  * Returns true if an assignment was successful, false if not.
  */
 static __always_inline bool
-ice_alloc_buf_slow_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
+ice_alloc_buf_slow_zc(struct ice_rx_ring *rx_ring, struct ice_rx_buf *rx_buf)
 {
 	struct xdp_umem *umem = rx_ring->xsk_pool;
 	u64 handle, headroom;
@@ -716,35 +804,53 @@ ice_alloc_buf_slow_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf)
  * This function allocates a number of Rx buffers from the fill ring
  * or the internal recycle mechanism and places them on the Rx ring.
  *
- * Returns false if all allocations were successful, true if any fail.
+ * Returns true if all allocations were successful, false if any fail.
  * NOTE: this function header description doesn't do kdoc style
  *       because of the function pointer creating problems.
  */
-bool ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count)
+bool ice_alloc_rx_bufs_zc(struct ice_rx_ring *rx_ring, int count)
 #else
 static bool
-ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count,
-		     bool (*alloc)(struct ice_ring *, struct ice_rx_buf *))
+ice_alloc_rx_bufs_zc(struct ice_rx_ring *rx_ring, int count,
+		     bool (*alloc)(struct ice_rx_ring *, struct ice_rx_buf *))
 #endif
 {
 	union ice_32b_rx_flex_desc *rx_desc;
 	u16 ntu = rx_ring->next_to_use;
+#ifndef HAVE_XSK_BATCHED_RX_ALLOC
 	struct ice_rx_buf *rx_buf;
-	bool ret = false;
+	bool ret = true;
+#else
+	struct xdp_buff **xdp;
+	u32 nb_buffs;
+#endif
 #ifdef HAVE_MEM_TYPE_XSK_BUFF_POOL
 	dma_addr_t dma;
 #endif
+	u32 i;
 
 	if (!count)
-		return false;
+		return true;
 
 	rx_desc = ICE_RX_DESC(rx_ring, ntu);
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+	xdp = ice_xdp_buf(rx_ring, ntu);
+
+	nb_buffs = min_t(u16, count, rx_ring->count - ntu);
+	nb_buffs = xsk_buff_alloc_batch(rx_ring->xsk_pool, xdp, nb_buffs);
+	if (!nb_buffs)
+		return false;
+	i = nb_buffs;
+#else
 	rx_buf = &rx_ring->rx_buf[ntu];
+
+	i = count;
+#endif
 
 	do {
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 		if (!alloc(rx_ring, rx_buf)) {
-			ret = true;
+			ret = false;
 			break;
 		}
 
@@ -754,18 +860,23 @@ ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count,
 
 		rx_desc->read.pkt_addr = cpu_to_le64(rx_buf->dma);
 #else
+#ifndef HAVE_XSK_BATCHED_RX_ALLOC
 		rx_buf->xdp = xsk_buff_alloc(rx_ring->xsk_pool);
 		if (!rx_buf->xdp) {
-			ret = true;
+			ret = false;
 			break;
 		}
-
 		dma = xsk_buff_xdp_get_dma(rx_buf->xdp);
+#else
+		dma = xsk_buff_xdp_get_dma(*xdp);
+		xdp++;
+#endif /* HAVE_XSK_BATCHED_RX_ALLOC */
 		rx_desc->read.pkt_addr = cpu_to_le64(dma);
-#endif
+#endif /* HAVE_MEM_TYPE_XSK_BUFF_POOL */
 		rx_desc->wb.status_error0 = 0;
 
 		rx_desc++;
+#ifndef HAVE_XSK_BATCHED_RX_ALLOC
 		rx_buf++;
 		ntu++;
 
@@ -774,12 +885,23 @@ ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count,
 			rx_buf = rx_ring->rx_buf;
 			ntu = 0;
 		}
-	} while (--count);
+#endif
+	} while (--i);
 
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+	ntu += nb_buffs;
+	if (ntu == rx_ring->count)
+		ntu = 0;
+
+	ice_release_rx_desc(rx_ring, ntu);
+
+	return count == nb_buffs;
+#else
 	if (rx_ring->next_to_use != ntu)
 		ice_release_rx_desc(rx_ring, ntu);
 
 	return ret;
+#endif
 }
 
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
@@ -790,7 +912,7 @@ ice_alloc_rx_bufs_zc(struct ice_ring *rx_ring, int count,
  *
  * Returns false on success, true on failure.
  */
-static bool ice_alloc_rx_bufs_fast_zc(struct ice_ring *rx_ring, u16 count)
+static bool ice_alloc_rx_bufs_fast_zc(struct ice_rx_ring *rx_ring, u16 count)
 {
 	return ice_alloc_rx_bufs_zc(rx_ring, count,
 				    ice_alloc_buf_fast_zc);
@@ -803,7 +925,7 @@ static bool ice_alloc_rx_bufs_fast_zc(struct ice_ring *rx_ring, u16 count)
  *
  * Returns false on success, true on failure.
  */
-bool ice_alloc_rx_bufs_slow_zc(struct ice_ring *rx_ring, u16 count)
+bool ice_alloc_rx_bufs_slow_zc(struct ice_rx_ring *rx_ring, u16 count)
 {
 	return ice_alloc_rx_bufs_zc(rx_ring, count,
 				    ice_alloc_buf_slow_zc);
@@ -814,7 +936,7 @@ bool ice_alloc_rx_bufs_slow_zc(struct ice_ring *rx_ring, u16 count)
  * ice_bump_ntc - Bump the next_to_clean counter of an Rx ring
  * @rx_ring: Rx ring
  */
-static void ice_bump_ntc(struct ice_ring *rx_ring)
+static void ice_bump_ntc(struct ice_rx_ring *rx_ring)
 {
 	int ntc = rx_ring->next_to_clean + 1;
 
@@ -834,7 +956,8 @@ static void ice_bump_ntc(struct ice_ring *rx_ring)
  *
  * Returns a pointer to the received Rx buffer.
  */
-static struct ice_rx_buf *ice_get_rx_buf_zc(struct ice_ring *rx_ring, int size)
+static struct ice_rx_buf *
+ice_get_rx_buf_zc(struct ice_rx_ring *rx_ring, int size)
 {
 	struct ice_rx_buf *rx_buf;
 
@@ -855,7 +978,7 @@ static struct ice_rx_buf *ice_get_rx_buf_zc(struct ice_ring *rx_ring, int size)
  * queue (next_to_alloc).
  */
 static void
-ice_reuse_rx_buf_zc(struct ice_ring *rx_ring, struct ice_rx_buf *old_buf)
+ice_reuse_rx_buf_zc(struct ice_rx_ring *rx_ring, struct ice_rx_buf *old_buf)
 {
 #ifndef HAVE_XDP_UMEM_PROPS
 	unsigned long mask = (unsigned long)rx_ring->xsk_pool->chunk_mask;
@@ -882,10 +1005,10 @@ ice_reuse_rx_buf_zc(struct ice_ring *rx_ring, struct ice_rx_buf *old_buf)
 }
 #endif
 
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
 /**
  * ice_construct_skb_zc - Create an sk_buff from zero-copy buffer
  * @rx_ring: Rx ring
- * @rx_buf: zero-copy Rx buffer
  * @xdp: xdp buffer
  *
  * This function allocates a new skb from a zero-copy Rx buffer.
@@ -893,8 +1016,12 @@ ice_reuse_rx_buf_zc(struct ice_ring *rx_ring, struct ice_rx_buf *old_buf)
  * Returns the skb on success, NULL on failure.
  */
 static struct sk_buff *
-ice_construct_skb_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
+ice_construct_skb_zc(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp)
+#else
+static struct sk_buff *
+ice_construct_skb_zc(struct ice_rx_ring *rx_ring, struct ice_rx_buf *rx_buf,
 		     struct xdp_buff *xdp)
+#endif
 {
 	unsigned int metasize = xdp->data - xdp->data_meta;
 	unsigned int datasize = xdp->data_end - xdp->data;
@@ -916,8 +1043,12 @@ ice_construct_skb_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 	ice_reuse_rx_buf_zc(rx_ring, rx_buf);
 #else
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+	xsk_buff_free(xdp);
+#else
 	xsk_buff_free(rx_buf->xdp);
 	rx_buf->xdp = NULL;
+#endif
 #endif
 
 	return skb;
@@ -931,11 +1062,11 @@ ice_construct_skb_zc(struct ice_ring *rx_ring, struct ice_rx_buf *rx_buf,
  * Returns any of ICE_XDP_{PASS, CONSUMED, TX, REDIR}
  */
 static int
-ice_run_xdp_zc(struct ice_ring *rx_ring, struct xdp_buff *xdp)
+ice_run_xdp_zc(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp)
 {
 	int err, result = ICE_XDP_PASS;
 	struct bpf_prog *xdp_prog;
-	struct ice_ring *xdp_ring;
+	struct ice_tx_ring *xdp_ring;
 	u32 act;
 
 	rcu_read_lock();
@@ -984,7 +1115,7 @@ ice_run_xdp_zc(struct ice_ring *rx_ring, struct xdp_buff *xdp)
  *
  * Returns number of processed packets on success, remaining budget on failure.
  */
-int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
+int ice_clean_rx_irq_zc(struct ice_rx_ring *rx_ring, int budget)
 {
 	unsigned int total_rx_bytes = 0, total_rx_packets = 0;
 	u16 cleaned_count = ICE_DESC_UNUSED(rx_ring);
@@ -994,12 +1125,16 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
 	struct xdp_buff xdp;
 
 	xdp.rxq = &rx_ring->xdp_rxq;
-
 #endif
+
 	while (likely(total_rx_packets < (unsigned int)budget)) {
 		union ice_32b_rx_flex_desc *rx_desc;
 		unsigned int size, xdp_res = 0;
+#ifndef HAVE_XSK_BATCHED_RX_ALLOC
 		struct ice_rx_buf *rx_buf;
+#else
+		struct xdp_buff *xdp;
+#endif
 		struct sk_buff *skb;
 		u16 stat_err_bits;
 		u16 vlan_tag = 0;
@@ -1007,10 +1142,11 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
 
 		if (cleaned_count >= ICE_RX_BUF_WRITE) {
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
-			failure |= ice_alloc_rx_bufs_fast_zc(rx_ring,
-							     cleaned_count);
+			failure |= !ice_alloc_rx_bufs_fast_zc(rx_ring,
+							      cleaned_count);
 #else
-			failure |= ice_alloc_rx_bufs_zc(rx_ring, cleaned_count);
+			failure |= !ice_alloc_rx_bufs_zc(rx_ring,
+							 cleaned_count);
 #endif
 			cleaned_count = 0;
 		}
@@ -1039,21 +1175,30 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
 
 		xdp.data = rx_buf->addr;
 		xdp.data_meta = xdp.data;
-		xdp.data_hard_start = xdp.data - XDP_PACKET_HEADROOM;
-		xdp.data_end = xdp.data + size;
+		xdp.data_hard_start = (u8 *)xdp.data - XDP_PACKET_HEADROOM;
+		xdp.data_end = (u8 *)xdp.data + size;
 		xdp.handle = rx_buf->handle;
 
 		xdp_res = ice_run_xdp_zc(rx_ring, &xdp);
 #else
+#ifndef HAVE_XSK_BATCHED_RX_ALLOC
 		rx_buf = &rx_ring->rx_buf[rx_ring->next_to_clean];
 		if (!rx_buf->xdp)
 			break;
-
 		rx_buf->xdp->data_end = rx_buf->xdp->data + size;
 		xsk_buff_dma_sync_for_cpu(rx_buf->xdp, rx_ring->xsk_pool);
 
 		xdp_res = ice_run_xdp_zc(rx_ring, rx_buf->xdp);
-#endif
+#else
+		xdp = *ice_xdp_buf(rx_ring, rx_ring->next_to_clean);
+		if (!xdp)
+			break;
+		xsk_buff_set_size(xdp, size);
+		xsk_buff_dma_sync_for_cpu(xdp, rx_ring->xsk_pool);
+
+		xdp_res = ice_run_xdp_zc(rx_ring, xdp);
+#endif /* HAVE_XSK_BATCHED_RX_ALLOC */
+#endif /* HAVE_MEM_TYPE_XSK_BUFF_POOL */
 		if (xdp_res) {
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 			if (xdp_res & (ICE_XDP_TX | ICE_XDP_REDIR)) {
@@ -1066,8 +1211,13 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
 			if (xdp_res & (ICE_XDP_TX | ICE_XDP_REDIR))
 				xdp_xmit |= xdp_res;
 			else
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+				xsk_buff_free(xdp);
+#else
 				xsk_buff_free(rx_buf->xdp);
+
 			rx_buf->xdp = NULL;
+#endif
 #endif
 			total_rx_bytes += size;
 			total_rx_packets++;
@@ -1081,7 +1231,11 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
 #ifndef HAVE_MEM_TYPE_XSK_BUFF_POOL
 		skb = ice_construct_skb_zc(rx_ring, rx_buf, &xdp);
 #else
+#ifndef HAVE_XSK_BATCHED_RX_ALLOC
 		skb = ice_construct_skb_zc(rx_ring, rx_buf, rx_buf->xdp);
+#else
+		skb = ice_construct_skb_zc(rx_ring, xdp);
+#endif
 #endif
 		if (!skb) {
 			rx_ring->ring_stats->rx_stats.alloc_buf_failed++;
@@ -1114,7 +1268,7 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
 #ifdef HAVE_NDO_XSK_WAKEUP
 	if (xsk_uses_need_wakeup(rx_ring->xsk_pool)) {
 		if (failure || rx_ring->next_to_clean == rx_ring->next_to_use ||
-		    (ice_ring_ch_enabled(rx_ring) &&
+		    (ice_rx_ring_ch_enabled(rx_ring) &&
 		     !ice_vsi_pkt_inspect_opt_ena(rx_ring->vsi)))
 			xsk_set_rx_need_wakeup(rx_ring->xsk_pool);
 		else
@@ -1134,7 +1288,7 @@ int ice_clean_rx_irq_zc(struct ice_ring *rx_ring, int budget)
  *
  * Returns true if cleanup/transmission is done.
  */
-static bool ice_xmit_zc(struct ice_ring *xdp_ring, int budget)
+static bool ice_xmit_zc(struct ice_tx_ring *xdp_ring, int budget)
 {
 	unsigned int sent_frames = 0, total_bytes = 0;
 	struct ice_tx_desc *tx_desc = NULL;
@@ -1213,7 +1367,7 @@ static bool ice_xmit_zc(struct ice_ring *xdp_ring, int budget)
  * @tx_buf: Tx buffer to clean
  */
 static void
-ice_clean_xdp_tx_buf(struct ice_ring *xdp_ring, struct ice_tx_buf *tx_buf)
+ice_clean_xdp_tx_buf(struct ice_tx_ring *xdp_ring, struct ice_tx_buf *tx_buf)
 {
 	xdp_return_frame((struct xdp_frame *)tx_buf->raw_buf);
 	xdp_ring->xdp_tx_active--;
@@ -1228,7 +1382,7 @@ ice_clean_xdp_tx_buf(struct ice_ring *xdp_ring, struct ice_tx_buf *tx_buf)
  *
  * Returns true if cleanup/tranmission is done.
  */
-bool ice_clean_tx_irq_zc(struct ice_ring *xdp_ring)
+bool ice_clean_tx_irq_zc(struct ice_tx_ring *xdp_ring)
 {
 	u16 next_rs_idx = xdp_ring->next_rs_idx;
 	u16 ntc = xdp_ring->next_to_clean;
@@ -1307,7 +1461,7 @@ int ice_xsk_async_xmit(struct net_device *netdev, u32 queue_id)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_q_vector *q_vector;
 	struct ice_vsi *vsi = np->vsi;
-	struct ice_ring *ring;
+	struct ice_tx_ring *ring;
 
 	if (test_bit(ICE_VSI_DOWN, vsi->state))
 		return -ENETDOWN;
@@ -1332,7 +1486,7 @@ int ice_xsk_async_xmit(struct net_device *netdev, u32 queue_id)
 	q_vector = ring->q_vector;
 	if (!napi_if_scheduled_mark_missed(&q_vector->napi)) {
 #if IS_ENABLED(CONFIG_NET_RX_BUSY_POLL)
-		if (ice_ring_ch_enabled(vsi->rx_rings[queue_id]) &&
+		if (ice_rx_ring_ch_enabled(vsi->rx_rings[queue_id]) &&
 		    !ice_vsi_pkt_inspect_opt_ena(vsi))
 #define ICE_BUSY_POLL_BUDGET 8
 			napi_busy_loop(q_vector->napi.napi_id, NULL, NULL,
@@ -1377,12 +1531,14 @@ bool ice_xsk_any_rx_ring_ena(struct ice_vsi *vsi)
  * ice_xsk_clean_rx_ring - clean UMEM queues connected to a given Rx ring
  * @rx_ring: ring to be cleaned
  */
-void ice_xsk_clean_rx_ring(struct ice_ring *rx_ring)
+void ice_xsk_clean_rx_ring(struct ice_rx_ring *rx_ring)
 {
-	u16 i;
+	u16 ntc = rx_ring->next_to_clean;
+	u16 ntu = rx_ring->next_to_use;
 
-	for (i = 0; i < rx_ring->count; i++) {
-		struct ice_rx_buf *rx_buf = &rx_ring->rx_buf[i];
+	while (ntc != ntu) {
+#ifndef HAVE_XSK_BATCHED_RX_ALLOC
+		struct ice_rx_buf *rx_buf = &rx_ring->rx_buf[ntc];
 
 		if (!rx_buf->addr)
 			continue;
@@ -1391,6 +1547,14 @@ void ice_xsk_clean_rx_ring(struct ice_ring *rx_ring)
 		xsk_umem_fq_reuse(rx_ring->xsk_pool, rx_buf->handle);
 #endif
 		rx_buf->addr = NULL;
+#else
+		struct xdp_buff *xdp = *ice_xdp_buf(rx_ring, ntc);
+
+		xsk_buff_free(xdp);
+#endif
+		ntc++;
+		if (ntc >= rx_ring->count)
+			ntc = 0;
 	}
 }
 
@@ -1398,7 +1562,7 @@ void ice_xsk_clean_rx_ring(struct ice_ring *rx_ring)
  * ice_xsk_clean_xdp_ring - Clean the XDP Tx ring and its UMEM queues
  * @xdp_ring: XDP_Tx ring
  */
-void ice_xsk_clean_xdp_ring(struct ice_ring *xdp_ring)
+void ice_xsk_clean_xdp_ring(struct ice_tx_ring *xdp_ring)
 {
 	u16 ntc = xdp_ring->next_to_clean, ntu = xdp_ring->next_to_use;
 	u32 xsk_frames = 0;

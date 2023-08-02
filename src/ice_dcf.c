@@ -310,18 +310,20 @@ static int
 ice_dcf_rm_sw_rule_to_vsi(struct ice_pf *pf,
 			  struct ice_dcf_sw_rule_entry *s_entry)
 {
-	struct ice_aqc_sw_rules_elem *s_rule;
+	struct ice_sw_rule_lkup_rx_tx *s_rule;
 	int status;
 
-	s_rule = kzalloc(ICE_SW_RULE_RX_TX_NO_HDR_SIZE, GFP_KERNEL);
+	s_rule = (typeof(s_rule))
+		kzalloc(struct_size(s_rule, hdr_data, 0), GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
 
-	s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
-	s_rule->pdata.lkup_tx_rx.act = 0;
-	s_rule->pdata.lkup_tx_rx.hdr_len = 0;
-	s_rule->pdata.lkup_tx_rx.index = cpu_to_le16(s_entry->rule_id);
-	status = ice_aq_sw_rules(&pf->hw, s_rule, ICE_SW_RULE_RX_TX_NO_HDR_SIZE,
+	s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
+	s_rule->act = 0;
+	s_rule->hdr_len = 0;
+	s_rule->index = cpu_to_le16(s_entry->rule_id);
+	status = ice_aq_sw_rules(&pf->hw, s_rule,
+				 struct_size(s_rule, hdr_data, 0),
 				 1, ice_aqc_opc_remove_sw_rules, NULL);
 	kfree(s_rule);
 	if (status)
@@ -343,7 +345,7 @@ ice_dcf_rm_sw_rule_to_vsi_list(struct ice_pf *pf,
 {
 	struct ice_dcf_vsi_list_info *vsi_list_info = s_entry->vsi_list_info;
 	struct ice_aqc_alloc_free_res_elem *res_buf;
-	struct ice_aqc_sw_rules_elem *s_rule;
+	struct ice_sw_rule_vsi_list *s_rule;
 	u16 rule_sz;
 	u16 vsi_id;
 	int status;
@@ -356,17 +358,17 @@ ice_dcf_rm_sw_rule_to_vsi_list(struct ice_pf *pf,
 	if (!vsi_list_info->vsi_count)
 		goto free_vsi_list;
 
-	rule_sz = ICE_SW_RULE_VSI_LIST_SIZE(vsi_list_info->vsi_count);
-	s_rule = kzalloc(rule_sz, GFP_KERNEL);
+	rule_sz = struct_size(s_rule, vsi, vsi_list_info->vsi_count);
+	s_rule = (typeof(s_rule))
+		kzalloc(rule_sz, GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
 
-	s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR);
-	s_rule->pdata.vsi_list.index = cpu_to_le16(vsi_list_info->list_id);
-	s_rule->pdata.vsi_list.number_vsi =
-					cpu_to_le16(vsi_list_info->vsi_count);
+	s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR);
+	s_rule->index = cpu_to_le16(vsi_list_info->list_id);
+	s_rule->number_vsi = cpu_to_le16(vsi_list_info->vsi_count);
 	for_each_set_bit(vsi_id, vsi_list_info->hw_vsi_map, ICE_HW_VSI_ID_MAX)
-		s_rule->pdata.vsi_list.vsi[i++] = cpu_to_le16(vsi_id);
+		s_rule->vsi[i++] = cpu_to_le16(vsi_id);
 
 	bitmap_zero(vsi_list_info->hw_vsi_map, ICE_HW_VSI_ID_MAX);
 	vsi_list_info->vsi_count = 0;
@@ -409,24 +411,24 @@ ice_dcf_rm_vsi_from_list(struct ice_pf *pf,
 			 struct ice_dcf_vsi_list_info *vsi_list_info,
 			 u16 hw_vsi_id)
 {
-	struct ice_aqc_sw_rules_elem *s_rule;
+	struct ice_sw_rule_vsi_list *s_rule;
 	int status;
 
 	if (!vsi_list_info || !vsi_list_info->vsi_count ||
 	    !test_bit(hw_vsi_id, vsi_list_info->hw_vsi_map))
 		return -ENOENT;
 
-	s_rule = kzalloc(ICE_SW_RULE_VSI_LIST_SIZE(1), GFP_KERNEL);
+	s_rule = (typeof(s_rule))
+		kzalloc(struct_size(s_rule, vsi, 1), GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
 
-	s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR);
-	s_rule->pdata.vsi_list.index = cpu_to_le16(vsi_list_info->list_id);
-	s_rule->pdata.vsi_list.number_vsi = cpu_to_le16(1);
-	s_rule->pdata.vsi_list.vsi[0] = cpu_to_le16(hw_vsi_id);
-	status = ice_aq_sw_rules(&pf->hw, s_rule,
-				 ICE_SW_RULE_VSI_LIST_SIZE(1), 1,
-				 ice_aqc_opc_update_sw_rules, NULL);
+	s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR);
+	s_rule->index = cpu_to_le16(vsi_list_info->list_id);
+	s_rule->number_vsi = cpu_to_le16(1);
+	s_rule->vsi[0] = cpu_to_le16(hw_vsi_id);
+	status = ice_aq_sw_rules(&pf->hw, s_rule, struct_size(s_rule, vsi, 1),
+				 1, ice_aqc_opc_update_sw_rules, NULL);
 	kfree(s_rule);
 	if (status)
 		return -EIO;
@@ -668,19 +670,19 @@ ice_dcf_parse_free_vsi_list_res(struct ice_pf *pf,
  * @vsi_list: pointer to the VSI ID list to be set
  */
 static enum virtchnl_status_code
-ice_dcf_set_vsi_list(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *vsi_list)
+ice_dcf_set_vsi_list(struct ice_pf *pf, struct ice_sw_rule_vsi_list *vsi_list)
 {
 	struct ice_dcf_vsi_list_info *vsi_list_info;
 	int i;
 
-	vsi_list_info = ice_dcf_find_vsi_list_info(pf,
-						   le16_to_cpu(vsi_list->pdata.vsi_list.index));
+	vsi_list_info =
+		ice_dcf_find_vsi_list_info(pf, le16_to_cpu(vsi_list->index));
 	if (!vsi_list_info)
 		return VIRTCHNL_STATUS_ERR_PARAM;
 
-	for (i = 0; i < le16_to_cpu(vsi_list->pdata.vsi_list.number_vsi); i++)
+	for (i = 0; i < le16_to_cpu(vsi_list->number_vsi); i++)
 		ice_dcf_add_vsi_id(vsi_list_info,
-				   le16_to_cpu(vsi_list->pdata.vsi_list.vsi[i]));
+				   le16_to_cpu(vsi_list->vsi[i]));
 
 	return VIRTCHNL_STATUS_SUCCESS;
 }
@@ -691,19 +693,19 @@ ice_dcf_set_vsi_list(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *vsi_list)
  * @vsi_list: pointer to the VSI ID list to be cleared
  */
 static enum virtchnl_status_code
-ice_dcf_clear_vsi_list(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *vsi_list)
+ice_dcf_clear_vsi_list(struct ice_pf *pf, struct ice_sw_rule_vsi_list *vsi_list)
 {
 	struct ice_dcf_vsi_list_info *vsi_list_info;
 	int i;
 
-	vsi_list_info = ice_dcf_find_vsi_list_info(pf,
-						   le16_to_cpu(vsi_list->pdata.vsi_list.index));
+	vsi_list_info =
+		ice_dcf_find_vsi_list_info(pf, le16_to_cpu(vsi_list->index));
 	if (!vsi_list_info)
 		return VIRTCHNL_STATUS_ERR_PARAM;
 
-	for (i = 0; i < le16_to_cpu(vsi_list->pdata.vsi_list.number_vsi); i++)
+	for (i = 0; i < le16_to_cpu(vsi_list->number_vsi); i++)
 		ice_dcf_del_vsi_id(vsi_list_info,
-				   le16_to_cpu(vsi_list->pdata.vsi_list.vsi[i]));
+				   le16_to_cpu(vsi_list->vsi[i]));
 
 	return VIRTCHNL_STATUS_SUCCESS;
 }
@@ -731,7 +733,8 @@ ice_dcf_find_sw_rule(struct ice_pf *pf, u16 rule_id)
  * @lkup: pointer to the add switch rule data
  */
 static enum virtchnl_status_code
-ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *lkup)
+ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf,
+			       struct ice_sw_rule_lkup_rx_tx *lkup)
 {
 	struct ice_dcf_sw_rule_entry *sw_rule;
 	u32 act;
@@ -740,11 +743,11 @@ ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *
 	if (!sw_rule)
 		return VIRTCHNL_STATUS_ERR_NO_MEMORY;
 
-	act = le32_to_cpu(lkup->pdata.lkup_tx_rx.act);
+	act = le32_to_cpu(lkup->act);
 	sw_rule->fltr_act = ICE_FWD_TO_VSI;
 	sw_rule->fwd_id.hw_vsi_id = (act & ICE_SINGLE_ACT_VSI_ID_M) >>
 					ICE_SINGLE_ACT_VSI_ID_S;
-	sw_rule->rule_id = le16_to_cpu(lkup->pdata.lkup_tx_rx.index);
+	sw_rule->rule_id = le16_to_cpu(lkup->index);
 
 	list_add(&sw_rule->list_entry, &pf->dcf.sw_rule_head);
 
@@ -757,19 +760,20 @@ ice_dcf_parse_add_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *
  * @lkup: pointer to the update switch rule data
  */
 static enum virtchnl_status_code
-ice_dcf_parse_updt_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *lkup)
+ice_dcf_parse_updt_sw_rule_data(struct ice_pf *pf,
+				struct ice_sw_rule_lkup_rx_tx *lkup)
 {
 	struct ice_dcf_vsi_list_info *vsi_list_info;
 	struct ice_dcf_sw_rule_entry *sw_rule;
 	u16 vsi_list_id, rule_id;
 	u32 act;
 
-	rule_id = le16_to_cpu(lkup->pdata.lkup_tx_rx.index);
+	rule_id = le16_to_cpu(lkup->index);
 	sw_rule = ice_dcf_find_sw_rule(pf, rule_id);
 	if (!sw_rule)
 		return VIRTCHNL_STATUS_ERR_PARAM;
 
-	act = le32_to_cpu(lkup->pdata.lkup_tx_rx.act);
+	act = le32_to_cpu(lkup->act);
 	if (!(act & ICE_SINGLE_ACT_VSI_LIST)) {
 		u16 vsi_hw_id = (act & ICE_SINGLE_ACT_VSI_ID_M) >>
 				ICE_SINGLE_ACT_VSI_ID_S;
@@ -825,9 +829,10 @@ ice_dcf_parse_updt_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem 
  * @lkup: pointer to the remove switch rule data
  */
 static enum virtchnl_status_code
-ice_dcf_parse_rm_sw_rule_data(struct ice_pf *pf, struct ice_aqc_sw_rules_elem *lkup)
+ice_dcf_parse_rm_sw_rule_data(struct ice_pf *pf,
+			      struct ice_sw_rule_lkup_rx_tx *lkup)
 {
-	u16 rule_id = le16_to_cpu(lkup->pdata.lkup_tx_rx.index);
+	u16 rule_id = le16_to_cpu(lkup->index);
 	struct ice_dcf_sw_rule_entry *sw_rule, *tmp;
 
 	list_for_each_entry_safe(sw_rule, tmp, &pf->dcf.sw_rule_head,
@@ -849,14 +854,16 @@ static enum virtchnl_status_code
 ice_dcf_handle_add_sw_rule_rsp(struct ice_pf *pf, u8 *aq_buf)
 {
 	enum virtchnl_status_code status = VIRTCHNL_STATUS_SUCCESS;
-	struct ice_aqc_sw_rules_elem *em =
-			(struct ice_aqc_sw_rules_elem *)aq_buf;
+	struct ice_aqc_sw_rules_elem_hdr *em =
+		(struct ice_aqc_sw_rules_elem_hdr *)aq_buf;
 	u16 type = le16_to_cpu(em->type);
 
 	if (type == ICE_AQC_SW_RULES_T_VSI_LIST_SET)
-		status = ice_dcf_set_vsi_list(pf, em);
+		status = ice_dcf_set_vsi_list(pf,
+			(struct ice_sw_rule_vsi_list *)em);
 	else if (type == ICE_AQC_SW_RULES_T_LKUP_RX)
-		status = ice_dcf_parse_add_sw_rule_data(pf, em);
+		status = ice_dcf_parse_add_sw_rule_data(pf,
+			(struct ice_sw_rule_lkup_rx_tx *)em);
 
 	return status;
 }
@@ -870,16 +877,19 @@ static enum virtchnl_status_code
 ice_dcf_handle_updt_sw_rule_rsp(struct ice_pf *pf, u8 *aq_buf)
 {
 	enum virtchnl_status_code status = VIRTCHNL_STATUS_SUCCESS;
-	struct ice_aqc_sw_rules_elem *em =
-			(struct ice_aqc_sw_rules_elem *)aq_buf;
+	struct ice_aqc_sw_rules_elem_hdr *em =
+		(struct ice_aqc_sw_rules_elem_hdr *)aq_buf;
 	u16 type = le16_to_cpu(em->type);
 
 	if (type == ICE_AQC_SW_RULES_T_VSI_LIST_SET)
-		status = ice_dcf_set_vsi_list(pf, em);
+		status = ice_dcf_set_vsi_list(pf,
+			(struct ice_sw_rule_vsi_list *)em);
 	else if (type == ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR)
-		status = ice_dcf_clear_vsi_list(pf, em);
+		status = ice_dcf_clear_vsi_list(pf,
+			(struct ice_sw_rule_vsi_list *)em);
 	else if (type == ICE_AQC_SW_RULES_T_LKUP_RX)
-		status = ice_dcf_parse_updt_sw_rule_data(pf, em);
+		status = ice_dcf_parse_updt_sw_rule_data(pf,
+			(struct ice_sw_rule_lkup_rx_tx *)em);
 
 	return status;
 }
@@ -893,12 +903,13 @@ static enum virtchnl_status_code
 ice_dcf_handle_rm_sw_rule_rsp(struct ice_pf *pf, u8 *aq_buf)
 {
 	enum virtchnl_status_code status = VIRTCHNL_STATUS_SUCCESS;
-	struct ice_aqc_sw_rules_elem *em =
-			(struct ice_aqc_sw_rules_elem *)aq_buf;
+	struct ice_aqc_sw_rules_elem_hdr *em =
+		(struct ice_aqc_sw_rules_elem_hdr *)aq_buf;
 	u16 type = le16_to_cpu(em->type);
 
 	if (type == ICE_AQC_SW_RULES_T_LKUP_RX)
-		status = ice_dcf_parse_rm_sw_rule_data(pf, em);
+		status = ice_dcf_parse_rm_sw_rule_data(pf,
+			(struct ice_sw_rule_lkup_rx_tx *)em);
 
 	return status;
 }
@@ -1123,24 +1134,24 @@ ice_dcf_pre_aq_send_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 	case ice_aqc_opc_update_sw_rules:
 	{
 		struct ice_dcf_vsi_list_info *vsi_list_info;
-		struct ice_aqc_sw_rules_elem *s_rule;
+		struct ice_sw_rule_vsi_list *s_rule;
 		u16 list_id, vsi_id;
 
-		if (aq_buf_size < ICE_SW_RULE_VSI_LIST_SIZE(1))
+		if (aq_buf_size < struct_size(s_rule, vsi, 1))
 			break;
 
-		s_rule = (struct ice_aqc_sw_rules_elem *)aq_buf;
-		if (le16_to_cpu(s_rule->type) !=
+		s_rule = (typeof(s_rule))aq_buf;
+		if (le16_to_cpu(s_rule->hdr.type) !=
 					ICE_AQC_SW_RULES_T_VSI_LIST_CLEAR ||
-		    le16_to_cpu(s_rule->pdata.vsi_list.number_vsi) != 1)
+		    le16_to_cpu(s_rule->number_vsi) != 1)
 			break;
 
-		list_id = le16_to_cpu(s_rule->pdata.vsi_list.index);
+		list_id = le16_to_cpu(s_rule->index);
 		vsi_list_info = ice_dcf_find_vsi_list_info(pf, list_id);
 		if (!vsi_list_info)
 			break;
 
-		vsi_id = le16_to_cpu(s_rule->pdata.vsi_list.vsi[0]);
+		vsi_id = le16_to_cpu(s_rule->vsi[0]);
 		if (vsi_id >= ICE_HW_VSI_ID_MAX ||
 		    test_bit(vsi_id, vsi_list_info->hw_vsi_map))
 			break;
@@ -1152,17 +1163,17 @@ ice_dcf_pre_aq_send_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 	}
 	case ice_aqc_opc_remove_sw_rules:
 	{
-		struct ice_aqc_sw_rules_elem *s_rule;
+		struct ice_sw_rule_lkup_rx_tx *s_rule;
 		u16 rule_id;
 
-		if (aq_buf_size < ICE_SW_RULE_RX_TX_NO_HDR_SIZE)
+		if (aq_buf_size < struct_size(s_rule, hdr_data, 0))
 			break;
 
-		s_rule = (struct ice_aqc_sw_rules_elem *)aq_buf;
-		if (le16_to_cpu(s_rule->type) != ICE_AQC_SW_RULES_T_LKUP_RX)
+		s_rule = (struct ice_sw_rule_lkup_rx_tx *)aq_buf;
+		if (le16_to_cpu(s_rule->hdr.type) != ICE_AQC_SW_RULES_T_LKUP_RX)
 			break;
 
-		rule_id = le16_to_cpu(s_rule->pdata.lkup_tx_rx.index);
+		rule_id = le16_to_cpu(s_rule->index);
 		if (ice_dcf_find_sw_rule(pf, rule_id))
 			break;
 

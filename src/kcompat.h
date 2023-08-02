@@ -4,12 +4,14 @@
 #ifndef _KCOMPAT_H_
 #define _KCOMPAT_H_
 
-#include "kcompat_gcc.h"
 #ifndef LINUX_VERSION_CODE
 #include <linux/version.h>
 #else
 #define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
 #endif
+
+#include "kcompat_gcc.h"
+
 #include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
@@ -36,30 +38,13 @@
 #include <linux/udp.h>
 #include <linux/vmalloc.h>
 
-#ifndef GCC_VERSION
-#define GCC_VERSION (__GNUC__ * 10000		\
-		     + __GNUC_MINOR__ * 100	\
-		     + __GNUC_PATCHLEVEL__)
-#endif /* GCC_VERSION */
+
 
 #ifndef IEEE_8021QAZ_APP_SEL_DSCP
 #define IEEE_8021QAZ_APP_SEL_DSCP	5
 #endif
 
-/* Backport macros for controlling GCC diagnostics */
-#if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,18,0) )
 
-/* Compilers before gcc-4.6 do not understand "#pragma GCC diagnostic push" */
-#if GCC_VERSION >= 40600
-#define __diag_str1(s)		#s
-#define __diag_str(s)		__diag_str1(s)
-#define __diag(s)		_Pragma(__diag_str(GCC diagnostic s))
-#else
-#define __diag(s)
-#endif /* GCC_VERSION >= 4.6 */
-#define __diag_push()	__diag(push)
-#define __diag_pop()	__diag(pop)
-#endif /* LINUX_VERSION < 4.18.0 */
 
 #ifndef NSEC_PER_MSEC
 #define NSEC_PER_MSEC 1000000L
@@ -948,7 +933,6 @@ struct _kc_ethtool_pauseparam {
   #endif /*  LINUX_VERSION_CODE == KERNEL_VERSION(4,15,0) */
 #endif /* if (NOT RHEL && NOT SLES && NOT UBUNTU) */
 
-
 #ifdef __KLOCWORK__
 #ifdef ARRAY_SIZE
 #undef ARRAY_SIZE
@@ -1828,9 +1812,6 @@ static inline struct sk_buff *__kc_napi_alloc_skb(struct napi_struct *napi, unsi
 #ifndef READ_ONCE
 #define READ_ONCE(_x) ACCESS_ONCE(_x)
 #endif
-#if RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(7,2))
-#define HAVE_NDO_FDB_ADD_VID
-#endif
 #ifndef ETH_MODULE_SFF_8636
 #define ETH_MODULE_SFF_8636		0x3
 #endif
@@ -1847,7 +1828,6 @@ static inline struct sk_buff *__kc_napi_alloc_skb(struct napi_struct *napi, unsi
 #define writel_relaxed	writel
 #endif
 #else /* 3.19.0 */
-#define HAVE_NDO_FDB_ADD_VID
 #define HAVE_RXFH_HASHFUNC
 #define NDO_DFLT_BRIDGE_GETLINK_HAS_BRFLAGS
 #endif /* 3.19.0 */
@@ -2623,12 +2603,15 @@ static inline void _kc_dev_consume_skb_any(struct sk_buff *skb)
 typedef struct {
 	__u8 b[UUID_SIZE];
 } uuid_t;
+
+#ifndef UUID_INIT
 #define UUID_INIT(a, b, c, d0, d1, d2, d3, d4, d5, d6, d7)		\
 ((uuid_t)								\
 {{ ((a) >> 24) & 0xff, ((a) >> 16) & 0xff, ((a) >> 8) & 0xff, (a) & 0xff, \
    ((b) >> 8) & 0xff, (b) & 0xff,					\
    ((c) >> 8) & 0xff, (c) & 0xff,					\
    (d0), (d1), (d2), (d3), (d4), (d5), (d6), (d7) }})
+#endif
 
 static inline bool uuid_equal(const uuid_t *u1, const uuid_t *u2)
 {
@@ -2877,37 +2860,6 @@ static inline unsigned long _kc_array_index_mask_nospec(unsigned long index,
 #ifndef sizeof_field
 #define sizeof_field(TYPE, MEMBER) (sizeof((((TYPE *)0)->MEMBER)))
 #endif /* sizeof_field */
-/* add a check for the Oracle UEK 4.14.35 kernel as
- * it backported a version of this bitmap function
- */
-#if !(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)) && \
-    !(SLE_VERSION_CODE >= SLE_VERSION(12,5,0) && \
-      SLE_VERSION_CODE < SLE_VERSION(15,0,0) || \
-      SLE_VERSION_CODE >= SLE_VERSION(15,1,0)) && \
-    !(LINUX_VERSION_CODE == KERNEL_VERSION(4,14,35))
-/*
- * Copy bitmap and clear tail bits in last word.
- */
-static inline void
-bitmap_copy_clear_tail(unsigned long *dst, const unsigned long *src, unsigned int nbits)
-{
-	bitmap_copy(dst, src, nbits);
-	if (nbits % BITS_PER_LONG)
-		dst[nbits / BITS_PER_LONG] &= BITMAP_LAST_WORD_MASK(nbits);
-}
-
-/*
- * On 32-bit systems bitmaps are represented as u32 arrays internally, and
- * therefore conversion is not needed when copying data from/to arrays of u32.
- */
-#if BITS_PER_LONG == 64
-void bitmap_from_arr32(unsigned long *bitmap, const u32 *buf, unsigned int nbits);
-#else
-#define bitmap_from_arr32(bitmap, buf, nbits)			\
-	bitmap_copy_clear_tail((unsigned long *) (bitmap),	\
-			       (const unsigned long *) (buf), (nbits))
-#endif /* BITS_PER_LONG == 64 */
-#endif /* !(RHEL >= 8.0) && !(SLES >= 12.5 && SLES < 15.0 || SLES >= 15.1) */
 #else /* >= 4.16 */
 #include <linux/nospec.h>
 #define HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK
@@ -3038,23 +2990,6 @@ _kc_dev_change_flags(struct net_device *netdev, unsigned int flags,
      (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,1)))
 #define HAVE_PTP_SYS_OFFSET_EXTENDED_IOCTL
 #define HAVE_PTP_CLOCK_INFO_GETTIMEX64
-#else /* RHEL >= 7.7 && RHEL < 8.0 || RHEL >= 8.1 */
-struct ptp_system_timestamp {
-	struct timespec64 pre_ts;
-	struct timespec64 post_ts;
-};
-
-static inline void
-ptp_read_system_prets(struct ptp_system_timestamp __always_unused *sts)
-{
-	;
-}
-
-static inline void
-ptp_read_system_postts(struct ptp_system_timestamp __always_unused *sts)
-{
-	;
-}
 #endif /* !(RHEL >= 7.7 && RHEL != 8.0) */
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,1)))
 #define HAVE_NDO_BRIDGE_SETLINK_EXTACK
@@ -3117,16 +3052,9 @@ __kc_eth_get_headlen(const struct net_device __always_unused *dev, void *data,
 #endif
 #endif /* mmiowb */
 
-#if (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(8,1))
-#define HAVE_NDO_GET_DEVLINK_PORT
-#endif /* RHEL > 8.1 */
-
 #else /* >= 5.2.0 */
 #define HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED
 #define SPIN_UNLOCK_IMPLIES_MMIOWB
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-#define HAVE_NDO_GET_DEVLINK_PORT
-#endif /* < 6.2.0 */
 #endif /* 5.2.0 */
 
 /*****************************************************************************/
@@ -3238,18 +3166,6 @@ static inline void _kc_bitmap_set_value8(unsigned long *map,
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,7,0))
 u64 _kc_pci_get_dsn(struct pci_dev *dev);
 #define pci_get_dsn(dev) _kc_pci_get_dsn(dev)
-/* add a check for the Oracle UEK 5.4.17 kernel which
- * backported the rename of the aer functions
- */
-#if defined(NEED_ORCL_LIN_PCI_AER_CLEAR_NONFATAL_STATUS) || \
-!(SLE_VERSION_CODE > SLE_VERSION(15, 2, 0)) && \
-    !((LINUX_VERSION_CODE == KERNEL_VERSION(5,3,18)) && \
-(SLE_LOCALVERSION_CODE >= KERNEL_VERSION(14, 0, 0))) && \
-    !(LINUX_VERSION_CODE == KERNEL_VERSION(5,4,17)) && \
-    !(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,3)))
-#define pci_aer_clear_nonfatal_status	pci_cleanup_aer_uncorrect_error_status
-#endif
-
 #ifndef DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID
 #define DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID "fw.bundle_id"
 #endif
@@ -3342,7 +3258,6 @@ _kc_napi_busy_loop(unsigned int napi_id,
 #endif /* >=5.12.0 */
 
 /*****************************************************************************/
-
 /*
  * Load the implementations file which actually defines kcompat backports.
  * Legacy backports still exist in this file, but all new backports must be

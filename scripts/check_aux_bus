@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (C) 2021, Intel Corporation
+# Copyright (C) 2021 - 2023 Intel Corporation
 #
 # Helper script to detect if auxiliary bus support. This script
 #

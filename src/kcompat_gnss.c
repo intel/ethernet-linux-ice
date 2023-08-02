@@ -28,7 +28,7 @@
 
 #define GNSS_MINORS	16
 
-DEFINE_IDA(gnss_minors);
+static DEFINE_IDA(gnss_minors);
 static dev_t gnss_first;
 
 /* FIFO size must be a power of two */
@@ -195,9 +195,9 @@ out_unlock:
 #ifndef HAVE_POLL_T
 typedef unsigned __bitwise __poll_t;
 #endif /* !HAVE_POLL_T */
-#define _EPOLLIN	0x00000001
-#define _EPOLLHUP	0x00000010
-#define _EPOLLRDNORM	0x00000040
+#define _EPOLLIN	(__force __poll_t)0x00000001
+#define _EPOLLHUP	(__force __poll_t)0x00000010
+#define _EPOLLRDNORM	(__force __poll_t)0x00000040
 
 static __poll_t gnss_poll(struct file *file, poll_table *wait)
 {
@@ -370,7 +370,6 @@ static const char * const gnss_type_names[GNSS_TYPE_COUNT] = {
 	[GNSS_TYPE_SIRF]	= "SiRF",
 	[GNSS_TYPE_UBX]		= "UBX",
 	[GNSS_TYPE_MTK]		= "MTK",
-	[GNSS_TYPE_UNDEFINED]	= "UNDEFINED",
 };
 
 static const char *gnss_type_name(const struct gnss_device *gdev)
@@ -380,10 +379,8 @@ static const char *gnss_type_name(const struct gnss_device *gdev)
 	if (gdev->type < GNSS_TYPE_COUNT)
 		name = gnss_type_names[gdev->type];
 
-	if (!name) {
+	if (!name)
 		dev_WARN(&gdev->dev, "type name not defined\n");
-		name = gnss_type_names[GNSS_TYPE_UNDEFINED];
-	}
 
 	return name;
 }
@@ -429,7 +426,7 @@ int gnss_module_init(void)
 		return ret;
 	}
 
-	gnss_class = class_create(THIS_MODULE, "gnss");
+	gnss_class = class_create("gnss");
 	if (IS_ERR(gnss_class)) {
 		ret = PTR_ERR(gnss_class);
 		pr_err("failed to create class: %d\n", ret);

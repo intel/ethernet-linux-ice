@@ -103,7 +103,8 @@ void ice_eswitch_del_vf_mac_rule(struct ice_vf *vf)
 	if (!vf->repr->rule_added)
 		return;
 
-	ice_rem_adv_rule_by_id(&vf->pf->hw, vf->repr->mac_rule);
+	if (ice_rem_adv_rule_by_id(&vf->pf->hw, vf->repr->mac_rule))
+		dev_dbg(ice_pf_to_dev(vf->pf), "failed to delete rule\n");
 	vf->repr->rule_added = false;
 }
 
@@ -186,21 +187,6 @@ ice_eswitch_release_env(struct ice_pf *pf)
 
 #ifdef HAVE_METADATA_PORT_INFO
 /**
- * ice_eswitch_remap_ring - reconfigure ring of switchdev ctrl VSI
- * @ring: pointer to ring
- * @q_vector: pointer of q_vector which is connected with this ring
- * @netdev: netdevice connected with this ring
- */
-static void
-ice_eswitch_remap_ring(struct ice_ring *ring, struct ice_q_vector *q_vector,
-		       struct net_device *netdev)
-{
-	ring->q_vector = q_vector;
-	ring->next = NULL;
-	ring->netdev = netdev;
-}
-
-/**
  * ice_eswitch_remap_rings_to_vectors - reconfigure rings of switchdev ctrl VSI
  * @pf: pointer to PF struct
  *
@@ -220,8 +206,8 @@ static void ice_eswitch_remap_rings_to_vectors(struct ice_pf *pf)
 
 	ice_for_each_txq(vsi, q_id) {
 		struct ice_q_vector *q_vector;
-		struct ice_ring *tx_ring;
-		struct ice_ring *rx_ring;
+		struct ice_tx_ring *tx_ring;
+		struct ice_rx_ring *rx_ring;
 		struct ice_repr *repr;
 		struct ice_vf *vf;
 
@@ -238,16 +224,20 @@ static void ice_eswitch_remap_rings_to_vectors(struct ice_pf *pf)
 		q_vector->reg_idx = vsi->q_vectors[0]->reg_idx;
 
 		q_vector->num_ring_tx = 1;
-		q_vector->tx.ring = tx_ring;
-		ice_eswitch_remap_ring(tx_ring, q_vector, repr->netdev);
+		q_vector->tx.tx_ring = tx_ring;
+		tx_ring->q_vector = q_vector;
+		tx_ring->next = NULL;
+		tx_ring->netdev = repr->netdev;
 		/* In switchdev mode, from OS stack perspective, there is only
 		 * one queue for given netdev, so it needs to be indexed as 0.
 		 */
 		tx_ring->q_index = 0;
 
 		q_vector->num_ring_rx = 1;
-		q_vector->rx.ring = rx_ring;
-		ice_eswitch_remap_ring(rx_ring, q_vector, repr->netdev);
+		q_vector->rx.rx_ring = rx_ring;
+		rx_ring->q_vector = q_vector;
+		rx_ring->next = NULL;
+		rx_ring->netdev = repr->netdev;
 
 		ice_put_vf(vf);
 	}
@@ -471,7 +461,13 @@ ice_eswitch_port_start_xmit(struct sk_buff __always_unused *skb,
 static struct ice_vsi *
 ice_eswitch_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 {
-	return ice_vsi_setup(pf, pi, ICE_VSI_SWITCHDEV_CTRL, NULL, NULL, 0);
+	struct ice_vsi_cfg_params params = {};
+
+	params.type = ICE_VSI_SWITCHDEV_CTRL;
+	params.pi = pi;
+	params.flags = ICE_VSI_FLAG_INIT;
+
+	return ice_vsi_setup(pf, &params);
 }
 
 /**

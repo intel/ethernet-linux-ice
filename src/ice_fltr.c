@@ -55,7 +55,8 @@ ice_fltr_add_entry_to_list(struct device *dev, struct ice_fltr_info *info,
  * Set VSI with all associated VLANs to given promiscuous mode(s)
  */
 int
-ice_fltr_set_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi, u8 promisc_mask)
+ice_fltr_set_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi,
+			      unsigned long *promisc_mask)
 {
 	struct ice_pf *pf = (struct ice_pf *)hw->back;
 	int result;
@@ -77,7 +78,8 @@ ice_fltr_set_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi, u8 promisc
  * Clear VSI with all associated VLANs to given promiscuous mode(s)
  */
 int
-ice_fltr_clear_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi, u8 promisc_mask)
+ice_fltr_clear_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi,
+				unsigned long *promisc_mask)
 {
 	struct ice_pf *pf = (struct ice_pf *)hw->back;
 	int result;
@@ -99,8 +101,8 @@ ice_fltr_clear_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi, u8 promi
  * @lport: logical port number to clear mode
  */
 int
-ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
-			   u16 vid, u8 lport)
+ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
+			   unsigned long *promisc_mask, u16 vid, u8 lport)
 {
 	struct ice_pf *pf = (struct ice_pf *)hw->back;
 	int result;
@@ -122,8 +124,8 @@ ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
  * @lport: logical port number to set promiscuous mode
  */
 int
-ice_fltr_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle, u8 promisc_mask,
-			 u16 vid, u8 lport)
+ice_fltr_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
+			 unsigned long *promisc_mask, u16 vid, u8 lport)
 {
 	struct ice_pf *pf = (struct ice_pf *)hw->back;
 	int result;
@@ -226,6 +228,11 @@ static int ice_fltr_remove_eth_list(struct ice_vsi *vsi, struct list_head *list)
 void ice_fltr_remove_all(struct ice_vsi *vsi)
 {
 	ice_remove_vsi_fltr(&vsi->back->hw, vsi->idx);
+	/* sync netdev filters if exist */
+	if (vsi->netdev) {
+		__dev_uc_unsync(vsi->netdev, NULL);
+		__dev_mc_unsync(vsi->netdev, NULL);
+	}
 }
 
 /**

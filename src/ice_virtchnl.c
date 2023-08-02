@@ -459,6 +459,9 @@ void ice_vc_notify_vf_link_state(struct ice_vf *vf)
 	struct ice_hw *hw = &vf->pf->hw;
 	struct ice_port_info *pi;
 
+	if (test_bit(ICE_VF_STATE_REPLAY_VC, vf->vf_states))
+		return;
+
 	pi = ice_vf_get_port_info(vf);
 
 
@@ -704,6 +707,8 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 				  VIRTCHNL_VF_OFFLOAD_RSS_REG |
 				  VIRTCHNL_VF_OFFLOAD_VLAN;
 
+	if (vf->migration_active)
+		vf->driver_caps &= ice_migration_supported_caps();
 	vfres->vf_cap_flags = VIRTCHNL_VF_OFFLOAD_L2;
 	vsi = ice_get_vf_vsi(vf);
 	if (!vsi) {
@@ -828,7 +833,7 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	vfres->num_vsis = 1;
 	/* Tx and Rx queue are equal for VF */
 	vfres->num_queue_pairs = vsi->num_txq;
-	vfres->max_vectors = pf->vfs.num_msix_per;
+	vfres->max_vectors = vf->num_msix;
 	vfres->rss_key_size = ICE_VSIQF_HKEY_ARRAY_SIZE;
 	vfres->rss_lut_size = vsi->rss_table_size;
 	vfres->max_mtu = ice_vc_get_max_frame_size(vf);
@@ -2783,13 +2788,14 @@ static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	bool rm_promisc, alluni = false, allmulti = false;
+	DECLARE_BITMAP(mcast_m, ICE_PROMISC_MAX) = {};
+	DECLARE_BITMAP(ucast_m, ICE_PROMISC_MAX) = {};
 	struct virtchnl_promisc_info *info =
 	    (struct virtchnl_promisc_info *)msg;
 	struct ice_vsi_vlan_ops *vlan_ops;
 	int mcast_err = 0, ucast_err = 0;
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
-	u8 mcast_m, ucast_m;
 	struct device *dev;
 	int ret = 0;
 
@@ -2836,7 +2842,7 @@ static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	ice_vf_get_promisc_masks(vf, vsi, &ucast_m, &mcast_m);
+	ice_vf_get_promisc_masks(vf, vsi, ucast_m, mcast_m);
 
 	if (!test_bit(ICE_FLAG_VF_TRUE_PROMISC_ENA, pf->flags)) {
 		if (alluni)
@@ -3064,6 +3070,16 @@ ice_vf_vsi_ena_single_txq(struct ice_vf *vf, struct ice_vsi *vsi,
 		return;
 
 	ice_vf_ena_txq_interrupt(vsi, q_id);
+	/* set TXQ head value to 0x1FFF to indicate no packet is sent. According
+	 * to CPK HAS Transmit Queue Context Structure, the size of descriptor
+	 * queue is from 8 descriptores (QLEN=0x8) to 8K-32 descriptors
+	 * (QLEN=0x1FE0). So QTX_COMM_HEAD.HEAD rang value from 0x1fe0 to 0x1fff
+	 * is reserved and will never be used by HW. So, use 0x1FFF as a marker.
+	 * This is used by live migration.
+	 */
+	if (vf->migration_active)
+		wr32(&vsi->back->hw, QTX_COMM_HEAD(vsi->txq_map[q_id]),
+		     QTX_COMM_HEAD_HEAD_M);
 	set_bit(vf_q_id, vf->txq_ena);
 }
 
@@ -3191,7 +3207,7 @@ ice_vf_vsi_dis_single_txq(struct ice_vf *vf, struct ice_vsi *vsi,
 			  u16 q_id, u16 vf_q_id)
 {
 	struct ice_txq_meta txq_meta = { 0 };
-	struct ice_ring *ring;
+	struct ice_tx_ring *ring;
 	int err;
 
 	if (!test_bit(vf_q_id, vf->txq_ena))
@@ -4187,8 +4203,7 @@ ice_vc_handle_mac_addr_msg(struct ice_vf *vf, u8 *msg, bool set)
 		u8 *mac_addr = al->list[i].addr;
 		int result;
 
-		if (is_broadcast_ether_addr(mac_addr) ||
-		    is_zero_ether_addr(mac_addr))
+		if (is_zero_ether_addr(mac_addr))
 			continue;
 
 		result = ice_vc_cfg_mac(vf, vsi, &al->list[i]);
@@ -4230,6 +4245,33 @@ static int ice_vc_del_mac_addr_msg(struct ice_vf *vf, u8 *msg)
 }
 
 /**
+ * ice_check_avail_qs_contig
+ * @pf: pointer to the PF structure
+ * @num_queues: number of queues requested
+ *
+ * check if available queues are contiguous
+ */
+static bool ice_check_avail_qs_contig(struct ice_pf *pf, u16 num_queues)
+{
+	u16 txqs_offset, rxqs_offset;
+
+	mutex_lock(&pf->avail_q_mutex);
+
+	txqs_offset = bitmap_find_next_zero_area(pf->avail_txqs,
+						 pf->max_pf_txqs,
+						 0, num_queues, 0);
+	rxqs_offset = bitmap_find_next_zero_area(pf->avail_rxqs,
+						 pf->max_pf_rxqs,
+						 0, num_queues, 0);
+	mutex_unlock(&pf->avail_q_mutex);
+
+	if (txqs_offset < pf->max_pf_txqs && rxqs_offset < pf->max_pf_rxqs)
+		return true;
+	else
+		return false;
+}
+
+/**
  * ice_vc_request_qs_msg
  * @vf: pointer to the VF info
  * @msg: pointer to the msg buffer
@@ -4247,11 +4289,25 @@ static int ice_vc_request_qs_msg(struct ice_vf *vf, u8 *msg)
 	u16 max_avail_vf_qps, max_allowed_vf_qps;
 	u16 req_queues = vfres->num_queue_pairs;
 	struct ice_pf *pf = vf->pf;
+	u16 cur_queues, cnt = 0;
 	u16 tx_rx_queue_left;
 	struct device *dev;
-	u16 cur_queues;
 
 	dev = ice_pf_to_dev(pf);
+
+	/* Wait for SR-IOV enablement */
+	do {
+		if (test_bit(ICE_FLAG_SRIOV_ENA, pf->flags))
+			break;
+		msleep_interruptible(50);
+	} while (++cnt < 200);
+
+	if (cnt == 200) {
+		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
+		dev_err(dev, "SR-IOV not enabled\n");
+		goto error_param;
+	}
+
 	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto error_param;
@@ -4276,6 +4332,10 @@ static int ice_vc_request_qs_msg(struct ice_vf *vf, u8 *msg)
 			 vf->vf_id, req_queues - cur_queues, tx_rx_queue_left);
 		vfres->num_queue_pairs = min_t(u16, max_avail_vf_qps,
 					       max_allowed_vf_qps);
+	} else if (!ice_check_avail_qs_contig(pf, req_queues)) {
+		dev_warn(dev, "VF %d requested %u more queues but are not contiguous, falling back to default %u queues.\n",
+			 vf->vf_id, req_queues - cur_queues, cur_queues);
+		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
 	} else {
 		/* request is successful, then reset VF */
 		vf->num_req_qs = req_queues;
@@ -4329,15 +4389,14 @@ static int
 ice_vf_ena_vlan_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 			struct ice_vlan *vlan)
 {
-	u8 promisc_m = 0;
+	DECLARE_BITMAP(promisc_m, ICE_PROMISC_MAX) = {};
 	int status;
 
 	if (test_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states))
-		promisc_m |= ICE_VF_UCAST_VLAN_PROMISC_BITS;
+		ice_set_vf_ucast_vlan_promisc_bits(promisc_m);
 	if (test_bit(ICE_VF_STATE_MC_PROMISC, vf->vf_states))
-		promisc_m |= ICE_MCAST_VLAN_PROMISC_BITS;
-
-	if (!promisc_m)
+		ice_set_mcast_vlan_promisc_bits(promisc_m);
+	if (bitmap_empty(promisc_m, ICE_PROMISC_MAX))
 		return 0;
 
 	status = ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m,
@@ -4361,9 +4420,11 @@ static int
 ice_vf_dis_vlan_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 			struct ice_vlan *vlan)
 {
-	u8 promisc_m = ICE_VF_UCAST_VLAN_PROMISC_BITS |
-		ICE_MCAST_VLAN_PROMISC_BITS;
+	DECLARE_BITMAP(promisc_m, ICE_PROMISC_MAX) = {};
 	int status;
+
+	ice_set_vf_ucast_promisc_bits(promisc_m);
+	ice_set_mcast_promisc_bits(promisc_m);
 
 	status = ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m,
 					    vlan->vid, vsi->port_info->lport);
@@ -5845,6 +5906,67 @@ static bool ice_vc_supported_queue_type(s32 queue_type)
 }
 
 /**
+ * ice_vf_get_tc_of_qid
+ * @vf: Pointer to VF
+ * @vf_q_id: VF relative qid
+ *
+ * Finds the TC of VF queue. Returns -1 if queue is not found.
+ */
+static inline int
+ice_vf_get_tc_of_qid(struct ice_vf *vf, unsigned int vf_q_id)
+{
+	int tc;
+
+	for (tc = 0; tc < vf->num_tc; tc++) {
+		if (vf_q_id < vf->ch[tc].offset + vf->ch[tc].num_qps)
+			return tc;
+	}
+	return -1;
+}
+
+/**
+ * ice_vf_get_vsi_of_qid
+ * @vf : Pointer to VF
+ * @vf_qid: VF relative qid
+ *
+ * Find corresponding VSI for a given VF qid
+ */
+static struct ice_vsi *ice_vf_get_vsi_of_qid(struct ice_vf *vf, u32 vf_qid)
+{
+	struct ice_pf *pf = vf->pf;
+	int tc;
+
+	if (!ice_is_vf_adq_ena(vf))
+		return ice_get_vf_vsi(vf);
+
+	tc = ice_vf_get_tc_of_qid(vf, vf_qid);
+	if (tc < 0)
+		return NULL;
+
+	return pf->vsi[vf->ch[tc].vsi_idx];
+}
+
+/**
+ * ice_vf_get_vsi_qid
+ * @vf : Pointer to VF
+ * @vf_qid: VF relative qid
+ *
+ * Find corresponding VSI relative qid for a given VF qid
+ */
+static int ice_vf_get_vsi_qid(struct ice_vf *vf, u32 vf_qid)
+{
+	int tc;
+
+	if (!ice_is_vf_adq_ena(vf))
+		return vf_qid;
+
+	tc = ice_vf_get_tc_of_qid(vf, vf_qid);
+	if (tc < 0)
+		return -1;
+	return (vf_qid - vf->ch[tc].offset);
+}
+
+/**
  * ice_vc_validate_qs_v2_msg - validate all qs_msg parameters
  * @vf: VF the message was received from
  * @qs_msg: contents of the message from the VF
@@ -5895,15 +6017,19 @@ ice_vc_validate_qs_v2_msg(struct ice_vf *vf,
 static int
 ice_vc_ena_rxq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
 {
-	struct ice_vsi *vsi = vf->pf->vsi[vf->lan_vsi_idx];
-	int q_id;
+	struct ice_vsi *vsi;
+	int vsi_qid;
+	u32 vf_qid;
 
-	if (!vsi)
-		return -EINVAL;
+	ice_for_each_q_in_chunk(chunk, vf_qid) {
+		int err;
 
-	ice_for_each_q_in_chunk(chunk, q_id) {
-		int err = ice_vf_vsi_ena_single_rxq(vf, vsi, q_id, q_id);
+		vsi = ice_vf_get_vsi_of_qid(vf, vf_qid);
+		vsi_qid = ice_vf_get_vsi_qid(vf, vf_qid);
+		if (!vsi || vsi_qid < 0)
+			return -EINVAL;
 
+		err = ice_vf_vsi_ena_single_rxq(vf, vsi, vsi_qid, vf_qid);
 		if (err)
 			return err;
 	}
@@ -5914,14 +6040,18 @@ ice_vc_ena_rxq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
 static int
 ice_vc_ena_txq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
 {
-	struct ice_vsi *vsi = vf->pf->vsi[vf->lan_vsi_idx];
-	int q_id;
+	struct ice_vsi *vsi;
+	int vsi_qid;
+	u32 vf_qid;
 
-	if (!vsi)
-		return -EINVAL;
+	ice_for_each_q_in_chunk(chunk, vf_qid) {
+		vsi = ice_vf_get_vsi_of_qid(vf, vf_qid);
+		vsi_qid = ice_vf_get_vsi_qid(vf, vf_qid);
+		if (!vsi || vsi_qid < 0)
+			return -EINVAL;
 
-	ice_for_each_q_in_chunk(chunk, q_id)
-		ice_vf_vsi_ena_single_txq(vf, vsi, q_id, q_id);
+		ice_vf_vsi_ena_single_txq(vf, vsi, vsi_qid, vf_qid);
+	}
 
 	return 0;
 }
@@ -5980,16 +6110,19 @@ error_param:
 static int
 ice_vc_dis_rxq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
 {
-	struct ice_vsi *vsi = vf->pf->vsi[vf->lan_vsi_idx];
-	u16 q_id;
+	struct ice_vsi *vsi;
+	int vsi_qid;
+	u32 vf_qid;
 
-	if (!vsi)
-		return -EINVAL;
-
-	ice_for_each_q_in_chunk(chunk, q_id) {
+	ice_for_each_q_in_chunk(chunk, vf_qid) {
 		int err;
 
-		err = ice_vf_vsi_dis_single_rxq(vf, vsi, q_id, q_id);
+		vsi = ice_vf_get_vsi_of_qid(vf, vf_qid);
+		vsi_qid = ice_vf_get_vsi_qid(vf, vf_qid);
+		if (!vsi || vsi_qid < 0)
+			return -EINVAL;
+
+		err = ice_vf_vsi_dis_single_rxq(vf, vsi, vsi_qid, vf_qid);
 		if (err)
 			return err;
 	}
@@ -6000,16 +6133,19 @@ ice_vc_dis_rxq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
 static int
 ice_vc_dis_txq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
 {
-	struct ice_vsi *vsi = vf->pf->vsi[vf->lan_vsi_idx];
-	u16 q_id;
+	struct ice_vsi *vsi;
+	int vsi_qid;
+	u32 vf_qid;
 
-	if (!vsi)
-		return -EINVAL;
-
-	ice_for_each_q_in_chunk(chunk, q_id) {
+	ice_for_each_q_in_chunk(chunk, vf_qid) {
 		int err;
 
-		err = ice_vf_vsi_dis_single_txq(vf, vsi, q_id, q_id);
+		vsi = ice_vf_get_vsi_of_qid(vf, vf_qid);
+		vsi_qid = ice_vf_get_vsi_qid(vf, vf_qid);
+		if (!vsi || vsi_qid < 0)
+			return -EINVAL;
+
+		err = ice_vf_vsi_dis_single_txq(vf, vsi, vsi_qid, vf_qid);
 		if (err)
 			return err;
 	}
@@ -6085,11 +6221,25 @@ ice_vc_validate_qv_maps(struct ice_vf *vf,
 			struct virtchnl_queue_vector_maps *qv_maps)
 {
 	struct ice_vsi *vsi;
-	int i;
+	int i, total_vectors;
 
 	vsi = vf->pf->vsi[vf->lan_vsi_idx];
 	if (!vsi)
 		return false;
+
+	/* Multiple VSIs exist when ADQ is configured. So, use
+	 * total queue count calculated from vf->ch structure
+	 * as the limit
+	 */
+	if (ice_is_vf_adq_ena(vf)) {
+		int tc;
+
+		total_vectors = ICE_NONQ_VECS_VF;
+		for (tc = 0; tc < vf->num_tc; tc++)
+			total_vectors += vf->ch[tc].num_qps;
+	} else {
+		total_vectors = vsi->num_q_vectors + ICE_NONQ_VECS_VF;
+	}
 
 	if (!qv_maps->num_qv_maps)
 		return false;
@@ -6101,7 +6251,7 @@ ice_vc_validate_qv_maps(struct ice_vf *vf,
 		if (qv_maps->qv_maps[i].queue_id >= vf->num_vf_qs)
 			return false;
 
-		if (qv_maps->qv_maps[i].vector_id >= (vsi->num_q_vectors + ICE_NONQ_VECS_VF))
+		if (qv_maps->qv_maps[i].vector_id >= total_vectors)
 			return false;
 	}
 
@@ -6118,6 +6268,7 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_queue_vector_maps *qv_maps;
 	struct ice_vsi *vsi;
+	u16 tc = 0;
 	int i;
 
 	qv_maps = (struct virtchnl_queue_vector_maps *)msg;
@@ -6137,19 +6288,33 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	vsi = vf->pf->vsi[vf->lan_vsi_idx];
-	if (!vsi) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		goto error_param;
-	}
-
 	for (i = 0; i < qv_maps->num_qv_maps; i++) {
 		struct virtchnl_queue_vector *qv_map = &qv_maps->qv_maps[i];
 		struct ice_q_vector *q_vector;
-		u16 msix_id;
+		u16 msix_id, vector_id;
+		int vsi_q_id;
 
-		q_vector = vf->vf_ops->get_q_vector(vsi,
-						    qv_map->vector_id);
+		vsi = ice_get_vf_vsi(vf);
+		vsi_q_id = qv_map->queue_id;
+		vector_id = qv_map->vector_id;
+
+		/* qv_maps has 2 entries per queue hence the divide by 2 */
+		if (ice_is_vf_adq_ena(vf)) {
+			vsi = vf->pf->vsi[vf->ch[tc].vsi_idx];
+			vsi_q_id = ice_vf_get_tc_based_qid(i / 2,
+							   vf->ch[tc].offset);
+			vector_id = qv_map->vector_id - vf->ch[tc].offset;
+			if ((i + 1) / 2 == vf->ch[tc + 1].offset)
+				tc++;
+		}
+
+		if (!vsi) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto error_param;
+		}
+
+		q_vector = vf->vf_ops->get_q_vector(vsi, vector_id);
+
 		if (!q_vector) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto error_param;
@@ -6157,12 +6322,15 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 
 		msix_id = q_vector->v_idx + vsi->base_vector;
 
+		if (!ice_vc_isvalid_q_id(vf, vsi->vsi_num, vsi_q_id))
+			return VIRTCHNL_STATUS_ERR_PARAM;
+
 		if (qv_map->queue_type == VIRTCHNL_QUEUE_TYPE_RX)
-			ice_cfg_rxq_interrupt(vsi, qv_map->queue_id,
+			ice_cfg_rxq_interrupt(vsi, vsi_q_id,
 					      msix_id,
 					      qv_map->itr_idx);
 		else if (qv_map->queue_type == VIRTCHNL_QUEUE_TYPE_TX)
-			ice_cfg_txq_interrupt(vsi, qv_map->queue_id,
+			ice_cfg_txq_interrupt(vsi, vsi_q_id,
 					      msix_id,
 					      qv_map->itr_idx);
 	}
@@ -7382,20 +7550,70 @@ void ice_virtchnl_set_repr_ops(struct ice_vf *vf)
 }
 
 /**
+ * ice_is_malicious_vf - check if this vf might be overflowing mailbox
+ * @vf: the VF to check
+ * @mbxdata: data about the state of the mailbox
+ *
+ * Detect if a given VF might be malicious and attempting to overflow the PF
+ * mailbox. If so, log a warning message and ignore this event.
+ */
+static bool
+ice_is_malicious_vf(struct ice_vf *vf, struct ice_mbx_data *mbxdata)
+{
+	bool report_malvf = false;
+	struct device *dev;
+	struct ice_pf *pf;
+	int status;
+
+	pf = vf->pf;
+	dev = ice_pf_to_dev(pf);
+
+	if (test_bit(ICE_VF_STATE_DIS, vf->vf_states))
+		return vf->mbx_info.malicious;
+
+	/* check to see if we have a newly malicious VF */
+	status = ice_mbx_vf_state_handler(&pf->hw, mbxdata, &vf->mbx_info,
+					  &report_malvf);
+	if (status)
+		dev_warn_ratelimited(dev, "Unable to check status of mailbox overflow for VF %u MAC %pM, status %d\n",
+				     vf->vf_id, vf->dev_lan_addr.addr, status);
+
+	if (report_malvf) {
+		struct ice_vsi *pf_vsi = ice_get_main_vsi(pf);
+		u8 zero_addr[ETH_ALEN] = {};
+
+		dev_warn(dev, "VF MAC %pM on PF MAC %pM is generating asynchronous messages and may be overflowing the PF message queue. Please see the Adapter User Guide for more information\n",
+			 vf->dev_lan_addr.addr,
+			 pf_vsi ? pf_vsi->netdev->dev_addr : zero_addr);
+	}
+
+	return vf->mbx_info.malicious;
+}
+
+/**
  * ice_vc_process_vf_msg - Process request from VF
  * @pf: pointer to the PF structure
  * @event: pointer to the AQ event
+ * @mbxdata: information used to detect VF attempting mailbox overflow
  *
  * This function will be called from:
  * 1. the common asq/arq handler to process request from VF
- * In the first case, the return value is ignored.
+ *
+ *    The return value is ignored, as the command will send the status of the
+ *    request as a response to the VF. This flow sets the mbxdata to
+ *    a non-NULL value and must call ice_is_malicious_vf to determine if this
+ *    VF might be attempting to overflow the PF message queue.
+ *
  * 2. replay virtual channel commamds during live migration
- * In the second case, returns negative indicates failed
- * to replay vc commands and result in migration failed.
+ *
+ *    The return value is used to indicate failure to replay vc commands and
+ *    that the migration failed. This flow sets mbxdata to NULL and skips the
+ *    ice_is_malicious_vf checks which are unnecessary during replay.
  *
  * Return 0 if success, negative for failure.
  */
-int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
+int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event,
+			  struct ice_mbx_data *mbxdata)
 {
 	u32 v_opcode = le32_to_cpu(event->desc.cookie_high);
 	s16 vf_id = le16_to_cpu(event->desc.retval);
@@ -7416,6 +7634,10 @@ int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 	}
 
 	mutex_lock(&vf->cfg_lock);
+
+	/* Check if the VF is trying to overflow the mailbox */
+	if (mbxdata && ice_is_malicious_vf(vf, mbxdata))
+		goto finish;
 
 	/* Check if VF is disabled. */
 	if (test_bit(ICE_VF_STATE_DIS, vf->vf_states)) {
@@ -7451,6 +7673,8 @@ error_handler:
 		goto finish;
 	}
 
+	if (vf->migration_active)
+		ice_migration_fix_msg_vsi(vf, v_opcode, msg);
 	switch (v_opcode) {
 	case VIRTCHNL_OP_VERSION:
 		err = ops->get_ver_msg(vf, msg);
@@ -7644,6 +7868,9 @@ error_handler:
 		dev_info(dev, "PF failed to honor VF %d, opcode %d, error %d\n",
 			 vf_id, v_opcode, err);
 	}
+
+	if (!err && vf->migration_active)
+		ice_migration_save_vf_msg(vf, event);
 
 finish:
 	mutex_unlock(&vf->cfg_lock);

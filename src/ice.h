@@ -40,7 +40,6 @@
 #include <linux/ipv6.h>
 #include <linux/pkt_sched.h>
 #include <linux/if_bridge.h>
-#include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/sizes.h>
 #ifdef HAVE_LINKMODE
@@ -131,12 +130,13 @@
 #include "ice_eswitch.h"
 #include "ice_vsi_vlan_ops.h"
 #include "ice_gnss.h"
+#include "ice_migration.h"
+#include "ice_migration_private.h"
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0			0
 #define ICE_BAR_RDMA_WC_START		0x0800000
 #define ICE_BAR_RDMA_WC_END		0x1000000
-#define ICE_BAR3			3
 #ifdef CONFIG_DEBUG_FS
 #define ICE_MAX_CSR_SPACE	(8 * 1024 * 1024 - 64 * 1024)
 #endif /* CONFIG_DEBUG_FS */
@@ -170,7 +170,7 @@ extern const char ice_drv_ver[];
 #define ICE_OICR_MSIX		1
 #define ICE_MIN_MSIX		(ICE_MIN_LAN_MSIX + ICE_OICR_MSIX)
 #define ICE_FDIR_MSIX		2
-#define ICE_RDMA_NUM_AEQ_MSIX	4
+#define ICE_RDMA_NUM_AEQ_MSIX	1
 #define ICE_MIN_RDMA_MSIX	2
 #define ICE_ESWITCH_MSIX	1
 #define ICE_NO_VSI		0xffff
@@ -188,6 +188,8 @@ extern const char ice_drv_ver[];
 #define ICE_RES_RDMA_VEC_ID	(ICE_RES_MISC_VEC_ID - 1)
 /* All VF control VSIs share the same irq, so assign a unique ID for them */
 #define ICE_RES_VF_CTRL_VEC_ID	(ICE_RES_RDMA_VEC_ID - 1)
+#define ICE_RES_VF_BASE_VEC_ID	(ICE_RES_VF_CTRL_VEC_ID - 1 - ICE_MAX_SRIOV_VFS)
+#define ICE_RES_LL_TS_VEC_ID	(ICE_RES_VF_BASE_VEC_ID - 1)
 #define ICE_INVAL_Q_INDEX	0xffff
 #define ICE_INVAL_VFID		256
 
@@ -271,21 +273,37 @@ extern const char ice_drv_ver[];
 #define ice_for_each_chnl_tc(i)	\
 	for ((i) = ICE_CHNL_START_TC; (i) < ICE_CHNL_MAX_TC; (i)++)
 
-#define ICE_UCAST_PROMISC_BITS (ICE_PROMISC_UCAST_TX | ICE_PROMISC_UCAST_RX)
+static inline void ice_set_ucast_promisc_bits(unsigned long *promisc_mask)
+{
+	set_bit(ICE_PROMISC_UCAST_TX, promisc_mask);
+	set_bit(ICE_PROMISC_UCAST_RX, promisc_mask);
+}
 
-#define ICE_UCAST_VLAN_PROMISC_BITS (ICE_PROMISC_UCAST_TX | \
-				     ICE_PROMISC_UCAST_RX | \
-				     ICE_PROMISC_VLAN_TX  | \
-				     ICE_PROMISC_VLAN_RX)
+static inline void ice_set_ucast_vlan_promisc_bits(unsigned long *promisc_mask)
+{
+	set_bit(ICE_PROMISC_UCAST_TX, promisc_mask);
+	set_bit(ICE_PROMISC_UCAST_RX, promisc_mask);
+	set_bit(ICE_PROMISC_VLAN_TX, promisc_mask);
+	set_bit(ICE_PROMISC_VLAN_RX, promisc_mask);
+}
 
-#define ICE_MCAST_PROMISC_BITS (ICE_PROMISC_MCAST_TX | ICE_PROMISC_MCAST_RX)
+static inline void ice_set_mcast_promisc_bits(unsigned long *promisc_mask)
+{
+	set_bit(ICE_PROMISC_MCAST_TX, promisc_mask);
+	set_bit(ICE_PROMISC_MCAST_RX, promisc_mask);
+}
 
-#define ICE_MCAST_VLAN_PROMISC_BITS (ICE_PROMISC_MCAST_TX | \
-				     ICE_PROMISC_MCAST_RX | \
-				     ICE_PROMISC_VLAN_TX  | \
-				     ICE_PROMISC_VLAN_RX)
+static inline void ice_set_mcast_vlan_promisc_bits(unsigned long *promisc_mask)
+{
+	set_bit(ICE_PROMISC_MCAST_TX, promisc_mask);
+	set_bit(ICE_PROMISC_MCAST_RX, promisc_mask);
+	set_bit(ICE_PROMISC_VLAN_TX, promisc_mask);
+	set_bit(ICE_PROMISC_VLAN_RX, promisc_mask);
+}
 
 #define ice_pf_to_dev(pf) (&((pf)->pdev->dev))
+
+#define ice_pf_src_tmr_owned(pf) ((pf)->hw.func_caps.ts_func_info.src_tmr_owned)
 
 struct ice_fwlog_user_input {
 	unsigned long events;
@@ -294,7 +312,6 @@ struct ice_fwlog_user_input {
 
 enum ice_feature {
 	ICE_F_DSCP,
-	ICE_F_PTP_EXTTS,
 	ICE_F_CGU,
 	ICE_F_PHY_RCLK,
 	ICE_F_SMA_CTRL,
@@ -487,11 +504,11 @@ struct ice_vsi {
 	struct ice_sw *vsw;		 /* switch this VSI is on */
 	struct ice_pf *back;		 /* back pointer to PF */
 	struct ice_port_info *port_info; /* back pointer to port_info */
-	struct ice_ring **rx_rings;	 /* Rx ring array */
-	struct ice_ring **tx_rings;	 /* Tx ring array */
+	struct ice_rx_ring **rx_rings;	 /* Rx ring array */
+	struct ice_tx_ring **tx_rings;	 /* Tx ring array */
 #ifdef HAVE_NDO_DFWD_OPS
 	/* Initial VSI tx_rings array when L2 offload is off */
-	struct ice_ring **base_tx_rings;
+	struct ice_tx_ring **base_tx_rings;
 #endif /* HAVE_NDO_DFWD_OPS */
 	struct ice_q_vector **q_vectors; /* q_vector array */
 
@@ -515,7 +532,6 @@ struct ice_vsi {
 
 	struct ice_vf *vf;		/* VF associated with this VSI */
 
-	u16 ethtype;			/* Ethernet protocol for pause frame */
 	u16 num_gfltr;
 	u16 num_bfltr;
 	u16 cntr_gfltr;
@@ -527,6 +543,7 @@ struct ice_vsi {
 	u8 *rss_hkey_user;	/* User configured hash keys */
 	u8 *rss_lut_user;	/* User configured lookup table entries */
 	u8 rss_lut_type;	/* used to configure Get/Set RSS LUT AQ call */
+	u16 *global_lut_id;
 
 	/* aRFS members only allocated for the PF VSI */
 #define ICE_MAX_RFS_FILTERS	0xFFFF
@@ -575,7 +592,7 @@ struct ice_vsi {
 	struct ice_tc_cfg tc_cfg;
 #ifdef HAVE_XDP_SUPPORT
 	struct bpf_prog *xdp_prog;
-	struct ice_ring **xdp_rings;	 /* XDP ring array */
+	struct ice_tx_ring **xdp_rings;	 /* XDP ring array */
 	u16 num_xdp_txq;		 /* Used XDP queues */
 	u8 xdp_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
 #endif /* HAVE_XDP_SUPPORT */
@@ -643,7 +660,6 @@ struct ice_vsi {
 	 * corresponds to
 	 */
 	struct ice_agg_node *agg_node;
-	u16 *global_lut_id;
 } ____cacheline_internodealigned_in_smp;
 
 enum ice_chnl_vector_state {
@@ -814,7 +830,6 @@ enum ice_pf_flags {
 	ICE_FLAG_FD_ENA,
 	ICE_FLAG_PTP_SUPPORTED,		/* NVM PTP support */
 	ICE_FLAG_PTP,			/* PTP successfully initialized */
-	ICE_FLAG_PTP_WT_ENABLED,	/* PTP workthread enabled */
 	ICE_FLAG_PLUG_AUX_DEV,
 	ICE_FLAG_UNPLUG_AUX_DEV,
 	ICE_FLAG_MTU_CHANGED,
@@ -826,6 +841,7 @@ enum ice_pf_flags {
 	ICE_FLAG_LINK_DOWN_ON_CLOSE_ENA,
 	ICE_FLAG_TOTAL_PORT_SHUTDOWN_ENA,
 	ICE_FLAG_NO_MEDIA,
+	ICE_FLAG_PTP_WT_BLOCKED,
 #ifndef ETHTOOL_GFECPARAM
 	ICE_FLAG_RS_FEC,
 	ICE_FLAG_BASE_R_FEC,
@@ -847,6 +863,7 @@ enum ice_pf_flags {
 	ICE_FLAG_DPLL_FAST_LOCK,
 	ICE_FLAG_DPLL_MONITOR,
 	ICE_FLAG_EXTTS_FILTER,
+	ICE_FLAG_ITU_G8262_FILTER_USED,
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
@@ -919,8 +936,21 @@ struct ice_mdd_reporter {
 };
 #endif /* HAVE_DEVLINK_HEALTH */
 
+struct ice_msix {
+	/* All on host, so sum without VF, it is because we need to store
+	 * information to call ena_msix on host. All on the card is in hw cups
+	 */
+	u16 all_host;			/* All reserved MSI-X on host */
+	u16 misc;			/* MSI-X reserved for misc */
+	u16 eth;			/* MSI-X reserved for eth */
+	u16 rdma;			/* MSI-X reserved for RDMA */
+	u16 vf;				/* MSI-X reserved for VFs */
+	u16 siov;			/* MSI-X reserved for SIOV */
+};
+
 struct ice_pf {
 	struct pci_dev *pdev;
+	struct pci_dev *peer_pdev;
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_REGIONS
 	struct devlink_region *nvm_region;
@@ -937,6 +967,11 @@ struct ice_pf {
 	/* OS reserved IRQ details */
 	struct msix_entry *msix_entries;
 	struct ice_res_tracker *irq_tracker;
+	struct ice_res_tracker *vf_irq_tracker;
+	/* Store MSI-X requested by user via devlink */
+	struct ice_msix req_msix;
+	/* Store currently used MSI-X */
+	struct ice_msix msix;
 	/* First MSIX vector used by SR-IOV VFs. Calculated by subtracting the
 	 * number of MSIX vectors needed for all SR-IOV VFs from the number of
 	 * MSIX vectors allowed on this PF.
@@ -971,7 +1006,6 @@ struct ice_pf {
 	struct ice_ptp ptp;
 	struct gnss_serial *gnss_serial;
 	struct gnss_device *gnss_dev;
-	u16 num_rdma_msix;	/* Total MSIX vectors for RDMA driver */
 	u16 rdma_base_vector;
 #ifdef HAVE_NDO_DFWD_OPS
 	/* MACVLAN specific variables */
@@ -993,10 +1027,10 @@ struct ice_pf {
 	u32 oicr_err_reg;
 	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
 	u16 oicr_misc;		/* Misc interrupts to handle in bottom half */
+	u16 ll_ts_int_idx;	/* LL_TS interrupt MSIX vector index */
 	u16 num_avail_sw_msix;	/* remaining MSIX SW vectors left unclaimed */
 	u16 max_pf_txqs;	/* Total Tx queues PF wide */
 	u16 max_pf_rxqs;	/* Total Rx queues PF wide */
-	u16 num_lan_msix;	/* Total MSIX vectors for base driver */
 	u16 num_lan_tx;		/* num LAN Tx queues setup */
 	u16 num_lan_rx;		/* num LAN Rx queues setup */
 	u16 next_vsi;		/* Next free slot in pf->vsi[] - 0-based! */
@@ -1039,6 +1073,7 @@ struct ice_pf {
 	unsigned long tx_timeout_last_recovery;
 	u32 tx_timeout_recovery_level;
 	char int_name[ICE_INT_NAME_STR_LEN];
+	char int_name_ll_ts[ICE_INT_NAME_STR_LEN];
 	struct iidc_core_dev_info **cdev_infos;
 	int aux_idx;
 	u32 sw_int_count;
@@ -1093,11 +1128,11 @@ struct ice_pf {
 	enum ice_cgu_state ptp_dpll_state;
 	u8 ptp_ref_pin;
 	s64 ptp_dpll_phase_offset;
-
-	u32 phc_recalc;
-
 	u8 n_quanta_prof_used;
 };
+
+extern struct ice_pf *
+ice_get_peer_pf(struct ice_pf *pf);
 
 extern struct workqueue_struct *ice_wq;
 extern struct workqueue_struct *ice_lag_wq;
@@ -1208,6 +1243,18 @@ ice_sw_intr_cntr(struct ice_q_vector *q_vector, bool napi_codepath)
 #endif /* ADQ_PERF_COUNTERS */
 
 /**
+ * ice_ptp_pf_handles_tx_interrupt - Check if PF handles Tx interrupt
+ * @pf: Board private structure
+ *
+ * Return true if this PF should respond to the Tx timestamp interrupt
+ * indication in the miscellaneous OICR interrupt handler.
+ */
+static inline bool ice_ptp_pf_handles_tx_interrupt(struct ice_pf *pf)
+{
+	return pf->ptp.tx_interrupt_mode != ICE_PTP_TX_INTERRUPT_NONE;
+}
+
+/**
  * ice_irq_dynamic_ena - Enable default interrupt generation settings
  * @hw: pointer to HW struct
  * @vsi: pointer to VSI struct, can be NULL
@@ -1268,7 +1315,7 @@ static inline bool ice_is_xdp_ena_vsi(struct ice_vsi *vsi)
 }
 
 #ifdef HAVE_XDP_SUPPORT
-static inline void ice_set_ring_xdp(struct ice_ring *ring)
+static inline void ice_set_ring_xdp(struct ice_tx_ring *ring)
 {
 	ring->flags |= ICE_TX_FLAGS_RING_XDP;
 }
@@ -1283,9 +1330,9 @@ static inline void ice_set_ring_xdp(struct ice_ring *ring)
  * NULL otherwise.
  */
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
-static inline struct xsk_buff_pool *ice_xsk_pool(struct ice_ring *ring)
+static inline struct xsk_buff_pool *ice_xsk_pool(struct ice_rx_ring *ring)
 #else
-static inline struct xdp_umem *ice_xsk_pool(struct ice_ring *ring)
+static inline struct xdp_umem *ice_xsk_pool(struct ice_rx_ring *ring)
 #endif
 {
 	struct ice_vsi *vsi = ring->vsi;
@@ -1294,8 +1341,40 @@ static inline struct xdp_umem *ice_xsk_pool(struct ice_ring *ring)
 #endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 	u16 qid = ring->q_index;
 
-	if (ice_ring_is_xdp(ring))
-		qid -= vsi->num_xdp_txq;
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
+	if (qid >= vsi->num_xsk_umems || !umems || !umems[qid] ||
+	    !ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
+		return NULL;
+
+	return umems[qid];
+#else
+	if (!ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
+		return NULL;
+
+	return xsk_get_pool_from_qid(vsi->netdev, qid);
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
+}
+
+/**
+ * ice_tx_xsk_pool - get XSK buffer pool bound to a ring
+ * @ring: Tx ring to use
+ *
+ * Returns a pointer to xdp_umem structure if there is a buffer pool present,
+ * NULL otherwise. Tx equivalent of ice_xsk_pool.
+ */
+#ifdef HAVE_NETDEV_BPF_XSK_POOL
+static inline struct xsk_buff_pool *ice_tx_xsk_pool(struct ice_tx_ring *ring)
+#else
+static inline struct xdp_umem *ice_tx_xsk_pool(struct ice_tx_ring *ring)
+#endif
+{
+	struct ice_vsi *vsi = ring->vsi;
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
+	struct xdp_umem **umems = vsi->xsk_umems;
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
+	u16 qid;
+
+	qid = ring->q_index - vsi->num_xdp_txq;
 
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
 	if (qid >= vsi->num_xsk_umems || !umems || !umems[qid] ||
@@ -1611,11 +1690,11 @@ void ice_update_pf_stats(struct ice_pf *pf);
 void ice_update_vsi_stats(struct ice_vsi *vsi);
 int ice_up(struct ice_vsi *vsi);
 void
-ice_fetch_u64_stats_per_ring(struct ice_ring_stats *ring_stat, u64 *pkts,
-			     u64 *bytes);
+ice_fetch_u64_stats_per_ring(struct u64_stats_sync *syncp,
+			     struct ice_q_stats stats, u64 *pkts, u64 *bytes);
 int ice_down(struct ice_vsi *vsi);
 int ice_down_up(struct ice_vsi *vsi);
-int ice_vsi_cfg(struct ice_vsi *vsi);
+int ice_vsi_cfg_lan(struct ice_vsi *vsi);
 struct ice_vsi *ice_lb_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi);
 #ifdef HAVE_NDO_DFWD_OPS
 int ice_vsi_cfg_netdev_tc0(struct ice_vsi *vsi);
@@ -1660,9 +1739,8 @@ void ice_cdev_info_refresh_msix(struct ice_pf *pf);
  */
 static inline void ice_set_rdma_cap(struct ice_pf *pf)
 {
-	if (pf->hw.func_caps.common_cap.iwarp && pf->num_rdma_msix) {
+	if (pf->hw.func_caps.common_cap.iwarp && pf->msix.rdma)
 		set_bit(ICE_FLAG_RDMA_ENA, pf->flags);
-	}
 }
 
 /**
@@ -1720,8 +1798,19 @@ int ice_open(struct net_device *netdev);
 int ice_open_internal(struct net_device *netdev);
 int ice_stop(struct net_device *netdev);
 void ice_service_task_schedule(struct ice_pf *pf);
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+int ice_load(struct ice_pf *pf);
+void ice_unload(struct ice_pf *pf);
+#endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 int
 ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_init_acl(struct ice_pf *pf);
 
+static inline bool
+ice_is_primary(struct ice_pf *pf)
+{
+	/* The only device is always primary */
+	return !pf->peer_pdev ||
+	       !!(pf->hw.dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
+}
 #endif /* _ICE_H_ */

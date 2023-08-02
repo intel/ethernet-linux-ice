@@ -475,3 +475,4 @@ ice_fwlog_event_dump(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf)
 
 	ice_info_fwlog(hw, 32, 1, buf, le16_to_cpu(desc->datalen));
 }
+

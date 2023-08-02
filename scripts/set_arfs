@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (C) 2020, Intel Corporation
+# Copyright (C) 2020 - 2023 Intel Corporation
 #
 # Attempt a basic setup of adaptive receive flow steering
 # also known as aRFS.  aRFS will automatically at runtime

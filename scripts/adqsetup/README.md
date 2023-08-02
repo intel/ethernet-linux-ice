@@ -1,7 +1,7 @@
 # adqsetup
 
 _SPDX-License-Identifier: BSD-3-Clause_  
-_Copyright (c) 2022, Intel Corporation_  
+_Copyright (C) 2022 - 2023 Intel Corporation_  
 
 **Dependencies:** _Python 2.7-3.10_
 

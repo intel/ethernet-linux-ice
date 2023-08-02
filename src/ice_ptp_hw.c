@@ -6,6 +6,7 @@
 #include "ice_ptp_hw.h"
 #include "ice_ptp_consts.h"
 #include "ice_cgu_regs.h"
+#include "ice_phy_regs.h"
 
 /* Low level functions for interacting with and managing the device clock used
  * for the Precision Time Protocol.
@@ -69,6 +70,13 @@
  * a suitable generic implementation
  */
 
+static const int cmnref_refselx_locovr[][2] = {
+	/* PHY0 PHY1 */
+	{  0x1, 0x1 }, /* ENET */
+	{  0x1, 0x5 }, /* SyncE */
+	{  0x5, 0x1 }, /* eref0 */
+};
+
 /**
  * ice_get_ptp_src_clock_index - determine source clock index
  * @hw: pointer to HW struct
@@ -101,16 +109,16 @@ u64 ice_ptp_read_src_incval(struct ice_hw *hw)
 }
 
 /**
- * ice_read_cgu_reg_e822 - Read a CGU register
+ * ice_read_cgu_reg_e82x - Read a CGU register
  * @hw: pointer to the HW struct
  * @addr: Register address to read
  * @val: storage for register value read
  *
  * Read the contents of a register of the Clock Generation Unit. Only
- * applicable to E822 devices.
+ * applicable to E822/E823/E825 devices.
  */
 static int
-ice_read_cgu_reg_e822(struct ice_hw *hw, u16 addr, u32 *val)
+ice_read_cgu_reg_e82x(struct ice_hw *hw, u16 addr, u32 *val)
 {
 	struct ice_sbq_msg_input cgu_msg;
 	int status;
@@ -133,16 +141,16 @@ ice_read_cgu_reg_e822(struct ice_hw *hw, u16 addr, u32 *val)
 }
 
 /**
- * ice_write_cgu_reg_e822 - Write a CGU register
+ * ice_write_cgu_reg_e82x - Write a CGU register
  * @hw: pointer to the HW struct
  * @addr: Register address to write
  * @val: value to write into the register
  *
  * Write the specified value to a register of the Clock Generation Unit. Only
- * applicable to E822 devices.
+ * applicable to E822/E823/E825 devices.
  */
 static int
-ice_write_cgu_reg_e822(struct ice_hw *hw, u16 addr, u32 val)
+ice_write_cgu_reg_e82x(struct ice_hw *hw, u16 addr, u32 val)
 {
 	struct ice_sbq_msg_input cgu_msg;
 	int status;
@@ -246,15 +254,15 @@ ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
 		return -EINVAL;
 	}
 
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD9, &dw9.val);
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD9, &dw9.val);
 	if (status)
 		return status;
 
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD24, &dw24.val);
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD24, &dw24.val);
 	if (status)
 		return status;
 
-	status = ice_read_cgu_reg_e822(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
+	status = ice_read_cgu_reg_e82x(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
 	if (status)
 		return status;
 
@@ -269,43 +277,43 @@ ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
 	if (dw24.field.ts_pll_enable) {
 		dw24.field.ts_pll_enable = 0;
 
-		status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
+		status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD24, dw24.val);
 		if (status)
 			return status;
 	}
 
 	/* Set the frequency */
 	dw9.field.time_ref_freq_sel = *clk_freq;
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD9, dw9.val);
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD9, dw9.val);
 	if (status)
 		return status;
 
 	/* Configure the TS PLL feedback divisor */
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD19, &dw19.val);
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD19, &dw19.val);
 	if (status)
 		return status;
 
 	dw19.field.tspll_fbdiv_intgr = e822_cgu_params[*clk_freq].feedback_div;
 	dw19.field.tspll_ndivratio = 1;
 
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD19, dw19.val);
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD19, dw19.val);
 	if (status)
 		return status;
 
 	/* Configure the TS PLL post divisor */
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD22, &dw22.val);
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD22, &dw22.val);
 	if (status)
 		return status;
 
 	dw22.field.time1588clk_div = e822_cgu_params[*clk_freq].post_pll_div;
 	dw22.field.time1588clk_sel_div2 = 0;
 
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD22, dw22.val);
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD22, dw22.val);
 	if (status)
 		return status;
 
 	/* Configure the TS PLL pre divisor and clock source */
-	status = ice_read_cgu_reg_e822(hw, NAC_CGU_DWORD24, &dw24.val);
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD24, &dw24.val);
 	if (status)
 		return status;
 
@@ -313,21 +321,21 @@ ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
 	dw24.field.tspll_fbdiv_frac = e822_cgu_params[*clk_freq].frac_n_div;
 	dw24.field.time_ref_sel = *clk_src;
 
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD24, dw24.val);
 	if (status)
 		return status;
 
 	/* Finally, enable the PLL */
 	dw24.field.ts_pll_enable = 1;
 
-	status = ice_write_cgu_reg_e822(hw, NAC_CGU_DWORD24, dw24.val);
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD24, dw24.val);
 	if (status)
 		return status;
 
 	/* Wait to verify if the PLL locks */
 	msleep(1);
 
-	status = ice_read_cgu_reg_e822(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
+	status = ice_read_cgu_reg_e82x(hw, TSPLL_RO_BWM_LF, &bwm_lf.val);
 	if (status)
 		return status;
 
@@ -350,30 +358,417 @@ ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
 }
 
 /**
- * ice_init_cgu_e822 - Initialize CGU with settings from firmware
- * @hw: pointer to the HW structure
+ * ice_cfg_cgu_pll_e825c - Configure the Clock Generation Unit for E825-C
+ * @hw: pointer to the HW struct
+ * @clk_freq: Clock frequency to program
+ * @clk_src: Clock source to select (TIME_REF, or TCX0)
  *
- * Initialize the Clock Generation Unit of the E822 device.
+ * Configure the Clock Generation Unit with the desired clock frequency and
+ * time reference, enabling the PLL which drives the PTP hardware clock.
  */
-static int ice_init_cgu_e822(struct ice_hw *hw)
+int
+ice_cfg_cgu_pll_e825c(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
+		      enum ice_clk_src *clk_src)
 {
-	struct ice_ts_func_info *ts_info = &hw->func_caps.ts_func_info;
-	union tspll_cntr_bist_settings cntr_bist;
-	enum ice_time_ref_freq time_ref_freq;
-	enum ice_clk_src clk_src;
+	union tspll_ro_lock_e825c ro_lock;
+	union nac_cgu_dword23_e825c dw23;
+	union nac_cgu_dword19 dw19;
+	union nac_cgu_dword22 dw22;
+	union nac_cgu_dword24 dw24;
+	union nac_cgu_dword9 dw9;
 	int status;
 
-	status = ice_read_cgu_reg_e822(hw, TSPLL_CNTR_BIST_SETTINGS,
+	if (*clk_freq >= NUM_ICE_TIME_REF_FREQ) {
+		dev_warn(ice_hw_to_dev(hw), "Invalid TIME_REF frequency %u\n",
+			 *clk_freq);
+		return -EINVAL;
+	}
+
+	if (*clk_src >= NUM_ICE_CLK_SRC) {
+		dev_warn(ice_hw_to_dev(hw), "Invalid clock source %u\n",
+			 *clk_src);
+		return -EINVAL;
+	}
+
+	if (*clk_src == ICE_CLK_SRC_TCX0 &&
+	    *clk_freq != ICE_TIME_REF_FREQ_25_000) {
+		dev_warn(ice_hw_to_dev(hw),
+			 "TCX0 only supports 25 MHz frequency\n");
+		return -EINVAL;
+	}
+
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD9, &dw9.val);
+	if (status)
+		return status;
+
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD24, &dw24.val);
+	if (status)
+		return status;
+
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C, &dw23.val);
+	if (status)
+		return status;
+
+	status = ice_read_cgu_reg_e82x(hw, TSPLL_RO_LOCK_E825C, &ro_lock.val);
+	if (status)
+		return status;
+
+	/* Log the current clock configuration */
+	ice_debug(hw, ICE_DBG_PTP, "Current CGU configuration -- %s, clk_src %s, clk_freq %s, PLL %s\n",
+		  dw24.field.ts_pll_enable ? "enabled" : "disabled",
+		  ice_clk_src_str(dw23.field.time_ref_sel),
+		  ice_clk_freq_str(dw9.field.time_ref_freq_sel),
+		  ro_lock.field.plllock_true_lock_cri ? "locked" : "unlocked");
+
+	/* Disable the PLL before changing the clock source or frequency */
+	if (dw23.field.ts_pll_enable) {
+		dw23.field.ts_pll_enable = 0;
+
+		status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C,
+						dw23.val);
+		if (status)
+			return status;
+	}
+
+	/* Set the frequency */
+	dw9.field.time_ref_freq_sel = *clk_freq;
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD9, dw9.val);
+	if (status)
+		return status;
+
+	/* Configure the TS PLL feedback divisor */
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD19, &dw19.val);
+	if (status)
+		return status;
+
+	dw19.field.tspll_fbdiv_intgr = e822_cgu_params[*clk_freq].feedback_div;
+	dw19.field.tspll_ndivratio = 1;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD19, dw19.val);
+	if (status)
+		return status;
+
+	/* Configure the TS PLL post divisor */
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD22, &dw22.val);
+	if (status)
+		return status;
+
+	dw22.field.time1588clk_div = e822_cgu_params[*clk_freq].post_pll_div;
+	dw22.field.time1588clk_sel_div2 = 0;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD22, dw22.val);
+	if (status)
+		return status;
+
+	/* Configure the TS PLL pre divisor and clock source */
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C, &dw23.val);
+	if (status)
+		return status;
+
+	dw23.field.ref1588_ck_div = e822_cgu_params[*clk_freq].refclk_pre_div;
+	dw23.field.time_ref_sel = *clk_src;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C, dw23.val);
+	if (status)
+		return status;
+
+	dw24.field.tspll_fbdiv_frac = e822_cgu_params[*clk_freq].frac_n_div;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD24, dw24.val);
+	if (status)
+		return status;
+
+	/* Finally, enable the PLL */
+	dw23.field.ts_pll_enable = 1;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C, dw23.val);
+	if (status)
+		return status;
+
+	/* Wait to verify if the PLL locks */
+	msleep(1);
+
+	status = ice_read_cgu_reg_e82x(hw, TSPLL_RO_LOCK_E825C, &ro_lock.val);
+	if (status)
+		return status;
+
+	if (!ro_lock.field.plllock_true_lock_cri) {
+		dev_warn(ice_hw_to_dev(hw), "CGU PLL failed to lock\n");
+		return -EBUSY;
+	}
+
+	/* Log the current clock configuration */
+	ice_debug(hw, ICE_DBG_PTP, "New CGU configuration -- %s, clk_src %s, clk_freq %s, PLL %s\n",
+		  dw24.field.ts_pll_enable ? "enabled" : "disabled",
+		  ice_clk_src_str(dw23.field.time_ref_sel),
+		  ice_clk_freq_str(dw9.field.time_ref_freq_sel),
+		  ro_lock.field.plllock_true_lock_cri ? "locked" : "unlocked");
+
+	*clk_freq = (enum ice_time_ref_freq)dw9.field.time_ref_freq_sel;
+	*clk_src = (enum ice_clk_src)dw23.field.time_ref_sel;
+
+	return 0;
+}
+
+/**
+ * ice_cfg_cgu_pll_dis_sticky_bits_e822 - disable TS PLL sticky bits
+ * @hw: pointer to the HW struct
+ *
+ * Configure the Clock Generation Unit TS PLL sticky bits so they don't latch on
+ * losing TS PLL lock, but always show current state.
+ */
+static int ice_cfg_cgu_pll_dis_sticky_bits_e822(struct ice_hw *hw)
+{
+	union tspll_cntr_bist_settings cntr_bist;
+	int status;
+
+	status = ice_read_cgu_reg_e82x(hw, TSPLL_CNTR_BIST_SETTINGS,
 				       &cntr_bist.val);
 	if (status)
 		return status;
 
-	/* Disable sticky lock detection so lock status reported is accurate */
 	cntr_bist.field.i_plllock_sel_0 = 0;
 	cntr_bist.field.i_plllock_sel_1 = 0;
 
-	status = ice_write_cgu_reg_e822(hw, TSPLL_CNTR_BIST_SETTINGS,
+	status = ice_write_cgu_reg_e82x(hw, TSPLL_CNTR_BIST_SETTINGS,
 					cntr_bist.val);
+	return status;
+}
+
+/**
+ * ice_cfg_cgu_pll_dis_sticky_bits_e825c - disable TS PLL sticky bits for E825-C
+ * @hw: pointer to the HW struct
+ *
+ * Configure the Clock Generation Unit TS PLL sticky bits so they don't latch on
+ * losing TS PLL lock, but always show current state.
+ */
+static int ice_cfg_cgu_pll_dis_sticky_bits_e825c(struct ice_hw *hw)
+{
+	union tspll_bw_tdc_e825c bw_tdc;
+	int status;
+
+	status = ice_read_cgu_reg_e82x(hw, TSPLL_BW_TDC_E825C,
+				       &bw_tdc.val);
+	if (status)
+		return status;
+
+	bw_tdc.field.i_plllock_sel_1_0 = 0;
+
+	status = ice_write_cgu_reg_e82x(hw, TSPLL_BW_TDC_E825C,
+					bw_tdc.val);
+	return status;
+}
+
+/**
+ * ice_cgu_ts_pll_lost_lock_e825c - check if TS PLL lost lock
+ * @hw: pointer to the HW struct
+ * @lost_lock: output flag for reporting lost lock
+ */
+int
+ice_cgu_ts_pll_lost_lock_e825c(struct ice_hw *hw, bool *lost_lock)
+{
+	union tspll_ro_lock_e825c ro_lock;
+	int status;
+
+	status = ice_read_cgu_reg_e82x(hw, TSPLL_RO_LOCK_E825C, &ro_lock.val);
+	if (status)
+		return status;
+
+	if (ro_lock.field.pllunlock_flag_cri &&
+	    !ro_lock.field.plllock_true_lock_cri)
+		*lost_lock = true;
+	else
+		*lost_lock = false;
+
+	return 0;
+}
+
+/**
+ * ice_cgu_ts_pll_restart_e825c - trigger TS PLL restart
+ * @hw: pointer to the HW struct
+ */
+int ice_cgu_ts_pll_restart_e825c(struct ice_hw *hw)
+{
+	union nac_cgu_dword23_e825c dw23;
+	int status;
+
+	/* Read the initial values of DW23 */
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C, &dw23.val);
+	if (status)
+		return status;
+
+	/* Disable the PLL */
+	dw23.field.ts_pll_enable = 0;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C, dw23.val);
+	if (status)
+		return status;
+
+	/* Wait 5us before reenabling PLL */
+	udelay(5);
+
+	/* Re-enable the PLL */
+	dw23.field.ts_pll_enable = 1;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD23_E825C, dw23.val);
+	if (status)
+		return status;
+
+	return 0;
+}
+
+#define E825C_CGU_BYPASS_MUX_OFFSET	3
+/**
+ * cgu_bypass_mux_port - calculate which output of the mux should be used
+ * @hw: pointer to the HW struct
+ * @port: number of the port
+ */
+static u32 cgu_bypass_mux_port(struct ice_hw *hw, u8 port)
+{
+	return (port % hw->phy_ports) +
+		E825C_CGU_BYPASS_MUX_OFFSET;
+}
+
+/**
+ * ice_cgu_bypass_mux_port_active_e825c - check if the given port is set active
+ * @hw: pointer to the HW struct
+ * @port: number of the port
+ * @active: output flag showing if port is active
+ */
+int
+ice_cgu_bypass_mux_port_active_e825c(struct ice_hw *hw, u8 port, bool *active)
+{
+	union nac_cgu_dword11_e825c dw11;
+	int status;
+
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD11_E825C, &dw11.val);
+	if (status)
+		return status;
+
+	if (dw11.field.synce_s_byp_clk == cgu_bypass_mux_port(hw, port))
+		*active = true;
+	else
+		*active = false;
+
+	return 0;
+}
+
+/**
+ * ice_cfg_cgu_bypass_mux_e825c - check if the given port is set active
+ * @hw: pointer to the HW struct
+ * @port: number of the port
+ * @clock_1588: true to enable 1588 reference, false to recover from port
+ * @ena: true to enable the reference, false if disable
+ */
+int
+ice_cfg_cgu_bypass_mux_e825c(struct ice_hw *hw, u8 port, bool clock_1588,
+			     unsigned int ena)
+{
+	union nac_cgu_dword11_e825c dw11;
+	union nac_cgu_dword10_e825c dw10;
+	int status;
+
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD11_E825C, &dw11.val);
+	if (status)
+		return status;
+
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD10_E825C, &dw10.val);
+	if (status)
+		return status;
+
+	/* ref_clk_byp1_div */
+	dw10.field.synce_ethclko_sel = 0x1;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD10_E825C, dw10.val);
+	if (status)
+		return status;
+
+	if (!ena)
+		/* net_ref_clk0 */
+		dw11.field.synce_s_byp_clk = 0x0;
+	else
+		dw11.field.synce_s_byp_clk = cgu_bypass_mux_port(hw, port);
+
+	return ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD11_E825C, dw11.val);
+}
+
+/**
+ * ice_get_div_e825c - get the divider for the given speed
+ * @link_speed: link speed of the port
+ * @divider: output value, calculated divider
+ */
+static int ice_get_div_e825c(u16 link_speed, u8 *divider)
+{
+	switch (link_speed) {
+	case ICE_AQ_LINK_SPEED_100GB:
+	case ICE_AQ_LINK_SPEED_50GB:
+	case ICE_AQ_LINK_SPEED_25GB:
+		*divider = 10;
+		break;
+	case ICE_AQ_LINK_SPEED_40GB:
+	case ICE_AQ_LINK_SPEED_10GB:
+		*divider = 4;
+		break;
+	case ICE_AQ_LINK_SPEED_5GB:
+	case ICE_AQ_LINK_SPEED_2500MB:
+	case ICE_AQ_LINK_SPEED_1000MB:
+		*divider = 2;
+		break;
+	case ICE_AQ_LINK_SPEED_100MB:
+		*divider = 1;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+	return 0;
+}
+
+/**
+ * ice_cfg_synce_ethdiv_e825c - set the divider on the mux
+ * @hw: pointer to the HW struct
+ * @divider: output parameter, returns used divider value
+ */
+int ice_cfg_synce_ethdiv_e825c(struct ice_hw *hw, u8 *divider)
+{
+	union nac_cgu_dword10_e825c dw10;
+	int status;
+	u16 link_speed;
+
+	link_speed = hw->port_info->phy.link_info.link_speed;
+	status = ice_get_div_e825c(link_speed, divider);
+	if (status)
+		return status;
+
+	status = ice_read_cgu_reg_e82x(hw, NAC_CGU_DWORD10_E825C, &dw10.val);
+	if (status)
+		return status;
+
+	/*  programmable divider value (from 2 to 16) minus 1 for ETHCLKOUT */
+	dw10.field.synce_ethdiv_m1 = *divider + 1;
+
+	status = ice_write_cgu_reg_e82x(hw, NAC_CGU_DWORD10_E825C,
+					dw10.val);
+	return status;
+}
+
+/**
+ * ice_init_cgu_e82x - Initialize CGU with settings from firmware
+ * @hw: pointer to the HW structure
+ *
+ * Initialize the Clock Generation Unit of the E822/E823/E825 device.
+ */
+static int ice_init_cgu_e82x(struct ice_hw *hw)
+{
+	struct ice_ts_func_info *ts_info = &hw->func_caps.ts_func_info;
+	enum ice_time_ref_freq time_ref_freq;
+	enum ice_clk_src clk_src;
+	int status;
+
+	/* Disable sticky lock detection so lock status reported is accurate */
+	if (ice_is_e825c(hw))
+		status = ice_cfg_cgu_pll_dis_sticky_bits_e825c(hw);
+	else
+		status = ice_cfg_cgu_pll_dis_sticky_bits_e822(hw);
 	if (status)
 		return status;
 
@@ -382,7 +777,10 @@ static int ice_init_cgu_e822(struct ice_hw *hw)
 	 */
 	time_ref_freq = (enum ice_time_ref_freq)ts_info->time_ref;
 	clk_src = (enum ice_clk_src)ts_info->clk_src;
-	status = ice_cfg_cgu_pll_e822(hw, &time_ref_freq, &clk_src);
+	if (ice_is_e825c(hw))
+		status = ice_cfg_cgu_pll_e825c(hw, &time_ref_freq, &clk_src);
+	else
+		status = ice_cfg_cgu_pll_e822(hw, &time_ref_freq, &clk_src);
 	if (status)
 		return status;
 
@@ -422,15 +820,15 @@ void ice_ptp_process_cgu_err(struct ice_hw *hw, struct ice_rq_event_info *event)
 {
 	u8 err_type = event->desc.params.cgu_err.err_type;
 
-	if (err_type | ICE_AQC_CGU_ERR_SYNCE_LOCK_LOSS)
+	if (err_type & ICE_AQC_CGU_ERR_SYNCE_LOCK_LOSS)
 		dev_warn(ice_hw_to_dev(hw), "SyncE lock lost\n");
 
-	if (err_type | ICE_AQC_CGU_ERR_HOLDOVER_CHNG)
+	if (err_type & ICE_AQC_CGU_ERR_HOLDOVER_CHNG)
 		dev_warn(ice_hw_to_dev(hw), "SyncE holdover change\n");
-	if (err_type | ICE_AQC_CGU_ERR_TIMESYNC_LOCK_LOSS) {
+	if (err_type & ICE_AQC_CGU_ERR_TIMESYNC_LOCK_LOSS) {
 		dev_warn(ice_hw_to_dev(hw),
 			 "TimeSync PLL lock lost. Retrying to acquire lock with default PLL configuration.\n");
-		ice_init_cgu_e822(hw);
+		ice_init_cgu_e82x(hw);
 	}
 
 	/* Reenable CGU error reporting */
@@ -501,6 +899,18 @@ static void ice_ptp_exec_tmr_cmd(struct ice_hw *hw)
 static void ice_ptp_clean_cmd(struct ice_hw *hw)
 {
 	wr32(hw, GLTSYN_CMD, 0);
+	ice_flush(hw);
+}
+
+/**
+ * ice_ptp_zero_syn_dlay - Set synchronization delay to zero
+ * @hw: pointer to HW struct
+ *
+ * Zero E810 and E830 specific PTP hardware clock synchronization delay.
+ */
+static void ice_ptp_zero_syn_dlay(struct ice_hw *hw)
+{
+	wr32(hw, GLTSYN_SYNC_DLAY, 0);
 	ice_flush(hw);
 }
 
@@ -585,6 +995,123 @@ ice_read_phy_eth56g_raw_lp(struct ice_hw *hw, u8 phy_index, u32 reg_addr,
 }
 
 /**
+ * ice_enable_clk_refs - enable all the TX clock references
+ * @hw: pointer to the HW struct
+ * @phy: number of a PHY
+ * @clk: number of a clk source
+ *
+ * Before choosing a TX clock on a given port, we need to enable it in advance.
+ */
+static int ice_enable_clk_refs(struct ice_hw *hw, int phy, int clk)
+{
+	union clkrx_cmn_reg_10 r10;
+	union clkrx_cmn_reg_12 r12;
+	union clkrx_cmn_reg_46 r46;
+	int status;
+
+	status = ice_read_phy_eth56g_raw_lp(hw, phy, CLKRX_CMN_REG_10(clk),
+					    &r10.val, true);
+	if (status)
+		return status;
+
+	status = ice_read_phy_eth56g_raw_lp(hw, phy,
+					    CLKRX_CMN_REG_46(clk),
+					    &r46.val, true);
+	if (status)
+		return status;
+
+	if (!r10.field.cmnref_locovren) {
+		status = ice_read_phy_eth56g_raw_lp(hw, phy,
+						    CLKRX_CMN_REG_12(clk),
+						    &r12.val, true);
+		if (status)
+			return status;
+
+		r12.field.cmnref_refsel0_locovr = r46.field.cmnref_refsel0_loc;
+		r12.field.cmnref_refsel1_locovr = r46.field.cmnref_refsel1_loc;
+		r12.field.cmnref_refsel2_locovr = r46.field.cmnref_refsel2_loc;
+
+		status = ice_write_phy_eth56g_raw_lp(hw, phy,
+						     CLKRX_CMN_REG_12(clk),
+						     r12.val, true);
+		if (status)
+			return status;
+
+		r10.field.cmnref_locovren = 1;
+
+		status = ice_write_phy_eth56g_raw_lp(hw, phy,
+						     CLKRX_CMN_REG_10(clk),
+						     r10.val, true);
+		if (status)
+			return status;
+	}
+
+	r12.field.cmnref_refsel0_locovr = cmnref_refselx_locovr[0][phy];
+	r12.field.cmnref_refsel1_locovr = cmnref_refselx_locovr[1][phy];
+	r12.field.cmnref_refsel2_locovr = cmnref_refselx_locovr[2][phy];
+
+	status = ice_write_phy_eth56g_raw_lp(hw, phy,
+					     CLKRX_CMN_REG_12(clk),
+					     r12.val, true);
+
+	return status;
+}
+
+#define E825C_CLKS_NUM 5
+/**
+ * ice_enable_all_clk_refs - enable all the TX clock references
+ * @hw: pointer to the HW struct
+ *
+ * Before choosing a TX clock on a given port, we need to enable it in advance.
+ */
+int ice_enable_all_clk_refs(struct ice_hw *hw)
+{
+	int status;
+	int phy, clk;
+
+	for (phy = 0; phy < hw->num_phys; phy++)
+		for (clk = 0; clk < E825C_CLKS_NUM; clk++) {
+			status = ice_enable_clk_refs(hw, phy, clk);
+			if (status)
+				return status;
+		}
+
+	return 0;
+}
+
+/**
+ * ice_change_tx_clk_eth56g - change the TX clock reference for a given port
+ * @hw: pointer to the HW struct
+ * @port: port number
+ * @clk: new TX clock source
+ */
+int
+ice_change_tx_clk_eth56g(struct ice_hw *hw, u8 port, enum ice_e825c_ref_clk clk)
+{
+	union serdes_ip_if_ln_flxm_general gen;
+	int status;
+	u8 lane, phy;
+
+	lane = port % hw->phy_ports;
+	phy = port / hw->phy_ports;
+
+	status = ice_read_phy_eth56g_raw_lp(hw, phy,
+					    SERDES_IP_IF_LN_FLXM_GENERAL(lane,
+									 0),
+					    &gen.val, true);
+	if (status)
+		return status;
+
+	gen.field.ictl_pcs_ref_sel_tx_nt = clk;
+
+	status = ice_write_phy_eth56g_raw_lp(hw, phy,
+					     SERDES_IP_IF_LN_FLXM_GENERAL(lane,
+									  0),
+					     gen.val, true);
+	return status;
+}
+
+/**
  * ice_phy_port_res_address_eth56g - Calculate a PHY port register address
  * @port: Port number to be written
  * @res_type: resource type (register/memory)
@@ -635,7 +1162,7 @@ ice_write_phy_port_eth56g_lp(struct ice_hw *hw, u8 port, u32 reg_offs, u32 val,
 	int status;
 	u32 reg_addr;
 
-	if (port >= hw->phy_ports)
+	if (port >= hw->max_phy_port)
 		return -EIO;
 
 	status = ice_phy_port_res_address_eth56g(phy_port, res_type, reg_offs,
@@ -666,7 +1193,7 @@ ice_read_phy_port_eth56g_lp(struct ice_hw *hw, u8 port, u32 reg_offs, u32 *val,
 	int status;
 	u32 reg_addr;
 
-	if (port >= hw->phy_ports)
+	if (port >= hw->max_phy_port)
 		return -EIO;
 
 	status = ice_phy_port_res_address_eth56g(phy_port, res_type, reg_offs,
@@ -1115,7 +1642,7 @@ static void ice_ptp_reset_ts_memory_eth56g(struct ice_hw *hw)
 {
 	unsigned int port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->max_phy_port; port++) {
 		ice_write_phy_reg_eth56g(hw, port, PHY_REG_TX_MEMORY_STATUS_L,
 					 0);
 		ice_write_phy_reg_eth56g(hw, port, PHY_REG_TX_MEMORY_STATUS_U,
@@ -1170,7 +1697,7 @@ ice_ptp_prep_phy_time_eth56g(struct ice_hw *hw, u32 time)
 	 */
 	phy_time = (u64)time << 32;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->max_phy_port; port++) {
 		int status;
 
 		status = ice_ptp_prep_port_phy_time_eth56g(hw, port,
@@ -1271,7 +1798,7 @@ ice_ptp_prep_phy_adj_eth56g(struct ice_hw *hw, s32 adj, bool lock_sbq)
 	 */
 	cycles = (s64)adj << 32;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->max_phy_port; port++) {
 
 		status = ice_ptp_prep_port_adj_eth56g(hw, port, cycles,
 						      lock_sbq);
@@ -1296,7 +1823,7 @@ ice_ptp_prep_phy_incval_eth56g(struct ice_hw *hw, u64 incval)
 {
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->max_phy_port; port++) {
 		int status;
 		status = ice_write_40b_phy_reg_eth56g(hw, port,
 						      PHY_REG_TIMETUS_L,
@@ -1357,7 +1884,7 @@ ice_ptp_prep_phy_adj_target_eth56g(struct ice_hw *hw, u32 target_time)
 	int status;
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->max_phy_port; port++) {
 		/* Tx case */
 		/* No sub-nanoseconds data */
 		status = ice_write_phy_reg_eth56g_lp(hw, port,
@@ -1540,7 +2067,7 @@ ice_ptp_port_cmd_eth56g(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
 {
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->max_phy_port; port++) {
 		int status;
 		status = ice_ptp_one_port_cmd_eth56g(hw, port, cmd, lock_sbq);
 		if (status)
@@ -1699,7 +2226,7 @@ static int ice_ptp_clear_phy_offset_ready_eth56g(struct ice_hw *hw)
 {
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->max_phy_port; port++) {
 		int status;
 
 		status = ice_write_phy_reg_eth56g(hw, port,
@@ -1977,7 +2504,7 @@ static int ice_ptp_init_phc_eth56g(struct ice_hw *hw)
 	int status = 0;
 
 	/* Initialize the Clock Generation Unit */
-	status = ice_init_cgu_e822(hw);
+	status = ice_init_cgu_e82x(hw);
 
 	return status;
 }
@@ -2666,7 +3193,7 @@ int ice_ptp_set_vernier_wl(struct ice_hw *hw)
 {
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->phy_ports; port++) {
 		int status;
 
 		status = ice_write_phy_reg_e822_lp(hw, port, P_REG_WL,
@@ -2701,7 +3228,7 @@ static int ice_ptp_init_phc_e822(struct ice_hw *hw)
 	wr32(hw, PF_SB_REM_DEV_CTL, regval);
 
 	/* Initialize the Clock Generation Unit */
-	status = ice_init_cgu_e822(hw);
+	status = ice_init_cgu_e82x(hw);
 	if (status)
 		return status;
 
@@ -2736,7 +3263,7 @@ ice_ptp_prep_phy_time_e822(struct ice_hw *hw, u32 time)
 	 */
 	phy_time = (u64)time << 32;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->phy_ports; port++) {
 
 		/* Tx case */
 		status = ice_write_64b_phy_reg_e822(hw, port,
@@ -2845,7 +3372,7 @@ ice_ptp_prep_phy_adj_e822(struct ice_hw *hw, s32 adj, bool lock_sbq)
 	else
 		cycles = -(((s64)-adj) << 32);
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->phy_ports; port++) {
 		int status;
 
 		status = ice_ptp_prep_port_adj_e822(hw, port, cycles,
@@ -2872,7 +3399,7 @@ ice_ptp_prep_phy_incval_e822(struct ice_hw *hw, u64 incval)
 	int status;
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->phy_ports; port++) {
 		status = ice_write_40b_phy_reg_e822(hw, port, P_REG_TIMETUS_L,
 						    incval);
 		if (status)
@@ -2933,7 +3460,7 @@ ice_ptp_prep_phy_adj_target_e822(struct ice_hw *hw, u32 target_time)
 	int status;
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->phy_ports; port++) {
 
 		/* Tx case */
 		/* No sub-nanoseconds data */
@@ -3120,7 +3647,7 @@ ice_ptp_port_cmd_e822(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
 {
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->phy_ports; port++) {
 		int status;
 
 		status = ice_ptp_one_port_cmd_e822(hw, port, cmd, lock_sbq);
@@ -3965,26 +4492,27 @@ int ice_phy_cfg_rx_offset_e822(struct ice_hw *hw, u8 port)
  */
 static int ice_ptp_clear_phy_offset_ready_e822(struct ice_hw *hw)
 {
-	int status = 0;
 	u8 port;
 
-	for (port = 0; port < ICE_NUM_EXTERNAL_PORTS; port++) {
+	for (port = 0; port < hw->phy_ports; port++) {
+		int status;
+
 		status = ice_write_phy_reg_e822(hw, port, P_REG_TX_OR, 0);
 		if (status) {
 			dev_warn(ice_hw_to_dev(hw),
 				 "Failed to clear PHY TX_OFFSET_READY register\n");
-			break;
+			return status;
 		}
 
 		status = ice_write_phy_reg_e822(hw, port, P_REG_RX_OR, 0);
 		if (status) {
 			dev_warn(ice_hw_to_dev(hw),
 				 "Failed to clear PHY RX_OFFSET_READY register\n");
-			break;
+			return status;
 		}
 	}
 
-	return status;
+	return 0;
 }
 
 /**
@@ -4615,8 +5143,7 @@ int ice_ptp_init_phy_e810(struct ice_hw *hw)
  */
 static int ice_ptp_init_phc_e810(struct ice_hw *hw)
 {
-	/* Ensure synchronization delay is zero */
-	wr32(hw, GLTSYN_SYNC_DLAY, 0);
+	ice_ptp_zero_syn_dlay(hw);
 
 	/* Initialize the PHY */
 	return ice_ptp_init_phy_e810(hw);
@@ -4778,17 +5305,18 @@ ice_ptp_prep_phy_adj_target_e810(struct ice_hw *hw, u32 target_time)
 }
 
 /**
- * ice_ptp_port_cmd_e810 - Prepare all external PHYs for a timer command
+ * ice_ptp_port_cmd - Prepare all external PHYs for a timer command
  * @hw: pointer to HW struct
  * @cmd: Command to be sent to the port
  * @lock_sbq: true if the sideband queue lock must be acquired
+ * @eth_gltsyn_cmd_addr: address for ETH_GLTSYN_CMD register
  *
  * Prepare the external PHYs connected to this device for a timer sync
  * command.
  */
 static int
-ice_ptp_port_cmd_e810(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
-		      bool lock_sbq)
+ice_ptp_port_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
+		 bool lock_sbq, u32 eth_gltsyn_cmd_addr)
 {
 	u32 cmd_val, val;
 	int status;
@@ -4815,7 +5343,8 @@ ice_ptp_port_cmd_e810(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
 	}
 
 	/* Read, modify, write */
-	status = ice_read_phy_reg_e810_lp(hw, ETH_GLTSYN_CMD, &val, lock_sbq);
+	status = ice_read_phy_reg_e810_lp(hw, eth_gltsyn_cmd_addr, &val,
+					  lock_sbq);
 	if (status) {
 		ice_debug(hw, ICE_DBG_PTP, "Failed to read GLTSYN_CMD, status %d\n",
 			  status);
@@ -4826,7 +5355,8 @@ ice_ptp_port_cmd_e810(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
 	val &= ~TS_CMD_MASK_E810;
 	val |= cmd_val;
 
-	status = ice_write_phy_reg_e810_lp(hw, ETH_GLTSYN_CMD, val, lock_sbq);
+	status = ice_write_phy_reg_e810_lp(hw, eth_gltsyn_cmd_addr, val,
+					   lock_sbq);
 	if (status) {
 		ice_debug(hw, ICE_DBG_PTP, "Failed to write back GLTSYN_CMD, status %d\n",
 			  status);
@@ -4834,6 +5364,22 @@ ice_ptp_port_cmd_e810(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
 	}
 
 	return 0;
+}
+
+/**
+ * ice_ptp_port_cmd_e810 - Prepare all external PHYs for a timer command
+ * @hw: pointer to HW struct
+ * @cmd: Command to be sent to the port
+ * @lock_sbq: true if the sideband queue lock must be acquired
+ *
+ * Prepare the external PHYs connected to this device for a timer sync
+ * command.
+ */
+static int
+ice_ptp_port_cmd_e810(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd,
+		      bool lock_sbq)
+{
+	return ice_ptp_port_cmd(hw, cmd, lock_sbq, E810_ETH_GLTSYN_CMD);
 }
 
 /**
@@ -5444,7 +5990,6 @@ void ice_ptp_unlock(struct ice_hw *hw)
 int ice_ptp_init_phy_model(struct ice_hw *hw)
 {
 	unsigned int phy;
-	u32 phy_rev;
 
 	for (phy = 0; phy < MAX_PHYS_PER_ICE; phy++)
 		hw->phy_addr[phy] = 0;
@@ -5455,28 +6000,35 @@ int ice_ptp_init_phy_model(struct ice_hw *hw)
 		hw->phy_addr[1] = eth56g_dev_1;
 		hw->num_phys = ICE_PHYS_PER_CPLX_C825X;
 		hw->phy_ports = ICE_PORTS_PER_PHY_C825X;
+		hw->max_phy_port = ice_is_nac_dual(hw) ?
+		       ICE_PORTS_PER_PHY_C825X :
+		       ICE_PHYS_PER_CPLX_C825X * ICE_PORTS_PER_PHY_C825X;
 		break;
 	default:
 		goto e8xx;
 	}
 
+	ice_sb_access_ena_eth56g(hw, true);
 	for (phy = 0; phy < hw->num_phys; phy++)
 		if (hw->phy_addr[phy]) {
 			int status;
-
-			ice_sb_access_ena_eth56g(hw, true);
+			u32 phy_rev;
 
 			status = ice_read_phy_eth56g_raw_lp(hw, phy,
 							    PHY_REG_REVISION,
 							    &phy_rev, true);
-			if (status)
+			if (status) {
+				hw->phy_model = ICE_PHY_UNSUP;
 				return status;
+			}
 
 			if (phy_rev != PHY_REVISION_ETH56G) {
 				hw->phy_model = ICE_PHY_UNSUP;
 				return -EOPNOTSUPP;
 			}
 		}
+
+	hw->phy_model = ICE_PHY_ETH56G;
 
 	return 0;
 e8xx:
@@ -5485,6 +6037,8 @@ e8xx:
 		hw->phy_model = ICE_PHY_E810;
 	else
 		hw->phy_model = ICE_PHY_E822;
+	hw->phy_ports = ICE_NUM_EXTERNAL_PORTS;
+	hw->max_phy_port = ICE_NUM_EXTERNAL_PORTS;
 
 	return 0;
 }
@@ -5522,6 +6076,7 @@ ice_ptp_tmr_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd, bool lock_sbq)
 	default:
 		status = -EOPNOTSUPP;
 	}
+
 	if (status) {
 		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY ports for timer command %u, status %d\n",
 			  cmd, status);
@@ -6013,5 +6568,21 @@ ice_ptp_read_phy_incval(struct ice_hw *hw, u8 port, u64 *incval)
 	default:
 		return -EOPNOTSUPP;
 	}
+}
+
+/**
+ * refsync_pin_id_valid
+ * @hw: pointer to the HW struct
+ * @id: pin index
+ *
+ * Checks whether DPLL's input pin can be configured to ref-sync pairing mode.
+ */
+bool refsync_pin_id_valid(struct ice_hw *hw, u8 id)
+{
+	/* refsync is allowed only on pins 1 or 5 for E810T */
+	if (ice_is_e810t(hw) && id != 1 && id != 5)
+		return false;
+
+	return true;
 }
 

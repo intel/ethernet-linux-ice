@@ -40,6 +40,10 @@
 #ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
 #define ICE_TC_FLWR_FIELD_L2TPV3_SESSID		BIT(26)
 #endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
+#define ICE_TC_FLWR_FIELD_VLAN_PRIO		BIT(27)
+#ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
+#define ICE_TC_FLWR_FIELD_CVLAN_PRIO		BIT(28)
+#endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN  */
 
 /* TC flower supported filter match */
 #define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC		ICE_TC_FLWR_FIELD_DST_MAC
@@ -92,9 +96,7 @@ struct ice_tc_flower_action {
 
 struct ice_tc_vlan_hdr {
 	__be16 vlan_id; /* Only last 12 bits valid */
-#ifdef HAVE_FLOW_DISSECTOR_VLAN_PRIO
-	u16 vlan_prio; /* Only last 3 bits valid (valid values: 0..7) */
-#endif
+	__be16 vlan_prio; /* Only first 3 bits valid (valid values: 0..7) */
 #ifdef HAVE_TCF_VLAN_TPID
 	__be16 vlan_tpid;
 #endif /* HAVE_TCF_VLAN_TPID */
@@ -244,6 +246,8 @@ static inline int ice_chnl_dmac_fltr_cnt(struct ice_pf *pf)
 int
 ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			   struct ice_tc_flower_fltr *tc_fltr);
+struct ice_vsi *
+ice_locate_vsi_using_queue(struct ice_vsi *vsi, int queue);
 #if defined(HAVE_TCF_MIRRED_DEV) || defined(HAVE_TC_FLOW_RULE_INFRASTRUCTURE)
 int
 ice_tc_tun_get_type(struct net_device *tunnel_dev,

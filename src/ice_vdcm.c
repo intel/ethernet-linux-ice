@@ -649,22 +649,40 @@ static vm_fault_t ice_vdcm_mmap_fault(struct vm_fault *vmf)
 	struct ice_vdcm *ivdm;
 	unsigned int index;
 	u64 addr, pg_off;
+	vm_fault_t fault;
 	int err;
 
 	ivdm = vma->vm_private_data;
+
+	dev_dbg(ivdm->dev, "vmf %p, vma %p, vma->vm_pgoff 0x%lx, vmf->pgoff 0x%lx, vmf->address 0x%lx\n",
+		vmf, vma, vma->vm_pgoff, vmf->pgoff, vmf->address);
+
 	mutex_lock(&ivdm->vma_lock);
 
-	mmap_vma = kzalloc(sizeof(*mmap_vma), GFP_KERNEL);
+	/* It is possible for two faults to occur nearly simultaneously. For
+	 * example of multiple threads access the same VMA page concurrently.
+	 * Prevent calling io_remap_pfn_range twice on the same VMA by
+	 * checking if we've already handled this VMA.
+	 */
+	list_for_each_entry(mmap_vma, &ivdm->vma_list, vma_next) {
+		if (mmap_vma->vma == vma) {
+			dev_dbg(ivdm->dev, "Ignoring duplicate simultaneous fault for VMA %p, vma->vm_pgoff 0x%lx\n",
+				vma, vma->vm_pgoff);
+			fault = VM_FAULT_NOPAGE;
+			goto err_unlock_vma_lock;
+		}
+	}
+
+	/* Allocate storage for VMA list node */
+	mmap_vma = kzalloc(sizeof(*mmap_vma), vmf->gfp_mask);
 	if (!mmap_vma) {
-		mutex_unlock(&ivdm->vma_lock);
-		return VM_FAULT_OOM;
+		fault = VM_FAULT_OOM;
+		goto err_unlock_vma_lock;
 	}
 
 	mmap_vma->vma = vma;
-	list_add(&mmap_vma->vma_next, &ivdm->vma_list);
 
-	mutex_unlock(&ivdm->vma_lock);
-
+	/* Get the HPA for this VMA */
 	index = vma->vm_pgoff >> (VFIO_PCI_OFFSET_SHIFT - PAGE_SHIFT);
 	pg_off = vma->vm_pgoff &
 		 ((1U << (VFIO_PCI_OFFSET_SHIFT - PAGE_SHIFT)) - 1);
@@ -672,17 +690,37 @@ static vm_fault_t ice_vdcm_mmap_fault(struct vm_fault *vmf)
 	if (err < 0) {
 		dev_err(ivdm->dev,
 			"failed to get HPA for memory map, err: %d.\n", err);
-		return VM_FAULT_SIGBUS;
+		fault = VM_FAULT_SIGBUS;
+		goto err_free_mmap_vma;
 	}
 
 	dev_dbg(ivdm->dev, "fault address GPA:0x%lx HPA:0x%llx HVA:0x%lx",
 		vma->vm_pgoff << PAGE_SHIFT, addr, vma->vm_start);
 
-	if (io_remap_pfn_range(vma, vma->vm_start, PHYS_PFN(addr),
-			       vma->vm_end - vma->vm_start, vma->vm_page_prot))
-		return VM_FAULT_SIGBUS;
+	/* Remap the physical page into this VMA */
+	err = io_remap_pfn_range(vma, vma->vm_start, PHYS_PFN(addr),
+				 vma->vm_end - vma->vm_start,
+				 vma->vm_page_prot);
+	if (err) {
+		dev_err(ivdm->dev, "failed to remap PFN, err %d.\n", err);
+		fault = VM_FAULT_SIGBUS;
+		goto err_zap_vma_ptes;
+	}
+
+	/* Store this VMA in the mmap list */
+	list_add(&mmap_vma->vma_next, &ivdm->vma_list);
+
+	mutex_unlock(&ivdm->vma_lock);
 
 	return VM_FAULT_NOPAGE;
+
+err_zap_vma_ptes:
+	zap_vma_ptes(vma, vma->vm_start, vma->vm_end - vma->vm_start);
+err_free_mmap_vma:
+	kfree(mmap_vma);
+err_unlock_vma_lock:
+	mutex_unlock(&ivdm->vma_lock);
+	return fault;
 }
 
 static const struct vm_operations_struct ice_vdcm_mmap_ops = {
@@ -1535,17 +1573,10 @@ int ice_vdcm_init(struct pci_dev *pdev)
 {
 	int err;
 
-	err = iommu_dev_enable_feature(&pdev->dev, IOMMU_DEV_FEAT_AUX);
-	if (err) {
-		dev_err(&pdev->dev, "Failed to enable aux-domain: %d", err);
-		return err;
-	}
-
 	err = mdev_register_device(&pdev->dev, &ice_vdcm_parent_ops);
 	if (err) {
 		dev_err(&pdev->dev, "S-IOV device register failed, err %d",
 			err);
-		iommu_dev_disable_feature(&pdev->dev, IOMMU_DEV_FEAT_AUX);
 		return err;
 	}
 
@@ -1559,5 +1590,4 @@ int ice_vdcm_init(struct pci_dev *pdev)
 void ice_vdcm_deinit(struct pci_dev *pdev)
 {
 	mdev_unregister_device(&pdev->dev);
-	iommu_dev_disable_feature(&pdev->dev, IOMMU_DEV_FEAT_AUX);
 }

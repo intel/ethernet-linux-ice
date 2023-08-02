@@ -339,6 +339,8 @@
 #define GLINT_VECT2FUNC_IS_PF_S			16
 #define GLINT_VECT2FUNC_IS_PF_M			BIT(16)
 #define PFINT_AEQCTL_MSIX_INDX_M		ICE_M(0x7FF, 0)
+#define PFINT_ALLOC				0x001D2600 /* Reset Source: CORER */
+#define PFINT_ALLOC_FIRST_M			ICE_M(0x7FF, 0)
 #define PFINT_FW_CTL				0x0016C800 /* Reset Source: CORER */
 #define PFINT_FW_CTL_MSIX_INDX_M		ICE_M(0x7FF, 0)
 #define PFINT_FW_CTL_CAUSE_ENA_M		BIT(30)
@@ -364,6 +366,7 @@
 #define PFINT_SB_CTL				0x0016B600 /* Reset Source: CORER */
 #define PFINT_SB_CTL_MSIX_INDX_M		ICE_M(0x7FF, 0)
 #define PFINT_SB_CTL_CAUSE_ENA_M		BIT(30)
+#define PFINT_TSYN_MSK				0x0016C980 /* Reset Source: CORER */
 #define QINT_RQCTL(_QRX)			(0x00150000 + ((_QRX) * 4)) /* _i=0...2047 */ /* Reset Source: CORER */
 #define QINT_RQCTL_MSIX_INDX_S			0
 #define QINT_RQCTL_MSIX_INDX_M			ICE_M(0x7FF, 0)

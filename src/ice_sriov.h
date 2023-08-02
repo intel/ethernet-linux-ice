@@ -6,6 +6,8 @@
 #include "ice_vf_lib.h"
 #include "ice_virtchnl.h"
 
+#define ICE_MAX_SRIOV_VFS	256
+
 /* Static VF transaction/status register def */
 #define VF_DEVICE_STATUS		0xAA
 #define VF_TRANS_PENDING_M		0x20
@@ -42,18 +44,21 @@ ice_get_vf_port_info(struct ice_pf *pf, u16 vf_id,
 		     struct iidc_vf_port_info *vf_port_info);
 void ice_dump_all_vfs(struct ice_pf *pf);
 void ice_process_vflr_event(struct ice_pf *pf);
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+u64 ice_sriov_get_vf_used_msix(struct ice_pf *pf);
+#endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
+#ifdef HAVE_PER_VF_MSIX_SYSFS
+u32 ice_sriov_get_vf_total_msix(struct pci_dev *pdev);
+int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count);
+#endif /* HAVE_PER_VF_MSIX_SYSFS */
 int ice_sriov_configure(struct pci_dev *pdev, int num_vfs);
 int ice_set_vf_mac(struct net_device *netdev, int vf_id, u8 *mac);
 int
 ice_get_vf_cfg(struct net_device *netdev, int vf_id, struct ifla_vf_info *ivi);
 void ice_free_vfs(struct ice_pf *pf);
-int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event);
 
 /* VF configuration related iplink handlers */
 void ice_restore_all_vfs_msi_state(struct pci_dev *pdev);
-bool
-ice_is_malicious_vf(struct ice_pf *pf, struct ice_rq_event_info *event,
-		    u16 num_msg_proc, u16 num_msg_pending);
 
 #ifdef IFLA_VF_VLAN_INFO_MAX
 int
@@ -101,11 +106,6 @@ bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 static inline void ice_dump_all_vfs(struct ice_pf *pf) { }
 static inline void ice_process_vflr_event(struct ice_pf *pf) { }
 static inline void ice_free_vfs(struct ice_pf *pf) { }
-static inline int
-ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
-{
-	return -EOPNOTSUPP;
-}
 static inline void
 ice_vf_lan_overflow_event(struct ice_pf *pf,
 			  struct ice_rq_event_info *event) { }
@@ -120,14 +120,25 @@ ice_get_vf_port_info(struct ice_pf __always_unused *pf,
 	return -EOPNOTSUPP;
 }
 
-static inline bool
-ice_is_malicious_vf(struct ice_pf __always_unused *pf,
-		    struct ice_rq_event_info __always_unused *event,
-		    u16 __always_unused num_msg_proc,
-		    u16 __always_unused num_msg_pending)
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+static inline u64 ice_sriov_get_vf_used_msix(struct ice_pf *pf)
 {
-	return false;
+	return 0;
 }
+#endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
+
+#ifdef HAVE_PER_VF_MSIX_SYSFS
+static inline u32 ice_sriov_get_vf_total_msix(struct pci_dev *pdev)
+{
+	return 0;
+}
+
+static inline int
+ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
+{
+	return -EOPNOTSUPP;
+}
+#endif /* !HAVE_PER_VF_MSIX_SYSFS */
 
 static inline int
 ice_sriov_configure(struct pci_dev __always_unused *pdev,

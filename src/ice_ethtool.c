@@ -260,7 +260,7 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 	ICE_PRIV_FLAG("cgu_fast_lock", ICE_FLAG_DPLL_FAST_LOCK),
 	ICE_PRIV_FLAG("dpll_monitor", ICE_FLAG_DPLL_MONITOR),
 	ICE_PRIV_FLAG("extts_filter", ICE_FLAG_EXTTS_FILTER),
-	ICE_PRIV_FLAG("ptp_wt_enabled", ICE_FLAG_PTP_WT_ENABLED),
+	ICE_PRIV_FLAG("itu_g8262_filter_used", ICE_FLAG_ITU_G8262_FILTER_USED),
 	ICE_PRIV_FLAG("allow-no-fec-modules-in-auto",
 		      ICE_FLAG_ALLOW_FEC_DIS_AUTO),
 };
@@ -651,7 +651,7 @@ static int ice_lbtest_prepare_rings(struct ice_vsi *vsi)
 	if (status)
 		goto err_setup_rx_ring;
 
-	status = ice_vsi_cfg(vsi);
+	status = ice_vsi_cfg_lan(vsi);
 	if (status)
 		goto err_setup_rx_ring;
 
@@ -760,7 +760,7 @@ static bool ice_lbtest_check_frame(u8 *frame)
  *
  * Function sends loopback packets on a test Tx ring.
  */
-static int ice_diag_send(struct ice_ring *tx_ring, u8 *data, u16 size)
+static int ice_diag_send(struct ice_tx_ring *tx_ring, u8 *data, u16 size)
 {
 	struct ice_tx_desc *tx_desc;
 	struct ice_tx_buf *tx_buf;
@@ -813,7 +813,7 @@ static int ice_diag_send(struct ice_ring *tx_ring, u8 *data, u16 size)
  * Function receives loopback packets and verify their correctness.
  * Returns number of received valid frames.
  */
-static int ice_lbtest_receive_frames(struct ice_ring *rx_ring)
+static int ice_lbtest_receive_frames(struct ice_rx_ring *rx_ring)
 {
 	struct ice_rx_buf *rx_buf;
 	int valid_frames, i;
@@ -832,7 +832,11 @@ static int ice_lbtest_receive_frames(struct ice_ring *rx_ring)
 			continue;
 
 		rx_buf = &rx_ring->rx_buf[i];
+#ifdef CONFIG_ICE_USE_SKB
+		received_buf = rx_buf->skb->data;
+#else
 		received_buf = page_address(rx_buf->page) + rx_buf->page_offset;
+#endif /* CONFIG_ICE_USE_SKB */
 
 		if (ice_lbtest_check_frame(received_buf))
 			valid_frames++;
@@ -853,9 +857,10 @@ static u64 ice_loopback_test(struct net_device *netdev)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *orig_vsi = np->vsi, *test_vsi;
 	struct ice_pf *pf = orig_vsi->back;
-	struct ice_ring *tx_ring, *rx_ring;
 	u8 broadcast[ETH_ALEN], ret = 0;
 	int num_frames, valid_frames;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
 	struct device *dev;
 	u8 *tx_frame;
 	int i;
@@ -1055,33 +1060,24 @@ skip_ol_tests:
  * This function returns Rx queue XDP related counters strings
  */
 static void
-ice_get_xdp_rx_strings(unsigned int q, u16 num_rxq, char **loc_in_buf)
+ice_get_xdp_rx_strings(unsigned int q, u16 num_rxq, u8 **loc_in_buf)
 {
-	char *p;
+	u8 *p;
 
 	if (!loc_in_buf || q >= num_rxq)
 		return;
 
 	p = *loc_in_buf;
 
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx_q-%u_bytes", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-passed_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-dropped_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-tx_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-tx-fail_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-unknown_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-redirected_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, "xdp-rx-redir-fail_q-%u_pkts", q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, "xdp-rx_q-%u_pkts", q);
+	ethtool_sprintf(&p, "xdp-rx_q-%u_bytes", q);
+	ethtool_sprintf(&p, "xdp-rx-passed_q-%u_pkts", q);
+	ethtool_sprintf(&p, "xdp-rx-dropped_q-%u_pkts", q);
+	ethtool_sprintf(&p, "xdp-rx-tx_q-%u_pkts", q);
+	ethtool_sprintf(&p, "xdp-tx-fail_q-%u_pkts", q);
+	ethtool_sprintf(&p, "xdp-rx-unknown_q-%u_pkts", q);
+	ethtool_sprintf(&p, "xdp-rx-redirected_q-%u_pkts", q);
+	ethtool_sprintf(&p, "xdp-rx-redir-fail_q-%u_pkts", q);
 
 	/* copy back updated length */
 	*loc_in_buf = p;
@@ -1095,9 +1091,9 @@ ice_get_xdp_rx_strings(unsigned int q, u16 num_rxq, char **loc_in_buf)
  * This function returns Tx queue XDP related counters strings
  */
 static void
-ice_get_xdp_tx_strings(struct ice_vsi *vsi, char **loc_in_buf)
+ice_get_xdp_tx_strings(struct ice_vsi *vsi, u8 **loc_in_buf)
 {
-	char *p;
+	u8 *p;
 	u16 q;
 
 	if (!vsi || !loc_in_buf)
@@ -1106,10 +1102,8 @@ ice_get_xdp_tx_strings(struct ice_vsi *vsi, char **loc_in_buf)
 	for (q = 0; q < vsi->num_xdp_txq; ++q) {
 		p = *loc_in_buf;
 
-		snprintf(p, ETH_GSTRING_LEN, "xdp-tx_q-%u_pkts", q);
-		p += ETH_GSTRING_LEN;
-		snprintf(p, ETH_GSTRING_LEN, "xdp-tx_q-%u_bytes", q);
-		p += ETH_GSTRING_LEN;
+		ethtool_sprintf(&p, "xdp-tx_q-%u_pkts", q);
+		ethtool_sprintf(&p, "xdp-tx_q-%u_bytes", q);
 
 		/* copy back updated length */
 		*loc_in_buf = p;
@@ -1169,7 +1163,7 @@ ice_get_xdp_tx_stats(struct ice_vsi *vsi, u64 *data, int *idx)
 
 	for (q = 0; q < vsi->num_xdp_txq; ++q) {
 		struct ice_q_stats *stats;
-		struct ice_ring *ring;
+		struct ice_tx_ring *ring;
 
 		ring = READ_ONCE(vsi->xdp_rings[q]);
 
@@ -1195,9 +1189,9 @@ ice_get_xdp_tx_stats(struct ice_vsi *vsi, u64 *data, int *idx)
  * This function returns Tx queue related strings for ADQ performance counters
  */
 static void
-ice_get_chnl_tx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
+ice_get_chnl_tx_strings(struct ice_vsi *vsi, unsigned int q, u8 **loc_in_buf)
 {
-	char *p;
+	u8 *p;
 
 	if (!loc_in_buf)
 		return;
@@ -1207,18 +1201,12 @@ ice_get_chnl_tx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
 	p = *loc_in_buf;
 
 	/* Tx queue specific extra counters */
-	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_BUSY_POLL, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_NOT_BUSY_POLL, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_SETUP, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_MARK_ATR_SETUP, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_TEARDOWN, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_ATR_BAIL, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_TXQ_BUSY_POLL, q);
+	ethtool_sprintf(&p, ICE_TXQ_NOT_BUSY_POLL, q);
+	ethtool_sprintf(&p, ICE_TXQ_ATR_SETUP, q);
+	ethtool_sprintf(&p, ICE_TXQ_MARK_ATR_SETUP, q);
+	ethtool_sprintf(&p, ICE_TXQ_ATR_TEARDOWN, q);
+	ethtool_sprintf(&p, ICE_TXQ_ATR_BAIL, q);
 
 	/* copy back updated length */
 	*loc_in_buf = p;
@@ -1238,7 +1226,7 @@ static void
 ice_get_chnl_tx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
 {
 	struct ice_ch_q_stats *ch_stats;
-	struct ice_ring *tx_ring;
+	struct ice_tx_ring *tx_ring;
 	int i;
 
 	if (!idx)
@@ -1280,7 +1268,7 @@ ice_get_chnl_rx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
 {
 	struct ice_q_vector_ch_stats *vector_ch_stats = NULL;
 	struct ice_ch_q_stats *ch_stats;
-	struct ice_ring *rx_ring;
+	struct ice_rx_ring *rx_ring;
 	bool orig_set = set;
 	int i;
 
@@ -1385,9 +1373,9 @@ ice_get_chnl_rx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
  * ADQ performance counters
  */
 static void
-ice_get_chnl_rx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
+ice_get_chnl_rx_strings(struct ice_vsi *vsi, unsigned int q, u8 **loc_in_buf)
 {
-	char *p;
+	u8 *p;
 
 	if (!loc_in_buf)
 		return;
@@ -1399,120 +1387,86 @@ ice_get_chnl_rx_strings(struct ice_vsi *vsi, unsigned int q, char **loc_in_buf)
 	/* Rx queue specific extra counters */
 
 	/* busy and non-busy poll packets */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BUSY_POLL, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NOT_BUSY_POLL, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_BUSY_POLL, q);
+	ethtool_sprintf(&p, ICE_RXQ_NOT_BUSY_POLL, q);
 	/* number of times Rx queue was set thru' Rx queue override logic */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_SET, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_SET, q);
 	/* number of times Rx queue was not set thru' Rx queue override logic */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BAIL, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_BAIL, q);
 	/* total TCP ctrl pkts */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_CTRL_PKTS, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_TCP_CTRL_PKTS, q);
 	/* total "only ctrl pkts" */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_ONLY_CTRL_PKTS, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_ONLY_CTRL_PKTS, q);
 	/* number of FIN recv */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_FIN_RECV, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_TCP_FIN_RECV, q);
 	/* number of RST recv */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_RST_RECV, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_TCP_RST_RECV, q);
 	/* number of SYN recv */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TCP_SYN_RECV, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_TCP_SYN_RECV, q);
 	/* BP, but didn't clean any data packets */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_NO_DATA_PKT, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_BP_NO_DATA_PKT, q);
 
 	/* Vector specific extra counters */
 
 	/* tracking BP, INT, BP->INT, INT->BP */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_IN_BP, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_INTR_TO_BP, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_TO_BP, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_IN_INTR, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_TO_INTR, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_INTR_TO_INTR, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_IN_BP, q);
+	ethtool_sprintf(&p, ICE_RXQ_INTR_TO_BP, q);
+	ethtool_sprintf(&p, ICE_RXQ_BP_TO_BP, q);
+	ethtool_sprintf(&p, ICE_RXQ_IN_INTR, q);
+	ethtool_sprintf(&p, ICE_RXQ_BP_TO_INTR, q);
+	ethtool_sprintf(&p, ICE_RXQ_INTR_TO_INTR, q);
 	/* unlikely comeback to busy_poll */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_UNLIKELY_CB_TO_BP, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_UNLIKELY_CB_TO_BP, q);
 	/* unlikely comeback to busy_poll and once_in_bp is true */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_UCB_ONCE_IN_BP, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_UCB_ONCE_IN_BP, q);
 	/* once_in_bp is false */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_INTR_ONCE_IN_BP_FALSE, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_INTR_ONCE_IN_BP_FALSE, q);
 	/* busy_poll stop due to need_resched() */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_STOP_NEED_RESCHED, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_BP_STOP_NEED_RESCHED, q);
 	/* busy_poll stop due to possible due to timeout */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_STOP_TIMEOUT, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_BP_STOP_TIMEOUT, q);
 	/* Transition: BP->INT: previously cleaned data packets */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_CLEANED_ANY_DATA_PKT, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_CLEANED_ANY_DATA_PKT, q);
 	/* need_resched(), but didn't clean any data packets */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NEED_RESCHED_NO_DATA, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_NEED_RESCHED_NO_DATA, q);
 	/* possible timeout(), but didn't clean any data packets */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_TIMEOUT_NO_DATA, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_TIMEOUT_NO_DATA, q);
 	/* number of SW triggered interrupt from napi_poll due to
 	 * possible timeout detected
 	 */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_SW_INTR_TIMEOUT, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_SW_INTR_TIMEOUT, q);
 	/* number of SW triggered interrupt from service_task */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_SW_INTR_SERV_TASK, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_SW_INTR_SERV_TASK, q);
 	/* number of times, SW triggered interrupt is not triggered from
 	 * napi_poll even when unlikely_cb_to_bp is set, once_in_bp is set
 	 * but ethtool private featute flag is off (for interrupt optimization
 	 * strategy
 	 */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NO_SW_INTR_OPT_OFF, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_NO_SW_INTR_OPT_OFF, q);
 	/* number of times WB_ON_ITR is set */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_WB_ON_ITR_SET, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_WB_ON_ITR_SET, q);
 
 	/* number of Rx packet processed due busy_poll_stop */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_PKTS_BP_STOP_BUDGET8, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_PKTS_BP_STOP_BUDGET8, q);
 
 	/* number of Rx packet processed due to napi_schedule which gets invoked
 	 * if busy_poll_stop returned budget
 	 */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_PKTS_BP_STOP_BUDGET64, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_PKTS_BP_STOP_BUDGET64, q);
 
 	/* num of times work_done == budget condition met from
 	 * busy_poll_stop:napi_poll code path
 	 */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_WD_EQUAL_BUDGET8, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_BP_WD_EQUAL_BUDGET8, q);
 
 	/* num of times work_done == budget condition met from
 	 * napi_schedule:napi_poll code path (this happens if busy_poll_stop
 	 * returned "budget")
 	 */
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BP_WD_EQUAL_BUDGET64, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_BP_WD_EQUAL_BUDGET64, q);
 
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_KEEP_STATE_BP_BUDGET8, q);
-	p += ETH_GSTRING_LEN;
-	snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_KEEP_STATE_BP_BUDGET64, q);
-	p += ETH_GSTRING_LEN;
+	ethtool_sprintf(&p, ICE_RXQ_KEEP_STATE_BP_BUDGET8, q);
+	ethtool_sprintf(&p, ICE_RXQ_KEEP_STATE_BP_BUDGET64, q);
 
 	/* copy back updated length */
 	*loc_in_buf = p;
@@ -1551,9 +1505,9 @@ static struct ice_macvlan *ice_get_macvlan(int id, struct ice_pf *pf)
  *
  * This function returns Tx related strings for MACVLAN offload
  */
-static void ice_get_macvlan_tx_strings(struct ice_pf *pf, char **loc_in_buf)
+static void ice_get_macvlan_tx_strings(struct ice_pf *pf, u8 **loc_in_buf)
 {
-	char *p;
+	u8 *p;
 	int i;
 
 	if (!loc_in_buf)
@@ -1564,17 +1518,11 @@ static void ice_get_macvlan_tx_strings(struct ice_pf *pf, char **loc_in_buf)
 		struct ice_macvlan *mv = ice_get_macvlan(i, pf);
 
 		if (mv) {
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_PKTS1,
-				 mv->vdev->name);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_BYTES1,
-				 mv->vdev->name);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, L2_FWD_TX_PKTS1, mv->vdev->name);
+			ethtool_sprintf(&p, L2_FWD_TX_BYTES1, mv->vdev->name);
 		} else {
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_PKTS2, i);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_TX_BYTES2, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, L2_FWD_TX_PKTS2, i);
+			ethtool_sprintf(&p, L2_FWD_TX_BYTES2, i);
 		}
 	}
 
@@ -1622,9 +1570,9 @@ static void ice_get_macvlan_tx_stats(struct ice_pf *pf, u64 *data, int *idx)
  *
  * This function returns Rx related strings for MACVLAN offload
  */
-static void ice_get_macvlan_rx_strings(struct ice_pf *pf, char **loc_in_buf)
+static void ice_get_macvlan_rx_strings(struct ice_pf *pf, u8 **loc_in_buf)
 {
-	char *p;
+	u8 *p;
 	int i;
 
 	if (!loc_in_buf)
@@ -1635,17 +1583,11 @@ static void ice_get_macvlan_rx_strings(struct ice_pf *pf, char **loc_in_buf)
 		struct ice_macvlan *mv = ice_get_macvlan(i, pf);
 
 		if (mv) {
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_PKTS1,
-				 mv->vdev->name);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_BYTES1,
-				 mv->vdev->name);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, L2_FWD_RX_PKTS1, mv->vdev->name);
+			ethtool_sprintf(&p, L2_FWD_RX_BYTES1, mv->vdev->name);
 		} else {
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_PKTS2, i);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, L2_FWD_RX_BYTES2, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, L2_FWD_RX_PKTS2, i);
+			ethtool_sprintf(&p, L2_FWD_RX_BYTES2, i);
 		}
 	}
 
@@ -1693,27 +1635,23 @@ static void
 __ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data,
 		  struct ice_vsi *vsi)
 {
-	char *p = (char *)data;
 	unsigned int i;
+	u8 *p = data;
 
 	switch (stringset) {
 	case ETH_SS_STATS:
-		for (i = 0; i < ICE_VSI_STATS_LEN; i++) {
-			snprintf(p, ETH_GSTRING_LEN, "%s",
-				 ice_gstrings_vsi_stats[i].stat_string);
-			p += ETH_GSTRING_LEN;
-		}
+		for (i = 0; i < ICE_VSI_STATS_LEN; i++)
+			ethtool_sprintf(&p, "%s",
+					ice_gstrings_vsi_stats[i].stat_string);
+
 		if (ice_is_port_repr_netdev(netdev))
 			return;
 
 		ice_for_each_alloc_txq(vsi, i) {
-			snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_PACKETS, i);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_BYTES, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, ICE_TXQ_PACKETS, i);
+			ethtool_sprintf(&p, ICE_TXQ_BYTES, i);
 #ifdef ICE_ADD_PROBES
-			snprintf(p, ETH_GSTRING_LEN, ICE_TXQ_NAPI_POLL, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, ICE_TXQ_NAPI_POLL, i);
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_tx_strings(vsi, i, &p);
@@ -1731,13 +1669,10 @@ __ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data,
 #endif /* ICE_ADD_PROBES */
 
 		ice_for_each_alloc_rxq(vsi, i) {
-			snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_PACKETS, i);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_BYTES, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, ICE_RXQ_PACKETS, i);
+			ethtool_sprintf(&p, ICE_RXQ_BYTES, i);
 #ifdef ICE_ADD_PROBES
-			snprintf(p, ETH_GSTRING_LEN, ICE_RXQ_NAPI_POLL, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, ICE_RXQ_NAPI_POLL, i);
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_rx_strings(vsi, i, &p);
@@ -1757,34 +1692,26 @@ __ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data,
 		if (vsi->type != ICE_VSI_PF)
 			return;
 
-		for (i = 0; i < ICE_PF_STATS_LEN; i++) {
-			snprintf(p, ETH_GSTRING_LEN, "%s",
-				 ice_gstrings_pf_stats[i].stat_string);
-			p += ETH_GSTRING_LEN;
-		}
+		for (i = 0; i < ICE_PF_STATS_LEN; i++)
+			ethtool_sprintf(&p, "%s",
+					ice_gstrings_pf_stats[i].stat_string);
 
 		for (i = 0; i < ICE_MAX_USER_PRIORITY; i++) {
-			snprintf(p, ETH_GSTRING_LEN, PORT_TX_PRIO_XON, i);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, PORT_TX_PRIO_XOFF, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, PORT_TX_PRIO_XON, i);
+			ethtool_sprintf(&p, PORT_TX_PRIO_XOFF, i);
 		}
 		for (i = 0; i < ICE_MAX_USER_PRIORITY; i++) {
-			snprintf(p, ETH_GSTRING_LEN, PORT_RX_PRIO_XON, i);
-			p += ETH_GSTRING_LEN;
-			snprintf(p, ETH_GSTRING_LEN, PORT_RX_PRIO_XOFF, i);
-			p += ETH_GSTRING_LEN;
+			ethtool_sprintf(&p, PORT_RX_PRIO_XON, i);
+			ethtool_sprintf(&p, PORT_RX_PRIO_XOFF, i);
 		}
 		break;
 	case ETH_SS_TEST:
 		memcpy(data, ice_gstrings_test, ICE_TEST_LEN * ETH_GSTRING_LEN);
 		break;
 	case ETH_SS_PRIV_FLAGS:
-		for (i = 0; i < ICE_PRIV_FLAG_ARRAY_SIZE; i++) {
-			snprintf(p, ETH_GSTRING_LEN, "%s",
-				 ice_gstrings_priv_flags[i].name);
-			p += ETH_GSTRING_LEN;
-		}
+		for (i = 0; i < ICE_PRIV_FLAG_ARRAY_SIZE; i++)
+			ethtool_sprintf(&p, "%s",
+					ice_gstrings_priv_flags[i].name);
 		break;
 	default:
 		break;
@@ -2325,12 +2252,6 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 		change_bit(ICE_FLAG_VF_VLAN_PRUNING, pf->flags);
 		ret = -EOPNOTSUPP;
 	}
-
-	if (test_bit(ICE_FLAG_PTP_WT_ENABLED, change_flags) &&
-	    test_bit(ICE_FLAG_PTP_WT_ENABLED, pf->flags)) {
-		dev_err(dev, "ptp_wt_enabled: You cannot reenable PTP workthread, please reload the driver.\n");
-		change_bit(ICE_FLAG_PTP_WT_ENABLED, pf->flags);
-	}
 	if (!test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags) &&
 	    pf->synce_dpll_state != ICE_CGU_STATE_UNKNOWN) {
 		pf->synce_dpll_state = ICE_CGU_STATE_UNKNOWN;
@@ -2341,6 +2262,15 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			dev_err(dev, "dpll_monitor: not supported\n");
 			/* toggle bit back to previous state */
 			change_bit(ICE_FLAG_DPLL_MONITOR, pf->flags);
+			ret = -EOPNOTSUPP;
+			goto ethtool_exit;
+		}
+	}
+	if (test_bit(ICE_FLAG_ITU_G8262_FILTER_USED, change_flags)) {
+		if (!ice_is_e825c(&pf->hw)) {
+			dev_err(dev, "itu_g8262_filter_used: only supported on E825C\n");
+			/* toggle bit back to previous state */
+			change_bit(ICE_FLAG_ITU_G8262_FILTER_USED, pf->flags);
 			ret = -EOPNOTSUPP;
 			goto ethtool_exit;
 		}
@@ -2377,7 +2307,7 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 		if (fast_lock_enabled)
 			ref_state |= ICE_AQC_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN;
 		else
-			ref_state &= !ICE_AQC_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN;
+			ref_state &= ~ICE_AQC_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN;
 		status = ice_aq_set_cgu_dpll_config(&pf->hw, ICE_CGU_DPLL_PTP,
 						    ref_state, config,
 						    eec_mode);
@@ -2463,7 +2393,8 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 			struct ice_vsi *vsi)
 {
 	struct ice_pf *pf = vsi->back;
-	struct ice_ring *ring;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
 	unsigned int j;
 	int i = 0;
 	char *p;
@@ -2482,12 +2413,12 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 	rcu_read_lock();
 
 	ice_for_each_alloc_txq(vsi, j) {
-		ring = READ_ONCE(vsi->tx_rings[j]);
-		if (ring && ring->ring_stats) {
-			data[i++] = ring->ring_stats->stats.pkts;
-			data[i++] = ring->ring_stats->stats.bytes;
+		tx_ring = READ_ONCE(vsi->tx_rings[j]);
+		if (tx_ring && tx_ring->ring_stats) {
+			data[i++] = tx_ring->ring_stats->stats.pkts;
+			data[i++] = tx_ring->ring_stats->stats.bytes;
 #ifdef ICE_ADD_PROBES
-			data[i++] = ring->ring_stats->stats.napi_poll_cnt;
+			data[i++] = tx_ring->ring_stats->stats.napi_poll_cnt;
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_tx_stats(vsi, j, data, &i, true);
@@ -2512,19 +2443,19 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 #endif /* ICE_ADD_PROBES */
 
 	ice_for_each_alloc_rxq(vsi, j) {
-		ring = READ_ONCE(vsi->rx_rings[j]);
-		if (ring && ring->ring_stats) {
-			data[i++] = ring->ring_stats->stats.pkts;
-			data[i++] = ring->ring_stats->stats.bytes;
+		rx_ring = READ_ONCE(vsi->rx_rings[j]);
+		if (rx_ring && rx_ring->ring_stats) {
+			data[i++] = rx_ring->ring_stats->stats.pkts;
+			data[i++] = rx_ring->ring_stats->stats.bytes;
 #ifdef ICE_ADD_PROBES
-			data[i++] = ring->ring_stats->stats.napi_poll_cnt;
+			data[i++] = rx_ring->ring_stats->stats.napi_poll_cnt;
 #endif /* ICE_ADD_PROBES */
 #ifdef ADQ_PERF_COUNTERS
 			ice_get_chnl_rx_stats(vsi, j, data, &i, true);
 #endif /* ADQ_PERF_COUNTERS */
 #ifdef HAVE_XDP_SUPPORT
 #ifdef ICE_ADD_PROBES
-			ice_get_xdp_rx_stats(&ring->xdp_stats, data, &i);
+			ice_get_xdp_rx_stats(&rx_ring->xdp_stats, data, &i);
 #endif /* ICE_ADD_PROBES */
 #endif /* HAVE_XDP_SUPPORT */
 		} else {
@@ -2951,9 +2882,20 @@ ice_get_link_ksettings(struct net_device *netdev,
 		ethtool_link_ksettings_add_link_mode(ks, advertising, FIBRE);
 		ks->base.port = PORT_DA;
 		break;
-	default:
+	case ICE_MEDIA_AUI:
+		ethtool_link_ksettings_add_link_mode(ks, supported, AUI);
+		ethtool_link_ksettings_add_link_mode(ks, advertising, AUI);
+		ks->base.port = PORT_AUI;
+		break;
+	case ICE_MEDIA_NONE:
+		ks->base.port = PORT_NONE;
+		break;
+	case ICE_MEDIA_UNKNOWN:
 		ks->base.port = PORT_OTHER;
 		break;
+		/* all possible enum ice_media_type are covered by switch
+		 * statement
+		 */
 	}
 
 	/* flow control is symmetric and always supported */
@@ -3069,6 +3011,8 @@ ice_ksettings_find_adv_link_speed(const struct ethtool_link_ksettings *ks)
 		adv_link_speed |= ICE_AQ_LINK_SPEED_10GB;
 #ifdef HAVE_ETHTOOL_NEW_10G_BITS
 	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  10000baseCR_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
 						  10000baseSR_Full) ||
 	    ethtool_link_ksettings_test_link_mode(ks, advertising,
 						  10000baseLR_Full))
@@ -4294,11 +4238,12 @@ static int
 ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 #endif /* HAVE_ETHTOOL_EXTENDED_RINGPARAMS */
 {
-	struct ice_ring *tx_rings = NULL, *rx_rings = NULL;
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 #ifdef HAVE_XDP_SUPPORT
-	struct ice_ring *xdp_rings = NULL;
+	struct ice_tx_ring *xdp_rings = NULL;
 #endif /* HAVE_XDP_SUPPORT */
+	struct ice_tx_ring *tx_rings = NULL;
+	struct ice_rx_ring *rx_rings = NULL;
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
 	int i, timeout = 50, err = 0;
@@ -4389,6 +4334,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 			while (i--)
 				ice_clean_tx_ring(&tx_rings[i]);
 			kfree(tx_rings);
+			tx_rings = NULL;
 			goto done;
 		}
 	}
@@ -4418,6 +4364,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 			while (i--)
 				ice_clean_tx_ring(&xdp_rings[i]);
 			kfree(xdp_rings);
+			xdp_rings = NULL;
 			goto free_tx;
 		}
 		ice_set_ring_xdp(&xdp_rings[i]);
@@ -4465,6 +4412,7 @@ rx_unwind:
 				ice_free_rx_ring(&rx_rings[i]);
 			}
 			kfree(rx_rings);
+			rx_rings = NULL;
 			err = -ENOMEM;
 			goto free_tx;
 		}
@@ -4483,6 +4431,7 @@ process_link:
 				*vsi->tx_rings[i] = tx_rings[i];
 			}
 			kfree(tx_rings);
+			tx_rings = NULL;
 		}
 
 		if (rx_rings) {
@@ -4501,6 +4450,7 @@ process_link:
 				*vsi->rx_rings[i] = rx_rings[i];
 			}
 			kfree(rx_rings);
+			rx_rings = NULL;
 		}
 
 #ifdef HAVE_XDP_SUPPORT
@@ -4510,6 +4460,7 @@ process_link:
 				*vsi->xdp_rings[i] = xdp_rings[i];
 			}
 			kfree(xdp_rings);
+			xdp_rings = NULL;
 		}
 #endif /* HAVE_XDP_SUPPORT */
 
@@ -4524,10 +4475,14 @@ free_tx:
 	if (tx_rings) {
 		ice_for_each_txq(vsi, i)
 			ice_free_tx_ring(&tx_rings[i]);
-		kfree(tx_rings);
 	}
 
 done:
+	kfree(rx_rings);
+#ifdef HAVE_XDP_SUPPORT
+	kfree(xdp_rings);
+#endif /* HAVE_XDP_SUPPORT */
+	kfree(tx_rings);
 	clear_bit(ICE_CFG_BUSY, pf->state);
 	return err;
 }
@@ -4884,9 +4839,9 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 #endif /* NETIF_F_HW_TC */
 	if (key) {
 		if (!vsi->rss_hkey_user) {
-			vsi->rss_hkey_user =
-				devm_kzalloc(dev, ICE_VSIQF_HKEY_ARRAY_SIZE,
-					     GFP_KERNEL);
+			vsi->rss_hkey_user = devm_kzalloc(dev,
+							  ICE_VSIQF_HKEY_ARRAY_SIZE,
+							  GFP_KERNEL);
 			if (!vsi->rss_hkey_user)
 				return -ENOMEM;
 		}
@@ -4939,7 +4894,7 @@ ice_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
 				SOF_TIMESTAMPING_RX_HARDWARE |
 				SOF_TIMESTAMPING_RAW_HARDWARE;
 
-	info->phc_index = ice_get_ptp_clock_index(pf);
+	info->phc_index = ice_ptp_clock_index(pf);
 
 	info->tx_types = BIT(HWTSTAMP_TX_OFF) | BIT(HWTSTAMP_TX_ON);
 
@@ -4954,7 +4909,7 @@ ice_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
  */
 static int ice_get_max_txq(struct ice_pf *pf)
 {
-	return min3(pf->num_lan_msix, pf->max_qps,
+	return min3(pf->msix.eth, pf->max_qps,
 		    (u16)pf->hw.func_caps.common_cap.num_txq);
 }
 
@@ -4964,7 +4919,7 @@ static int ice_get_max_txq(struct ice_pf *pf)
  */
 static int ice_get_max_rxq(struct ice_pf *pf)
 {
-	return min3(pf->num_lan_msix, pf->max_qps,
+	return min3(pf->msix.eth, pf->max_qps,
 		    (u16)pf->hw.func_caps.common_cap.num_rxq);
 }
 
@@ -4983,7 +4938,7 @@ static u32 ice_get_combined_cnt(struct ice_vsi *vsi)
 	ice_for_each_q_vector(vsi, q_idx) {
 		struct ice_q_vector *q_vector = vsi->q_vectors[q_idx];
 
-		if (q_vector->rx.ring && q_vector->tx.ring)
+		if (q_vector->rx.rx_ring && q_vector->tx.tx_ring)
 			combined += q_vector->num_ring_rx;
 	}
 
@@ -5209,21 +5164,21 @@ static int ice_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 static int
 ice_get_rc_coalesce(struct ethtool_coalesce *ec, struct ice_ring_container *rc)
 {
-	if (!rc->ring)
+	if (!rc->rx_ring)
 		return -EINVAL;
 
 	switch (rc->type) {
 	case ICE_RX_CONTAINER:
 		ec->use_adaptive_rx_coalesce = ITR_IS_DYNAMIC(rc);
 		ec->rx_coalesce_usecs = rc->itr_setting;
-		ec->rx_coalesce_usecs_high = rc->ring->q_vector->intrl;
+		ec->rx_coalesce_usecs_high = rc->rx_ring->q_vector->intrl;
 		break;
 	case ICE_TX_CONTAINER:
 		ec->use_adaptive_tx_coalesce = ITR_IS_DYNAMIC(rc);
 		ec->tx_coalesce_usecs = rc->itr_setting;
 		break;
 	default:
-		dev_dbg(ice_pf_to_dev(rc->ring->vsi->back), "Invalid c_type %d\n", rc->type);
+		dev_dbg(ice_pf_to_dev(rc->rx_ring->vsi->back), "Invalid c_type %d\n", rc->type);
 		return -EINVAL;
 	}
 
@@ -5333,7 +5288,7 @@ ice_set_rc_coalesce(struct ethtool_coalesce *ec,
 	struct ice_pf *pf = vsi->back;
 	u16 itr_setting;
 
-	if (!rc->ring)
+	if (!rc->rx_ring)
 		return -EINVAL;
 
 	switch (rc->type) {
@@ -5346,14 +5301,14 @@ ice_set_rc_coalesce(struct ethtool_coalesce *ec,
 				    ICE_MAX_INTRL);
 			return -EINVAL;
 		}
-		if (ec->rx_coalesce_usecs_high != rc->ring->q_vector->intrl &&
+		if (ec->rx_coalesce_usecs_high != rc->rx_ring->q_vector->intrl &&
 		    (ec->use_adaptive_rx_coalesce || ec->use_adaptive_tx_coalesce)) {
 			netdev_info(vsi->netdev, "Invalid value, %s-usecs-high cannot be changed if adaptive-tx or adaptive-rx is enabled\n",
 				    c_type_str);
 			return -EINVAL;
 		}
-		if (ec->rx_coalesce_usecs_high != rc->ring->q_vector->intrl)
-			rc->ring->q_vector->intrl = ec->rx_coalesce_usecs_high;
+		if (ec->rx_coalesce_usecs_high != rc->rx_ring->q_vector->intrl)
+			rc->rx_ring->q_vector->intrl = ec->rx_coalesce_usecs_high;
 
 		use_adaptive_coalesce = ec->use_adaptive_rx_coalesce;
 		coalesce_usecs = ec->rx_coalesce_usecs;
@@ -5623,7 +5578,7 @@ ice_repr_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
-	struct ice_ring *rx_ring;
+	struct ice_rx_ring *rx_ring;
 	int v_idx;
 
 #ifndef ETHTOOL_COALESCE_USECS
@@ -5673,7 +5628,7 @@ ice_repr_get_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
 
-	if (!vsi->rx_rings || !vsi->rx_rings[0]->q_vector->rx.ring)
+	if (!vsi->rx_rings || !vsi->rx_rings[0]->q_vector->rx.rx_ring)
 		return -EINVAL;
 
 	ec->rx_coalesce_usecs_high = vsi->rx_rings[0]->q_vector->intrl;
@@ -5873,6 +5828,8 @@ ice_get_module_eeprom(struct net_device *netdev,
 		 * SFP modules only ever use page 0.
 		 */
 		if (page == 0 || !(data[0x2] & 0x4)) {
+			u32 copy_len;
+
 			/* If i2c bus is busy due to slow page change or
 			 * link management access, call can fail. This is normal.
 			 * So we retry this a few times.
@@ -5896,8 +5853,8 @@ ice_get_module_eeprom(struct net_device *netdev,
 			}
 
 			/* Make sure we have enough room for the new block */
-			if ((i + SFF_READ_BLOCK_SIZE) <= ee->len)
-				memcpy(data + i, value, SFF_READ_BLOCK_SIZE);
+			copy_len = min_t(u32, SFF_READ_BLOCK_SIZE, ee->len - i);
+			memcpy(data + i, value, copy_len);
 		}
 	}
 	return 0;

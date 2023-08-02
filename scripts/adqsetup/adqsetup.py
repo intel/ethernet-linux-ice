@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2022, Intel Corporation
+# Copyright (C) 2022 - 2023 Intel Corporation
 #
 
 import sys, os, time, socket, subprocess, pipes, re, json, math
@@ -3414,14 +3414,14 @@ def _main():
             "\x1B[33m***\x1B[1m ADQ Setup Tool v%s \x1B[0m\x1B[33m***\x1B[0m" % _VERSION_,
             "\x1B[90mWebsite: https://www.intel.com/content/www/us/en/architecture-and-technology/ethernet/adq-resource-center.html\x1B[0m",
             "\x1B[90mSPDX-License-Identifier: BSD-3-Clause\x1B[0m",
-            "\x1B[90mCopyright (c) 2022, Intel Corporation\x1B[0m"
+            "\x1B[90mCopyright (C) 2022 - 2023 Intel Corporation\x1B[0m"
         ]
     else:
         prolog = [
             "*** ADQ Setup Tool v%s ***" % _VERSION_,
             "Website: https://www.intel.com/content/www/us/en/architecture-and-technology/ethernet/adq-resource-center.html",
             "SPDX-License-Identifier: BSD-3-Clause",
-            "Copyright (c) 2022, Intel Corporation"
+            "Copyright (C) 2022 - 2023 Intel Corporation"
         ]
     prolog.append("\nFor use with Intel Ethernet E810 Controllers and Network Adapters ONLY")
 

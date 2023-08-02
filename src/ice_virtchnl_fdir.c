@@ -2255,6 +2255,7 @@ ice_vc_fdir_parse_raw(struct ice_vf *vf,
 	/* Get raw profile info via Parser Lib */
 	if (ice_parser_create(hw, &psr))
 		goto err_parser_process;
+	ice_parser_dvm_set(psr, ice_is_dvm_ena(hw));
 	if (ice_get_open_tunnel_port(hw, TNL_VXLAN, &udp_port))
 		ice_parser_vxlan_tunnel_set(psr, udp_port, true);
 	if (ice_parser_run(psr, pkt_buf, proto->raw.pkt_len, &rslt))
@@ -3449,7 +3450,7 @@ static void ice_vf_fdir_dump_info(struct ice_vf *vf)
 
 	fd_size = rd32(hw, VSIQF_FD_SIZE(vsi_num));
 	fd_cnt = rd32(hw, VSIQF_FD_CNT(vsi_num));
-	dev_dbg(dev, "VF %d: space allocated: guar:0x%x, be:0x%x, space consumed: guar:0x%x, be:0x%x\n",
+	dev_dbg(dev, "VF %d: space allocated: guar:0x%lx, be:0x%lx, space consumed: guar:0x%lx, be:0x%lx\n",
 		vf->vf_id,
 		(fd_size & VSIQF_FD_CNT_FD_GCNT_M) >> VSIQF_FD_CNT_FD_GCNT_S,
 		(fd_size & VSIQF_FD_CNT_FD_BCNT_M) >> VSIQF_FD_CNT_FD_BCNT_S,
@@ -4029,10 +4030,6 @@ int ice_vc_add_fdir_fltr(struct ice_vf *vf, u8 *msg)
 		goto err_free_conf;
 	}
 
-	/* For Protocol Agnostic Flow Offloading case only */
-	if (conf->parser_ena)
-		return ice_vc_add_fdir_raw(vf, conf, stat, len);
-
 	if (fltr->validate_only) {
 		v_ret = VIRTCHNL_STATUS_SUCCESS;
 		stat->status = VIRTCHNL_FDIR_SUCCESS;
@@ -4041,6 +4038,10 @@ int ice_vc_add_fdir_fltr(struct ice_vf *vf, u8 *msg)
 					   v_ret, (u8 *)stat, len);
 		goto exit;
 	}
+
+	/* For Protocol Agnostic Flow Offloading case only */
+	if (conf->parser_ena)
+		return ice_vc_add_fdir_raw(vf, conf, stat, len);
 
 	is_tun = ice_fdir_is_tunnel(conf->ttype);
 	ret = ice_vc_fdir_config_input_set(vf, fltr, conf, is_tun);

@@ -13,9 +13,7 @@
  * should be migrated to the new format over time.
  */
 
-/*
- * generic network stack functions
- */
+/* generic network stack functions */
 
 /* NEED_NETDEV_TXQ_BQL_PREFETCH
  *
@@ -197,9 +195,7 @@ static inline bool macvlan_supports_dest_filter(struct net_device *dev)
 
 #endif /* NETIF_F_HW_L2FW_DOFFLOAD */
 
-/*
- * tc functions
- */
+/* tc functions */
 
 /* NEED_FLOW_INDR_BLOCK_CB_REGISTER
  *
@@ -215,9 +211,7 @@ static inline bool macvlan_supports_dest_filter(struct net_device *dev)
 #define __flow_indr_block_cb_unregister __tc_indr_block_cb_unregister
 #endif
 
-/*
- * devlink support
- */
+/* devlink support */
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 
 #include <net/devlink.h>
@@ -438,6 +432,72 @@ _kc_devlink_alloc(const struct devlink_ops *ops, size_t priv_size,
 #define devlink_alloc _kc_devlink_alloc
 #endif /* NEED_DEVLINK_ALLOC_SETS_DEV */
 
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+#ifdef NEED_DEVLINK_UNLOCKED_RESOURCE
+/*
+ * NEED_DEVLINK_UNLOCKED_RESOURCE
+ *
+ * Handle devlink API change introduced in:
+ * c223d6a4bf ("net: devlink: add unlocked variants of devlink_resource*()
+ * functions")
+ * 644a66c60f ("net: devlink: convert reload command to take implicit
+ * devlink->lock")
+ *
+ * devl_resource_size_get() does not take devlink->lock where
+ * devlink_resource_size_get() takes devlink->lock, but we do not introduce
+ * locking in the driver as taking the lock in devlink_reload() was added
+ * upstream in the same version as API change.
+ *
+ * We have to rely on distro maintainers properly backporting of both mentioned
+ * commits for OOT driver to work properly.
+ * In case of backporting only c223d6a4bf assert inside
+ * devl_resource_size_get() will trigger kernel WARNING,
+ * In case of backporting only 644a66c60f devlink_resource_size_get() will
+ * attempt to take the lock second time.
+ */
+static inline int devl_resource_size_get(struct devlink *devlink,
+					 u64 resource_id,
+					 u64 *p_resource_size)
+{
+	return devlink_resource_size_get(devlink, resource_id, p_resource_size);
+}
+#endif /* NEED_DEVLINK_UNLOCKED_RESOURCE */
+
+#ifdef NEED_DEVLINK_RESOURCES_UNREGISTER_NO_RESOURCE
+/*
+ * NEED_DEVLINK_RESOURCES_UNREGISTER_NO_RESOURCE
+ *
+ * Commit 4c897cfc46 ("devlink: Simplify devlink resources unregister call")
+ * removed struct devlink_resource *resource parameter from
+ * devlink_resources_unregister() function, if NULL is passed as a resource
+ * parameter old version of devlink_resources_unregister() behaves the same
+ * way as new implementation removing all resources from:
+ * &devlink->resource_list.
+ */
+static inline void
+_kc_devlink_resources_unregister(struct devlink *devlink)
+{
+	return devlink_resources_unregister(devlink, NULL);
+}
+
+#define devlink_resources_unregister _kc_devlink_resources_unregister
+#endif /* NEED_DEVLINK_RESOURCES_UNREGISTER_NO_RESOURCE */
+#endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
+
+#ifdef NEED_DEVLINK_TO_DEV
+/*
+ * Commit 2131463 ("devlink: Reduce struct devlink exposure")
+ * removed devlink struct fields from header to avoid exposure
+ * and added devlink_to_dev and related functions to access
+ * them instead.
+ */
+static inline struct device *
+devlink_to_dev(const struct devlink *devlink)
+{
+	return devlink->dev;
+}
+#endif /* NEED_DEVLINK_TO_DEV */
+
 #endif /* CONFIG_NET_DEVLINK */
 
 #ifdef NEED_IDA_ALLOC_MIN_MAX_RANGE_FREE
@@ -475,19 +535,20 @@ static inline void ida_free(struct ida *ida, unsigned int id)
 }
 #endif /* NEED_IDA_ALLOC_MIN_MAX_RANGE_FREE */
 
-/*
- * dev_printk implementations
- */
+/* dev_printk implementations */
 
-/* NEED_DEV_PRINTK_ONCE
+/* NEED_DEV_LEVEL_ONCE
  *
  * The dev_*_once family of printk functions was introduced by commit
  * e135303bd5be ("device: Add dev_<level>_once variants")
  *
  * The implementation is very straight forward so we will just implement them
  * as-is here.
+ *
+ * Note that this assumes all dev_*_once macros exist if dev_level_once was
+ * found.
  */
-#ifdef NEED_DEV_PRINTK_ONCE
+#ifdef NEED_DEV_LEVEL_ONCE
 #ifdef CONFIG_PRINTK
 #define dev_level_once(dev_level, dev, fmt, ...)			\
 do {									\
@@ -522,7 +583,7 @@ do {									\
 	dev_level_once(dev_info, dev, fmt, ##__VA_ARGS__)
 #define dev_dbg_once(dev, fmt, ...)					\
 	dev_level_once(dev_dbg, dev, fmt, ##__VA_ARGS__)
-#endif /* NEED_DEV_PRINTK_ONCE */
+#endif /* NEED_DEV_LEVEL_ONCE */
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 
@@ -563,9 +624,7 @@ tc_cls_can_offload_and_chain0(const struct net_device *dev,
 #define TC_SETUP_QDISC_MQPRIO TC_SETUP_MQPRIO
 #endif /* NEED_TC_SETUP_QDISC_MQPRIO */
 
-/*
- * ART/TSC functions
- */
+/* ART/TSC functions */
 #ifdef HAVE_PTP_CROSSTIMESTAMP
 /* NEED_CONVERT_ART_NS_TO_TSC
  *
@@ -610,9 +669,7 @@ static inline struct system_counterval_t convert_art_ns_to_tsc(u64 art_ns)
 #endif /* NEED_CONVERT_ART_NS_TO_TSC */
 #endif /* HAVE_PTP_CROSSTIMESTAMP */
 
-/*
- * PTP functions and definitions
- */
+/* PTP functions and definitions */
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 #include <linux/ptp_clock_kernel.h>
 #include <linux/ptp_clock.h>
@@ -667,6 +724,121 @@ static inline struct system_counterval_t convert_art_ns_to_tsc(u64 art_ns)
 
 #endif /* CONFIG_PTP_1588_CLOCK */
 
+/*
+ * NEED_PTP_SYSTEM_TIMESTAMP
+ *
+ * Upstream commit 361800876f80 ("ptp: add PTP_SYS_OFFSET_EXTENDED
+ * ioctl") introduces new ioctl, driver and helper functions.
+ *
+ * Required for PhotonOS 3.0 to correctly support backport of
+ * PTP patches introduced in Linux Kernel version 5.0 on 4.x kernels
+ */
+#ifdef NEED_PTP_SYSTEM_TIMESTAMP
+struct ptp_system_timestamp {
+	struct timespec64 pre_ts;
+	struct timespec64 post_ts;
+};
+
+static inline void
+ptp_read_system_prets(struct ptp_system_timestamp *sts) { }
+
+static inline void
+ptp_read_system_postts(struct ptp_system_timestamp *sts) { }
+#endif /* !NEED_PTP_SYSTEM_TIMESTAMP */
+
+#ifdef NEED_PTP_CLASSIFY_RAW
+/* NEED_PTP_CLASSIFY_RAW
+ *
+ * The ptp_classify_raw() function was introduced into <linux/ptp_classify.h>
+ * as part of commit 164d8c666521 ("net: ptp: do not reimplement PTP/BPF
+ * classifier").
+ *
+ * The kernel does provide the classifier BPF program since commit
+ * 15f0127d1d18 ("net: added a BPF to help drivers detect PTP packets.").
+ * However, it requires initializing the BPF filter properly and that varies
+ * depending on the kernel version.
+ *
+ * The only current uses for this function in our drivers is to enhance
+ * debugging messages. Rather than re-implementing the function just return
+ * PTP_CLASS_NONE indicating that it could not identify any PTP frame.
+ */
+#include <linux/ptp_classify.h>
+
+static inline unsigned int ptp_classify_raw(struct sk_buff *skb)
+{
+	return PTP_CLASS_NONE;
+}
+#endif /* NEED_PTP_CLASSIFY_RAW */
+
+#ifdef NEED_PTP_PARSE_HEADER
+/* NEED_PTP_PARSE_HEADER
+ *
+ * The ptp_parse_header() function was introduced upstream in commit
+ * bdfbb63c314a ("ptp: Add generic ptp v2 header parsing function").
+ *
+ * Since it is straight forward to implement, do so.
+ */
+#include <linux/ptp_classify.h>
+
+struct clock_identity {
+	u8 id[8];
+};
+
+struct port_identity {
+	struct clock_identity	clock_identity;
+	__be16			port_number;
+};
+
+struct ptp_header {
+	u8			tsmt;  /* transportSpecific | messageType */
+	u8			ver;   /* reserved          | versionPTP  */
+	__be16			message_length;
+	u8			domain_number;
+	u8			reserved1;
+	u8			flag_field[2];
+	__be64			correction;
+	__be32			reserved2;
+	struct port_identity	source_port_identity;
+	__be16			sequence_id;
+	u8			control;
+	u8			log_message_interval;
+} __packed;
+
+static inline struct ptp_header *ptp_parse_header(struct sk_buff *skb,
+						  unsigned int type)
+{
+#if defined(CONFIG_NET_PTP_CLASSIFY)
+	u8 *ptr = skb_mac_header(skb);
+
+	if (type & PTP_CLASS_VLAN)
+		ptr += VLAN_HLEN;
+
+	switch (type & PTP_CLASS_PMASK) {
+	case PTP_CLASS_IPV4:
+		ptr += IPV4_HLEN(ptr) + UDP_HLEN;
+		break;
+	case PTP_CLASS_IPV6:
+		ptr += IP6_HLEN + UDP_HLEN;
+		break;
+	case PTP_CLASS_L2:
+		break;
+	default:
+		return NULL;
+	}
+
+	ptr += ETH_HLEN;
+
+	/* Ensure that the entire header is present in this packet. */
+	if (ptr + sizeof(struct ptp_header) > skb->data + skb->len)
+		return NULL;
+
+	return (struct ptp_header *)ptr;
+#else
+	return NULL;
+#endif
+}
+#endif /* NEED_PTP_PARSE_HEADER */
+
 #ifdef NEED_BUS_FIND_DEVICE_CONST_DATA
 /* NEED_BUS_FIND_DEVICE_CONST_DATA
  *
@@ -712,9 +884,9 @@ _kc_bus_find_device(struct bus_type *type, struct device *start,
 	_kc_bus_find_device(type, start, data, match)
 #endif /* NEED_BUS_FIND_DEVICE_CONST_DATA */
 
-#ifdef NEED_DEV_PM_DOMAIN_ATTACH_DETACH
+#if defined(NEED_DEV_PM_DOMAIN_ATTACH) && defined(NEED_DEV_PM_DOMAIN_DETACH)
 #include <linux/acpi.h>
-/* NEED_DEV_PM_DOMAIN_ATTACH_DETACH
+/* NEED_DEV_PM_DOMAIN_ATTACH and NEED_DEV_PM_DOMAIN_DETACH
  *
  * dev_pm_domain_attach() and dev_pm_domain_detach() were added in upstream
  * commit 46420dd73b80 ("PM / Domains: Add APIs to attach/detach a PM domain for
@@ -738,7 +910,18 @@ static inline void dev_pm_domain_detach(struct device *dev, bool power_off)
 	if (ACPI_HANDLE(dev))
 		acpi_dev_pm_detach(dev, true);
 }
-#endif /* NEED_DEV_PM_DOMAIN_ATTACH_DETACH */
+#else /* NEED_DEV_PM_DOMAIN_ATTACH && NEED_DEV_PM_DOMAIN_DETACH */
+/* it doesn't make sense to compat only one of these functions, and it is
+ * likely either a failure in kcompat-generator.sh or a failed distribution
+ * backport if this occurs. Don't try to support it.
+ */
+#ifdef NEED_DEV_PM_DOMAIN_ATTACH
+#error "NEED_DEV_PM_DOMAIN_ATTACH defined but NEED_DEV_PM_DOMAIN_DETACH not defined???"
+#endif /* NEED_DEV_PM_DOMAIN_ATTACH */
+#ifdef NEED_DEV_PM_DOMAIN_DETACH
+#error "NEED_DEV_PM_DOMAIN_DETACH defined but NEED_DEV_PM_DOMAIN_ATTACH not defined???"
+#endif /* NEED_DEV_PM_DOMAIN_DETACH */
+#endif /* NEED_DEV_PM_DOMAIN_ATTACH && NEED_DEV_PM_DOMAIN_DETACH */
 
 #ifdef NEED_CPU_LATENCY_QOS_RENAME
 /* NEED_CPU_LATENCY_QOS_RENAME
@@ -773,43 +956,45 @@ cpu_latency_qos_remove_request(struct pm_qos_request *req)
 #ifdef NEED_DECLARE_STATIC_KEY_FALSE
 /* NEED_DECLARE_STATIC_KEY_FALSE
  *
- * DECLARE_STATIC_KEY_FALSE was added by upstream commit
- * 525e0ac4d2b2 ("locking/static_keys: Provide DECLARE and
- * well as DEFINE macros")
+ * DECLARE_STATIC_KEY_FALSE was added by upstream commit b8fb03785d4d
+ * ("locking/static_keys: Provide DECLARE and well as DEFINE macros")
  *
- * The definition is now necessary to handle
- * the xdpdrv work with more than 64 cpus
+ * The definition is now necessary to handle the xdpdrv work with more than 64
+ * cpus
  */
-#define DECLARE_STATIC_KEY_FALSE(name)	\
-	extern struct static_key_false name
+#ifdef HAVE_STRUCT_STATIC_KEY_FALSE
+#define DECLARE_STATIC_KEY_FALSE(name) extern struct static_key_false name
+#else
+#define DECLARE_STATIC_KEY_FALSE(name) extern struct static_key name
+#endif /* HAVE_STRUCT_STATIC_KEY_FALSE */
 #endif /* NEED_DECLARE_STATIC_KEY_FALSE */
 
 #ifdef NEED_DEFINE_STATIC_KEY_FALSE
 /* NEED_DEFINE_STATIC_KEY_FALSE
  *
- * DEFINE_STATIC_KEY_FALSE was added by upstream commit
- * 11276d5306b8 ("locking/static_keys: Add a new
- * static_key interface")
+ * DEFINE_STATIC_KEY_FALSE was added by upstream commit 11276d5306b8
+ * ("locking/static_keys: Add a new static_key interface")
  *
- * The definition is now necessary to handle
- * the xdpdrv work with more than 64 cpus
+ * The definition is now necessary to handle the xdpdrv work with more than 64
+ * cpus
  */
-#define DECLARE_STATIC_KEY_FALSE(name) extern struct static_key name
-
 #define DEFINE_STATIC_KEY_FALSE(name) \
 	struct static_key name = STATIC_KEY_INIT_FALSE
 #endif /* NEED_DEFINE_STATIC_KEY_FALSE */
 
-#ifdef NEED_STATIC_BRANCH
-/* NEED_STATIC_BRANCH
+#ifdef NEED_STATIC_BRANCH_LIKELY
+/* NEED_STATIC_BRANCH_LIKELY
  *
  * static_branch_likely, static_branch_unlikely,
  * static_branch_inc, static_branch_dec was added by upstream commit
  * 11276d5306b8 ("locking/static_keys: Add a new
  * static_key interface")
  *
- * The definition is now necessary to handle
- * the xdpdrv work with more than 64 cpus
+ * The definition is now necessary to handle the xdpdrv work with more than 64
+ * cpus
+ *
+ * Note that we include all four definitions if static_branch_likely cannot be
+ * found in <linux/jump_label.h>.
  */
 #define static_branch_likely(x)		likely(static_key_enabled(x))
 #define static_branch_unlikely(x)	unlikely(static_key_enabled(x))
@@ -817,7 +1002,18 @@ cpu_latency_qos_remove_request(struct pm_qos_request *req)
 #define static_branch_inc(x)		static_key_slow_inc(x)
 #define static_branch_dec(x)		static_key_slow_dec(x)
 
-#endif /* NEED_STATIC_BRANCH */
+#endif /* NEED_STATIC_BRANCH_LIKELY */
+
+/* PCI related stuff */
+
+/* NEED_PCI_AER_CLEAR_NONFATAL_STATUS
+ *
+ * 894020fdd88c ("PCI/AER: Rationalize error status register clearing") has
+ * renamed pci_cleanup_aer_uncorrect_error_status to more sane name.
+ */
+#ifdef NEED_PCI_AER_CLEAR_NONFATAL_STATUS
+#define pci_aer_clear_nonfatal_status	pci_cleanup_aer_uncorrect_error_status
+#endif /* NEED_PCI_AER_CLEAR_NONFATAL_STATUS */
 
 #ifdef NEED_NETDEV_XDP_STRUCT
 #define netdev_bpf netdev_xdp
@@ -941,15 +1137,18 @@ static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 #endif /* CONFIG_RETPOLINE */
 #endif /* NEED_EXPORT_INDIRECT_CALLABLE */
 
-#ifdef NEED_DEVM_KASPRINTF
-/* NEED_DEVM_KASPRINTF
+/* NEED_DEVM_KASPRINTF and NEED_DEVM_KVASPRINTF
  *
  * devm_kvasprintf and devm_kasprintf were added by commit
  * 75f2a4ead5d5 ("devres: Add devm_kasprintf and devm_kvasprintf API")
  * in Linux 3.17.
  */
+#ifdef NEED_DEVM_KVASPRINTF
 __printf(3, 0) char *devm_kvasprintf(struct device *dev, gfp_t gfp,
 				     const char *fmt, va_list ap);
+#endif /* NEED_DEVM_KVASPRINTF */
+
+#ifdef NEED_DEVM_KASPRINTF
 __printf(3, 4) char *devm_kasprintf(struct device *dev, gfp_t gfp,
 				    const char *fmt, ...);
 #endif /* NEED_DEVM_KASPRINTF */
@@ -1260,6 +1459,104 @@ flow_rule_match_enc_keyid(const struct flow_rule *rule,
 #endif /* HAVE_TC_FLOWER_ENC */
 #endif /* NEED_FLOW_MATCH && HAVE_TC_SETUP_CLSFLOWER */
 
+/* bitfield / bitmap */
+
+/* NEED_BITMAP_COPY_CLEAR_TAIL
+ *
+ * backport
+ * c724f193619c ("bitmap: new bitmap_copy_safe and bitmap_{from,to}_arr32")
+ */
+#ifdef NEED_BITMAP_COPY_CLEAR_TAIL
+/* Copy bitmap and clear tail bits in last word */
+static inline void
+bitmap_copy_clear_tail(unsigned long *dst, const unsigned long *src, unsigned int nbits)
+{
+	bitmap_copy(dst, src, nbits);
+	if (nbits % BITS_PER_LONG)
+		dst[nbits / BITS_PER_LONG] &= BITMAP_LAST_WORD_MASK(nbits);
+}
+#endif /* NEED_BITMAP_COPY_CLEAR_TAIL */
+
+/* NEED_BITMAP_FROM_ARR32
+ *
+ * backport
+ * c724f193619c ("bitmap: new bitmap_copy_safe and bitmap_{from,to}_arr32")
+ */
+#ifdef NEED_BITMAP_FROM_ARR32
+#if BITS_PER_LONG == 64
+/**
+ * bitmap_from_arr32 - copy the contents of u32 array of bits to bitmap
+ * @bitmap: array of unsigned longs, the destination bitmap
+ * @buf: array of u32 (in host byte order), the source bitmap
+ * @nbits: number of bits in @bitmap
+ */
+static inline void bitmap_from_arr32(unsigned long *bitmap, const u32 *buf,
+				     unsigned int nbits)
+{
+	unsigned int i, halfwords;
+
+	halfwords = DIV_ROUND_UP(nbits, 32);
+	for (i = 0; i < halfwords; i++) {
+		bitmap[i/2] = (unsigned long) buf[i];
+		if (++i < halfwords)
+			bitmap[i/2] |= ((unsigned long) buf[i]) << 32;
+	}
+
+	/* Clear tail bits in last word beyond nbits. */
+	if (nbits % BITS_PER_LONG)
+		bitmap[(halfwords - 1) / 2] &= BITMAP_LAST_WORD_MASK(nbits);
+}
+#else /* BITS_PER_LONG == 64 */
+/*
+ * On 32-bit systems bitmaps are represented as u32 arrays internally, and
+ * therefore conversion is not needed when copying data from/to arrays of u32.
+ */
+#define bitmap_from_arr32(bitmap, buf, nbits)			\
+	bitmap_copy_clear_tail((unsigned long *) (bitmap),	\
+			       (const unsigned long *) (buf), (nbits))
+#endif /* BITS_PER_LONG == 64 */
+#endif /* NEED_BITMAP_FROM_ARR32 */
+
+/* NEED_BITMAP_TO_ARR32
+ *
+ * backport
+ * c724f193619c ("bitmap: new bitmap_copy_safe and bitmap_{from,to}_arr32")
+ */
+#ifdef NEED_BITMAP_TO_ARR32
+#if BITS_PER_LONG == 64
+/**
+ * bitmap_to_arr32 - copy the contents of bitmap to a u32 array of bits
+ *  @buf: array of u32 (in host byte order), the dest bitmap
+ *  @bitmap: array of unsigned longs, the source bitmap
+ *  @nbits: number of bits in @bitmap
+ */
+static inline void bitmap_to_arr32(u32 *buf, const unsigned long *bitmap,
+				   unsigned int nbits)
+{
+	unsigned int i, halfwords;
+
+	halfwords = DIV_ROUND_UP(nbits, 32);
+	for (i = 0; i < halfwords; i++) {
+		buf[i] = (u32) (bitmap[i/2] & UINT_MAX);
+		if (++i < halfwords)
+			buf[i] = (u32) (bitmap[i/2] >> 32);
+	}
+
+	/* Clear tail bits in last element of array beyond nbits. */
+	if (nbits % BITS_PER_LONG)
+		buf[halfwords - 1] &= (u32) (UINT_MAX >> ((-nbits) & 31));
+}
+#else
+/*
+ * On 32-bit systems bitmaps are represented as u32 arrays internally, and
+ * therefore conversion is not needed when copying data from/to arrays of u32.
+ */
+#define bitmap_to_arr32(buf, bitmap, nbits)			\
+	bitmap_copy_clear_tail((unsigned long *) (buf),		\
+			       (const unsigned long *) (bitmap), (nbits))
+#endif /* BITS_PER_LONG == 64 */
+#endif /* NEED_BITMAP_TO_ARR32 */
+
 #ifndef HAVE_INCLUDE_BITFIELD
 /* linux/bitfield.h has been added in Linux 4.9 in upstream commit
  * 3e9b3112ec74 ("add basic register-field manipulation macros")
@@ -1378,6 +1675,7 @@ flow_rule_match_enc_keyid(const struct flow_rule *rule,
  *
  * Define NEED_NETIF_NAPI_ADD_NO_WEIGHT on kernels 3.10+ to use old
  * implementation. Undef for 6.1+ where new function was introduced.
+ * RedHat 9.2 required using no weight parameter option.
  */
 #ifdef NEED_NETIF_NAPI_ADD_NO_WEIGHT
 static inline void
@@ -1394,6 +1692,14 @@ _kc_netif_napi_add(struct net_device *dev, struct napi_struct *napi,
 #define netif_napi_add _kc_netif_napi_add
 #endif /* NEED_NETIF_NAPI_ADD_NO_WEIGHT */
 
+/*
+ * NEED_ETHTOOL_SPRINTF
+ *
+ * Upstream commit 7888fe53b706 ("ethtool: Add common function for filling out
+ * strings") introduced ethtool_sprintf, which landed in Linux v5.13
+ *
+ * The function is easy to directly implement.
+ */
 #ifdef NEED_ETHTOOL_SPRINTF
 static inline
 __printf(2, 3) void ethtool_sprintf(u8 **data, const char *fmt, ...)
@@ -1407,5 +1713,280 @@ __printf(2, 3) void ethtool_sprintf(u8 **data, const char *fmt, ...)
 	*data += ETH_GSTRING_LEN;
 }
 #endif /* NEED_ETHTOOL_SPRINTF */
+
+/*
+ * NEED_SYSFS_EMIT
+ *
+ * Upstream introduced following function in
+ * commit 2efc459d06f1 ("sysfs: Add sysfs_emit and sysfs_emit_at to format sysfs output")
+ */
+#ifdef NEED_SYSFS_EMIT
+static inline __printf(2, 3)
+int sysfs_emit(char *buf, const char *fmt, ...)
+{
+	va_list args;
+	int len;
+
+	if (WARN(!buf || offset_in_page(buf),
+		 "invalid sysfs_emit: buf:%p\n", buf))
+		return 0;
+
+	va_start(args, fmt);
+	len = vscnprintf(buf, PAGE_SIZE, fmt, args);
+	va_end(args);
+
+	return len;
+}
+#endif /* NEED_SYSFS_EMIT */
+
+/*
+ * HAVE_U64_STATS_FETCH_BEGIN_IRQ
+ * HAVE_U64_STATS_FETCH_RETRY_IRQ
+ *
+ * Upstream commit 44b0c2957adc ("u64_stats: Streamline the implementation")
+ * marks u64_stats_fetch_begin_irq() and u64_stats_fetch_retry_irq()
+ * as obsolete. Their functionality is combined with: u64_stats_fetch_begin()
+ * and u64_stats_fetch_retry().
+ *
+ * Upstream commit dec5efcffad4 ("u64_stat: Remove the obsolete fetch_irq()
+ * variants.") removes u64_stats_fetch_begin_irq() and
+ * u64_stats_fetch_retry_irq().
+ *
+ * Map u64_stats_fetch_begin() and u64_stats_fetch_retry() to the _irq()
+ * variants on the older kernels to allow the same driver code working on
+ * both old and new kernels.
+ */
+#ifdef HAVE_U64_STATS_FETCH_BEGIN_IRQ
+#define u64_stats_fetch_begin _kc_u64_stats_fetch_begin
+
+static inline unsigned int
+_kc_u64_stats_fetch_begin(const struct u64_stats_sync *syncp)
+{
+	return u64_stats_fetch_begin_irq(syncp);
+}
+#endif /* HAVE_U64_STATS_FETCH_BEGIN_IRQ */
+
+#ifdef HAVE_U64_STATS_FETCH_RETRY_IRQ
+#define u64_stats_fetch_retry _kc_u64_stats_fetch_retry
+
+static inline bool
+_kc_u64_stats_fetch_retry(const struct u64_stats_sync *syncp,
+			  unsigned int start)
+{
+	return u64_stats_fetch_retry_irq(syncp, start);
+}
+#endif /* HAVE_U64_STATS_FETCH_RETRY_IRQ */
+
+/*
+ * NEED_DEVM_KFREE
+ * NEED_DEVM_KZALLOC
+ *
+ * Upstream commit 9ac7849e35f7 ("devres: device resource management")
+ * Implement device resource management to allocate and free the resource
+ * for driver
+ */
+#ifdef NEED_DEVM_KFREE
+#define devm_kfree(dev, p) kfree(p)
+#else
+static inline void _kc_devm_kfree(struct device *dev, void *p)
+{
+	/* Upstream devm_kfree() has this NULL check since
+	 * commit cad064f1bd52 ("devres: handle zero size in devm_kmalloc()"),
+	 * but it's done in devres.c (not header), so we could NOT use
+	 * kcompat generator to check for it's presence.
+	 */
+	if (p)
+		devm_kfree(dev, p);
+}
+#define devm_kfree _kc_devm_kfree
+#endif /* NEED_DEVM_KFREE */
+
+#ifdef NEED_DEVM_KZALLOC
+#define devm_kzalloc(dev, size, flags) kzalloc(size, flags)
+#endif /* NEED_DEVM_KZALLOC */
+
+/* NEED_DIFF_BY_SCALED_PPM
+ *
+ * diff_by_scaled_ppm and adjust_by_scaled_ppm were introduced in
+ * kernel 6.1 by upstream commit 1060707e3809 ("ptp: introduce helpers
+ * to adjust by scaled parts per million").
+ */
+#ifdef NEED_DIFF_BY_SCALED_PPM
+static inline bool
+diff_by_scaled_ppm(u64 base, long scaled_ppm, u64 *diff)
+{
+	bool negative = false;
+
+	if (scaled_ppm < 0) {
+		negative = true;
+		scaled_ppm = -scaled_ppm;
+	}
+
+	*diff = mul_u64_u64_div_u64(base, (u64)scaled_ppm,
+				    1000000ULL << 16);
+
+	return negative;
+}
+
+static inline u64
+adjust_by_scaled_ppm(u64 base, long scaled_ppm)
+{
+	u64 diff;
+
+	if (diff_by_scaled_ppm(base, scaled_ppm, &diff))
+		return base - diff;
+
+	return base + diff;
+}
+#endif /* NEED_DIFF_BY_SCALED_PPM */
+
+#ifndef HAVE_PCI_MSIX_CAN_ALLOC_DYN
+static inline bool pci_msix_can_alloc_dyn(struct pci_dev __always_unused *dev)
+{
+	return false;
+}
+#endif /* !HAVE_PCI_MSIX_CAN_ALLOC_DYN */
+
+#if !defined(HAVE_PCI_MSIX_ALLOC_IRQ_AT) && !defined(HAVE_PCI_MSIX_FREE_IRQ)
+struct msi_map {
+	int	index;
+	int	virq;
+};
+#endif /* !HAVE_PCI_MSIX_ALLOC_IRQ_AT && !HAVE_PCI_MSIX_FREE_IRQ */
+
+#ifndef HAVE_PCI_MSIX_ALLOC_IRQ_AT
+#define MSI_ANY_INDEX		UINT_MAX
+struct irq_affinity_desc;
+
+static inline struct msi_map
+pci_msix_alloc_irq_at(struct pci_dev __always_unused *dev,
+		      unsigned int __always_unused index,
+		      const struct irq_affinity_desc __always_unused *affdesc)
+{
+	struct msi_map map = { .index = -ENOTSUPP  };
+	return map;
+}
+#endif /* !HAVE_PCI_MSIX_ALLOC_IRQ_AT */
+
+#ifndef HAVE_PCI_MSIX_FREE_IRQ
+static inline void
+pci_msix_free_irq(struct pci_dev __always_unused *dev,
+		  struct msi_map __always_unused map)
+{
+}
+#endif /* !HAVE_PCI_MSIX_FREE_IRQ */
+
+#ifdef NEED_PCIE_PTM_ENABLED
+/* NEED_PCIE_PTM_ENABLED
+ *
+ * pcie_ptm_enabled was added by upstream commit 014408cd624e
+ * ("PCI: Add pcie_ptm_enabled()").
+ *
+ * It is easy to implement directly.
+ */
+static inline bool pcie_ptm_enabled(struct pci_dev *dev)
+{
+#if defined(HAVE_STRUCT_PCI_DEV_PTM_ENABLED) && defined(CONFIG_PCIE_PTM)
+	if (!dev)
+		return false;
+
+	return dev->ptm_enabled;
+#else /* !HAVE_STRUCT_PCI_DEV_PTM_ENABLED || !CONFIG_PCIE_PTM */
+	return false;
+#endif /* HAVE_STRUCT_PCI_DEV_PTM_ENBED && CONFIG_PCIE_PTM */
+}
+#endif /* NEED_PCIE_PTM_ENABLED */
+
+/* NEED_PCI_ENABLE_PTM
+ *
+ * commit ac6c26da29c1 made this function private
+ * commit 1d71eb53e451 made this function public again
+ * This declares/defines the function for kernels missing it in linux/pci.h
+ */
+#ifdef NEED_PCI_ENABLE_PTM
+#ifdef CONFIG_PCIE_PTM
+int pci_enable_ptm(struct pci_dev *dev, u8 *granularity);
+#else
+static inline int pci_enable_ptm(struct pci_dev *dev, u8 *granularity)
+{ return -EINVAL; }
+#endif /* CONFIG_PCIE_PTM */
+#endif /* NEED_PCI_ENABLE_PTM */
+
+/* NEED_DEV_PAGE_IS_REUSABLE
+ *
+ * dev_page_is_reusable was introduced by
+ * commit bc38f30f8dbc ("net:  introduce common dev_page_is_reusable()")
+ *
+ * This function is trivial to re-implement in full.
+ */
+#ifdef NEED_DEV_PAGE_IS_REUSABLE
+static inline bool dev_page_is_reusable(struct page *page)
+{
+	return likely(page_to_nid(page) == numa_mem_id() &&
+		      !page_is_pfmemalloc(page));
+}
+#endif /* NEED_DEV_PAGE_IS_REUSABLE */
+
+/* NEED_DEBUGFS_LOOKUP
+ *
+ * Old RHELs (7.2-7.4) do not have this backported. Create a stub and always
+ * return NULL. Should not affect important features workflow and allows the
+ * driver to compile on older kernels.
+ */
+#ifdef NEED_DEBUGFS_LOOKUP
+
+#include <linux/debugfs.h>
+
+static inline struct dentry *
+debugfs_lookup(const char *name, struct dentry *parent)
+{
+	return NULL;
+}
+#endif /* NEED_DEBUGFS_LOOKUP */
+
+/* NEED_DEBUGFS_LOOKUP_AND_REMOVE
+ *
+ * Upstream commit dec9b2f1e0455("debugfs: add debugfs_lookup_and_remove()")
+ *
+ * Should work the same as upstream equivalent.
+ */
+#ifdef NEED_DEBUGFS_LOOKUP_AND_REMOVE
+
+#include <linux/debugfs.h>
+
+static inline void
+debugfs_lookup_and_remove(const char *name, struct dentry *parent)
+{
+	struct dentry *dentry;
+
+	dentry = debugfs_lookup(name, parent);
+	if (!dentry)
+		return;
+
+	debugfs_remove(dentry);
+	dput(dentry);
+}
+#endif /* NEED_DEBUGFS_LOOKUP_AND_REMOVE */
+
+/* NEED_CLASS_CREATE_WITH_MODULE_PARAM
+ *
+ * Upstream removed owner argument form helper macro class_create in
+ * 1aaba11da9aa ("remove module * from class_create()")
+ *
+ * In dcfbb67e48a2 ("use lock_class_key already present in struct subsys_private")
+ * the macro was removed completely.
+ *
+ * class_create no longer has owner/module param as it was not used.
+ */
+#ifdef NEED_CLASS_CREATE_WITH_MODULE_PARAM
+static inline struct class *_kc_class_create(const char *name)
+{
+	return class_create(THIS_MODULE, name);
+}
+#ifdef class_create
+#undef class_create
+#endif
+#define class_create _kc_class_create
+#endif /* NEED_CLASS_CREATE_WITH_MODULE_PARAM */
 
 #endif /* _KCOMPAT_IMPL_H_ */

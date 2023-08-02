@@ -8,6 +8,7 @@
 #include <linux/bitops.h>
 #include <linux/if_ether.h>
 #include "virtchnl.h"
+#include "ice_switch.h"
 #include "ice_vf_lib.h"
 
 /* Restrict number of MAC Addr and VLAN that non-trusted VF can programmed */
@@ -17,9 +18,6 @@
  * broadcast, and 16 for additional unicast/multicast filters
  */
 #define ICE_MAX_MACADDR_PER_VF		18
-
-/* Maximum number of queue pairs to configure by default for a VF */
-#define ICE_MAX_DFLT_QS_PER_VF		16
 
 #define ICE_MAX_RSS_QS_PER_LARGE_VF	64
 #define ICE_MAX_RSS_QS_PER_VF		16
@@ -33,9 +31,16 @@
 #define calc_quanta_desc(x)	\
 	max_t(u16, 12, min_t(u16, 63, ((x + 66) / 132) * 2 + 4))
 
-#define ICE_VF_UCAST_PROMISC_BITS ICE_PROMISC_UCAST_RX
-#define ICE_VF_UCAST_VLAN_PROMISC_BITS	(ICE_PROMISC_UCAST_RX | \
-					 ICE_PROMISC_VLAN_RX)
+static inline void ice_set_vf_ucast_promisc_bits(unsigned long *mask)
+{
+	set_bit(ICE_PROMISC_UCAST_RX, mask);
+}
+
+static inline void ice_set_vf_ucast_vlan_promisc_bits(unsigned long *mask)
+{
+	set_bit(ICE_PROMISC_UCAST_RX, mask);
+	set_bit(ICE_PROMISC_VLAN_RX, mask);
+}
 
 struct ice_virtchnl_ops {
 	int (*get_ver_msg)(struct ice_vf *vf, u8 *msg);
@@ -128,6 +133,8 @@ ice_vc_send_response_to_vf(struct ice_vf *vf, u32 v_opcode,
 			   enum virtchnl_status_code v_retval, u8 *msg,
 			   u16 msglen);
 bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
+int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event,
+			  struct ice_mbx_data *mbxdata);
 #else /* CONFIG_PCI_IOV */
 static inline void ice_virtchnl_set_dflt_ops(struct ice_vf *vf) { }
 static inline void ice_virtchnl_set_repr_ops(struct ice_vf *vf) { }
@@ -159,6 +166,13 @@ ice_vc_send_response_to_vf(struct ice_vf *vf, u32 v_opcode,
 static inline bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id)
 {
 	return 0;
+}
+
+static inline int
+ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event,
+		      struct ice_mbx_data *mbxdata)
+{
+	return -EOPNOTSUPP;
 }
 #endif /* !CONFIG_PCI_IOV */
 

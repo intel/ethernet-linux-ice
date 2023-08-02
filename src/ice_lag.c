@@ -138,7 +138,7 @@ ice_lag_add_lg_action(struct ice_hw *hw, struct ice_adv_lkup_elem *lkup,
 	const struct ice_dummy_pkt_offsets *pkt_offsets;
 	struct ice_pf *pf = (struct ice_pf *)hw->back;
 	u16 rule_buf_sz, pkt_len, vsi_handle, rid = 0;
-	struct ice_aqc_sw_rules_elem *s_rule = NULL;
+	struct ice_sw_rule_lkup_rx_tx *s_rule = NULL;
 	const u8 *pkt = NULL;
 	int ret = 0;
 	u32 act = 0;
@@ -174,7 +174,7 @@ ice_lag_add_lg_action(struct ice_hw *hw, struct ice_adv_lkup_elem *lkup,
 		return ret;
 	}
 
-	rule_buf_sz = ICE_SW_RULE_RX_TX_NO_HDR_SIZE + pkt_len;
+	rule_buf_sz = struct_size(s_rule, hdr_data, 0) + pkt_len;
 	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
@@ -183,10 +183,10 @@ ice_lag_add_lg_action(struct ice_hw *hw, struct ice_adv_lkup_elem *lkup,
 	      ICE_SINGLE_ACT_PTR_HAS_FWD | ICE_SINGLE_ACT_PTR_BIT |
 	      ICE_SINGLE_ACT_LAN_ENABLE | ICE_SINGLE_ACT_LB_ENABLE;
 
-	s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
-	s_rule->pdata.lkup_tx_rx.src = cpu_to_le16(hw->port_info->lport);
-	s_rule->pdata.lkup_tx_rx.recipe_id = cpu_to_le16(rid);
-	s_rule->pdata.lkup_tx_rx.act = cpu_to_le32(act);
+	s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
+	s_rule->src = cpu_to_le16(hw->port_info->lport);
+	s_rule->recipe_id = cpu_to_le16(rid);
+	s_rule->act = cpu_to_le32(act);
 
 	ret = ice_fill_adv_dummy_packet(lkup, 1, s_rule, pkt, pkt_len,
 					pkt_offsets);
@@ -195,15 +195,15 @@ ice_lag_add_lg_action(struct ice_hw *hw, struct ice_adv_lkup_elem *lkup,
 		goto ice_lag_lg_act_err;
 	}
 
-	ret = ice_aq_sw_rules(hw, (struct ice_aqc_sw_rules *)s_rule,
-			      rule_buf_sz, 1, ice_aqc_opc_add_sw_rules, NULL);
+	ret = ice_aq_sw_rules(hw, s_rule, rule_buf_sz, 1,
+			      ice_aqc_opc_add_sw_rules, NULL);
 	if (ret) {
 		dev_warn(ice_pf_to_dev(pf), "Fail adding switch rule for Lg Action\n");
 		goto ice_lag_lg_act_err;
 	}
 
 	entry->rid = rid;
-	entry->rule_id = le16_to_cpu(s_rule->pdata.lkup_tx_rx.index);
+	entry->rule_id = le16_to_cpu(s_rule->index);
 	entry->vsi_handle = rinfo->sw_act.vsi_handle;
 
 ice_lag_lg_act_err:
@@ -218,12 +218,11 @@ ice_lag_lg_act_err:
  */
 static void ice_lag_add_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 {
-	u16 num_vsi, rule_buf_sz, vsi_list_id, prim_vsi_num, event_vsi_idx;
-	struct ice_aqc_sw_rules_elem *s_rule = NULL;
+	u16 rule_buf_sz, vsi_list_id, prim_vsi_num, event_vsi_idx;
+	struct ice_sw_rule_vsi_list *s_rule = NULL;
 	struct ice_sw_recipe *recp_list;
+	const u16 num_vsi = 1;
 	struct device *dev;
-
-	num_vsi = 1;
 
 	recp_list = &event_pf->hw.switch_info->recp_list[ICE_SW_LKUP_VLAN];
 	dev = ice_pf_to_dev(lag->pf);
@@ -235,15 +234,15 @@ static void ice_lag_add_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 		return;
 	}
 
-	rule_buf_sz = ICE_SW_RULE_VSI_LIST_SIZE(num_vsi);
+	rule_buf_sz = struct_size(s_rule, vsi, num_vsi);
 	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return;
 
-	s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_PRUNE_LIST_SET);
-	s_rule->pdata.vsi_list.index = cpu_to_le16(vsi_list_id);
-	s_rule->pdata.vsi_list.number_vsi = cpu_to_le16(num_vsi);
-	s_rule->pdata.vsi_list.vsi[0] = cpu_to_le16(prim_vsi_num);
+	s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_PRUNE_LIST_SET);
+	s_rule->index = cpu_to_le16(vsi_list_id);
+	s_rule->number_vsi = cpu_to_le16(num_vsi);
+	s_rule->vsi[0] = cpu_to_le16(prim_vsi_num);
 
 	if (ice_aq_sw_rules(&lag->pf->hw, (struct ice_aqc_sw_rules *)s_rule,
 			    rule_buf_sz, 1, ice_aqc_opc_update_sw_rules, NULL))
@@ -258,12 +257,11 @@ static void ice_lag_add_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
  */
 static void ice_lag_del_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 {
-	u16 num_vsi, vsi_num, vsi_idx, rule_buf_sz, vsi_list_id;
-	struct ice_aqc_sw_rules_elem *s_rule = NULL;
+	u16 vsi_num, vsi_idx, rule_buf_sz, vsi_list_id;
+	struct ice_sw_rule_vsi_list *s_rule = NULL;
 	struct ice_sw_recipe *recp_list;
+	const u16 num_vsi = 1;
 	struct device *dev;
-
-	num_vsi = 1;
 
 	recp_list = &event_pf->hw.switch_info->recp_list[ICE_SW_LKUP_VLAN];
 	dev = ice_pf_to_dev(lag->pf);
@@ -275,19 +273,19 @@ static void ice_lag_del_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 		return;
 	}
 
-	rule_buf_sz = ICE_SW_RULE_VSI_LIST_SIZE(num_vsi);
-	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
+	rule_buf_sz = struct_size(s_rule, vsi, num_vsi);
+	s_rule = (typeof(s_rule))
+		kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return;
 
-	rule_buf_sz = ICE_SW_RULE_VSI_LIST_SIZE(num_vsi);
-	s_rule->type = cpu_to_le16(ICE_AQC_SW_RULES_T_PRUNE_LIST_CLEAR);
-	s_rule->pdata.vsi_list.index = cpu_to_le16(vsi_list_id);
-	s_rule->pdata.vsi_list.number_vsi = cpu_to_le16(num_vsi);
-	s_rule->pdata.vsi_list.vsi[0] = cpu_to_le16(vsi_num);
+	s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_PRUNE_LIST_CLEAR);
+	s_rule->index = cpu_to_le16(vsi_list_id);
+	s_rule->number_vsi = cpu_to_le16(num_vsi);
+	s_rule->vsi[0] = cpu_to_le16(vsi_num);
 
-	if (ice_aq_sw_rules(&lag->pf->hw, (struct ice_aqc_sw_rules *)s_rule,
-			    rule_buf_sz, 1, ice_aqc_opc_update_sw_rules, NULL))
+	if (ice_aq_sw_rules(&lag->pf->hw, s_rule, rule_buf_sz, 1,
+			    ice_aqc_opc_update_sw_rules, NULL))
 		dev_warn(dev, "Error clearing VSI prune list\n");
 
 	kfree(s_rule);
@@ -300,7 +298,6 @@ static void ice_lag_del_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 static int ice_lag_rdma_create_fltr(struct ice_lag *lag)
 {
 	struct ice_aqc_alloc_free_res_elem *sw_buf;
-	struct ice_aqc_sw_rules_elem rule = { 0 };
 	struct ice_aqc_res_elem *sw_ele;
 	struct ice_lag *primary_lag;
 	struct ice_vsi *primary_vsi;
@@ -319,7 +316,7 @@ static int ice_lag_rdma_create_fltr(struct ice_lag *lag)
 	np = netdev_priv(primary_lag->netdev);
 	primary_vsi = np->vsi;
 
-	buf_len = ICE_SW_RULE_LG_ACT_SIZE(ICE_LAG_NUM_RULES);
+	buf_len = struct_size(sw_buf, elem, ICE_LAG_NUM_RULES);
 	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
@@ -328,7 +325,9 @@ static int ice_lag_rdma_create_fltr(struct ice_lag *lag)
 	sw_buf->res_type = cpu_to_le16(ICE_AQC_RES_TYPE_WIDE_TABLE_1 |
 				       ICE_LAG_RES_SHARED);
 	if (lag->primary) {
+		struct ice_sw_rule_lg_act *s_rule;
 		u32 large_action = 0x0;
+		u16 rule_sz;
 
 		dev_dbg(ice_pf_to_dev(lag->pf), "Configuring filter on Primary\n");
 		/* Allocate a shared Large Action on primary interface
@@ -350,16 +349,23 @@ static int ice_lag_rdma_create_fltr(struct ice_lag *lag)
 		large_action |= (primary_vsi->vsi_num << ICE_LAG_LA_VSI_S) |
 				ICE_LAG_LA_VALID;
 
+		rule_sz = struct_size(s_rule, act, ICE_LAG_NUM_RULES);
+		s_rule = (typeof(s_rule))kzalloc(rule_sz, GFP_KERNEL);
+		if (!s_rule) {
+			ret = -ENOMEM;
+			goto create_fltr_out;
+		}
 		/* Fill out add switch rule structure */
-		rule.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LG_ACT);
-		rule.pdata.lg_act.index = cpu_to_le16(lag->action_idx);
-		rule.pdata.lg_act.size = cpu_to_le16(ICE_LAG_NUM_RULES);
-		rule.pdata.lg_act.act[0] = cpu_to_le32(large_action);
+		s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LG_ACT);
+		s_rule->index = cpu_to_le16(lag->action_idx);
+		s_rule->size = cpu_to_le16(ICE_LAG_NUM_RULES);
+		s_rule->act[0] = cpu_to_le32(large_action);
 
 		/* call add switch rule */
-		ret = ice_aq_sw_rules(&lag->pf->hw, &rule, sizeof(rule),
+		ret = ice_aq_sw_rules(&lag->pf->hw, s_rule, rule_sz,
 				      ICE_LAG_NUM_RULES,
 				      ice_aqc_opc_add_sw_rules, NULL);
+		kfree(s_rule);
 		if (ret)
 			dev_err(ice_pf_to_dev(lag->pf),
 				"Failed configuring shared Lg Action item %d\n",
@@ -394,7 +400,6 @@ static int ice_lag_rdma_create_fltr(struct ice_lag *lag)
 			goto create_fltr_out;
 		}
 
-		memset(item, 0, sizeof(*item));
 		item->type = ICE_UDP_ILOS;
 		memcpy(&item->h_u.l4_hdr.dst_port, "\x12\xB7", 2);
 		memset(&item->m_u.l4_hdr.dst_port, 0xFF, 2);
@@ -424,19 +429,18 @@ create_fltr_out:
 static void ice_lag_rdma_del_fltr(struct ice_lag *lag)
 {
 	struct ice_rule_query_data *rm_entry = &lag->fltr;
-	struct ice_aqc_sw_rules_elem *s_rule;
+	struct ice_sw_rule_lkup_rx_tx *s_rule;
 	struct ice_hw *hw = &lag->pf->hw;
 	u16 rule_buf_sz;
 
-	rule_buf_sz = ICE_SW_RULE_RX_TX_NO_HDR_SIZE;
-	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
+	rule_buf_sz = struct_size(s_rule, hdr_data, 0);
+	s_rule = (typeof(s_rule))kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return;
 
-	s_rule->pdata.lkup_tx_rx.act = 0;
-	s_rule->pdata.lkup_tx_rx.index =
-		cpu_to_le16(rm_entry->rule_id);
-	s_rule->pdata.lkup_tx_rx.hdr_len = 0;
+	s_rule->act = 0;
+	s_rule->index = cpu_to_le16(rm_entry->rule_id);
+	s_rule->hdr_len = 0;
 	if (ice_aq_sw_rules(hw, (struct ice_aqc_sw_rules *)s_rule,
 			    rule_buf_sz, 1,
 			    ice_aqc_opc_remove_sw_rules, NULL))
@@ -457,7 +461,7 @@ static void ice_lag_rdma_del_action(struct ice_lag *lag)
 {
 	struct ice_aqc_alloc_free_res_elem *sw_buf;
 	struct ice_lag *primary_lag;
-	u16 buf_len = 0x6;
+	const u16 buf_len = struct_size(sw_buf, elem, 1);
 	int ret;
 
 	if (lag->primary)
@@ -483,6 +487,8 @@ static void ice_lag_rdma_del_action(struct ice_lag *lag)
 		dev_warn(ice_pf_to_dev(lag->pf),
 			 "Error trying to delete/unsub from large action %d\n",
 			 ret);
+
+	kfree(sw_buf);
 }
 
 /**
@@ -803,7 +809,7 @@ static int ice_lag_move_node(struct ice_lag *lag, u8 oldport, u8 newport, u8 tc)
 	cmd->flags = ICE_AQC_PF_MODE_KEEP_OWNERSHIP;
 	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
-	buf = kzalloc(ICE_LAG_SINGLE_FILTER_SIZE, GFP_KERNEL);
+	buf = kzalloc(ICE_LAG_SINGLE_FILTER_SIZE, GFP_ATOMIC);
 	if (!buf)
 		return -ENOMEM;
 
@@ -896,7 +902,7 @@ ice_lag_reclaim_node(struct ice_lag *lag, struct ice_hw *active_hw, u8 tc)
 		return -EINVAL;
 	}
 
-	buf = kzalloc(ICE_LAG_SINGLE_FILTER_SIZE, GFP_KERNEL);
+	buf = kzalloc(ICE_LAG_SINGLE_FILTER_SIZE, GFP_ATOMIC);
 	if (!buf)
 		return -ENOMEM;
 
@@ -972,7 +978,7 @@ int ice_lag_move_node_sync(struct ice_hw *old_hw, struct ice_hw *new_hw,
 	cmd->flags = ICE_AQC_PF_MODE_KEEP_OWNERSHIP;
 	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
-	buf = kzalloc(ICE_LAG_SINGLE_FILTER_SIZE, GFP_KERNEL);
+	buf = kzalloc(ICE_LAG_SINGLE_FILTER_SIZE, GFP_ATOMIC);
 	if (!buf)
 		return -ENOMEM;
 
@@ -1539,14 +1545,14 @@ ice_lag_event_handler(struct notifier_block *notif_blk, unsigned long event,
 
 	INIT_LIST_HEAD(&lag_work->netdev_list.node);
 	if (upper_netdev) {
-		struct net_device *tmp_nd;
 		struct ice_lag_netdev_list *nd_list;
+		struct net_device *tmp_nd;
 
 		rcu_read_lock();
 		for_each_netdev_in_bond_rcu(upper_netdev, tmp_nd) {
-			nd_list = kzalloc(sizeof(*nd_list), GFP_KERNEL);
+			nd_list = kzalloc(sizeof(*nd_list), GFP_ATOMIC);
 			if (!nd_list)
-				continue;
+				break;
 
 			nd_list->netdev = tmp_nd;
 			list_add(&nd_list->node, &lag_work->netdev_list.node);

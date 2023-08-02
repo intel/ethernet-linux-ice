@@ -210,6 +210,7 @@ static void ice_free_adi(struct ice_adi_priv *priv)
 	 */
 	mutex_lock(&vfs->table_lock);
 	hash_del_rcu(&vf->entry);
+	list_del(&vf->mbx_info.list_entry);
 	mutex_unlock(&vfs->table_lock);
 
 	cancel_work_sync(&priv->update_hash_entry);
@@ -225,14 +226,20 @@ static void ice_free_adi(struct ice_adi_priv *priv)
  */
 static struct ice_vsi *ice_adi_vsi_setup(struct ice_vf *vf)
 {
-	struct ice_port_info *pi = vf->pf->hw.port_info;
+	struct ice_vsi_cfg_params params = {};
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 	struct device *dev;
 	int err;
 
 	dev = ice_pf_to_dev(pf);
-	vsi = ice_vsi_setup(pf, pi, ICE_VSI_ADI, vf, NULL, 0);
+
+	params.type = ICE_VSI_ADI;
+	params.pi = vf->pf->hw.port_info;
+	params.vf = vf;
+	params.flags = ICE_VSI_FLAG_INIT;
+
+	vsi = ice_vsi_setup(pf, &params);
 	if (!vsi) {
 		dev_err(dev, "ADI VSI setup failed\n");
 		ice_vf_invalidate_vsi(vf);
@@ -1187,6 +1194,36 @@ void ice_vdcm_free_adi(struct ice_adi *adi)
 }
 
 /**
+ * ice_is_siov_capable - Check if device and platform support Scalable IOV
+ * @pf: pointer to the device private structure
+ *
+ * Note that there is no way to check whether the platform supports the IOMMU
+ * auxiliary domain without enabling the feature, so this has a side effect of
+ * enabling it when returning true.
+ */
+bool ice_is_siov_capable(struct ice_pf *pf)
+{
+	struct pci_dev *pdev = pf->pdev;
+	struct device *dev = &pdev->dev;
+	int err;
+
+	/* The device must have the PASID extended PCI capability, and its
+	 * BAR0 size must be at least 128MB.
+	 */
+	if (!pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_PASID) ||
+	    pci_resource_len(pdev, ICE_BAR0) < SZ_128M)
+		return false;
+
+	/* Enable the IOMMU auxiliary domain now. If we fail, this means the
+	 * platform doesn't support Scalable IOV and we should fall back to
+	 * defaults
+	 */
+	err = iommu_dev_enable_feature(dev, IOMMU_DEV_FEAT_AUX);
+
+	return err ? false : true;
+}
+
+/**
  * ice_restore_pasid_config - restore PASID mbx support
  * @pf: PF pointer structure
  * @reset_type: type of reset
@@ -1208,11 +1245,19 @@ void ice_restore_pasid_config(struct ice_pf *pf, enum ice_reset_req reset_type)
  */
 void ice_initialize_siov_res(struct ice_pf *pf)
 {
+	struct device *dev = ice_pf_to_dev(pf);
 	int err;
 
 	err = ice_vdcm_init(pf->pdev);
 	if (err) {
-		dev_err(ice_pf_to_dev(pf), "Error enabling Scalable IOV\n");
+		dev_err(dev, "Error enabling Scalable IOV\n");
+
+		/* Disable the IOMMU auxiliary domain since we're no longer
+		 * going to enable Scalable IOV support. It's already enabled
+		 * when checking whether the device is capable of supporting
+		 * Scalable IOV.
+		 */
+		iommu_dev_disable_feature(dev, IOMMU_DEV_FEAT_AUX);
 		return;
 	}
 	/* enable PASID mailbox support */
@@ -1226,7 +1271,31 @@ void ice_initialize_siov_res(struct ice_pf *pf)
 
 	/* ensure mutual exclusivity of SRIOV and SIOV */
 	clear_bit(ICE_FLAG_SRIOV_CAPABLE, pf->flags);
-	dev_info(ice_pf_to_dev(pf), "Scalable IOV has been enabled, disabling SRIOV\n");
+	dev_info(dev, "Scalable IOV has been enabled, disabling SRIOV\n");
 
 	ice_dcf_init_sw_rule_mgmt(pf);
+}
+
+/**
+ * ice_deinit_siov_res - Deinitialize Scalable IOV related resources
+ * @pf: pointer to the PF private structure
+ */
+void ice_deinit_siov_res(struct ice_pf *pf)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	u32 reg;
+
+	if (!test_bit(ICE_FLAG_SIOV_ENA, pf->flags))
+		return;
+
+	ice_vdcm_deinit(pf->pdev);
+
+	iommu_dev_disable_feature(dev, IOMMU_DEV_FEAT_AUX);
+
+	/* disable PASID mailbox */
+	reg = rd32(&pf->hw, GL_MBX_PASID);
+	reg &= ~GL_MBX_PASID_PASID_MODE_M;
+	wr32(&pf->hw, GL_MBX_PASID, reg);
+
+	clear_bit(ICE_FLAG_SIOV_ENA, pf->flags);
 }

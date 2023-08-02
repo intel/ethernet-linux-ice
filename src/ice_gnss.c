@@ -452,9 +452,8 @@ void ice_gnss_exit(struct ice_pf *pf)
 		kthread_cancel_delayed_work_sync(&gnss->read_work);
 		kthread_destroy_worker(gnss->kworker);
 		gnss->kworker = NULL;
-
 #if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
-		if (gnss->gnss_module_owner)
+		if (pf->gnss_serial->gnss_module_owner)
 			gnss_module_exit();
 #endif /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 

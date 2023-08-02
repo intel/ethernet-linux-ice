@@ -99,17 +99,6 @@ ice_alloc_ctrlq_sq_ring(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 		return -ENOMEM;
 	cq->sq.desc_buf.size = size;
 
-	cq->sq.cmd_buf = devm_kcalloc(ice_hw_to_dev(hw), cq->num_sq_entries,
-				      sizeof(struct ice_sq_cd), GFP_KERNEL);
-	if (!cq->sq.cmd_buf) {
-		dmam_free_coherent(ice_hw_to_dev(hw), cq->sq.desc_buf.size,
-				   cq->sq.desc_buf.va, cq->sq.desc_buf.pa);
-		cq->sq.desc_buf.va = NULL;
-		cq->sq.desc_buf.pa = 0;
-		cq->sq.desc_buf.size = 0;
-		return -ENOMEM;
-	}
-
 	return 0;
 }
 
@@ -188,7 +177,7 @@ ice_alloc_rq_bufs(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 		if (cq->rq_buf_size > ICE_AQ_LG_BUF)
 			desc->flags |= cpu_to_le16(ICE_AQ_FLAG_LB);
 		desc->opcode = 0;
-		/* This is in accordance with Admin queue design, there is no
+		/* This is in accordance with control queue design, there is no
 		 * register for buffer size configuration
 		 */
 		desc->datalen = cpu_to_le16(bi->size);
@@ -340,9 +329,6 @@ do {									\
 					(qi)->ring.r.ring##_bi[i].size = 0;\
 		}							\
 	}								\
-	/* free the buffer info list */					\
-	if ((qi)->ring.cmd_buf)						\
-		devm_kfree(ice_hw_to_dev(hw), (qi)->ring.cmd_buf);	\
 	/* free DMA head */						\
 	devm_kfree(ice_hw_to_dev(hw), (qi)->ring.dma_head);		\
 } while (0)
@@ -408,11 +394,11 @@ init_ctrlq_exit:
 }
 
 /**
- * ice_init_rq - initialize ARQ
+ * ice_init_rq - initialize receive side of a control queue
  * @hw: pointer to the hardware structure
  * @cq: pointer to the specific Control queue
  *
- * The main initialization routine for the Admin Receive (Event) Queue.
+ * The main initialization routine for Receive side of a control queue.
  * Prior to calling this function, the driver *MUST* set the following fields
  * in the cq->structure:
  *     - cq->num_rq_entries
@@ -468,7 +454,7 @@ init_ctrlq_exit:
 }
 
 /**
- * ice_shutdown_sq - shutdown the Control ATQ
+ * ice_shutdown_sq - shutdown the transmit side of a control queue
  * @hw: pointer to the hardware structure
  * @cq: pointer to the specific Control queue
  *
@@ -486,7 +472,7 @@ ice_shutdown_sq(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 		goto shutdown_sq_out;
 	}
 
-	/* Stop firmware AdminQ processing */
+	/* Stop processing of the control queue */
 	wr32(hw, cq->sq.head, 0);
 	wr32(hw, cq->sq.tail, 0);
 	wr32(hw, cq->sq.len, 0);
@@ -505,7 +491,7 @@ shutdown_sq_out:
 }
 
 /**
- * ice_aq_ver_check - Check the reported AQ API version.
+ * ice_aq_ver_check - Check the reported AQ API version
  * @hw: pointer to the hardware structure
  *
  * Checks if the driver should load on a given AQ API version.
@@ -688,8 +674,9 @@ static bool ice_is_sbq_supported(struct ice_hw *hw)
  *
  * NOTE: this function does not destroy the control queue locks.
  */
-static void ice_shutdown_ctrlq(struct ice_hw *hw, enum ice_ctl_q q_type,
-			       bool unloading)
+static void
+ice_shutdown_ctrlq(struct ice_hw *hw, enum ice_ctl_q q_type,
+		   bool unloading)
 {
 	struct ice_ctl_q_info *cq;
 
@@ -852,7 +839,7 @@ void ice_destroy_all_ctrlq(struct ice_hw *hw)
 }
 
 /**
- * ice_clean_sq - cleans Admin send queue (ATQ)
+ * ice_clean_sq - cleans send side of a control queue
  * @hw: pointer to the hardware structure
  * @cq: pointer to the specific Control queue
  *
@@ -862,21 +849,17 @@ static u16 ice_clean_sq(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 {
 	struct ice_ctl_q_ring *sq = &cq->sq;
 	u16 ntc = sq->next_to_clean;
-	struct ice_sq_cd *details;
 	struct ice_aq_desc *desc;
 
 	desc = ICE_CTL_Q_DESC(*sq, ntc);
-	details = ICE_CTL_Q_DETAILS(*sq, ntc);
 
 	while (rd32(hw, cq->sq.head) != ntc) {
 		ice_debug(hw, ICE_DBG_AQ_MSG, "ntc %d head %d.\n", ntc, rd32(hw, cq->sq.head));
 		memset(desc, 0, sizeof(*desc));
-		memset(details, 0, sizeof(*details));
 		ntc++;
 		if (ntc == sq->count)
 			ntc = 0;
 		desc = ICE_CTL_Q_DESC(*sq, ntc);
-		details = ICE_CTL_Q_DETAILS(*sq, ntc);
 	}
 
 	sq->next_to_clean = ntc;
@@ -885,15 +868,41 @@ static u16 ice_clean_sq(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 }
 
 /**
+ * ice_ctl_q_str - Convert control queue type to string
+ * @qtype: the control queue type
+ *
+ * Returns: A string name for the given control queue type.
+ */
+static const char *ice_ctl_q_str(enum ice_ctl_q qtype)
+{
+	switch (qtype) {
+	case ICE_CTL_Q_UNKNOWN:
+		return "Unknown CQ";
+	case ICE_CTL_Q_ADMIN:
+		return "AQ";
+	case ICE_CTL_Q_MAILBOX:
+		return "MBXQ";
+	case ICE_CTL_Q_SB:
+		return "SBQ";
+	default:
+		return "Unrecognized CQ";
+	}
+}
+
+/**
  * ice_debug_cq
  * @hw: pointer to the hardware structure
+ * @cq: pointer to the specific Control queue
  * @desc: pointer to control queue descriptor
  * @buf: pointer to command buffer
  * @buf_len: max length of buf
+ * @response: true if this is the writeback response
  *
  * Dumps debug log about control command with descriptor contents.
  */
-static void ice_debug_cq(struct ice_hw *hw, void *desc, void *buf, u16 buf_len)
+static void
+ice_debug_cq(struct ice_hw *hw, struct ice_ctl_q_info *cq,
+	     void *desc, void *buf, u16 buf_len, bool response)
 {
 	struct ice_aq_desc *cq_desc = desc;
 	u16 datalen, flags;
@@ -908,7 +917,8 @@ static void ice_debug_cq(struct ice_hw *hw, void *desc, void *buf, u16 buf_len)
 	datalen = le16_to_cpu(cq_desc->datalen);
 	flags = le16_to_cpu(cq_desc->flags);
 
-	ice_debug(hw, ICE_DBG_AQ_DESC, "CQ CMD: opcode 0x%04X, flags 0x%04X, datalen 0x%04X, retval 0x%04X\n",
+	ice_debug(hw, ICE_DBG_AQ_DESC, "%s %s: opcode 0x%04X, flags 0x%04X, datalen 0x%04X, retval 0x%04X\n",
+		  ice_ctl_q_str(cq->qtype), response ? "Response" : "Command",
 		  le16_to_cpu(cq_desc->opcode), flags, datalen,
 		  le16_to_cpu(cq_desc->retval));
 	ice_debug(hw, ICE_DBG_AQ_DESC, "\tcookie (h,l) 0x%08X 0x%08X\n",
@@ -933,23 +943,23 @@ static void ice_debug_cq(struct ice_hw *hw, void *desc, void *buf, u16 buf_len)
 }
 
 /**
- * ice_sq_done - check if FW has processed the Admin Send Queue (ATQ)
+ * ice_sq_done - check if the last send on a control queue has completed
  * @hw: pointer to the HW struct
  * @cq: pointer to the specific Control queue
  *
- * Returns true if the firmware has processed all descriptors on the
- * admin send queue. Returns false if there are still requests pending.
+ * Returns: true if all the descriptors on the send side of a control queue
+ *          are finished processing, false otherwise.
  */
 static bool ice_sq_done(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 {
-	/* AQ designers suggest use of head for better
+	/* control queue designers suggest use of head for better
 	 * timing reliability than DD bit
 	 */
 	return rd32(hw, cq->sq.head) == cq->sq.next_to_use;
 }
 
 /**
- * ice_sq_send_cmd_nolock - send command to Control Queue (ATQ)
+ * ice_sq_send_cmd_nolock - send command to a control queue
  * @hw: pointer to the HW struct
  * @cq: pointer to the specific Control queue
  * @desc: prefilled descriptor describing the command (non DMA mem)
@@ -957,8 +967,9 @@ static bool ice_sq_done(struct ice_hw *hw, struct ice_ctl_q_info *cq)
  * @buf_size: size of buffer for indirect commands (or 0 for direct commands)
  * @cd: pointer to command details structure
  *
- * This is the main send command routine for the ATQ. It runs the queue,
- * cleans the queue, etc.
+ * This is the main send command routine for a control queue. It prepares the
+ * command into a descriptor, bumps the send queue tail, waits for the command
+ * to complete, captures status and data for the command, etc.
  */
 int
 ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
@@ -968,7 +979,6 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	struct ice_dma_mem *dma_buf = NULL;
 	struct ice_aq_desc *desc_on_ring;
 	bool cmd_completed = false;
-	struct ice_sq_cd *details;
 	u32 total_delay = 0;
 	int status = 0;
 	u16 retval = 0;
@@ -1012,12 +1022,6 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 		goto sq_send_command_error;
 	}
 
-	details = ICE_CTL_Q_DETAILS(cq->sq, cq->sq.next_to_use);
-	if (cd)
-		*details = *cd;
-	else
-		memset(details, 0, sizeof(*details));
-
 	/* Call clean and check queue available function to reclaim the
 	 * descriptors that were processed by FW/MBX; the function returns the
 	 * number of desc available. The clean function called here could be
@@ -1053,19 +1057,27 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 
 	/* Debug desc and buffer */
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ATQ: Control Send queue desc and buffer:\n");
-
-	ice_debug_cq(hw, (void *)desc_on_ring, buf, buf_size);
+	ice_debug_cq(hw, cq, (void *)desc_on_ring, buf, buf_size, false);
 
 	(cq->sq.next_to_use)++;
 	if (cq->sq.next_to_use == cq->sq.count)
 		cq->sq.next_to_use = 0;
 	wr32(hw, cq->sq.tail, cq->sq.next_to_use);
+	ice_flush(hw);
+
+	/* Wait a short time before initial ice_sq_done() check, to allow
+	 * hardware time for completion.
+	 */
+	udelay(5);
 
 	do {
 		if (ice_sq_done(hw, cq))
 			break;
 
-		udelay(ICE_CTL_Q_SQ_CMD_USEC);
+		if (cd && cd->is_atomic_context)
+			udelay(10);
+		else
+			usleep_range(10, 20);
 		total_delay++;
 	} while (total_delay < cq->sq_cmd_timeout);
 
@@ -1100,13 +1112,11 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	}
 
 	ice_debug(hw, ICE_DBG_AQ_MSG, "ATQ: desc and buffer writeback:\n");
-
-	ice_debug_cq(hw, (void *)desc, buf, buf_size);
+	ice_debug_cq(hw, cq, (void *)desc, buf, buf_size, true);
 
 	/* save writeback AQ if requested */
-	if (details->wb_desc)
-		memcpy(details->wb_desc, desc_on_ring,
-		       sizeof(*details->wb_desc));
+	if (cd && cd->wb_desc)
+		memcpy(cd->wb_desc, desc_on_ring, sizeof(*cd->wb_desc));
 
 	/* update the error if time out occurred */
 	if (!cmd_completed) {
@@ -1125,7 +1135,7 @@ sq_send_command_error:
 }
 
 /**
- * ice_sq_send_cmd - send command to Control Queue (ATQ)
+ * ice_sq_send_cmd - send command to a control queue
  * @hw: pointer to the HW struct
  * @cq: pointer to the specific Control queue
  * @desc: prefilled descriptor describing the command
@@ -1133,8 +1143,9 @@ sq_send_command_error:
  * @buf_size: size of buffer for indirect commands (or 0 for direct commands)
  * @cd: pointer to command details structure
  *
- * This is the main send command routine for the ATQ. It runs the queue,
- * cleans the queue, etc.
+ * Main command for the transmit side of a control queue. It puts the command
+ * on the queue, bumps the tail, waits for processing of the command, captures
+ * command status and results, etc.
  */
 int
 ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
@@ -1146,6 +1157,10 @@ ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	/* if reset is in progress return a soft error */
 	if (hw->reset_ongoing)
 		return -EBUSY;
+
+	if (cd && cd->is_atomic_context)
+		ice_debug(hw, ICE_DBG_AQ_MSG, "%s: is_atomic_context is set, but we're about to acquire a mutex which might sleep...\n",
+			  __func__);
 
 	mutex_lock(&cq->sq_lock);
 	status = ice_sq_send_cmd_nolock(hw, cq, desc, buf, buf_size, cd);
@@ -1176,9 +1191,9 @@ void ice_fill_dflt_direct_cmd_desc(struct ice_aq_desc *desc, u16 opcode)
  * @e: event info from the receive descriptor, includes any buffers
  * @pending: number of events that could be left to process
  *
- * This function cleans one Admin Receive Queue element and returns
- * the contents through e. It can also return how many events are
- * left to process through 'pending'.
+ * Clean one element from the receive side of a control queue. On return 'e'
+ * contains contents of the message, and 'pending' contains the number of
+ * events left to process.
  */
 int
 ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
@@ -1233,8 +1248,7 @@ ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 		memcpy(e->msg_buf, cq->rq.r.rq_bi[desc_idx].va, e->msg_len);
 
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ARQ: desc and buffer:\n");
-
-	ice_debug_cq(hw, (void *)desc, e->msg_buf, cq->rq_buf_size);
+	ice_debug_cq(hw, cq, (void *)desc, e->msg_buf, cq->rq_buf_size, true);
 
 	/* Restore the original datalen and buffer address in the desc,
 	 * FW updates datalen to indicate the event message size

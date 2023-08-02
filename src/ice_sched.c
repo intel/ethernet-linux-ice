@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2023 Intel Corporation */
 
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+#include <net/devlink.h>
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 #include "ice_sched.h"
 
 /**
@@ -142,12 +145,14 @@ ice_aq_query_sched_elems(struct ice_hw *hw, u16 elems_req,
  * @pi: port information structure
  * @layer: Scheduler layer of the node
  * @info: Scheduler element information from firmware
+ * @prealloc_node: preallocated ice_sched_node struct for SW DB
  *
  * This function inserts a scheduler node to the SW DB.
  */
 int
 ice_sched_add_node(struct ice_port_info *pi, u8 layer,
-		   struct ice_aqc_txsched_elem_data *info)
+		   struct ice_aqc_txsched_elem_data *info,
+		   struct ice_sched_node *prealloc_node)
 {
 	struct ice_aqc_txsched_elem_data elem;
 	struct ice_sched_node *parent;
@@ -175,7 +180,12 @@ ice_sched_add_node(struct ice_port_info *pi, u8 layer,
 	status = ice_sched_query_elem(hw, le32_to_cpu(info->node_teid), &elem);
 	if (status)
 		return status;
-	node = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*node), GFP_KERNEL);
+
+	if (prealloc_node)
+		node = prealloc_node;
+	else
+		node = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*node),
+				    GFP_KERNEL);
 	if (!node)
 		return -ENOMEM;
 	if (hw->max_children[layer]) {
@@ -354,6 +364,10 @@ void ice_free_sched_node(struct ice_port_info *pi, struct ice_sched_node *node)
 	/* leaf nodes have no children */
 	if (node->children)
 		devm_kfree(ice_hw_to_dev(hw), node->children);
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	kfree(node->name);
+	xa_erase(&pi->sched_node_ids, node->id);
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	devm_kfree(ice_hw_to_dev(hw), node);
 }
 
@@ -943,13 +957,15 @@ ice_aq_cfg_l2_node_cgd(struct ice_hw *hw, u16 num_l2_nodes,
  * @num_nodes: number of nodes
  * @num_nodes_added: pointer to num nodes added
  * @first_node_teid: if new nodes are added then return the TEID of first node
+ * @prealloc_nodes: preallocated nodes struct for software DB
  *
  * This function add nodes to HW as well as to SW DB for a given layer
  */
-static int
+int
 ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 		    struct ice_sched_node *parent, u8 layer, u16 num_nodes,
-		    u16 *num_nodes_added, u32 *first_node_teid)
+		    u16 *num_nodes_added, u32 *first_node_teid,
+		    struct ice_sched_node **prealloc_nodes)
 {
 	struct ice_sched_node *prev, *new_node;
 	struct ice_aqc_add_elem *buf;
@@ -995,7 +1011,11 @@ ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 	*num_nodes_added = num_nodes;
 	/* add nodes to the SW DB */
 	for (i = 0; i < num_nodes; i++) {
-		status = ice_sched_add_node(pi, layer, &buf->generic[i]);
+		if (prealloc_nodes)
+			status = ice_sched_add_node(pi, layer, &buf->generic[i], prealloc_nodes[i]);
+		else
+			status = ice_sched_add_node(pi, layer, &buf->generic[i], NULL);
+
 		if (status) {
 			ice_debug(hw, ICE_DBG_SCHED, "add nodes in SW DB failed status =%d\n",
 				  status);
@@ -1011,6 +1031,24 @@ ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 
 		new_node->sibling = NULL;
 		new_node->tc_num = tc_node->tc_num;
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+		new_node->tx_weight = ICE_SCHED_DFLT_BW_WT;
+		new_node->tx_share = ICE_SCHED_DFLT_BW;
+		new_node->tx_max = ICE_SCHED_DFLT_BW;
+		new_node->name = kzalloc(SCHED_NODE_NAME_MAX_LEN, GFP_KERNEL);
+		if (!new_node->name)
+			return -ENOMEM;
+
+		status = xa_alloc(&pi->sched_node_ids, &new_node->id, NULL, XA_LIMIT(0, UINT_MAX),
+				  GFP_KERNEL);
+		if (status) {
+			ice_debug(hw, ICE_DBG_SCHED, "xa_alloc failed for sched node status =%d\n",
+				  status);
+			break;
+		}
+
+		snprintf(new_node->name, SCHED_NODE_NAME_MAX_LEN, "node_%u", new_node->id);
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 
 		/* add it to previous node sibling pointer */
 		/* Note: siblings are not linked across branches */
@@ -1074,7 +1112,7 @@ ice_sched_add_nodes_to_hw_layer(struct ice_port_info *pi,
 	}
 
 	return ice_sched_add_elems(pi, tc_node, parent, layer, num_nodes,
-				   num_nodes_added, first_node_teid);
+				   num_nodes_added, first_node_teid, NULL);
 }
 
 /**
@@ -1099,14 +1137,14 @@ ice_sched_add_nodes_to_layer(struct ice_port_info *pi,
 	u32 *first_teid_ptr = first_node_teid;
 	u16 new_num_nodes = num_nodes;
 	int status = 0;
+#ifdef __CHECKER__
+	/* cppcheck-suppress unusedVariable */
+#endif /* __CHECKER__ */
+	u32 temp;
 
 	*num_nodes_added = 0;
 	while (*num_nodes_added < num_nodes) {
 		u16 max_child_nodes, num_added = 0;
-#ifdef __CHECKER__
-		/* cppcheck-suppress unusedVariable */
-#endif /* __CHECKER__ */
-		u32 temp;
 
 		status = ice_sched_add_nodes_to_hw_layer(pi, tc_node, parent,
 							 layer,	new_num_nodes,
@@ -1336,7 +1374,7 @@ int ice_sched_init_port(struct ice_port_info *pi)
 			    ICE_AQC_ELEM_TYPE_ENTRY_POINT)
 				hw->sw_entry_point_layer = j;
 
-			status = ice_sched_add_node(pi, j, &buf[i].generic[j]);
+			status = ice_sched_add_node(pi, j, &buf[i].generic[j], NULL);
 			if (status)
 				goto err_init_port;
 		}
@@ -1458,11 +1496,6 @@ void ice_sched_get_psm_clk_freq(struct ice_hw *hw)
 	clk_src = (val & GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_M) >>
 		GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_S;
 
-#define PSM_CLK_SRC_367_MHZ 0x0
-#define PSM_CLK_SRC_416_MHZ 0x1
-#define PSM_CLK_SRC_446_MHZ 0x2
-#define PSM_CLK_SRC_390_MHZ 0x3
-
 	switch (clk_src) {
 	case PSM_CLK_SRC_367_MHZ:
 		hw->psm_clk_freq = ICE_PSM_CLK_367MHZ_IN_HZ;
@@ -1476,11 +1509,12 @@ void ice_sched_get_psm_clk_freq(struct ice_hw *hw)
 	case PSM_CLK_SRC_390_MHZ:
 		hw->psm_clk_freq = ICE_PSM_CLK_390MHZ_IN_HZ;
 		break;
-	default:
-		ice_debug(hw, ICE_DBG_SCHED, "PSM clk_src unexpected %u\n",
-			  clk_src);
-		/* fall back to a safe default */
-		hw->psm_clk_freq = ICE_PSM_CLK_446MHZ_IN_HZ;
+
+	/* default condition is not required as clk_src is restricted
+	 * to a 2-bit value from GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_M mask.
+	 * The above switch statements cover the possible values of
+	 * this variable.
+	 */
 	}
 }
 
@@ -2334,7 +2368,7 @@ ice_sched_get_free_vsi_parent(struct ice_hw *hw, struct ice_sched_node *node,
  * This function removes the child from the old parent and adds it to a new
  * parent
  */
-static void
+void
 ice_sched_update_parent(struct ice_sched_node *new_parent,
 			struct ice_sched_node *node)
 {
@@ -2368,7 +2402,7 @@ ice_sched_update_parent(struct ice_sched_node *new_parent,
  *
  * This function move the child nodes to a given parent.
  */
-static int
+int
 ice_sched_move_nodes(struct ice_port_info *pi, struct ice_sched_node *parent,
 		     u16 num_items, u32 *list)
 {
@@ -3949,8 +3983,8 @@ static u16 ice_sched_calc_wakeup(struct ice_hw *hw, s32 bw)
 		if (wakeup_f > div64_s64(ICE_RL_PROF_MULTIPLIER, 2))
 			wakeup_f += 1;
 
-		wakeup_f_int = (s32) div64_s64(wakeup_f * ICE_RL_PROF_FRACTION,
-					       ICE_RL_PROF_MULTIPLIER);
+		wakeup_f_int = (s32)div64_s64(wakeup_f * ICE_RL_PROF_FRACTION,
+					      ICE_RL_PROF_MULTIPLIER);
 		wakeup |= (u16)(wakeup_int << 9);
 		wakeup |= (u16)(0x1ff & wakeup_f_int);
 	}
@@ -4354,7 +4388,7 @@ ice_sched_set_node_bw_dflt(struct ice_port_info *pi,
  * node's RL profile ID of type CIR, EIR, or SRL, and removes old profile
  * ID from local database. The caller needs to hold scheduler lock.
  */
-static int
+int
 ice_sched_set_node_bw(struct ice_port_info *pi, struct ice_sched_node *node,
 		      enum ice_rl_type rl_type, u32 bw, u8 layer_num)
 {
@@ -4391,6 +4425,58 @@ ice_sched_set_node_bw(struct ice_port_info *pi, struct ice_sched_node *node,
 }
 
 /**
+ * ice_sched_set_node_priority - set node's priority
+ * @pi: port information structure
+ * @node: tree node
+ * @priority: number 0-7 representing priority among siblings
+ *
+ * This function sets priority of a node among it's siblings.
+ */
+int
+ice_sched_set_node_priority(struct ice_port_info *pi, struct ice_sched_node *node,
+			    u16 priority)
+{
+	struct ice_aqc_txsched_elem_data buf;
+	struct ice_aqc_txsched_elem *data;
+
+	buf = node->info;
+	data = &buf.data;
+
+	data->valid_sections |= ICE_AQC_ELEM_VALID_GENERIC;
+	data->generic |= ICE_AQC_ELEM_GENERIC_PRIO_M &
+			 (priority << ICE_AQC_ELEM_GENERIC_PRIO_S);
+
+	return ice_sched_update_elem(pi->hw, node, &buf);
+}
+
+/**
+ * ice_sched_set_node_weight - set node's weight
+ * @pi: port information structure
+ * @node: tree node
+ * @weight: number 1-200 representing weight for WFQ
+ *
+ * This function sets weight of the node for WFQ algorithm.
+ */
+int
+ice_sched_set_node_weight(struct ice_port_info *pi, struct ice_sched_node *node, u16 weight)
+{
+	struct ice_aqc_txsched_elem_data buf;
+	struct ice_aqc_txsched_elem *data;
+
+	buf = node->info;
+	data = &buf.data;
+
+	data->valid_sections = ICE_AQC_ELEM_VALID_CIR | ICE_AQC_ELEM_VALID_EIR |
+			       ICE_AQC_ELEM_VALID_GENERIC;
+	data->cir_bw.bw_alloc = cpu_to_le16(weight);
+	data->eir_bw.bw_alloc = cpu_to_le16(weight);
+	data->generic |= ICE_AQC_ELEM_GENERIC_SP_M &
+			 (0x0 << ICE_AQC_ELEM_GENERIC_SP_S);
+
+	return ice_sched_update_elem(pi->hw, node, &buf);
+}
+
+/**
  * ice_sched_set_node_bw_lmt - set node's BW limit
  * @pi: port information structure
  * @node: tree node
@@ -4403,7 +4489,7 @@ ice_sched_set_node_bw(struct ice_port_info *pi, struct ice_sched_node *node,
  * NOTE: Caller provides the correct SRL node in case of shared profile
  * settings.
  */
-static int
+int
 ice_sched_set_node_bw_lmt(struct ice_port_info *pi, struct ice_sched_node *node,
 			  enum ice_rl_type rl_type, u32 bw)
 {

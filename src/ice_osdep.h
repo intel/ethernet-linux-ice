@@ -61,7 +61,7 @@ void __iomem *ice_get_hw_addr(struct ice_hw *hw, resource_size_t reg);
 
 #define ice_flush(a)		rd32((a), GLGEN_STAT)
 
-#define ICE_M(m, s)		((m) << (s))
+#define ICE_M(m, s)		((m ## UL) << (s))
 
 struct ice_dma_mem {
 	void *va;

@@ -2,7 +2,7 @@
 /* Copyright (C) 2018-2023 Intel Corporation */
 
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2020, Intel Corporation. */
+/* Copyright (C) 2021 - 2023 Intel Corporation. */
 
 /* This is taken from upstream <linux/pldmfw.h> */
 

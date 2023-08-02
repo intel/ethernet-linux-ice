@@ -1451,7 +1451,7 @@ err_exit:
  */
 static void ice_update_per_q_fltr(struct ice_vsi *vsi, u32 q_index, bool inc)
 {
-	struct ice_ring *rx_ring;
+	struct ice_rx_ring *rx_ring;
 
 	if (!vsi->num_rxq || q_index >= vsi->num_rxq)
 		return;
