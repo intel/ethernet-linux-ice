@@ -28,9 +28,9 @@
 
 #define DRV_VERSION_MAJOR 1
 #define DRV_VERSION_MINOR 12
-#define DRV_VERSION_BUILD 6
+#define DRV_VERSION_BUILD 7
 
-#define DRV_VERSION	"1.12.6"
+#define DRV_VERSION	"1.12.7"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -4518,18 +4518,16 @@ static irqreturn_t ice_ll_ts_intr(int __always_unused irq, void *data)
 	tx = &pf->ptp.port.tx;
 	ice_ptp_complete_tx_single_tstamp(tx);
 
-	idx = find_next_bit(tx->in_use, tx->len, tx->last_ll_ts_idx_read + 1);
-	if (idx != tx->last_ll_ts_idx_read) {
-		tx->last_ll_ts_idx_read = idx;
+	idx = find_first_bit(tx->in_use, tx->len);
+	if (idx != tx->len)
 		ice_ptp_req_tx_single_tstamp(tx, idx);
-	}
 
 	val = GLINT_DYN_CTL_INTENA_M | GLINT_DYN_CTL_CLEARPBA_M |
 	      (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S);
 	pf_intr_start_offset = rd32(hw, PFINT_ALLOC) & PFINT_ALLOC_FIRST_M;
 	wr32(hw, GLINT_DYN_CTL(pf->ll_ts_int_idx + pf_intr_start_offset), val);
 
-	return IRQ_NONE;
+	return IRQ_HANDLED;
 }
 
 /**
@@ -4629,8 +4627,17 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 			struct ice_ptp_tx *tx = &pf->ptp.port.tx;
 			u8 idx;
 
-			idx = find_first_bit(tx->in_use, tx->len);
-			ice_ptp_req_tx_single_tstamp(tx, idx);
+			idx = (tx->last_ll_ts_idx_read + 1) % tx->len;
+			if (test_bit(idx, tx->in_use))
+				ice_ptp_req_tx_single_tstamp(tx, idx);
+			/* if idx is no longer valid - after 2 sec timeout */
+			while (!test_bit(idx, tx->in_use)) {
+				idx = find_first_bit(tx->in_use, tx->len);
+				if (idx == tx->len)
+					break;
+				ice_ptp_req_tx_single_tstamp(tx, idx);
+			}
+
 		} else if (ice_ptp_pf_handles_tx_interrupt(pf)) {
 			pf->oicr_misc |= PFINT_OICR_TSYN_TX_M;
 		}

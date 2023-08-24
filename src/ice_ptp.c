@@ -1949,6 +1949,7 @@ void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 {
 	struct ice_ptp_port *ptp_port;
 	struct ice_pf *pf;
+	struct sk_buff *skb;
 
 	if (!tx->init)
 		return;
@@ -1960,6 +1961,13 @@ void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 	if (time_is_before_jiffies(tx->tstamps[idx].start + 2 * HZ)) {
 		/* Count the number of Tx timestamps that timed out */
 		pf->ptp.tx_hwtstamp_timeouts++;
+
+		skb = tx->tstamps[idx].skb;
+		tx->tstamps[idx].skb = NULL;
+		clear_bit(idx, tx->in_use);
+		clear_bit(idx, tx->stale);
+
+		dev_kfree_skb_any(skb);
 		return;
 	}
 
@@ -1998,7 +2006,7 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 
 	/* When the bit is cleared, the TS is ready in the register */
 	if (val & TS_LL_READ_TS) {
-		dev_err(ice_pf_to_dev(pf), "Failed to get the Tx tstamp - FW not ready");
+		dev_dbg(ice_pf_to_dev(pf), "Failed to get the Tx tstamp - FW not ready. Will retry");
 		return;
 	}
 
@@ -2018,7 +2026,6 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 	    raw_tstamp == tx->tstamps[idx].cached_tstamp)
 		return;
 
-	spin_lock(&tx->lock);
 	if (tx->verify_cached && raw_tstamp)
 		tx->tstamps[idx].cached_tstamp = raw_tstamp;
 	clear_bit(idx, tx->in_use);
@@ -2026,7 +2033,6 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 	tx->tstamps[idx].skb = NULL;
 	if (test_and_clear_bit(idx, tx->stale))
 		drop_ts = true;
-	spin_unlock(&tx->lock);
 
 	if (!skb)
 		return;
@@ -4450,7 +4456,10 @@ s8 ice_ptp_request_ts(struct ice_ptp_tx *tx, struct sk_buff *skb)
 	}
 
 	/* Find and set the first available index */
-	idx = find_first_zero_bit(tx->in_use, tx->len);
+	idx = find_next_zero_bit(tx->in_use, tx->len,
+				 tx->last_ll_ts_idx_read + 1);
+	if (idx == tx->len)
+		idx = find_first_zero_bit(tx->in_use, tx->len);
 	if (idx < tx->len) {
 		/* We got a valid index that no other thread could have set.
 		 * Store a reference to the skb and the start time to allow
