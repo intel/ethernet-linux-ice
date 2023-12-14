@@ -3530,6 +3530,7 @@ ice_ptp_gpio_enable_e810(struct ptp_clock_info *info,
 		clk_cfg.start_time = ((rq->perout.start.sec * NSEC_PER_SEC) +
 				       rq->perout.start.nsec);
 		clk_cfg.ena = !!on;
+		clk_cfg.present = true;
 
 		err = ice_ptp_cfg_clkout(pf, chan, &clk_cfg, true);
 		break;

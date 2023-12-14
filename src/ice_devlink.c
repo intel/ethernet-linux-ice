@@ -2396,6 +2396,14 @@ ice_devlink_nvm_snapshot(struct devlink *devlink,
 	u8 *nvm_data, *tmp, i;
 	u32 nvm_size, left;
 	s8 num_blks;
+	int status;
+
+	status = ice_wait_for_reset(pf, msecs_to_jiffies(10000));
+	if (status) {
+		dev_dbg(dev, "Device is busy resetting");
+		NL_SET_ERR_MSG_MOD(extack, "Device is busy resetting");
+		return status;
+	}
 
 	nvm_size = hw->flash.flash_size;
 	nvm_data = vzalloc(nvm_size);
@@ -2414,7 +2422,6 @@ ice_devlink_nvm_snapshot(struct devlink *devlink,
 	 */
 	for (i = 0; i < num_blks; i++) {
 		u32 read_sz = min_t(u32, ICE_DEVLINK_READ_BLK_SIZE, left);
-		int status;
 
 		status = ice_acquire_nvm(hw, ICE_RES_READ);
 		if (status) {

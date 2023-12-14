@@ -158,6 +158,7 @@ static int ice_repr_stop(struct net_device *netdev)
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK) && defined(HAVE_DEVLINK_PORT_ATTR_PCI_VF)
 #ifdef HAVE_NDO_GET_DEVLINK_PORT
+#ifndef HAVE_SET_NETDEV_DEVLINK_PORT
 static struct devlink_port *
 ice_repr_get_devlink_port(struct net_device *netdev)
 {
@@ -165,6 +166,7 @@ ice_repr_get_devlink_port(struct net_device *netdev)
 
 	return &repr->vf->devlink_port;
 }
+#endif /* !HAVE_SET_NETDEV_DEVLINK_PORT */
 #endif /* HAVE_NDO_GET_DEVLINK_PORT */
 #endif /* CONFIG_NET_DEVLINK && HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #if defined(HAVE_NDO_OFFLOAD_STATS) || defined(HAVE_RHEL7_EXTENDED_OFFLOAD_STATS)
@@ -332,7 +334,9 @@ static const struct net_device_ops ice_repr_netdev_ops = {
 #endif /* HAVE_RHEL7_EXTENDED_MIN_MAX_MTU */
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
 #ifdef HAVE_NDO_GET_DEVLINK_PORT
+#ifndef HAVE_SET_NETDEV_DEVLINK_PORT
 	.ndo_get_devlink_port = ice_repr_get_devlink_port,
+#endif /* !HAVE_SET_NETDEV_DEVLINK_PORT */
 #endif /* HAVE_NDO_GET_DEVLINK_PORT */
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #ifdef HAVE_TC_SETUP_CLSFLOWER

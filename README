@@ -1936,9 +1936,6 @@ network. PTP support varies among Intel devices that support this driver. Use
 'ethtool -T <ethX>' to get a definitive list of PTP capabilities supported by
 the device.
 
-NOTE: You can only change the state of the Clock Generation Unit (CGU) Fast
-Lock flag (cgu-fast-lock) on PF0.
-
 A detailed user guide is available for the following devices. Refer to it for
 advanced configuration of this feature.
 - Intel(R) Ethernet Network Adapter E810-XXV-4T:
@@ -1972,9 +1969,6 @@ advanced configuration of this feature.
 
 - Intel(R) Ethernet Network Adapter E810-C-Q2T:
   https://cdrdv2.intel.com/v1/dl/getContent/722960
-
-NOTE: You can only change the state of the Clock Generation Unit (CGU) Fast
-Lock flag (cgu-fast-lock) on PF0.
 
 
 Tunnel/Overlay Stateless Offloads

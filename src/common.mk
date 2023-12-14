@@ -17,7 +17,7 @@
 #####################
 
 SHELL := $(shell which bash)
-
+src ?= $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 readlink = $(shell readlink -f ${1})
 
 # helper functions for converting kernel version to version codes
@@ -314,7 +314,7 @@ minimum_kver_check = $(eval $(call _minimum_kver_check,${1},${2},${3}))
 # entire feature ought to be excluded on some kernels due to missing
 # functionality.
 #
-# To support this, kcompat_defs.h is compiled and converted into a word list
+# To support this, kcompat_defs.h is preprocessed and converted into a word list
 # that can be checked to determine whether a given kcompat feature flag will
 # be defined for this kernel.
 #
@@ -339,25 +339,20 @@ minimum_kver_check = $(eval $(call _minimum_kver_check,${1},${2},${3}))
 # kcompat.h are not supported. If you need to check one of these, please
 # refactor it into the new layout.
 
-ifneq ($(wildcard ./kcompat_defs.h),)
 # call script that populates defines automatically
 #
 # since is_kcompat_defined() is a macro, it's "computed" before any target
 # recipe, kcompat_generated_defs.h is needed prior to that, so needs to be
 # generated also via $(shell) call, which makes error handling ugly
-$(if $(shell KSRC=${KSRC} OUT=kcompat_generated_defs.h CONFFILE=${CONFIG_FILE} \
-    bash kcompat-generator.sh && echo ok), , $(error kcompat-generator.sh failed))
+$(if $(shell KSRC=${KSRC} OUT=${src}/kcompat_generated_defs.h CONFFILE=${CONFIG_FILE} \
+    bash ${src}/kcompat-generator.sh && echo ok), , $(error kcompat-generator.sh failed))
 
 KCOMPAT_DEFINITIONS := $(shell ${CC} ${EXTRA_CFLAGS} -E -dM \
                                      -I${KOBJ}/include \
                                      -I${KOBJ}/include/generated/uapi \
-                                     kcompat_defs.h | awk '{ print $$2 }')
+                                     ${src}/kcompat_defs.h | awk '{ print $$2 }')
 
 is_kcompat_defined = $(if $(filter ${1},${KCOMPAT_DEFINITIONS}),1,)
-else
-KCOMPAT_DEFINITIONS :=
-is_kcompat_defined =
-endif
 
 ################
 # Manual Pages #

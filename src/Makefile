@@ -16,6 +16,32 @@ endif
 # default shell. Looking at you, Ubuntu.
 SHELL=/bin/bash
 
+COMMON_MK ?= $(wildcard $(src)/common.mk)
+ifeq (${COMMON_MK},)
+  override src = .
+  COMMON_MK = $(wildcard $(src)/common.mk)
+endif
+ifeq (${COMMON_MK},)
+  $(error Cannot find common.mk build rules)
+else
+  include ${COMMON_MK}
+endif
+
+# SIOV support is only supported if the kernel has features for controlling
+# PASID support. Do not even try to build SIOV support if the kernel lacks
+# the necessary infrastructure.
+ifeq ($(call is_kcompat_defined,HAVE_PASID_SUPPORT),1)
+ifeq ($(call is_kcompat_defined,HAVE_IOMMU_DEV_FEAT_AUX),1)
+export ENABLE_SIOV_SUPPORT := 1
+endif
+endif
+
+# LM support is only enabled if the kernel has features for LM v1 protocol.
+# If the kernel lacks the necessary infrastructure, LM support will be disabled.
+ifeq ($(call is_kcompat_defined,HAVE_LMV1_SUPPORT),1)
+export ENABLE_LM_SUPPORT := 1
+endif
+
 ifneq ($(KERNELRELEASE),)
 # kbuild part of makefile
 
@@ -133,30 +159,8 @@ else	# ifneq($(KERNELRELEASE),)
 
 DRIVER := ice
 
-COMMON_MK ?= $(wildcard common.mk)
-ifeq (${COMMON_MK},)
-  $(error Cannot find common.mk build rules)
-else
-  include ${COMMON_MK}
-endif
-
 # ice does not support building on kernels older than 3.10.0
 $(call minimum_kver_check,3,10,0)
-
-# SIOV support is only supported if the kernel has features for controlling
-# PASID support. Do not even try to build SIOV support if the kernel lacks
-# the necessary infrastructure.
-ifeq ($(call is_kcompat_defined,HAVE_PASID_SUPPORT),1)
-ifeq ($(call is_kcompat_defined,HAVE_IOMMU_DEV_FEAT_AUX),1)
-export ENABLE_SIOV_SUPPORT := 1
-endif
-endif
-
-# LM support is only enabled if the kernel has features for LM v1 protocol.
-# If the kernel lacks the necessary infrastructure, LM support will be disabled.
-ifeq ($(call is_kcompat_defined,HAVE_LMV1_SUPPORT),1)
-export ENABLE_LM_SUPPORT := 1
-endif
 
 # Command to update initramfs or display a warning message
 ifeq (${cmd_initrd},)

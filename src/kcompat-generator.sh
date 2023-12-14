@@ -28,11 +28,12 @@ set -Eeuo pipefail
 # Most of the implementation is in kcompat-lib.sh, here are actual 'gen' calls.
 
 export LC_ALL=C
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 ORIG_CWD="$(pwd)"
 trap 'rc=$?; echo >&2 "$(realpath "$ORIG_CWD/${BASH_SOURCE[0]}"):$LINENO: failed with rc: $rc"' ERR
 
 # shellcheck source=kcompat-lib.sh
-source "$ORIG_CWD"/kcompat-lib.sh
+source "$SCRIPT_DIR"/kcompat-lib.sh
 
 # DO NOT break gen calls below (via \), to make our compat code more grep-able,
 # keep them also grouped, first by feature (like DEVLINK), then by .h filename
@@ -119,7 +120,7 @@ function gen-gnss() {
 	fh='include/linux/fs.h'
 
 	gen HAVE_CDEV_DEVICE if fun cdev_device_add in "$cdh"
-	gen HAVE_DEV_UEVENT_CONST if method dev_uevent of class matches 'const struct device' in "$clh"
+	gen HAVE_DEV_UEVENT_CONST if method dev_uevent of class matches '(const|CONST) struct device' in "$clh" "$dh"
 	gen HAVE_POLL_T if typedef __poll_t in "$th"
 	gen HAVE_STREAM_OPEN if fun stream_open in "$fh"
 	# There can be either macro class_create or a function

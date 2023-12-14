@@ -3388,6 +3388,14 @@ ice_vsi_cfg_def(struct ice_vsi *vsi, struct ice_vsi_cfg_params *params)
 
 		vsi->stat_offsets_loaded = false;
 
+#ifdef HAVE_XDP_SUPPORT
+		if (ice_is_xdp_ena_vsi(vsi)) {
+			ret = ice_prepare_xdp_rings(vsi, vsi->xdp_prog);
+			if (ret)
+				goto unroll_vector_base;
+		}
+#endif /* HAVE_XDP_SUPPORT */
+
 		/* ICE_VSI_CTRL does not need RSS so skip RSS processing */
 		if (vsi->type != ICE_VSI_CTRL)
 			/* Do not exit if configuring RSS had an issue, at

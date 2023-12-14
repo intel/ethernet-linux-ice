@@ -565,11 +565,6 @@ ice_validate_cloud_filter(struct ice_vf *vf, struct virtchnl_filter *tc_filter)
 	struct device *dev;
 
 	dev = ice_pf_to_dev(pf);
-	if (!tc_filter->action) {
-		dev_err(dev, "VF %d: Currently ADQ doesn't support Drop Action\n",
-			vf->vf_id);
-		return -EOPNOTSUPP;
-	}
 
 	/* Check filter if it's programmed for advanced mode or basic mode.
 	 * There are two ADQ modes (for VF only),
@@ -773,9 +768,14 @@ ice_vc_chnl_fltr_state_verify(struct ice_vf *vf, struct virtchnl_filter *vcf)
 		return VIRTCHNL_STATUS_ERR_PARAM;
 	}
 
+	if (vcf->action != VIRTCHNL_ACTION_TC_REDIRECT) {
+		dev_err(dev, "VF %d: filter action(%d) not supported when ADQ is configured\n",
+			vf->vf_id, vcf->action);
+		return VIRTCHNL_STATUS_ERR_PARAM;
+	}
+
 	max_tc_allowed = ice_vc_get_max_chnl_tc_allowed(vf);
-	if (vcf->action == VIRTCHNL_ACTION_TC_REDIRECT &&
-	    vcf->action_meta >= max_tc_allowed) {
+	if (vcf->action_meta >= max_tc_allowed) {
 		dev_err(dev, "VF %d: Err: action(%u)_meta(TC): %u >= max_tc_allowed (%u)\n",
 			vf->vf_id, vcf->action, vcf->action_meta,
 			max_tc_allowed);
@@ -1169,7 +1169,7 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 	u64 total_max_rate = 0;
 	u32 max_tc_allowed;
 	struct device *dev;
-	u16 total_qs = 0;
+	u32 total_qs = 0;
 	u32 link_speed;
 	unsigned int i;
 
@@ -1245,6 +1245,13 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto err;
 		}
+		if (tci->list[i].offset + tci->list[i].count
+						    > ICE_MAX_DFLT_QS_PER_VF) {
+			dev_err(dev, "VF %d: Incorrect offset or count for TC %d\n",
+				vf->vf_id, i);
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
 		total_qs += tci->list[i].count;
 	}
 
@@ -1268,9 +1275,15 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 		goto err;
 	}
 
-	for (i = 0; i < tci->num_tc; i++)
+	for (i = 0; i < tci->num_tc; i++) {
+		if (tci->list[i].max_tx_rate > link_speed) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+
 		if (tci->list[i].max_tx_rate)
 			total_max_rate += tci->list[i].max_tx_rate;
+	}
 
 	if (total_max_rate > link_speed) {
 		dev_err(dev, "Invalid tx rate specified for ADQ on VF %d\n",

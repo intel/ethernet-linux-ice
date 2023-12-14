@@ -692,6 +692,12 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 		goto err;
 	}
 
+	/* Don't process if GET_VF_RESOURCES is already negotiated */
+	if (test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
 	len = sizeof(struct virtchnl_vf_resource);
 
 	vfres = kzalloc(len, GFP_KERNEL);
@@ -5992,7 +5998,7 @@ ice_vc_validate_qs_v2_msg(struct ice_vf *vf,
 		return false;
 
 	for (i = 0; i < chunks->num_chunks; i++) {
-		u16 max_queue_in_chunk;
+		u32 max_queue_in_chunk;
 
 		if (!ice_vc_supported_queue_type(chunks->chunks[i].type))
 			return false;

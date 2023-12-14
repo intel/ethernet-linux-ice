@@ -5,7 +5,7 @@
 #include "ice_lib.h"
 
 #if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
-static bool gnss_module_initialized;
+static atomic_t gnss_module_initializations;
 #endif /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 
 /**
@@ -413,11 +413,10 @@ void ice_gnss_init(struct ice_pf *pf)
 		return;
 
 #if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
-	if (!gnss_module_initialized) {
-		gnss_module_initialized = true;
+	if (atomic_inc_return(&gnss_module_initializations) == 1) {
 		ret = gnss_module_init();
 		if (ret < 0) {
-			gnss_module_initialized = false;
+			atomic_dec(&gnss_module_initializations);
 			dev_err(ice_pf_to_dev(pf),
 				"GNSS module init failure\n");
 			return;
@@ -453,8 +452,12 @@ void ice_gnss_exit(struct ice_pf *pf)
 		kthread_destroy_worker(gnss->kworker);
 		gnss->kworker = NULL;
 #if !defined(HAVE_GNSS_MODULE) || !IS_ENABLED(CONFIG_GNSS)
-		if (pf->gnss_serial->gnss_module_owner)
-			gnss_module_exit();
+		if (atomic_dec_and_test(&gnss_module_initializations)) {
+			if (pf->gnss_serial->gnss_module_owner) {
+				gnss_module_exit();
+				gnss->gnss_module_owner = false;
+			}
+		}
 #endif /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 
 		kfree(gnss);

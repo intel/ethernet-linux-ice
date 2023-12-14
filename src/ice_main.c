@@ -28,9 +28,9 @@
 
 #define DRV_VERSION_MAJOR 1
 #define DRV_VERSION_MINOR 12
-#define DRV_VERSION_BUILD 7
+#define DRV_VERSION_BUILD 18
 
-#define DRV_VERSION	"1.12.7"
+#define DRV_VERSION	"1.12.18"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -623,6 +623,7 @@ static int ice_clear_promisc(struct ice_vsi *vsi, unsigned long *promisc_m)
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_NDO_GET_DEVLINK_PORT
+#ifndef HAVE_SET_NETDEV_DEVLINK_PORT
 /**
  * ice_get_devlink_port - Get devlink port from netdev
  * @netdev:  the netdevice structure
@@ -636,6 +637,7 @@ static struct devlink_port *ice_get_devlink_port(struct net_device *netdev)
 
 	return &pf->devlink_port;
 }
+#endif /* !HAVE_SET_NETDEV_DEVLINK_PORT */
 #endif /* HAVE_NDO_GET_DEVLINK_PORT */
 #endif /* CONFIG_NET_DEVLINK */
 
@@ -4129,27 +4131,29 @@ void ice_ch_vsi_update_ring_vecs(struct ice_vsi *vsi)
 int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog)
 {
 	u16 max_txqs[ICE_MAX_TRAFFIC_CLASS] = { 0 };
-	int xdp_rings_rem = vsi->num_xdp_txq;
 	struct ice_pf *pf = vsi->back;
 	struct ice_qs_cfg xdp_qs_cfg = {
 		.qs_mutex = &pf->avail_q_mutex,
 		.pf_map = pf->avail_txqs,
 		.pf_map_size = pf->max_pf_txqs,
-		.q_count = vsi->num_xdp_txq,
 		.scatter_count = ICE_MAX_SCATTER_TXQS,
 		.vsi_map = vsi->txq_map,
 		.vsi_map_offset = vsi->alloc_txq,
 		.mapping_mode = ICE_VSI_MAP_CONTIG
 	};
+	int i, v_idx, xdp_rings_rem;
 	struct device *dev;
-	int i, v_idx;
-	int status;
+	int err = -ENOMEM;
 
 	dev = ice_pf_to_dev(pf);
+
+	vsi->num_xdp_txq = vsi->alloc_rxq;
+	xdp_qs_cfg.q_count = vsi->num_xdp_txq;
+
 	vsi->xdp_rings = devm_kcalloc(dev, vsi->num_xdp_txq,
 				      sizeof(*vsi->xdp_rings), GFP_KERNEL);
 	if (!vsi->xdp_rings)
-		return -ENOMEM;
+		goto err_alloc_rings;
 
 	if (__ice_vsi_get_qs(&xdp_qs_cfg))
 		goto err_map_xdp;
@@ -4158,6 +4162,7 @@ int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog)
 	if (ice_xdp_alloc_setup_rings(vsi))
 		goto clear_xdp_rings;
 
+	xdp_rings_rem = vsi->num_xdp_txq;
 	/* follow the logic from ice_vsi_map_rings_to_vectors */
 	ice_for_each_q_vector(vsi, v_idx) {
 		struct ice_q_vector *q_vector = vsi->q_vectors[v_idx];
@@ -4193,11 +4198,11 @@ int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog)
 	for (i = 0; i < vsi->tc_cfg.numtc; i++)
 		max_txqs[i] = vsi->num_txq + vsi->num_xdp_txq;
 
-	status = ice_cfg_vsi_lan(vsi->port_info, vsi->idx, vsi->tc_cfg.ena_tc,
-				 max_txqs);
-	if (status) {
+	err = ice_cfg_vsi_lan(vsi->port_info, vsi->idx, vsi->tc_cfg.ena_tc,
+			      max_txqs);
+	if (err) {
 		dev_err(dev, "Failed VSI LAN queue config for XDP, error: %d\n",
-			status);
+			err);
 		goto clear_xdp_rings;
 	}
 	ice_vsi_assign_bpf_prog(vsi, prog);
@@ -4219,7 +4224,9 @@ err_map_xdp:
 	mutex_unlock(&pf->avail_q_mutex);
 
 	devm_kfree(dev, vsi->xdp_rings);
-	return -ENOMEM;
+err_alloc_rings:
+	vsi->num_xdp_txq = 0;
+	return err;
 }
 
 /**
@@ -4341,7 +4348,6 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 	}
 
 	if (!ice_is_xdp_ena_vsi(vsi) && prog) {
-		vsi->num_xdp_txq = vsi->alloc_rxq;
 		xdp_ring_err = ice_prepare_xdp_rings(vsi, prog);
 		if (xdp_ring_err)
 			NL_SET_ERR_MSG_MOD(extack, "Setting up XDP Tx resources failed");
@@ -12770,7 +12776,9 @@ static const struct net_device_ops ice_netdev_ops = {
 #endif /* HAVE_NDO_DFWD_OPS */
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_NDO_GET_DEVLINK_PORT
+#ifndef HAVE_SET_NETDEV_DEVLINK_PORT
 	.ndo_get_devlink_port = ice_get_devlink_port,
+#endif /* HAVE_SET_NETDEV_DEVLINK_PORT */
 #endif /* HAVE_NDO_GET_DEVLINK_PORT */
 #endif /* CONFIG_NET_DEVLINK */
 };
