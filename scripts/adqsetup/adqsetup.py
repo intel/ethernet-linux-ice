@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (C) 2022 - 2023 Intel Corporation
+# Copyright (c) 2022, Intel Corporation
 #
 
 import sys, os, time, socket, subprocess, pipes, re, json, math
@@ -69,7 +69,7 @@ elif sys.version_info.major == 2:
             raise Exception(os.strerror(get_errno()))
 
 
-_VERSION_ = '2.0.1'
+_VERSION_ = '2.1'
 
 ## public API
 
@@ -285,7 +285,7 @@ def _readfile(path): # type: (list[str]) -> str
 
 def _writefile(path, data): # type(list[str], str) -> int
     if not os.path.isdir(os.path.dirname(path)):
-        os.mkdirs(os.path.dirname(path))
+        os.mkdir(os.path.dirname(path))
     with open(path, 'w') as f:
         return f.write(data)
 
@@ -314,20 +314,37 @@ def _sysctl(key, value=None, log=None):
             log.write("sysctl --write %s=%s\n" % (key, str(value)))
         return _writefile(path, value)
 
-def _uevent(dev):
-    # type: (str) -> dict
+def _uevent(dev, subdev=""):
+    # type: (str, str) -> dict
     '''
     Get and parse device/uevent entry for device
     '''
-    path = os.path.join(*['/sys', 'class', 'net', dev, 'device', 'uevent'])
+    path = os.path.join(*['/sys', 'class', 'net', dev, 'device', subdev, 'uevent'])
     info = dict(re.findall('^([\w\_]+)=(.*)$', _readfile(path), re.MULTILINE))
     return {key.lower(): val for key, val in info.items()}
 
+def _is_vf(dev):
+    # type: (str) -> bool
+    path = os.path.join(*['/sys', 'class', 'net', dev, 'device', 'physfn'])
+    return os.path.islink(path)
+
+def _vf_to_pf(dev):
+    # type: (str) -> str
+    pf_pci = _uevent(dev, "physfn")["pci_slot_name"]
+    netdevs = os.listdir(os.path.join(*['/sys', 'class', 'net']))
+    for n in netdevs:
+        try:
+            if _uevent(n)["pci_slot_name"] == pf_pci:
+                return n
+        except:
+            pass
+    return None
+
 def _irqs(dev):
     # get nic interrupts
-    # named: ice-<dev>-TxRx-<queue>
+    # named: (ice|iavf)-<dev>-TxRx-<queue>
     output = _exec(
-        "grep -i 'ice-%s-TxRx-' /proc/interrupts | cut -f1 -d:" % dev, 
+        "grep -iE '(ice|iavf)-%s-TxRx-' /proc/interrupts | cut -f1 -d:" % dev, 
         shell=True
     )
     return [int(t) for t in output.split()]
@@ -1039,6 +1056,20 @@ class NLAttr(namedtuple("NLAttr", "type data")):
             # type: (bytes, int, int) -> str
             return '{}.{}.{}.{}'.format(*cls._struct.unpack_from(data, offset))
 
+    class _macaddr_struct:
+        _struct = Struct("BBBBBB")
+        @classmethod
+        def pack(cls, obj): # type: (str) -> bytes
+            octets = [int(o, 16) for o in str(obj).strip().split(':')]
+            if len(octets) != 6:
+                raise Exception("%r is not a valid MAC address" % obj)
+            return cls._struct.pack(*octets)            
+        @classmethod
+        def unpack(cls, data, offset=0, length=0): 
+            # type: (bytes, int, int) -> str
+            return '{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}'\
+                .format(*cls._struct.unpack_from(data, offset))
+
     _struct = {
         TYPE_FLAG: _int_struct("B"),
         TYPE_U8: _int_struct("B"),
@@ -1503,21 +1534,60 @@ class TCMQAttr(NLAttr):
     MODE_CHANNEL = 1
     SHAPER_DCB     = 0
     SHAPER_BW_RATE = 1
+    TYPE_MINRATE = 3
+    TYPE_MAXRATE = 4   
 
     _struct = {
         TYPE_MODE: NLAttr._int_struct("H"),
-        TYPE_SHAPER: NLAttr._int_struct("H")
+        TYPE_SHAPER: NLAttr._int_struct("H"),
+        TYPE_MINRATE: NLAttr._int_struct("Q"),
+        TYPE_MAXRATE: NLAttr._int_struct("Q")
     }
 
     def __str__(self):
         return "TCMQAttr(type=%d, data=%r)" % (self.type, self.data)
 
+class TCMQNestAttr(NLAttr):
+    TYPE_MINRATE = 3
+    TYPE_MAXRATE = 4
+    
+    class _nest_array:
+        _item_type = 0
+        def __init__(self, item_type): # type: (str) -> None
+            self._item_type = item_type
+        @classmethod
+        def pack(cls, obj):
+            data = bytearray([]) # changed
+            for i in range(len(obj)):
+                data = data + obj[i]._bytes
+            return data
+        @classmethod
+        def unpack(cls, data, offset=0, length=0): 
+            results = []
+            item = TCMQAttr(cls._item_type, 0)
+            while offset < len(data):
+                attr =item._from(data, offset)
+                results.append(attr)
+                offset += attr.size
+            return results
+        
+    _struct = {
+        TYPE_MINRATE: _nest_array(TYPE_MINRATE),
+        TYPE_MAXRATE: _nest_array(TYPE_MAXRATE),
+    }
+
+    def __str__(self):
+        return "TCMQNestAttr(type=%d, data=%r)" % (self.type, self.data)
 
 class TCFLAttr(NLAttr):
     ## /include/uapi/linux/pkt_cls.h
     TYPE_CLASSID           = 1
     TYPE_INDEV             = 2
     TYPE_ACT               = 3
+    TYPE_KEY_ETH_DST       = 4 # /* u8[6] */
+    TYPE_KEY_ETH_DST_MASK  = 5 # /* u8[6] */
+    TYPE_KEY_ETH_SRC       = 6 # /* u8[6] */
+    TYPE_KEY_ETH_SRC_MASK  = 7 # /* u8[6] */
     TYPE_KEY_ETH_TYPE      = 8 # /* be16 */
     TYPE_KEY_IP_PROTO      = 9 # /* u8 */
     TYPE_KEY_IPV4_SRC      = 10 # /* be32 */
@@ -1584,6 +1654,10 @@ class TCFLAttr(NLAttr):
         TYPE_CLASSID: NLAttr._int_struct("I"),
         TYPE_KEY_ETH_TYPE: NLAttr._int_struct("!H"),
         TYPE_KEY_IP_PROTO: _ipproto_struct(),
+        TYPE_KEY_ETH_DST: NLAttr._macaddr_struct(),
+        TYPE_KEY_ETH_DST_MASK: NLAttr._macaddr_struct(),
+        TYPE_KEY_ETH_SRC: NLAttr._macaddr_struct(),
+        TYPE_KEY_ETH_SRC_MASK: NLAttr._macaddr_struct(),
         TYPE_KEY_IPV4_SRC: NLAttr._ipaddr_struct(),
         TYPE_KEY_IPV4_SRC_MASK: NLAttr._ipaddr_struct(),
         TYPE_KEY_IPV4_DST: NLAttr._ipaddr_struct(),
@@ -1694,9 +1768,10 @@ class TCtool(object):
 
     Clsact = namedtuple("Qdisc", "parent kind")
     Qdisc = namedtuple("Qdisc", 
-        "parent kind num_tc map hw count offset mode shaper")
+        "parent kind num_tc map hw count offset mode shaper min_rate max_rate")
     Filter = namedtuple("Filter", 
-        "prio proto src_addr src_port dst_addr dst_port tc action priority")
+        "prio proto src_mac src_addr src_port"
+        " dst_mac dst_addr dst_port queue tc action priority")
 
     def __init__(self, ifname, log=None): # type: (str, any) -> None
         self.ifname = ifname
@@ -1739,9 +1814,12 @@ class TCtool(object):
                             attrs = TCMQAttr.dict(attr.data, 84)
                             mode = attrs.get(TCMQAttr.TYPE_MODE, None)
                             shaper = attrs.get(TCMQAttr.TYPE_SHAPER, None)
+                            attrs_nest = TCMQNestAttr.dict(attr.data, 100)
+                            min_rate = attrs_nest.get(TCMQNestAttr.TYPE_MINRATE, None)
+                            max_rate = attrs_nest.get(TCMQNestAttr.TYPE_MAXRATE, None)
                             results.append(self.Qdisc(
                                 msg.parent, kind, num_tc, pmap, hw, 
-                                count, offset, mode, shaper
+                                count, offset, mode, shaper, min_rate, max_rate
                             ))
                             break
                         elif kind == 'clsact':
@@ -1750,8 +1828,8 @@ class TCtool(object):
             return results
 
     def qdisc_add(self, parent=None, kind=None, 
-            pmap=None, count=None, offset=None):
-        # type: (int, str, list[int], list[int], list[int]) -> None
+            pmap=None, count=None, offset=None, min_rate=None, max_rate=None):
+        # type: (int, str, list[int], list[int], list[int], list[int], list[int]) -> None
         with RNLConn() as conn:
             handle = 0
             if parent == self.TC_H_CLSACT:
@@ -1770,15 +1848,43 @@ class TCtool(object):
                 pmap = pmap[:max_tc]
                 count = count[:len(pmap)]
                 offset = offset[:len(pmap)]
-                # nested attrs
-                msg.data = msg.data + TCAttr(
-                    TCAttr.TYPE_OPTIONS, 
-                    pack("B", len(pmap)) + _pack_list(pmap, 'B', max_tc) 
-                    + pack("B", 1) + _pack_list(count, 'H', max_tc) 
-                    + _pack_list(offset, 'H', max_tc)
-                    + b'\x00' * 2 # DWORD alignment padding
-                    + TCMQAttr(TCMQAttr.TYPE_MODE, TCMQAttr.MODE_CHANNEL)._bytes
-                )._bytes
+                if min_rate is not None or max_rate is not None:
+                    minrate = array('Q', [0] * 16)
+                    if min_rate is not None:
+                        for i in range(len(min_rate)):
+                            pnum = pack("Q", min_rate[i] if min_rate[i] is not None else 0)
+                            num = unpack("Q", pnum)[0] * 125000
+                            minrate[i] = num
+                    maxrate = array('Q', [0] * 16)
+                    if max_rate is not None:
+                        for i in range(len(max_rate)):
+                            pnum = pack("Q", max_rate[i] if max_rate[i] is not None else 0)
+                            num = unpack("Q", pnum)[0] * 125000
+                            maxrate[i] = num
+                    # nested attrs
+                    min_rates = [TCMQAttr(TCMQAttr.TYPE_MINRATE, minrate[i]) for i in range(16)]
+                    max_rates = [TCMQAttr(TCMQAttr.TYPE_MAXRATE, maxrate[i]) for i in range(16)]
+                    msg.data = msg.data + TCAttr(
+                        TCAttr.TYPE_OPTIONS, 
+                        pack("B", len(pmap)) + _pack_list(pmap, 'B', max_tc) 
+                        + pack("B", 1) + _pack_list(count, 'H', max_tc) 
+                        + _pack_list(offset, 'H', max_tc)
+                        + b'\x00' * 2 # DWORD alignment padding
+                        + TCMQAttr(TCMQAttr.TYPE_MODE, TCMQAttr.MODE_CHANNEL)._bytes
+                        + TCMQAttr(TCMQAttr.TYPE_SHAPER, TCMQAttr.SHAPER_BW_RATE)._bytes
+                        + TCMQNestAttr(TCMQNestAttr.TYPE_MINRATE, min_rates)._bytes
+                        + TCMQNestAttr(TCMQNestAttr.TYPE_MAXRATE, max_rates)._bytes
+                    )._bytes
+                else:
+                    # nested attrs
+                    msg.data = msg.data + TCAttr(
+                        TCAttr.TYPE_OPTIONS, 
+                        pack("B", len(pmap)) + _pack_list(pmap, 'B', max_tc) 
+                        + pack("B", 1) + _pack_list(count, 'H', max_tc) 
+                        + _pack_list(offset, 'H', max_tc)
+                        + b'\x00' * 2 # DWORD alignment padding
+                        + TCMQAttr(TCMQAttr.TYPE_MODE, TCMQAttr.MODE_CHANNEL)._bytes
+                    )._bytes
             conn.send(msg)
             if self.log:
                 if parent == self.TC_H_ROOT and kind == "mqprio":
@@ -1837,17 +1943,23 @@ class TCtool(object):
                     if attr.type == TCAttr.TYPE_KIND:
                         kind = attr.data
                     elif attr.type == TCAttr.TYPE_OPTIONS and kind == 'flower':
-                        hw_tc = None
+                        queue = None
+                        tc = None
                         action = None
                         priority = None
                         attrs = TCFLAttr.dict(attr.data)
-                        if TCFLAttr.TYPE_CLASSID in attrs:
-                            clsid = self._tc_h_min(attrs[TCFLAttr.TYPE_CLASSID])
-                            if clsid >= self.TC_H_MIN_PRIORITY and \
-                                    clsid <= self.TC_H_MAX_PRIORITY:
-                                hw_tc = clsid - self.TC_H_MIN_PRIORITY
+                        classid = attrs.get(TCFLAttr.TYPE_CLASSID, None)
+                        if classid is not None:
+                            hmin = self._tc_h_min(classid)
+                            if hmin < self.TC_H_MIN_PRIORITY:
+                                queue = hmin - 1
+                            elif hmin >= self.TC_H_MIN_PRIORITY and \
+                                    hmin <= self.TC_H_MAX_PRIORITY:
+                                tc = hmin - self.TC_H_MIN_PRIORITY
                         proto = attrs.get(TCFLAttr.TYPE_KEY_IP_PROTO, None)
+                        dst_mac = attrs.get(TCFLAttr.TYPE_KEY_ETH_DST, None)
                         dst_addr = attrs.get(TCFLAttr.TYPE_KEY_IPV4_DST, None)
+                        src_mac = attrs.get(TCFLAttr.TYPE_KEY_ETH_SRC, None)
                         src_addr = attrs.get(TCFLAttr.TYPE_KEY_IPV4_SRC, None)
                         if proto == 'tcp':
                             dst_port = attrs.get(
@@ -1871,8 +1983,9 @@ class TCtool(object):
                                     actions[TCAttr.TYPE_OPTIONS])
                                 priority = options[TCSKBAttr.TYPE_PRIORITY]
                         results.append(self.Filter(
-                            prio, proto, src_addr, src_port, 
-                            dst_addr, dst_port, hw_tc, action, priority
+                            prio, proto, src_mac, src_addr, src_port, 
+                            dst_mac, dst_addr, dst_port, queue, 
+                            tc, action, priority
                         ))
                         break
             return results
@@ -1889,9 +2002,10 @@ class TCtool(object):
         }
 
     def filter_add(self, direction='ingress', prio=1, proto='tcp', 
-            src_addr=None, src_port=None, dst_addr=None, dst_port=None, 
-            tc=None, action=None, priority=None):
-        # type: (str, int, str, str, int, str, int, int, str, int) -> None
+            src_mac=None, src_addr=None, src_port=None, 
+            dst_mac=None, dst_addr=None, dst_port=None, 
+            queue=None, tc=None, action=None, priority=None):
+        # type: (str, int, str, str, str, int, str, str, int, int, int, str, int) -> None
         with RNLConn() as conn:
             if proto.lower() not in ['tcp', 'udp']:
                 raise Exception('invalid ip protocol %r', proto)
@@ -1905,10 +2019,18 @@ class TCtool(object):
                 raise Exception("invalid filter direction %r" % direction)
             options = []
             options.append(TCFLAttr(TCFLAttr.TYPE_KEY_IP_PROTO, proto.lower()))
+            if src_mac is not None:
+                mask = "ff:ff:ff:ff:ff:ff"
+                options.append(TCFLAttr(TCFLAttr.TYPE_KEY_ETH_SRC, src_mac))
+                options.append(TCFLAttr(TCFLAttr.TYPE_KEY_ETH_SRC_MASK, mask))
             if src_addr is not None:
                 addr, mask = self._from_cidr(src_addr)
                 options.append(TCFLAttr(TCFLAttr.TYPE_KEY_IPV4_SRC, addr))
                 options.append(TCFLAttr(TCFLAttr.TYPE_KEY_IPV4_SRC_MASK, mask))
+            if dst_mac is not None:
+                mask = "ff:ff:ff:ff:ff:ff"
+                options.append(TCFLAttr(TCFLAttr.TYPE_KEY_ETH_DST, dst_mac))
+                options.append(TCFLAttr(TCFLAttr.TYPE_KEY_ETH_DST_MASK, mask))
             if dst_addr is not None:
                 addr, mask = self._from_cidr(dst_addr)
                 options.append(TCFLAttr(TCFLAttr.TYPE_KEY_IPV4_DST, addr))
@@ -1928,12 +2050,15 @@ class TCtool(object):
                     options.append(
                         TCFLAttr(TCFLAttr.TYPE_KEY_UDP_DST, dst_port))
             flags = 0
-            if direction == 'ingress' and tc is not None:
+            if direction == 'ingress' and queue is not None:
                 options.append(TCFLAttr(TCFLAttr.TYPE_CLASSID, 
-                    self._tc_h_make(
-                        self._tc_h_maj(parent),
-                        self._tc_h_min(tc + self.TC_H_MIN_PRIORITY)
-                    )))
+                    self._tc_h_make(self.TC_H_ROOT, queue + 1)
+                ))
+                flags = flags | TCFLAttr.FLAGS_SKIP_SW
+            elif direction == 'ingress' and tc is not None:
+                options.append(TCFLAttr(TCFLAttr.TYPE_CLASSID, 
+                    self._tc_h_make(parent, tc + self.TC_H_MIN_PRIORITY)
+                ))
                 flags = flags | TCFLAttr.FLAGS_SKIP_SW
             elif direction == 'egress' and action is not None:
                 options.append(TCFLAttr(TCFLAttr.TYPE_ACT, TCAction(1, 
@@ -1963,19 +2088,27 @@ class TCtool(object):
                     TCAttr(TCAttr.TYPE_OPTIONS, data)._bytes
             )
             conn.send(msg)
+            time.sleep(0.0001)
             if self.log:
                 # send simulated commands to the log
                 params = [direction, 'prio', str(prio), 'protocol', 'ip', 
                     'flower', 'ip_proto', proto]
+                if src_mac is not None:
+                    params.extend(['src_mac', src_mac])
                 if src_addr is not None:
                     params.extend(['src_ip', src_addr])
                 if src_port is not None:
                     params.extend(['src_port', str(src_port)])
+                if dst_mac is not None:
+                    params.extend(['dst_mac', dst_mac])
                 if dst_addr is not None:
                     params.extend(['dst_ip', dst_addr])
                 if dst_port is not None:
                     params.extend(['dst_port', str(dst_port)])
-                if tc is not None:
+                if queue is not None:
+                    params.extend(['skip_sw', 'classid', 
+                        "FFFF:{:04x}".format(queue + 1)])
+                elif tc is not None:
                     params.extend(['skip_sw', 'hw_tc', str(tc)])
                 else:
                     if action is not None:
@@ -2193,12 +2326,13 @@ class Devlink(object):
 
 class Inventory(object):
     _pciids = [
-        "8086:1591", # /* Intel(R) Ethernet Controller E810-C for backplane */
-        "8086:1592", # /* Intel(R) Ethernet Controller E810-C for QSFP */
-        "8086:1593", # /* Intel(R) Ethernet Controller E810-C for SFP */
-        "8086:1599", # /* Intel(R) Ethernet Controller E810-XXV for backplane */
-        "8086:159A", # /* Intel(R) Ethernet Controller E810-XXV for QSFP */
-        "8086:159B" # /* Intel(R) Ethernet Controller E810-XXV for SFP */
+        "8086:1591", # Intel(R) Ethernet Controller E810-C for backplane
+        "8086:1592", # Intel(R) Ethernet Controller E810-C for QSFP
+        "8086:1593", # Intel(R) Ethernet Controller E810-C for SFP
+        "8086:1599", # Intel(R) Ethernet Controller E810-XXV for backplane
+        "8086:159A", # Intel(R) Ethernet Controller E810-XXV for QSFP
+        "8086:159B", # Intel(R) Ethernet Controller E810-XXV for SFP
+        "8086:1889" # Intel(R) iavf 
     ]
     def __init__(self):
         '''
@@ -2265,8 +2399,8 @@ class Inventory(object):
             try:
                 # query device entry for user events
                 info = _uevent(dev)
-                # check device for ice driver
-                if info['driver'] == 'ice' and info['pci_id'] in self._pciids:
+                # check device for ice or iavf driver
+                if (info['driver'] == 'ice' or info['driver'] == 'iavf') and info['pci_id'] in self._pciids:
                     # get device numa node
                     path = os.path.join(*[
                         '/sys', 'class', 'net', dev, 'device', 'numa_node'
@@ -2339,9 +2473,11 @@ class Settings(object):
         # get device private flags
         flags = self.ethtool.flags()
         # store in class attributes
+        # TODO: not on a VF
         key = 'channel-inline-flow-director'
         if key in flags:
             self.flow_director = True if flags[key] == 'on' else False
+        # TODO: END
         self._channel_pkt = 'channel-pkt' \
             if any(['channel-pkt' in key for key in flags]) \
             else 'channel-packet'
@@ -2385,14 +2521,18 @@ class Settings(object):
         features = {}
         if self.tc_offload is not None:
             features['hw-tc-offload'] = self.tc_offload
+        # TODO: not on a VF
         if self.ntuple_filters is not None:
             features['rx-ntuple-filter'] = self.ntuple_filters
+        # TODO: END
         self.ethtool.features(features)
         # apply device private flags
         self._log("## device private flags ##")
         flags = {}
+        # TODO: not on a VF
         if self.flow_director is not None:
             flags['channel-inline-flow-director'] = self.flow_director
+        # TODO: END
         if self.inspect_optimize is not None:
             flags[self._channel_pkt + '-inspect-optimize'] = \
                 self.inspect_optimize
@@ -2403,6 +2543,31 @@ class Settings(object):
         self.ethtool.flags(flags)        
 
 ## config classes
+class Filters(object):
+    # direction: str = 'ingress', prio: int = 1, proto: str = 'tcp', src_mac: str = None, src_addr: str = None, src_port: int = None, 
+    # dst_mac: str = None, dst_addr: str = None, dst_port: int = None, queue: int = None, tc: int = None, action: str = None, priority: int = None
+    Filter = namedtuple("Filter", 
+    "protocol mac addr port remote_addr remote_port tc queue")
+    _filters = []
+    def add(self, protocol, mac, addr, port, remote_addr, remote_port, tc, queue):
+        # type: (str, str, str, int, str, int, int, int) -> None
+        filter = self.Filter(protocol, mac, addr, port, remote_addr, remote_port, tc, queue)
+        for f in self._filters:
+            score = 0
+            for i in range(len(filter) - 2):
+                if f[i] == filter[i] or f[i] is None or filter[i] is None:
+                    score += 1
+            if score == len(filter):
+                raise Exception("conflicting mac, addr, port, remote_addr, or remote_port")
+        self._filters.append(filter)
+    def create(self, dev, skbedit=False, log=None):
+        # type: (str, bool, any) -> dict[str, list[TCtool.Filter]]
+        tc = TCtool(dev, log)
+        for f in self._filters:
+            tc.filter_add('ingress', f.tc, f.protocol, src_addr=f.addr, )
+            if skbedit:
+                tc.filter_add()
+        return tc.filter_list()
 
 class ConfigBase(object):
     
@@ -2412,7 +2577,7 @@ class ConfigBase(object):
 
     ## custom schema formats
     @staticmethod
-    def _bool(s):
+    def _bool(s): # type (Any) -> bool
         '''
         Parse a <bool> on/off flag 
         '''
@@ -2428,7 +2593,14 @@ class ConfigBase(object):
             raise Exception("%r is not a valid boolean" % s)
 
     @staticmethod
-    def _int_list(s): # type (str) -> list
+    def _str_lower(s): # type (Any) -> str
+        ''' 
+        Parse a case insensitive value 
+        '''
+        return str(s).lower()
+
+    @staticmethod
+    def _int_list(s): # type (Any) -> list
         '''
         Parse a comma-seperated list of integers with ranges
         '''
@@ -2446,7 +2618,7 @@ class ConfigBase(object):
         return sorted(set(l))
 
     @staticmethod
-    def _str_list(s): # type (str) -> list
+    def _str_list(s): # type (Any) -> list
         ''' 
         Parse a comma-seperated list of strings 
         '''
@@ -2461,9 +2633,6 @@ class ConfigBase(object):
         self._tcid = None
         self._qpp = 0
         self._queueid = []
-        self.queues = None
-        self.cpus = None
-        self.numa = None
 
     @property
     def _isfiltered(self): # type: () -> bool
@@ -2490,11 +2659,11 @@ class ConfigBase(object):
                 key = key.strip().lower().replace('-', '_')
                 if isinstance(value, str):
                     # normalize value
-                    value = value.strip().lower()
-                    if value == 'auto' or value == '':
+                    value = value.strip()
+                    if value.lower() == 'auto' or value == '':
                         value = None
                 if isinstance(value, list):
-                    value = ','.join([str(v) for v in value])
+                    value = ','.join([str(v).strip() for v in value])
                 if key in self._schema:
                     if value is not None and callable(self._schema[key]):
                         # use schema callable to convert value
@@ -2517,23 +2686,26 @@ class ConfigGlobals(ConfigBase):
     # a dictionary of callables that defines
     # the schema of the config dict/file
     _schema = {
-        'dev': str, 
-        'queues': int, 
-        'cpus': ConfigBase._int_list,
-        'numa': str,
-        'optimize': ConfigBase._bool, 
+        'arpfilter': ConfigBase._bool, 
         'bpstop': ConfigBase._bool,
         'bpstop_cfg': ConfigBase._bool,
-        'busypoll': int, 
-        'busyread': int, 
-        'rxadapt': ConfigBase._bool, 
-        'txadapt': ConfigBase._bool, 
-        'rxusecs': int, 
-        'txusecs': int, 
-        'rxring': int, 
+        'busypoll': int,
+        'busyread': int,
+        'cpus': ConfigBase._int_list,
+        'dev': str, 
+        'queues': int, 
+        'min_rate': int,
+        'max_rate': int,
+        'numa': ConfigBase._str_lower,
+        'optimize': ConfigBase._bool, 
+        'priority': ConfigBase._str_lower,
+        'queues': int,
+        'rxadapt': ConfigBase._bool,
+        'rxring': int,
+        'rxusecs': int,
+        'txadapt': ConfigBase._bool,
         'txring': int,
-        'arpfilter': ConfigBase._bool, 
-        'priority': str
+        'txusecs': int,
     }
 
     def __init__(self, source=None): # type: (dict) -> None
@@ -2543,21 +2715,25 @@ class ConfigGlobals(ConfigBase):
         '''
         super(ConfigGlobals, self).__init__("globals")
         # attributes
-        self.dev = None
-        self.optimize = None
+        self.arpfilter = False
         self.bpstop = None
         self.bpstop_cfg = None
         self.busypoll = None
         self.busyread = None
-        self.rxadapt = None
-        self.rxusecs = None
-        self.rxring = None
-        self.txadapt = None
-        self.txusecs = None
-        self.txring = None
-        self.arpfilter = False
+        self.cpus = None
+        self.dev = None
+        self.min_rate = None
+        self.max_rate = None
+        self.numa = None
+        self.optimize = None
         self.priority = None
-
+        self.queues = None
+        self.rxadapt = None
+        self.rxring = None
+        self.rxusecs = None
+        self.txadapt = None
+        self.txring = None
+        self.txusecs = None
         # initialize section with source
         if source is not None:
             if not isinstance(source, dict):
@@ -2599,22 +2775,25 @@ class ConfigSection(ConfigBase):
     # a dictionary of callables that defines
     # the schema of the config dict/file
     _schema = {
-        'mode': str, 
-        'queues': int, 
+        'addrs': ConfigBase._str_list,
+        'cpus': ConfigBase._int_list,
+        'mac': str,
+        'min_rate': int,
+        'max_rate': int,
+        'mode': ConfigBase._str_lower,
+        'numa': ConfigBase._str_lower,
         'pollers': int,
         'poller_timeout': int,
-        'protocol': str,
         'ports': ConfigBase._int_list, 
-        'addrs': ConfigBase._str_list,
+        'protocol': ConfigBase._str_lower,
+        'queues': int,
         'remote_ports': ConfigBase._int_list, 
         'remote_addrs': ConfigBase._str_list,
-        'cpus': ConfigBase._int_list, 
-        'numa': str
     }
 
     @property
     def _isfiltered(self): # type: () -> bool
-        return any([self.addrs, self.ports, self.remote_addrs, self.remote_ports])
+        return any([self.mac, self.addrs, self.ports, self.remote_addrs, self.remote_ports])
 
     def __init__(self, name=None, source=None): # type (str, dict) -> None
         '''
@@ -2623,14 +2802,21 @@ class ConfigSection(ConfigBase):
         '''
         super(ConfigSection, self).__init__(name)
         # attributes
+        self.addrs = None
+        self.cpus = None
+        self.mac = None
+        self.min_rate = None
+        self.max_rate = None
         self.mode = None
+        self.numa = None
         self.pollers = 0
         self.poller_timeout = 10000
-        self.protocol = None
         self.ports = None
-        self.addrs = None
-        self.remote_ports = None
+        self.protocol = None
+        self.queues = None
         self.remote_addrs = None
+        self.remote_ports = None
+        self._filters = []
         # initialize section with source
         if source is not None:
             if not isinstance(source, dict):
@@ -2659,7 +2845,7 @@ class ConfigSection(ConfigBase):
         self.numa = 'all' if self.numa is None else self.numa
         if self.pollers:
             if self.pollers > self.queues:
-                raise Exception("[%s] pollers must not be more then "
+                raise Exception("[%s] pollers must not be more than "
                     "the number of queues" % self._name)
             self._qpp = int(math.ceil(float(self.queues) / self.pollers))
             maxpollers = int(math.ceil(float(self.queues) / self._qpp))
@@ -2681,6 +2867,9 @@ class ConfigSection(ConfigBase):
             raise Exception("[%s] invalid protocol %r" % 
                 (self._name, self.protocol))
         # check for a valid port list
+        if len(self.ports) > 1000:
+            raise Exception("[%s] the number of ports per section "
+                "cannot exceed 1000 entries" % self._name)
         for v in self.ports:
             if v > 65535:
                 raise Exception("[%s] invalid port value: %r" % (self._name, v))
@@ -2689,28 +2878,28 @@ class ConfigSection(ConfigBase):
             raise Exception("[%s] invalid number of queues" % self._name)
 
     @staticmethod
-    def _set_tc_filters(tc, tcid, protocol, addr, ports=None, skbedit=False): 
-        # type: (TCtool, int, str, str, list[int], bool) -> None
+    def _set_tc_filters(tc, tcid, protocol, addr=None, ports=None, mac=None, skbedit=False): 
+        # type: (TCtool, int, str, str, list[int], str, bool) -> None
         if addr and '/' not in addr:
             addr = addr + '/32'
         if ports:
             for port in ports:
                 tc.filter_add(
-                    'ingress', tcid, protocol, dst_addr=addr, 
+                    'ingress', tcid, protocol, dst_mac=mac, dst_addr=addr, 
                     dst_port=port, tc=tcid
                 )
                 if skbedit:
                     tc.filter_add(
-                        'egress', tcid, protocol, src_addr=addr, 
+                        'egress', tcid, protocol, src_mac=mac, src_addr=addr, 
                         src_port=port, action='skbedit', priority=tcid
                     )
-        else:
+        elif addr or mac:
             tc.filter_add(
-                'ingress', tcid, protocol, dst_addr=addr, tc=tcid
+                'ingress', tcid, protocol, dst_mac=mac, dst_addr=addr, tc=tcid
             )
             if skbedit:
                 tc.filter_add(
-                    'egress', tcid, protocol, src_addr=addr, 
+                    'egress', tcid, protocol, src_mac=mac, src_addr=addr, 
                     action='skbedit', priority=tcid
                 )
 
@@ -2728,53 +2917,122 @@ class ConfigSection(ConfigBase):
                 if skbedit:
                     tc.filter_add(
                         'egress', tcid, protocol, dst_addr=addr, 
-                        dst_port=port, action='skbedit', priority=1
+                        dst_port=port, action='skbedit', priority=tcid
                     )
-        else:
+        elif addr:
             tc.filter_add(
                 'ingress', tcid, protocol, src_addr=addr, tc=tcid
             )
             if skbedit:
                 tc.filter_add(
                     'egress', tcid, protocol, dst_addr=addr, 
-                    action='skbedit', priority=1
+                    action='skbedit', priority=tcid
                 )
+
+    @staticmethod
+    def _set_queue_filters(tc, tcid, queue, protocol, addrs=None, port=None, mac=None, skbedit=False): 
+        # type: (TCtool, int, int, str, str, int, str, bool) -> None
+        if addrs:
+            for addr in addrs:             
+                if addr and '/' not in addr:
+                    addr = addr + '/32'
+                tc.filter_add(
+                    'ingress', tcid, protocol, dst_mac=mac, dst_addr=addr, 
+                    dst_port=port, queue=queue
+                )
+                if skbedit:
+                    tc.filter_add(
+                        'egress', tcid, protocol, src_mac=mac, src_addr=addr, 
+                        src_port=port, action='skbedit', priority=tcid
+                    )
+        else:
+            tc.filter_add(
+                'ingress', tcid, protocol, dst_mac=mac, 
+                dst_port=port, queue=queue
+            )
+            if skbedit:
+                tc.filter_add(
+                    'egress', tcid, protocol, src_mac=mac, 
+                    src_port=port, action='skbedit', priority=tcid
+                )
+
+    # def _create_filters(self):
+    #     filters = Filters()
+    #     if self.addrs:
+    #         for addr in self.addrs:
+    #             if addr and '/' not in addr:
+    #                 addr = addr + '/32'
+    #             for port in self.ports:
+    #                 filters.add(
+    #                     Filter(self.protocol, self.mac, addr, port, None, None)
+    #                 )
+    #     elif self.ports:
+    #         for port in self.ports:
+    #             filters.add(
+    #                 Filter(self.protocol, self.mac, None, port, None, None)
+    #             )
+    #     elif self.mac:
+    #         filters.add(Filter(self.protocol, self.mac, None, None, None, None))
+    #     if self.remote_addrs:
+    #         for addr in self.remote_addrs:
+    #             if addr and '/' not in addr:
+    #                 addr = addr + '/32'
+    #             for port in self.remote_ports:
+    #                 filters.add(
+    #                     Filter(self.protocol, None, None, None, addr, port)
+    #                 )
+    #     elif self.remote_ports:
+    #         for port in self.remote_ports:
+    #             filters.add(
+    #                 Filter(self.protocol, None, None, None, None, port)
+    #             )
 
     def _set_filters(self, dev, skbedit=False, log=None): 
         # type: (str, bool, any) -> None
         # create ingress & egress filters
         if not self._isfiltered:
             return
-        tc = TCtool(dev, log)
-        if self.addrs:
-            for addr in self.addrs:
+        def _tc_filters(self, dev, skbedit, log):
+            tc = TCtool(dev, log)
+            if self.addrs:
+                for addr in self.addrs:
+                    self._set_tc_filters(tc, self._tcid, self.protocol, 
+                        addr, self.ports, self.mac, skbedit)
+            elif self.ports:
                 self._set_tc_filters(tc, self._tcid, self.protocol, 
-                    addr, self.ports, skbedit)
-        elif self.ports:
-            self._set_tc_filters(tc, self._tcid, self.protocol, 
-                    None, self.ports, skbedit)
-        if self.remote_addrs:
-            for addr in self.remote_addrs:
+                    None, self.ports, self.mac, skbedit)
+            elif self.mac:
+                self._set_tc_filters(tc, self._tcid, self.protocol, 
+                    None, None, self.mac, skbedit)
+            if self.remote_addrs:
+                for addr in self.remote_addrs:
+                    self._set_tc_filters_remote(tc, self._tcid, self.protocol, 
+                        addr, self.remote_ports, skbedit)
+            elif self.remote_ports:
                 self._set_tc_filters_remote(tc, self._tcid, self.protocol, 
-                    addr, self.remote_ports, skbedit)
-        elif self.remote_ports:
-            self._set_tc_filters_remote(tc, self._tcid, self.protocol, 
                     None, self.remote_ports, skbedit)
-        # create ntuple sideband (flow) filters as needed
-        if self.mode == 'shared':
-            ethtool = Ethtool(dev, log)
+        def _queue_filters(self, dev, skbedit, log):
+            tc = TCtool(dev, log)
+            for i, port in enumerate(self.ports):
+                self._set_queue_filters(tc, self._tcid, self._queueid[i], 
+                    self.protocol, None, port, self.mac, skbedit)
+        if self.mode == "exclusive":
+            _tc_filters(self, dev, skbedit, log)
+        elif self.mode == 'shared':
             if len(self.ports) != self.queues:
                 raise Exception("[%s] the number of ports must be equal"
                     " to the number of queues when the mode is 'shared'" 
                     % self._name)
-            # if log:
-            #     log.write("## flow rules for section [%s] ##\n" % self._name)
-            for i, port in enumerate(self.ports):
-                ethtool.ntuple_add(
-                    proto=self.protocol,
-                    dst_port=port, action=self._queueid[i]
-                )
-
+            try:
+                _queue_filters(self, dev, skbedit, log)
+            except:
+                _tc_filters(self, dev, skbedit, log)
+                ethtool = Ethtool(dev, log)
+                for i, port in enumerate(self.ports):
+                    ethtool.ntuple_add(
+                        proto=self.protocol,
+                        dst_port=port, action=self._queueid[i]
+                    )
 
 class Config(object):
 
@@ -2825,7 +3083,10 @@ class Config(object):
         try:
             # load filepath as config file
             conf = SafeConfigParser()
-            conf.readfp(fp)
+            if sys.version[:1] == '3':
+                conf.read_file(fp)
+            else:
+                conf.readfp(fp)
         except:
             # raise Exception("unable to load %r" % filepath)
             raise
@@ -2885,7 +3146,7 @@ class Config(object):
                     else:
                         value = None
                 if value is not None:
-                    conf.set('globals', key, str(value).lower())
+                    conf.set('globals', key, str(value))
         del(config['globals'])
         for name, section in config.items():
             conf.add_section(name)
@@ -2897,7 +3158,7 @@ class Config(object):
                         else:
                             value = None
                 if value is not None:
-                    conf.set(name, key, str(value).lower())
+                    conf.set(name, key, str(value))
         buf = StringIO()
         conf.write(buf)
         return buf.getvalue().strip()
@@ -2947,6 +3208,21 @@ class Config(object):
         if requested > 256:
             raise Exception("Not enough queues available")
         
+    def _check_rates(self): # type() -> None
+        speed = int(_readfile("/sys/class/net/%s/speed" % self.globals.dev))
+        requested = self.globals.min_rate if self.globals.min_rate is not None else 0
+        for sec in self._sections.values():
+            requested += sec.min_rate if sec.min_rate is not None else 0
+        if requested > speed:
+            raise Exception("Total min_rate exceeds device speed %d" % speed)
+        requested = self.globals.max_rate if self.globals.max_rate is not None else 0
+        if requested > speed:
+            raise Exception("[globals] max_rate exceeds device speed %d" % speed)
+        for name, sec in self._sections.items():
+            requested = sec.max_rate if sec.max_rate is not None else 0
+            if requested > speed:
+                raise Exception("[%s] max_rate exceeds device speed %d" % (name, speed))
+
     def _cleanup(self): # type: () -> None
         '''
         Attempt to cleanup setup from previous run
@@ -2979,7 +3255,7 @@ class Config(object):
             pass
         # clear any settings
         settings = Settings(self.globals.dev, self.log)
-        settings.ntuple_filters = None
+        settings.ntuple_filters = False
         settings.arp_announce = 0
         settings.arp_ignore = 0
         settings.arp_notify = 0
@@ -3031,9 +3307,9 @@ class Config(object):
     def _set_interface_flags(self): # type: () -> None
         # enable tc offload
         self.settings.tc_offload = True
+        self.settings.ntuple_filters = True
         # if no sections are 'shared', enable global flow director if available
-        if not any([s.mode == 'shared' for s in self._sections.values()]) \
-                and self.settings.flow_director is not None:
+        if not self._isshared and self.settings.flow_director is not None:
             self.settings.flow_director = True
         # set various tunables
         if self.globals.optimize is not None:
@@ -3107,9 +3383,14 @@ class Config(object):
         tc = TCtool(self.globals.dev, self.log)
         # create root mqprio qdisc
         count = [section.queues for _, section in self]
+        min_rate = [section.min_rate for _, section in self]
+        max_rate = [section.max_rate for _, section in self]
         pmap = [i for i in range(len(count))]
         offset = [sum(count[:i]) for i in range(len(count))]
-        tc.qdisc_add(tc.TC_H_ROOT, 'mqprio', pmap, count, offset)
+        tc.qdisc_add(tc.TC_H_ROOT, 'mqprio', pmap, count, offset,
+            min_rate if any(x is not None for x in min_rate) else None,
+            max_rate if any(x is not None for x in max_rate) else None
+            )
         if self._isfiltered \
                 and not any([t.kind == 'clsact' for t in tc.qdisc_list()]):
             # create classifier (ingress+egress) qdisc if needed
@@ -3163,7 +3444,7 @@ class Config(object):
                 params = []
                 for n, v in f._asdict().items():
                     if v is not None:
-                        if n in ['tc', 'action']:
+                        if n in ['tc', 'action', 'queue']:
                             n = '-> ' + n
                         params.append("%s %s" % (n, str(v)))
                 self._print("  %s" % ' '.join(params))
@@ -3178,10 +3459,13 @@ class Config(object):
                         params.append("%s %s" % (n, str(v)))
                 self._print("  %s" % ' '.join(params))
         if self._isfiltered and self._isshared:
-            self._print("- flow rules:")
-            for f in self.settings.ethtool.ntuple_list().values():
-                self._print("  proto %s dst_port %d -> queue %d" % 
-                    (f['proto'], f['addr']['dst_port'], f['ring']))
+            if not _is_vf(self.globals.dev):
+                ntuples = self.settings.ethtool.ntuple_list()
+                if ntuples:
+                    self._print("- flow rules:")
+                    for f in ntuples.values():
+                        self._print("  proto %s dst_port %d -> queue %d" % 
+                            (f['proto'], f['addr']['dst_port'], f['ring']))
 
     def _set_affinity(self): # type: () -> None
         self._printhead("setting queue/poller affinity")
@@ -3257,12 +3541,15 @@ class Config(object):
             section._validate(self.inventory)
         if self.globals.dev not in self.inventory.devs:
             raise Exception("[globals] network device not found or ineligible")
+        if self._isshared and _is_vf(self.globals.dev):
+                raise Exception("Shared mode is not currently supported on VF netdevs")
         if any([s.pollers for s in self._sections.values()]):
             self.globals.busypoll = 0
             self.globals.busyread = 0
             _printhead("when using pollers, " \
                 "busypoll and/or busyread cannot be enabled - " \
                 "setting both to zero", 93)
+        # check for conflicting filters
         self._assign_auto_cpus(self.inventory)
 
     def apply(self): # type: () -> None
@@ -3272,6 +3559,7 @@ class Config(object):
         self._log("### cleanup ###")
         self._cleanup()
         self._check_queues()
+        self._check_rates()
         self.settings = Settings(self.globals.dev, self.log)
         self._set_sysctls()
         self._set_interface_flags()
@@ -3280,7 +3568,9 @@ class Config(object):
         self._print(self.settings)
         self.settings.apply()
         self._set_tcs()
+        time.sleep(0.5)
         self._set_filters()
+        time.sleep(0.5)
         self._set_options()
         self._log("", "### affinitization ###")
         self._set_affinity()
@@ -3316,17 +3606,22 @@ def check_interface(dev, log=None, verbose=False):
         #     look for a 'pci:ice' symbolic link
         raise Exception("you must provide a network dev")
     else:
+        driver = ""
         # check if net dev exists
         if not os.path.isdir("/sys/class/net/%s" % dev):
             raise Exception("%r net dev does not exist" % dev)
-        # check if net dev is using the ice driver
-        path = "/sys/class/net/%s/device/driver/module/drivers/pci:ice" % dev
-        if not os.path.islink(path):
-            raise Exception("%r net dev is not using the ice driver" % dev)
+        # check if net dev is using the ice or iavf driver
+        path = "/sys/class/net/%s/device/driver/module/drivers/pci:%s"
+        if os.path.islink(path % (dev, "ice")):
+            driver = 'ice'
+        elif os.path.islink(path % (dev, "iavf")):
+            driver = 'iavf'
+        else:
+            raise Exception("%r net dev is not using the ice or iavf driver" % dev)
         if verbose:
-            ice_version = _readfile(path + "/module/version")
-            ice_srcversion = _readfile(path + "/module/srcversion")
-            print("driver: ice v%s (%s)" % (ice_version, ice_srcversion))
+            version = _readfile((path % (dev, driver)) + "/module/version")
+            srcversion = _readfile((path % (dev, driver)) + "/module/srcversion")
+            print("driver: %s v%s (%s)" % (driver, version, srcversion))
     ip = IPtool(dev)
     # check link status
     status = ip.link_state()
@@ -3414,14 +3709,14 @@ def _main():
             "\x1B[33m***\x1B[1m ADQ Setup Tool v%s \x1B[0m\x1B[33m***\x1B[0m" % _VERSION_,
             "\x1B[90mWebsite: https://www.intel.com/content/www/us/en/architecture-and-technology/ethernet/adq-resource-center.html\x1B[0m",
             "\x1B[90mSPDX-License-Identifier: BSD-3-Clause\x1B[0m",
-            "\x1B[90mCopyright (C) 2022 - 2023 Intel Corporation\x1B[0m"
+            "\x1B[90mCopyright (c) 2022, Intel Corporation\x1B[0m"
         ]
     else:
         prolog = [
             "*** ADQ Setup Tool v%s ***" % _VERSION_,
             "Website: https://www.intel.com/content/www/us/en/architecture-and-technology/ethernet/adq-resource-center.html",
             "SPDX-License-Identifier: BSD-3-Clause",
-            "Copyright (C) 2022 - 2023 Intel Corporation"
+            "Copyright (c) 2022, Intel Corporation"
         ]
     prolog.append("\nFor use with Intel Ethernet E810 Controllers and Network Adapters ONLY")
 
@@ -3495,7 +3790,7 @@ def _main():
     parser.add_argument('--txusecs', dest='txusecs', metavar='<INT>', type=int, help="tx coalesce usec value", default=SUPPRESS)
     parser.add_argument('--txring', dest='txring', metavar='<INT>', type=int, help="tx ring size", default=SUPPRESS)
     parser.add_argument('--arpfilter', '-f', action='store_true', help="enable selective ARP activity in order to properly "
-        "use more then one interface on the same subnet", default=SUPPRESS)
+        "use more than one interface on the same subnet", default=SUPPRESS)
     parser.add_argument('--priority', '-p', metavar='<METHOD>', choices=['skbedit'], help="method to use for setting socket priority, "
         "possible values are 'skbedit'", default=SUPPRESS)    
 
@@ -3526,6 +3821,9 @@ def _main():
             name = params.pop(0)
             if name[0] == '[' and name[-1] == ']':
                 name = name[1:-1]
+            else:
+                _printhead("warning: the use of section names without "
+                    "[ ] brackets is depreciated", 93)
             config = {}
             group = {}
             while len(params):

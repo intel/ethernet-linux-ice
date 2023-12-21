@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2023 Intel Corporation */
 
+#include "ice_osdep.h"
 #include "ice_common.h"
 #include "ice_fwlog.h"
 

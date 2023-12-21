@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2023 Intel Corporation */
 
+#include "ice.h"
 #include <linux/bpf_trace.h>
 #include <net/xdp_sock.h>
 #include <net/xdp.h>
 #include <net/busy_poll.h>
-#include "ice.h"
 #include "ice_lib.h"
 #include "ice_base.h"
 #include "ice_type.h"
@@ -454,9 +454,6 @@ ice_xsk_pool_enable(struct ice_vsi *vsi, struct xdp_umem *pool, u16 qid)
 #endif
 	int err;
 
-	if (vsi->type != ICE_VSI_PF)
-		return -EINVAL;
-
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
 	if (!vsi->num_xsk_umems)
 		vsi->num_xsk_umems = min_t(u16, vsi->num_rxq, vsi->num_txq);
@@ -522,11 +519,11 @@ static int ice_realloc_rx_xdp_bufs(struct ice_rx_ring *rx_ring,
 	if (pool_present) {
 		kfree(rx_ring->rx_buf);
 		rx_ring->rx_buf = NULL;
-		rx_ring->xdp_buf = sw_ring;
+		rx_ring->xdp_buf = (struct xdp_buff **)sw_ring;
 	} else {
 		kfree(rx_ring->xdp_buf);
 		rx_ring->xdp_buf = NULL;
-		rx_ring->rx_buf = sw_ring;
+		rx_ring->rx_buf = (struct ice_rx_buf *)sw_ring;
 	}
 
 	return 0;
@@ -1185,7 +1182,7 @@ int ice_clean_rx_irq_zc(struct ice_rx_ring *rx_ring, int budget)
 		rx_buf = &rx_ring->rx_buf[rx_ring->next_to_clean];
 		if (!rx_buf->xdp)
 			break;
-		rx_buf->xdp->data_end = rx_buf->xdp->data + size;
+		rx_buf->xdp->data_end = (u8 *)rx_buf->xdp->data + size;
 		xsk_buff_dma_sync_for_cpu(rx_buf->xdp, rx_ring->xsk_pool);
 
 		xdp_res = ice_run_xdp_zc(rx_ring, rx_buf->xdp);

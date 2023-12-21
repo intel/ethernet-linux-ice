@@ -3,12 +3,12 @@
 
 /* The driver transmit and receive code */
 
+#include "ice.h"
 #include <linux/mm.h>
 #include <linux/netdevice.h>
 #include <linux/prefetch.h>
 #include "ice_txrx_lib.h"
 #include "ice_lib.h"
-#include "ice.h"
 #include "ice_dcb_lib.h"
 #include <net/dsfield.h>
 #ifdef HAVE_XDP_SUPPORT
@@ -253,7 +253,12 @@ static bool ice_clean_tx_irq(struct ice_tx_ring *tx_ring, int napi_budget)
 	prefetch(&vsi->state);
 
 	do {
-		struct ice_tx_desc *eop_desc = tx_buf->next_to_watch;
+		struct ice_tx_desc *eop_desc;
+
+		if (!tx_buf)
+			break;
+
+		eop_desc = tx_buf->next_to_watch;
 
 		/* if next_to_watch is not set then there is no work pending */
 		if (!eop_desc)
@@ -1710,6 +1715,10 @@ int ice_clean_rx_irq(struct ice_rx_ring *rx_ring, int budget)
 		 * hardware wrote DD then it will be non-zero
 		 */
 		stat_err_bits = BIT(ICE_RX_FLEX_DESC_STATUS0_DD_S);
+
+		if (!rx_desc)
+			return budget;
+
 		if (!ice_test_staterr(rx_desc->wb.status_error0, stat_err_bits))
 			break;
 
@@ -3671,19 +3680,14 @@ ice_tstamp(struct ice_tx_ring *tx_ring, struct sk_buff *skb,
 	if (likely(!(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)))
 		return;
 
-	if (!tx_ring->ptp_tx)
-		return;
-
 	/* Tx timestamps cannot be sampled when doing TSO */
 	if (first->tx_flags & ICE_TX_FLAGS_TSO)
 		return;
 
 	/* Grab an open timestamp slot */
 	idx = ice_ptp_request_ts(tx_ring->tx_tstamps, skb);
-	if (idx < 0) {
-		tx_ring->vsi->back->ptp.tx_hwtstamp_skipped++;
+	if (idx < 0)
 		return;
-	}
 
 	off->cd_qw1 |= (u64)(ICE_TX_DESC_DTYPE_CTX |
 			     (ICE_TX_CTX_DESC_TSYN << ICE_TXD_CTX_QW1_CMD_S) |

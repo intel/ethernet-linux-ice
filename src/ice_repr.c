@@ -298,6 +298,7 @@ ice_repr_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 }
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
 
+#ifndef HAVE_NETDEV_MIN_MAX_MTU
 /**
  * ice_repr_change_mtu - NDO callback to change the MTU on port representor
  * @netdev: network interface device structure
@@ -317,6 +318,7 @@ static int ice_repr_change_mtu(struct net_device *netdev, int new_mtu)
 
 	return 0;
 }
+#endif /* !HAVE_NETDEV_MIN_MAX_MTU */
 
 static const struct net_device_ops ice_repr_netdev_ops = {
 #ifdef HAVE_NDO_GET_PHYS_PORT_NAME
@@ -327,11 +329,13 @@ static const struct net_device_ops ice_repr_netdev_ops = {
 	.ndo_stop = ice_repr_stop,
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 	.ndo_start_xmit = ice_eswitch_port_start_xmit,
-#ifdef HAVE_RHEL7_EXTENDED_MIN_MAX_MTU
+#ifndef HAVE_NETDEV_MIN_MAX_MTU
+#ifdef HAVE_NETDEV_EXTENDED_MIN_MAX_MTU
 	.extended.ndo_change_mtu = ice_repr_change_mtu,
 #else
 	.ndo_change_mtu = ice_repr_change_mtu,
-#endif /* HAVE_RHEL7_EXTENDED_MIN_MAX_MTU */
+#endif /* HAVE_NETDEV_EXTENDED_MIN_MAX_MTU */
+#endif /* HAVE_NETDEV_MIN_MAX_MTU */
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
 #ifdef HAVE_NDO_GET_DEVLINK_PORT
 #ifndef HAVE_SET_NETDEV_DEVLINK_PORT
@@ -407,12 +411,6 @@ static int ice_repr_add(struct ice_vf *vf)
 	if (!repr)
 		return -ENOMEM;
 
-	repr->mac_rule = kzalloc(sizeof(*repr->mac_rule), GFP_KERNEL);
-	if (!repr->mac_rule) {
-		err = -ENOMEM;
-		goto err_alloc_rule;
-	}
-
 	repr->netdev = alloc_etherdev(sizeof(struct ice_netdev_priv));
 	if (!repr->netdev) {
 		err =  -ENOMEM;
@@ -439,15 +437,14 @@ static int ice_repr_add(struct ice_vf *vf)
 		goto err_devlink;
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 
-#ifdef HAVE_NETDEVICE_MIN_MAX_MTU
-#ifdef HAVE_RHEL7_EXTENDED_MIN_MAX_MTU
+#ifdef HAVE_NETDEV_EXTENDED_MIN_MAX_MTU
 	repr->netdev->extended->min_mtu = ETH_MIN_MTU;
 	repr->netdev->extended->max_mtu = ICE_MAX_MTU;
-#else
+#endif /* HAVE_NETDEV_EXTENDED_MIN_MAX_MTU */
+#ifdef HAVE_NETDEV_MIN_MAX_MTU
 	repr->netdev->min_mtu = ETH_MIN_MTU;
 	repr->netdev->max_mtu = ICE_MAX_MTU;
-#endif /* HAVE_RHEL7_EXTENDED_MIN_MAX_MTU */
-#endif /* HAVE_NETDEVICE_MIN_MAX_MTU */
+#endif /* HAVE_NETDEV_MIN_MAX_MTU */
 #endif /* CONFIG_NET_DEVLINK */
 
 	SET_NETDEV_DEV(repr->netdev, ice_pf_to_dev(vf->pf));
@@ -487,9 +484,6 @@ err_alloc_q_vector:
 	free_netdev(repr->netdev);
 	repr->netdev = NULL;
 err_alloc:
-	kfree(repr->mac_rule);
-	repr->mac_rule = NULL;
-err_alloc_rule:
 	kfree(repr);
 	vf->repr = NULL;
 	return err;
@@ -514,8 +508,6 @@ static void ice_repr_rem(struct ice_vf *vf)
 #endif /* CONFIG_NET_DEVLINK */
 	free_netdev(vf->repr->netdev);
 	vf->repr->netdev = NULL;
-	kfree(vf->repr->mac_rule);
-	vf->repr->mac_rule = NULL;
 	kfree(vf->repr);
 	vf->repr = NULL;
 

@@ -59,6 +59,11 @@ struct ice_virtchnl_ops {
 	int (*cfg_promiscuous_mode_msg)(struct ice_vf *vf, u8 *msg);
 	int (*add_vlan_msg)(struct ice_vf *vf, u8 *msg);
 	int (*remove_vlan_msg)(struct ice_vf *vf, u8 *msg);
+	int (*hqos_read_tree)(struct ice_vf *vf, u8 *msg);
+	int (*hqos_elems_add)(struct ice_vf *vf, u8 *msg);
+	int (*hqos_elems_del)(struct ice_vf *vf, u8 *msg);
+	int (*hqos_elems_move)(struct ice_vf *vf, u8 *msg);
+	int (*hqos_elems_conf)(struct ice_vf *vf, u8 *msg);
 	int (*query_rxdid)(struct ice_vf *vf);
 	int (*get_rss_hena)(struct ice_vf *vf);
 	int (*set_rss_hena_msg)(struct ice_vf *vf, u8 *msg);

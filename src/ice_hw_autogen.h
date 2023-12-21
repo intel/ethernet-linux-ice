@@ -479,6 +479,7 @@
 #define VP_MDET_TX_TDPU(_VF)			(0x00040000 + ((_VF) * 4)) /* _i=0...255 */ /* Reset Source: CORER */
 #define VP_MDET_TX_TDPU_VALID_M			BIT(0)
 #define GL_MNG_FWSM				0x000B6134 /* Reset Source: POR */
+#define GL_MNG_FWSM_FW_LOADING_M		BIT(30)
 #define GL_MNG_FWSM_FW_MODES_M			ICE_M(0x7, 0)
 #define GLNVM_FLA				0x000B6108 /* Reset Source: POR */
 #define GLNVM_FLA_LOCKED_M			BIT(6)

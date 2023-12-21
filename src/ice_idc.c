@@ -49,7 +49,7 @@ struct iidc_auxiliary_drv
  * ice_for_each_aux - iterate across and call function for each aux driver
  * @pf: pointer to private board struct
  * @data: data to pass to function on each call
- * @fn: pointer to function to call for each peer
+ * @fn: pointer to function to call for each aux driver
  */
 int
 ice_for_each_aux(struct ice_pf *pf, void *data,
@@ -125,10 +125,15 @@ void ice_send_event_to_aux_no_lock(struct iidc_core_dev_info *cdev, void *data)
 {
 	struct iidc_event *event = data;
 	struct iidc_auxiliary_drv *iadrv;
+	struct ice_pf *pf;
+
+	pf = pci_get_drvdata(cdev->pdev);
+	mutex_lock(&pf->adev_mutex);
 
 	iadrv = ice_get_auxiliary_drv(cdev);
 	if (iadrv && iadrv->event_handler)
 		iadrv->event_handler(cdev, event);
+	mutex_unlock(&pf->adev_mutex);
 }
 
 /**
@@ -257,7 +262,6 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 		dev_err(dev, "Failed VSI RDMA qset enable\n");
 		return status;
 	}
-	vsi->qset_handle[qset->tc] = qset->qs_handle;
 	qset->teid = qset_teid;
 
 #ifdef HAVE_NETDEV_UPPER_INFO
@@ -267,7 +271,7 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 		lag->rdma_qset[qset->tc] = *qset;
 
 		if (cdev_info->rdma_active_port != pf->hw.port_info->lport &&
-		    cdev_info->rdma_active_port != ICE_LAG_INVALID_PORT) {
+		    cdev_info->rdma_active_port != IIDC_RDMA_INVALID_PORT) {
 			struct net_device *tmp_nd;
 
 			rcu_read_lock();
@@ -307,6 +311,89 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 }
 
 /**
+ * ice_alloc_rdma_multi_qsets - Allocate QSets for RDMA Leaf Nodes
+ * @cdev_info: struct for aux driver that is allocating qsets
+ * @qset: Resource(s) to be allocated
+ */
+static int
+ice_alloc_rdma_multi_qsets(struct iidc_core_dev_info *cdev_info,
+			   struct iidc_rdma_multi_qset_params *qset)
+{
+	u16 max_rdmaqs[ICE_MAX_TRAFFIC_CLASS];
+#ifdef HAVE_NETDEV_UPPER_INFO
+	struct ice_lag *lag;
+#endif /* HAVE_NETDEV_UPPER_INFO */
+	struct ice_vsi *vsi;
+	struct device *dev;
+	struct ice_pf *pf;
+	u32 qset_teid[2];
+	u16 qs_handle[2];
+	int i, status;
+
+	if (!cdev_info || !qset)
+		return -EINVAL;
+
+	if (qset->num > 2)
+		return -EOPNOTSUPP;
+
+	pf = pci_get_drvdata(cdev_info->pdev);
+	dev = ice_pf_to_dev(pf);
+
+	if (!ice_is_aux_ena(pf))
+		return -EINVAL;
+
+	ice_for_each_traffic_class(i)
+		max_rdmaqs[i] = 0;
+	max_rdmaqs[qset->tc] = qset->num;
+
+	for (i = 0; i < qset->num; i++)
+		qs_handle[i] = qset->qs_handle[i];
+
+	vsi = ice_find_vsi(pf, qset->vport_id);
+	if (!vsi) {
+		dev_err(dev, "RDMA QSet invalid VSI\n");
+		return -EINVAL;
+	}
+
+	status = ice_cfg_vsi_rdma(vsi->port_info, vsi->idx, vsi->tc_cfg.ena_tc,
+				  max_rdmaqs);
+	if (status) {
+		dev_err(dev, "Failed VSI RDMA qset config\n");
+		return status;
+	}
+
+	for (i = 0; i < qset->num; i++) {
+		status = ice_ena_vsi_rdma_qset(vsi->port_info, vsi->idx,
+					       qset->tc, &qs_handle[i], 1,
+					       &qset_teid[i]);
+		if (status) {
+			dev_err(dev, "Failed VSI RDMA qset enable\n");
+			return status;
+		}
+	}
+
+	for (i = 0; i < qset->num; i++) {
+		qset->teid[i] = qset_teid[i];
+		qset->qset_port[i] = IIDC_RDMA_PRIMARY_PORT;
+	}
+
+#ifdef HAVE_NETDEV_UPPER_INFO
+	lag = pf->lag;
+	if (lag && lag->bonded && cdev_info->bond_aa) {
+		mutex_lock(&pf->lag_mutex);
+		lag->rdma_qsets[qset->tc] = *qset;
+		/* ice_lag_aa_failover has the logic that will determine if
+		 * some, all or none of the qsets need to move to secondary port
+		 */
+		ice_lag_aa_failover(lag, cdev_info, IIDC_RDMA_SECONDARY_PORT,
+				    true);
+		mutex_unlock(&pf->lag_mutex);
+	}
+#endif /* HAVE_NETDEV_UPPER_INFO */
+	return 0;
+}
+
+/**
  * ice_free_rdma_qsets - Free leaf nodes for RDMA Qset
  * @cdev_info: aux driver that requested qsets to be freed
  * @qset: Resource to be freed
@@ -343,14 +430,12 @@ ice_free_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 	q_id = qset->qs_handle;
 	teid = qset->teid;
 
-	vsi->qset_handle[qset->tc] = 0;
-
 #ifdef HAVE_NETDEV_UPPER_INFO
 	if (pf->lag && pf->lag->bonded) {
 		mutex_lock(&pf->lag_mutex);
 
 		if (cdev_info->rdma_active_port != pf->hw.port_info->lport &&
-		    cdev_info->rdma_active_port != ICE_LAG_INVALID_PORT) {
+		    cdev_info->rdma_active_port != IIDC_RDMA_INVALID_PORT) {
 			struct net_device *tmp_nd;
 
 			rcu_read_lock();
@@ -395,6 +480,109 @@ ice_free_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 	return 0;
 }
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+/**
+ * ice_lag_aa_reclaim_nodes - ensure nodes back on primary for freeing
+ * @cdev: aux device struct
+ * @qset: resources to be moved
+ */
+void
+ice_lag_aa_reclaim_nodes(struct iidc_core_dev_info *cdev,
+			 struct iidc_rdma_multi_qset_params *qset)
+{
+	struct iidc_rdma_multi_qset_params *r_qsets;
+	struct ice_pf *pf;
+
+	if (cdev->rdma_ports[ICE_PRI_IDX] == IIDC_RDMA_INVALID_PORT ||
+	    cdev->rdma_ports[ICE_SEC_IDX] == IIDC_RDMA_INVALID_PORT)
+		return;
+
+	pf = pci_get_drvdata(cdev->pdev);
+	r_qsets = pf->lag->rdma_qsets;
+
+	if (qset->teid[ICE_PRI_IDX] &&
+	    r_qsets[qset->tc].qset_port[ICE_PRI_IDX] !=
+	    IIDC_RDMA_PRIMARY_PORT &&
+	    !ice_lag_move_node(pf->lag, cdev->rdma_ports[ICE_SEC_IDX],
+			       cdev->rdma_ports[ICE_PRI_IDX], qset->tc,
+			       qset->teid[ICE_PRI_IDX],
+			       qset->qs_handle[ICE_PRI_IDX]))
+		r_qsets[qset->tc].qset_port[ICE_PRI_IDX] =
+			IIDC_RDMA_PRIMARY_PORT;
+
+	if (qset->teid[ICE_SEC_IDX] &&
+	    r_qsets[qset->tc].qset_port[ICE_SEC_IDX] !=
+	    IIDC_RDMA_PRIMARY_PORT &&
+	    !ice_lag_move_node(pf->lag, cdev->rdma_ports[ICE_SEC_IDX],
+			       cdev->rdma_ports[ICE_PRI_IDX], qset->tc,
+			       qset->teid[ICE_SEC_IDX],
+			       qset->qs_handle[ICE_SEC_IDX]))
+		r_qsets[qset->tc].qset_port[ICE_SEC_IDX] =
+			IIDC_RDMA_PRIMARY_PORT;
+}
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+/**
+ * ice_free_rdma_multi_qsets - Free leaf nodes for RDMA multi_qsets
+ * @cdev_info: struct for aux device freeing resources
+ * @qset: resources to be freed
+ */
+static int
+ice_free_rdma_multi_qsets(struct iidc_core_dev_info *cdev_info,
+			  struct iidc_rdma_multi_qset_params *qset)
+{
+	struct ice_vsi *vsi;
+	struct device *dev;
+	struct ice_pf *pf;
+	int status, i;
+	u32 teid[2];
+	u16 q_id[2];
+
+	if (!cdev_info || !qset)
+		return -EINVAL;
+
+	if (qset->num > 2)
+		return -EOPNOTSUPP;
+
+	pf = pci_get_drvdata(cdev_info->pdev);
+	dev = ice_pf_to_dev(pf);
+	vsi = ice_find_vsi(pf, qset->vport_id);
+	if (!vsi) {
+		dev_err(dev, "RDMA INVALID VSI\n");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < qset->num; i++) {
+		teid[i] = qset->teid[i];
+		q_id[i] = qset->qs_handle[i];
+	}
+
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag && pf->lag->bonded && cdev_info->bond_aa) {
+		mutex_lock(&pf->lag_mutex);
+		ice_lag_aa_reclaim_nodes(cdev_info, qset);
+		mutex_unlock(&pf->lag_mutex);
+	}
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+	/* The FW AQ command cannot handle freeing multiple qsets at once,
+	 * so break up the call to free qsets into separate calls
+	 */
+	for (i = 0; i < qset->num; i++) {
+		status = ice_dis_vsi_rdma_qset(vsi->port_info, 1, &teid[i],
+					       &q_id[i]);
+		if (status)
+			return status;
+	}
+
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag)
+		memset(&pf->lag->rdma_qsets[qset->tc], 0, sizeof(*qset));
+
+#endif /* HAVE_NETDEV_UPPER_INFO */
+	return 0;
+}
+
 /**
  * ice_cdev_info_alloc_res - Allocate requested resources for aux driver
  * @cdev_info: struct for aux driver that is requesting resources
@@ -417,6 +605,27 @@ ice_cdev_info_alloc_res(struct iidc_core_dev_info *cdev_info,
 }
 
 /**
+ * ice_cdev_info_alloc_multi_res - Allocate requested resources for aux driver
+ * @cdev_info: struct for aux driver that is requesting resources
+ * @qset: resource(s) to be allocated
+ */
+static int
+ice_cdev_info_alloc_multi_res(struct iidc_core_dev_info *cdev_info,
+			      struct iidc_rdma_multi_qset_params *qset)
+{
+	struct ice_pf *pf;
+
+	if (!cdev_info || !qset)
+		return -EINVAL;
+
+	pf = pci_get_drvdata(cdev_info->pdev);
+	if (!ice_pf_state_is_nominal(pf))
+		return -EBUSY;
+
+	return ice_alloc_rdma_multi_qsets(cdev_info, qset);
+}
+
+/**
  * ice_cdev_info_free_res - Free resources associated with aux driver
  * @cdev_info: struct for aux driver that is requesting freeing of resources
  * @qset: Resource to be freed
@@ -432,9 +641,24 @@ ice_cdev_info_free_res(struct iidc_core_dev_info *cdev_info,
 }
 
 /**
- * ice_cdev_info_request_reset - accept request from peer to perform a reset
+ * ice_cdev_info_free_multi_res - Free resources associated with aux driver
+ * @cdev_info: struct for aux driver that is freeing resources
+ * @qset: resource(s) to be freed
+ */
+static int
+ice_cdev_info_free_multi_res(struct iidc_core_dev_info *cdev_info,
+			     struct iidc_rdma_multi_qset_params *qset)
+{
+	if (!cdev_info || !qset)
+		return -EINVAL;
+
+	return ice_free_rdma_multi_qsets(cdev_info, qset);
+}
+
+/**
+ * ice_cdev_info_request_reset - accept request from aux to perform a reset
  * @cdev_info: struct for aux driver that is requesting a reset
- * @reset_type: type of reset the peer is requesting
+ * @reset_type: type of reset the aux is requesting
  */
 static int
 ice_cdev_info_request_reset(struct iidc_core_dev_info *cdev_info,
@@ -459,7 +683,7 @@ ice_cdev_info_request_reset(struct iidc_core_dev_info *cdev_info,
 		reset = ICE_RESET_GLOBR;
 		break;
 	default:
-		dev_err(ice_pf_to_dev(pf), "incorrect reset request from peer\n");
+		dev_err(ice_pf_to_dev(pf), "incorrect reset request from auxiliary driver\n");
 		return -EINVAL;
 	}
 
@@ -624,7 +848,7 @@ ice_cdev_info_get_vf_port_info(struct iidc_core_dev_info *cdev_info,
 /**
  * ice_find_cdev_info_by_id - find cdev_info instance by its id
  * @pf: pointer to private board struct
- * @cdev_info_id: peer driver ID
+ * @cdev_info_id: aux driver ID
  */
 struct iidc_core_dev_info
 *ice_find_cdev_info_by_id(struct ice_pf *pf, int cdev_info_id)
@@ -663,6 +887,8 @@ void ice_cdev_info_update_vsi(struct iidc_core_dev_info *cdev_info,
 static const struct iidc_core_ops iidc_ops = {
 	.alloc_res			= ice_cdev_info_alloc_res,
 	.free_res			= ice_cdev_info_free_res,
+	.alloc_multi_res		= ice_cdev_info_alloc_multi_res,
+	.free_multi_res			= ice_cdev_info_free_multi_res,
 	.request_reset			= ice_cdev_info_request_reset,
 	.update_vport_filter		= ice_cdev_info_update_vsi_filter,
 	.get_vf_info			= ice_cdev_info_get_vf_port_info,
@@ -685,7 +911,7 @@ static void ice_cdev_info_adev_release(struct device *dev)
 
 /* ice_plug_aux_dev - allocate and register aux dev for cdev_info
  * @cdev_info: pointer to cdev_info struct
- * @name: name of peer_aux_dev
+ * @name: name of aux dev
  *
  * The cdev_info must be setup before calling this function
  */
@@ -731,6 +957,7 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 		return -ENOMEM;
 
 	adev = &iadev->adev;
+
 	mutex_lock(&pf->adev_mutex);
 	cdev_info->adev = adev;
 	iadev->cdev_info = cdev_info;
@@ -765,6 +992,7 @@ void ice_unplug_aux_dev(struct iidc_core_dev_info *cdev_info)
 
 	if (!cdev_info)
 		return;
+
 	pf = pci_get_drvdata(cdev_info->pdev);
 
 	/* if this aux dev has already been unplugged move on */
@@ -831,7 +1059,7 @@ void ice_unplug_aux_devs(struct ice_pf *pf)
 }
 
 /**
- * ice_cdev_init_rdma_qos_info - initialize qos_info for RDMA peer
+ * ice_cdev_init_rdma_qos_info - initialize qos_info for RDMA aux
  * @pf: pointer to ice_pf
  * @qos_info: pointer to qos_info struct
  */
@@ -934,8 +1162,14 @@ int ice_init_aux_devices(struct ice_pf *pf)
 			cdev_info->cdev_info_id = IIDC_RDMA_ID;
 			cdev_info->pf_id = pf->hw.pf_id;
 #ifdef HAVE_NETDEV_UPPER_INFO
-			cdev_info->rdma_active_port = ICE_LAG_INVALID_PORT;
+			cdev_info->rdma_active_port = IIDC_RDMA_INVALID_PORT;
 			cdev_info->main_pf_port = pf->hw.port_info->lport;
+			cdev_info->rdma_ports[ICE_PRI_IDX] =
+				IIDC_RDMA_INVALID_PORT;
+			cdev_info->rdma_ports[ICE_SEC_IDX] =
+				IIDC_RDMA_INVALID_PORT;
+			cdev_info->bond_aa = 0;
+			cdev_info->rdma_port_bitmap = 0;
 #endif /* HAVE_NETDEV_UPPER_INFO */
 			ice_cdev_init_rdma_qos_info(pf, &cdev_info->qos_info);
 			/* make sure peer specific resources such as msix_count

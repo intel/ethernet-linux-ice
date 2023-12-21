@@ -165,8 +165,16 @@ struct ice_update_recipe_lkup_idx_params {
 
 struct ice_adv_lkup_elem {
 	enum ice_protocol_type type;
-	union ice_prot_hdr h_u;	/* Header values */
-	union ice_prot_hdr m_u;	/* Mask of header values to match */
+	union {
+		union ice_prot_hdr h_u;	/* Header values */
+		/* Used to iterate over the headers */
+		u16 h_raw[sizeof(union ice_prot_hdr) / sizeof(u16)];
+	};
+	union {
+		union ice_prot_hdr m_u;	/* Mask of header values to match */
+		/* Used to iterate over header mask */
+		u16 m_raw[sizeof(union ice_prot_hdr) / sizeof(u16)];
+	};
 };
 
 struct entry_vsi_fwd {
@@ -244,14 +252,15 @@ struct ice_adv_rule_flags_info {
 };
 
 struct ice_adv_rule_info {
+	/* Store metadata values in rule info */
 	enum ice_sw_tunnel_type tun_type;
-	struct ice_sw_act_ctrl sw_act;
-	u32 priority;
-	u8 rx; /* true means LOOKUP_RX otherwise LOOKUP_TX */
-	u8 add_dir_lkup;
-	u16 fltr_rule_id;
-	u16 lg_id;
 	u16 vlan_type;
+	u16 fltr_rule_id;
+	u32 priority;
+	u16 src_vsi;
+	struct ice_sw_act_ctrl sw_act;
+	u8 add_dir_lkup;
+	u16 lg_id;
 	struct ice_adv_rule_flags_info flags_info;
 };
 
@@ -385,17 +394,21 @@ struct ice_dummy_pkt_offsets {
 	u16 offset; /* ICE_PROTOCOL_LAST indicates end of list */
 };
 
-void
+struct ice_dummy_pkt_profile {
+	const struct ice_dummy_pkt_offsets *offsets;
+	const u8 *pkt;
+	u32 match;
+	u16 pkt_len;
+};
+
+const struct ice_dummy_pkt_profile *
 ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
-		      enum ice_sw_tunnel_type tun_type, const u8 **pkt,
-		      u16 *pkt_len,
-		      const struct ice_dummy_pkt_offsets **offsets);
+		      enum ice_sw_tunnel_type tun_type);
 
 int
 ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 			  struct ice_sw_rule_lkup_rx_tx *s_rule,
-			  const u8 *dummy_pkt, u16 pkt_len,
-			  const struct ice_dummy_pkt_offsets *offsets);
+			  const struct ice_dummy_pkt_profile *profile);
 
 int
 ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
@@ -546,7 +559,17 @@ int
 ice_aq_get_recipe_to_profile(struct ice_hw *hw, u32 profile_id, u8 *r_bitmap,
 			     struct ice_sq_cd *cd);
 
+void ice_init_chk_subscribable_recipe_support(struct ice_hw *hw);
+
 int ice_alloc_recipe(struct ice_hw *hw, u16 *recipe_id);
+void ice_rule_add_tunnel_metadata(struct ice_adv_lkup_elem *lkup,
+				  struct ice_adv_rule_info *rule_info,
+				  enum ice_sw_tunnel_type tun_type);
+void ice_rule_add_direction_metadata(struct ice_adv_lkup_elem *lkup);
+#ifdef HAVE_TCF_VLAN_TPID
+void ice_rule_add_vlan_metadata(struct ice_adv_lkup_elem *lkup);
+#endif /* HAVE_TCF_VLAN_TPID */
+void ice_rule_add_src_vsi_metadata(struct ice_adv_lkup_elem *lkup);
 int
 ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		 u16 lkups_cnt, struct ice_adv_rule_info *rinfo,

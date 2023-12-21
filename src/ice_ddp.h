@@ -424,11 +424,6 @@ ice_update_pkg(struct ice_hw *hw, struct ice_buf *bufs, u32 count);
 int
 ice_update_pkg_no_lock(struct ice_hw *hw, struct ice_buf *bufs, u32 count);
 void ice_release_global_cfg_lock(struct ice_hw *hw);
-struct ice_generic_seg_hdr *
-ice_find_seg_in_pkg(struct ice_hw *hw, u32 seg_type,
-		    struct ice_pkg_hdr *pkg_hdr);
-enum ice_ddp_state
-ice_verify_pkg(struct ice_pkg_hdr *pkg, u32 len);
 enum ice_ddp_state
 ice_get_pkg_info(struct ice_hw *hw);
 void ice_init_pkg_hints(struct ice_hw *hw, struct ice_seg *ice_seg);

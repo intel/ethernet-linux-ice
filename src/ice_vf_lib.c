@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2023 Intel Corporation */
 
-#include "ice_vf_lib_private.h"
 #include "ice.h"
+#include "ice_vf_lib_private.h"
 #include "ice_lib.h"
 #include "ice_fltr.h"
 #include "ice_vf_vsi_vlan_ops.h"
@@ -294,8 +294,6 @@ static void ice_vf_clear_counters(struct ice_vf *vf)
 		vsi->num_vlan = 0;
 
 	vf->num_mac = 0;
-	memset(&vf->mdd_tx_events, 0, sizeof(vf->mdd_tx_events));
-	memset(&vf->mdd_rx_events, 0, sizeof(vf->mdd_rx_events));
 }
 
 /**
@@ -329,28 +327,43 @@ static void ice_vf_pre_vsi_rebuild(struct ice_vf *vf)
 }
 
 /**
- * ice_vf_recreate_vsi - Release and re-create the VF's VSI
- * @vf: VF to recreate the VSI for
+ * ice_vf_reconfig_vsi - Reconfigure a VF VSI with the device
+ * @vf: VF to reconfigure the VSI for
  *
- * This is only called when a single VF is being reset (i.e. VVF, VFLR, host
- * VF configuration change, etc)
+ * This is called when a single VF is being reset (i.e. VVF, VFLR, host VF
+ * configuration change, etc).
  *
- * It releases and then re-creates a new VSI.
+ * It brings the VSI down and then reconfigures it with the hardware.
  */
-static int ice_vf_recreate_vsi(struct ice_vf *vf)
+int ice_vf_reconfig_vsi(struct ice_vf *vf)
 {
+	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+	struct ice_vsi_cfg_params params = {};
 	struct ice_pf *pf = vf->pf;
 	int err;
 
-	ice_vf_vsi_release(vf);
+	if (WARN_ON(!vsi))
+		return -EINVAL;
 
-	err = vf->vf_ops->create_vsi(vf);
+	params = ice_vsi_to_params(vsi);
+	params.flags = ICE_VSI_FLAG_NO_INIT;
+
+	ice_vsi_decfg(vsi);
+	ice_fltr_remove_all(vsi);
+
+	err = ice_vsi_cfg(vsi, &params);
 	if (err) {
 		dev_err(ice_pf_to_dev(pf),
-			"Failed to recreate the VF%u's VSI, error %d\n",
+			"Failed to reconfigure the VF%u's VSI, error %d\n",
 			vf->vf_id, err);
 		return err;
 	}
+
+	/* Update the lan_vsi_num field since it might have been changed. The
+	 * PF lan_vsi_idx number remains the same so we don't need to change
+	 * that.
+	 */
+	vf->lan_vsi_num = vsi->vsi_num;
 
 	ice_vf_recreate_adq_vsi(vf);
 
@@ -392,6 +405,218 @@ static int ice_vf_rebuild_vsi(struct ice_vf *vf)
 	}
 
 	return 0;
+}
+
+/**
+ * ice_vf_set_host_trust_cfg - set trust setting based on pre-reset value
+ * @vf: VF to configure trust setting for
+ */
+static void ice_vf_set_host_trust_cfg(struct ice_vf *vf)
+{
+	assign_bit(ICE_VF_CAP_TRUSTED, vf->vf_caps, vf->trusted);
+}
+
+/**
+ * ice_vf_rebuild_host_mac_cfg - add broadcast and the VF's perm_addr/LAA
+ * @vf: VF to add MAC filters for
+ *
+ * Called after a VF VSI has been re-added/rebuilt during reset. The PF driver
+ * always re-adds a broadcast filter and the VF's perm_addr/LAA after reset.
+ */
+static int ice_vf_rebuild_host_mac_cfg(struct ice_vf *vf)
+{
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+	u8 broadcast[ETH_ALEN];
+	int status;
+
+	if (WARN_ON(!vsi))
+		return -EINVAL;
+
+	if (ice_is_eswitch_mode_switchdev(vf->pf))
+		return 0;
+
+	eth_broadcast_addr(broadcast);
+	status = ice_fltr_add_mac(vsi, broadcast, ICE_FWD_TO_VSI);
+	if (status) {
+		dev_err(dev, "failed to add broadcast MAC filter for VF %u, error %d\n",
+			vf->vf_id, status);
+		return status;
+	}
+
+	vf->num_mac++;
+
+	if (is_valid_ether_addr(vf->hw_lan_addr.addr)) {
+		status = ice_fltr_add_mac(vsi, vf->hw_lan_addr.addr,
+					  ICE_FWD_TO_VSI);
+		if (status) {
+			dev_err(dev, "failed to add default unicast MAC filter %pM for VF %u, error %d\n",
+				&vf->hw_lan_addr.addr[0], vf->vf_id,
+				status);
+			return status;
+		}
+		vf->num_mac++;
+
+		ether_addr_copy(vf->dev_lan_addr.addr, vf->hw_lan_addr.addr);
+	}
+
+	return 0;
+}
+
+/**
+ * ice_vf_rebuild_dcf_vlan_cfg - Config DCF outer VLAN for VF
+ * @vf: VF to add outer VLAN for
+ * @vsi: Pointer to VSI
+ */
+static int ice_vf_rebuild_dcf_vlan_cfg(struct ice_vf *vf, struct ice_vsi *vsi)
+{
+	struct ice_dcf_vlan_info *dcf_vlan = &vf->dcf_vlan_info;
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_vlan *outer_vlan;
+	int err;
+
+	if (!ice_is_dcf_enabled(vf->pf) || !dcf_vlan->applying) {
+		memset(dcf_vlan, 0, sizeof(*dcf_vlan));
+		return 0;
+	}
+
+	dcf_vlan->applying = 0;
+
+	outer_vlan = &dcf_vlan->outer_port_vlan;
+
+	if (outer_vlan->vid) {
+		err = ice_vf_vsi_dcf_set_outer_port_vlan(vsi, outer_vlan);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "failed to configure outer port VLAN via DCF for VF %u",
+					  vf->vf_id);
+			return err;
+		}
+	}
+
+	if (dcf_vlan->outer_stripping_ena) {
+		u16 tpid = dcf_vlan->outer_stripping_tpid;
+
+		err = ice_vf_vsi_dcf_ena_outer_vlan_stripping(vsi, tpid);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "failed to enable outer VLAN stripping via DCF for VF %u",
+					  vf->vf_id);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * ice_vf_rebuild_host_tx_rate_cfg - re-apply the Tx rate limiting configuration
+ * @vf: VF to re-apply the configuration for
+ *
+ * Called after a VF VSI has been re-added/rebuild during reset. The PF driver
+ * needs to re-apply the host configured Tx rate limiting configuration.
+ */
+static int ice_vf_rebuild_host_tx_rate_cfg(struct ice_vf *vf)
+{
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+	int err;
+
+	if (WARN_ON(!vsi))
+		return -EINVAL;
+
+	if (vf->min_tx_rate) {
+		err = ice_set_min_bw_limit(vsi, (u64)vf->min_tx_rate * 1000);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "failed to set min Tx rate to %d Mbps for VF %u",
+					  vf->min_tx_rate, vf->vf_id);
+			return err;
+		}
+	}
+
+	if (vf->max_tx_rate) {
+		err = ice_set_max_bw_limit(vsi, (u64)vf->max_tx_rate * 1000);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "failed to set max Tx rate to %d Mbps for VF %u",
+					  vf->max_tx_rate, vf->vf_id);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+static int ice_vf_apply_tx_lldp(struct ice_vf *vf)
+{
+	if (!vf->transmit_lldp)
+		return 0;
+
+	/* Disable it so it can be applied again. */
+	vf->transmit_lldp = false;
+
+	return ice_handle_vf_tx_lldp(vf, true);
+}
+
+/**
+ * ice_vf_rebuild_host_cfg - host admin configuration is persistent across reset
+ * @vf: VF to rebuild host configuration on
+ */
+static void ice_vf_rebuild_host_cfg(struct ice_vf *vf)
+{
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+
+	if (WARN_ON(!vsi))
+		return;
+
+	ice_vf_set_host_trust_cfg(vf);
+
+	if (ice_vf_rebuild_host_mac_cfg(vf))
+		dev_err(dev, "failed to rebuild default MAC configuration for VF %d\n",
+			vf->vf_id);
+
+	if (ice_vf_rebuild_dcf_vlan_cfg(vf, vsi))
+		dev_err(dev, "failed to rebuild DCF VLAN configuration for VF %u\n",
+			vf->vf_id);
+
+	if (ice_vf_rebuild_host_vlan_cfg(vf, vsi))
+		dev_err(dev, "failed to rebuild VLAN configuration for VF %u\n",
+			vf->vf_id);
+
+	if (ice_vf_rebuild_host_tx_rate_cfg(vf))
+		dev_err(dev, "failed to rebuild Tx rate limiting configuration for VF %u\n",
+			vf->vf_id);
+
+	if (ice_vsi_apply_spoofchk(vsi, vf->spoofchk))
+		dev_err(dev, "failed to rebuild spoofchk configuration for VF %d\n",
+			vf->vf_id);
+
+	if (ice_vf_apply_tx_lldp(vf))
+		dev_err(dev, "failed to rebuild transmit LLDP configuration for VF %d\n",
+			vf->vf_id);
+
+	/* rebuild aggregator node config for main VF VSI */
+	ice_vf_rebuild_aggregator_node_cfg(vsi);
+}
+
+/**
+ * ice_vf_set_initialized - VF is ready for VIRTCHNL communication
+ * @vf: VF to set in initialized state
+ *
+ * After this function the VF will be ready to receive/handle the
+ * VIRTCHNL_OP_GET_VF_RESOURCES message
+ */
+static void ice_vf_set_initialized(struct ice_vf *vf)
+{
+	ice_set_vf_state_qs_dis(vf);
+	clear_bit(ICE_VF_STATE_MC_PROMISC, vf->vf_states);
+	clear_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states);
+	clear_bit(ICE_VF_STATE_DIS, vf->vf_states);
+	set_bit(ICE_VF_STATE_INIT, vf->vf_states);
+	memset(&vf->vlan_v2_caps, 0, sizeof(vf->vlan_v2_caps));
+	vf->vm_vsi_num = vf->lan_vsi_num;
 }
 
 /**
@@ -747,6 +972,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 
 	/* Set VF disable bit state here, before triggering reset */
 	set_bit(ICE_VF_STATE_DIS, vf->vf_states);
+	set_bit(ICE_VF_STATE_IN_RESET, vf->vf_states);
 	ice_send_vf_reset_to_aux(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID),
 				 ice_abs_vf_id(&pf->hw, vf->vf_id));
 	ice_trigger_vf_reset(vf, flags & ICE_VF_RESET_VFLR, false);
@@ -815,8 +1041,6 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	if (flags & ICE_VF_RESET_VFLR)
 		ice_vf_adq_release(vf);
 
-	ice_eswitch_del_vf_mac_rule(vf);
-
 	ice_vf_fdir_exit(vf);
 	ice_vf_fdir_init(vf);
 
@@ -831,8 +1055,8 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 
 	ice_vf_pre_vsi_rebuild(vf);
 
-	if (ice_vf_recreate_vsi(vf)) {
-		dev_err(dev, "Failed to release and setup the VF%u's VSI\n",
+	if (ice_vf_reconfig_vsi(vf)) {
+		dev_err(dev, "Failed to reconfigure the VF%u's VSI\n",
 			vf->vf_id);
 		err = -EFAULT;
 		goto out_unlock;
@@ -846,7 +1070,6 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	}
 
 	ice_eswitch_update_repr(vsi);
-	ice_eswitch_replay_vf_mac_rule(vf);
 
 	if (ice_dcf_get_state(pf) == ICE_DCF_STATE_BUSY) {
 		struct virtchnl_pf_event pfe = { 0 };
@@ -867,6 +1090,8 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	ice_mbx_clear_malvf(&vf->mbx_info);
 
 out_unlock:
+	clear_bit(ICE_VF_STATE_IN_RESET, vf->vf_states);
+
 	if (flags & ICE_VF_RESET_LOCK)
 		mutex_unlock(&vf->cfg_lock);
 
@@ -938,20 +1163,223 @@ rss_lut_vf_attr_store(struct device *dev, struct device_attribute *attr,
 	return ice_vsi_alloc_rss_lut(hw, dev, vsi, buf, count);
 }
 
-int ice_init_vf_sysfs(struct ice_vf *vf)
+static int ice_init_vf_rss_lut_sysfs(struct ice_vf *vf)
 {
 	struct device_attribute tmp = __ATTR(rss_lut_vf_attr, 0644,
 					     rss_lut_vf_attr_show,
 					     rss_lut_vf_attr_store);
 
-	if (!vf->vfdev) {
-		dev_err(ice_pf_to_dev(vf->pf), "%s: no vfdev", __func__);
-		return -ENOENT;
-	}
-
 	vf->rss_lut_attr = tmp;
 
 	return device_create_file(&vf->vfdev->dev, &vf->rss_lut_attr);
+}
+
+static bool
+ice_is_transmit_lldp_enabled(struct ice_pf *pf)
+{
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	ice_for_each_vf(pf, bkt, vf) {
+		if (vf->transmit_lldp)
+			return true;
+	}
+
+	return false;
+}
+
+/**
+ * ice_ena_vf_rx_lldp
+ * @vf: VF to configure Rx LLDP for
+ *
+ * Configure Rx filters for VF to receive LLDP
+ */
+int ice_ena_vf_rx_lldp(struct ice_vf *vf)
+{
+	struct ice_pf *pf = vf->pf;
+	struct ice_vsi *vsi;
+
+	if (test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags)) {
+		dev_dbg(ice_pf_to_dev(pf), "FW LLDP agent is enabled, cannot enable Rx LLDP on VF %d\n",
+			vf->vf_id);
+		return -EPERM;
+	}
+
+	if (!vf->trusted) {
+		dev_dbg(ice_pf_to_dev(pf), "VF %d is not trusted - cannot configure Rx LLDP filter.\n",
+			vf->vf_id);
+		return -EPERM;
+	}
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -ENOENT;
+
+	if (vsi->rx_lldp_ena)
+		return 0;
+
+	ice_cfg_sw_lldp(vsi, false, true);
+
+	return 0;
+}
+
+/**
+ * ice_ena_all_vfs_rx_lldp - Re-add RX LLDP filter on applicable VFs.
+ * @pf: ptr to PF
+ *
+ * That is in case when fw-lldp-agent is toggled and LLDP multicast addresses
+ * are added to the interface.
+ * RX LLDP filter will be added for trusted VFs only.
+ */
+void
+ice_ena_all_vfs_rx_lldp(struct ice_pf *pf)
+{
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	if (!test_bit(ICE_FLAG_SRIOV_ENA, pf->flags))
+		return;
+
+	ice_for_each_vf(pf, bkt, vf) {
+		struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+
+		if (vsi && vsi->lldp_macs > 0 && !vsi->rx_lldp_ena)
+			ice_ena_vf_rx_lldp(vf);
+	}
+}
+
+/**
+ * ice_handle_vf_tx_lldp
+ * @vf: VF to configure Tx LLDP for
+ * @ena: Enable or disable Tx LLDP switch rule
+ *
+ * Configure Tx filters for VF to receive LLDP
+ */
+int ice_handle_vf_tx_lldp(struct ice_vf *vf, bool ena)
+{
+	void (*allow_override)(struct ice_vsi_ctx *ctx);
+	struct ice_vsi *vsi;
+	struct device *dev;
+	struct ice_pf *pf;
+
+	pf = vf->pf;
+	dev = ice_pf_to_dev(pf);
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -ENOENT;
+
+	if (ena && test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags)) {
+		dev_err(dev, "Transmit LLDP VF is only allowed when FW LLDP Agent is disabled");
+		return -EPERM;
+	}
+
+	if (ena && ice_is_transmit_lldp_enabled(pf)) {
+		dev_err(dev, "Only a single VF per port is allowed to transmit LLDP packets, ignoring the settings");
+		return -EPERM;
+	}
+
+	allow_override = ena ? ice_vsi_ctx_set_allow_override
+			     : ice_vsi_ctx_clear_allow_override;
+
+	if (ice_vsi_update_security(vsi, allow_override))
+		return -ENOENT;
+
+	vf->transmit_lldp = ena;
+
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi)
+		return -ENOENT;
+	/* If VF can transmit LLDP, then PF cannot and vice versa */
+	allow_override = ena ? ice_vsi_ctx_clear_allow_override
+			     : ice_vsi_ctx_set_allow_override;
+
+	if (ice_vsi_update_security(vsi, allow_override))
+		return -ENOENT;
+
+	return 0;
+}
+
+static ssize_t
+transmit_lldp_vf_attr_show(struct device *dev, struct device_attribute *attr,
+			   char *buf)
+{
+	struct ice_vf *vf = ice_get_vf_by_dev(dev);
+
+	if (!vf)
+		return -ENOENT;
+
+	return sysfs_emit(buf, "%u\n", vf->transmit_lldp);
+}
+
+static ssize_t
+transmit_lldp_vf_attr_store(struct device *dev, struct device_attribute *attr,
+			    const char *buf, size_t count)
+{
+	struct pci_dev *vfdev = container_of(dev, struct pci_dev, dev);
+	struct ice_vf *vf = ice_get_vf_by_dev(dev);
+	struct pci_dev *pdev = vfdev->physfn;
+	struct ice_pf *pf;
+	bool ena;
+	int err;
+
+	if (!vf)
+		return -ENOENT;
+
+	pf = pci_get_drvdata(pdev);
+	if (!pf)
+		return -ENOENT;
+
+	err = kstrtobool(buf, &ena);
+	if (err)
+		return -EINVAL;
+
+	if (ena == vf->transmit_lldp) {
+		dev_dbg(dev, "Transmit LLDP value already set for VF %d",
+			vf->vf_id);
+		return count;
+	}
+
+	err = ice_handle_vf_tx_lldp(vf, ena);
+	if (err)
+		return err;
+
+	return count;
+}
+
+static int ice_init_vf_transmit_lldp_sysfs(struct ice_vf *vf)
+{
+	struct device_attribute tmp = __ATTR(transmit_lldp, 0644,
+					     transmit_lldp_vf_attr_show,
+					     transmit_lldp_vf_attr_store);
+
+	vf->transmit_lldp_attr = tmp;
+
+	return device_create_file(&vf->vfdev->dev, &vf->transmit_lldp_attr);
+}
+
+int ice_init_vf_sysfs(struct ice_vf *vf)
+{
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	int err = 0;
+
+	if (!vf->vfdev) {
+		dev_err(dev, "%s: no vfdev", __func__);
+		return -ENOENT;
+	}
+
+	err = ice_init_vf_rss_lut_sysfs(vf);
+	if (err) {
+		dev_err(dev, "could not init rss_lut_vf_attr sysfs entry, err: %d",
+			err);
+		return err;
+	}
+
+	err = ice_init_vf_transmit_lldp_sysfs(vf);
+	if (err)
+		dev_err(dev, "could not init transmit_lldp sysfs entry, err: %d",
+			err);
+
+	return err;
 }
 
 /**
@@ -1161,7 +1589,7 @@ int ice_vsi_apply_spoofchk(struct ice_vsi *vsi, bool enable)
  */
 bool ice_is_vf_trusted(struct ice_vf *vf)
 {
-	return test_bit(ICE_VIRTCHNL_VF_CAP_PRIVILEGE, &vf->vf_caps);
+	return test_bit(ICE_VF_CAP_TRUSTED, vf->vf_caps);
 }
 
 /**
@@ -1199,111 +1627,6 @@ bool ice_is_vf_link_up(struct ice_vf *vf)
 	else
 		return pi->phy.link_info.link_info &
 			ICE_AQ_LINK_UP;
-}
-
-/**
- * ice_vf_set_host_trust_cfg - set trust setting based on pre-reset value
- * @vf: VF to configure trust setting for
- */
-static void ice_vf_set_host_trust_cfg(struct ice_vf *vf)
-{
-	if (vf->trusted)
-		set_bit(ICE_VIRTCHNL_VF_CAP_PRIVILEGE, &vf->vf_caps);
-	else
-		clear_bit(ICE_VIRTCHNL_VF_CAP_PRIVILEGE, &vf->vf_caps);
-}
-
-/**
- * ice_vf_rebuild_host_mac_cfg - add broadcast and the VF's perm_addr/LAA
- * @vf: VF to add MAC filters for
- *
- * Called after a VF VSI has been re-added/rebuilt during reset. The PF driver
- * always re-adds a broadcast filter and the VF's perm_addr/LAA after reset.
- */
-static int ice_vf_rebuild_host_mac_cfg(struct ice_vf *vf)
-{
-	struct device *dev = ice_pf_to_dev(vf->pf);
-	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
-	u8 broadcast[ETH_ALEN];
-	int status;
-
-	if (WARN_ON(!vsi))
-		return -EINVAL;
-
-	if (ice_is_eswitch_mode_switchdev(vf->pf))
-		return 0;
-
-	eth_broadcast_addr(broadcast);
-	status = ice_fltr_add_mac(vsi, broadcast, ICE_FWD_TO_VSI);
-	if (status) {
-		dev_err(dev, "failed to add broadcast MAC filter for VF %u, error %d\n",
-			vf->vf_id, status);
-		return status;
-	}
-
-	vf->num_mac++;
-
-	if (is_valid_ether_addr(vf->hw_lan_addr.addr)) {
-		status = ice_fltr_add_mac(vsi, vf->hw_lan_addr.addr,
-					  ICE_FWD_TO_VSI);
-		if (status) {
-			dev_err(dev, "failed to add default unicast MAC filter %pM for VF %u, error %d\n",
-				&vf->hw_lan_addr.addr[0], vf->vf_id,
-				status);
-			return status;
-		}
-		vf->num_mac++;
-
-		ether_addr_copy(vf->dev_lan_addr.addr, vf->hw_lan_addr.addr);
-	}
-
-	return 0;
-}
-
-/**
- * ice_vf_rebuild_dcf_vlan_cfg - Config DCF outer VLAN for VF
- * @vf: VF to add outer VLAN for
- * @vsi: Pointer to VSI
- */
-static int ice_vf_rebuild_dcf_vlan_cfg(struct ice_vf *vf, struct ice_vsi *vsi)
-{
-	struct ice_dcf_vlan_info *dcf_vlan = &vf->dcf_vlan_info;
-	struct device *dev = ice_pf_to_dev(vf->pf);
-	struct ice_vlan *outer_vlan;
-	int err;
-
-	if (!ice_is_dcf_enabled(vf->pf) || !dcf_vlan->applying) {
-		memset(dcf_vlan, 0, sizeof(*dcf_vlan));
-		return 0;
-	}
-
-	dcf_vlan->applying = 0;
-
-	outer_vlan = &dcf_vlan->outer_port_vlan;
-
-	if (outer_vlan->vid) {
-		err = ice_vf_vsi_dcf_set_outer_port_vlan(vsi, outer_vlan);
-		if (err) {
-			ice_dev_err_errno(dev, err,
-					  "failed to configure outer port VLAN via DCF for VF %u",
-					  vf->vf_id);
-			return err;
-		}
-	}
-
-	if (dcf_vlan->outer_stripping_ena) {
-		u16 tpid = dcf_vlan->outer_stripping_tpid;
-
-		err = ice_vf_vsi_dcf_ena_outer_vlan_stripping(vsi, tpid);
-		if (err) {
-			ice_dev_err_errno(dev, err,
-					  "failed to enable outer VLAN stripping via DCF for VF %u",
-					  vf->vf_id);
-			return err;
-		}
-	}
-
-	return 0;
 }
 
 /**
@@ -1353,45 +1676,6 @@ int ice_vf_rebuild_host_vlan_cfg(struct ice_vf *vf, struct ice_vsi *vsi)
 }
 
 /**
- * ice_vf_rebuild_host_tx_rate_cfg - re-apply the Tx rate limiting configuration
- * @vf: VF to re-apply the configuration for
- *
- * Called after a VF VSI has been re-added/rebuild during reset. The PF driver
- * needs to re-apply the host configured Tx rate limiting configuration.
- */
-static int ice_vf_rebuild_host_tx_rate_cfg(struct ice_vf *vf)
-{
-	struct device *dev = ice_pf_to_dev(vf->pf);
-	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
-	int err;
-
-	if (WARN_ON(!vsi))
-		return -EINVAL;
-
-	if (vf->min_tx_rate) {
-		err = ice_set_min_bw_limit(vsi, (u64)vf->min_tx_rate * 1000);
-		if (err) {
-			ice_dev_err_errno(dev, err,
-					  "failed to set min Tx rate to %d Mbps for VF %u",
-					  vf->min_tx_rate, vf->vf_id);
-			return err;
-		}
-	}
-
-	if (vf->max_tx_rate) {
-		err = ice_set_max_bw_limit(vsi, (u64)vf->max_tx_rate * 1000);
-		if (err) {
-			ice_dev_err_errno(dev, err,
-					  "failed to set max Tx rate to %d Mbps for VF %u",
-					  vf->max_tx_rate, vf->vf_id);
-			return err;
-		}
-	}
-
-	return 0;
-}
-
-/**
  * ice_vf_rebuild_aggregator_node_cfg - rebuild aggregator node config
  * @vsi: Pointer to VSI
  *
@@ -1422,44 +1706,6 @@ void ice_vf_rebuild_aggregator_node_cfg(struct ice_vsi *vsi)
 			vsi->idx, vsi->agg_node->agg_id);
 	else
 		vsi->agg_node->num_vsis++;
-}
-
-/**
- * ice_vf_rebuild_host_cfg - host admin configuration is persistent across reset
- * @vf: VF to rebuild host configuration on
- */
-void ice_vf_rebuild_host_cfg(struct ice_vf *vf)
-{
-	struct device *dev = ice_pf_to_dev(vf->pf);
-	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
-
-	if (WARN_ON(!vsi))
-		return;
-
-	ice_vf_set_host_trust_cfg(vf);
-
-	if (ice_vf_rebuild_host_mac_cfg(vf))
-		dev_err(dev, "failed to rebuild default MAC configuration for VF %d\n",
-			vf->vf_id);
-
-	if (ice_vf_rebuild_dcf_vlan_cfg(vf, vsi))
-		dev_err(dev, "failed to rebuild DCF VLAN configuration for VF %u\n",
-			vf->vf_id);
-
-	if (ice_vf_rebuild_host_vlan_cfg(vf, vsi))
-		dev_err(dev, "failed to rebuild VLAN configuration for VF %u\n",
-			vf->vf_id);
-
-	if (ice_vf_rebuild_host_tx_rate_cfg(vf))
-		dev_err(dev, "failed to rebuild Tx rate limiting configuration for VF %u\n",
-			vf->vf_id);
-
-	if (ice_vsi_apply_spoofchk(vsi, vf->spoofchk))
-		dev_err(dev, "failed to rebuild spoofchk configuration for VF %d\n",
-			vf->vf_id);
-
-	/* rebuild aggregator node config for main VF VSI */
-	ice_vf_rebuild_aggregator_node_cfg(vsi);
 }
 
 /**
@@ -1591,20 +1837,3 @@ void ice_vf_vsi_release(struct ice_vf *vf)
 	ice_vf_invalidate_vsi(vf);
 }
 
-/**
- * ice_vf_set_initialized - VF is ready for VIRTCHNL communication
- * @vf: VF to set in initialized state
- *
- * After this function the VF will be ready to receive/handle the
- * VIRTCHNL_OP_GET_VF_RESOURCES message
- */
-void ice_vf_set_initialized(struct ice_vf *vf)
-{
-	ice_set_vf_state_qs_dis(vf);
-	clear_bit(ICE_VF_STATE_MC_PROMISC, vf->vf_states);
-	clear_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states);
-	clear_bit(ICE_VF_STATE_DIS, vf->vf_states);
-	set_bit(ICE_VF_STATE_INIT, vf->vf_states);
-	memset(&vf->vlan_v2_caps, 0, sizeof(vf->vlan_v2_caps));
-	vf->vm_vsi_num = vf->lan_vsi_num;
-}

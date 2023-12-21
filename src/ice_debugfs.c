@@ -10,6 +10,225 @@
 
 static struct dentry *ice_debugfs_root;
 
+#define ICE_FW_DUMP_BLK_MAX	0xFFFF
+#define ICE_FW_DUMP_DATA_SIZE	4096
+#define ICE_FW_DUMP_HDR_SIZE	24
+/* dump blk = Cluster header + dump data */
+#define ICE_FW_DUMP_BLK_SIZE	(ICE_FW_DUMP_DATA_SIZE + ICE_FW_DUMP_HDR_SIZE)
+#define ICE_FW_DUMP_FILENAME	"debug_dump"
+#define ICE_FW_DUMP_LAST_IDX	0xFFFFFFFF
+#define ICE_FW_DUMP_LAST_ID	0xFF
+#define ICE_FW_DUMP_LAST_ID2	0xFFFF
+
+/* The ice_cluster_header structure needs to be added to each table dump
+ * the header is contains 6 words each of 4byte(32 bits) in size
+ * The structe contains following fields
+ *
+ * Cluster ID - The cluster ID of the tables
+ * Table ID - The table ID of the data dump
+ * Table Length - Size of the table
+ * Current Offset - This value represents the total offset of bytes into
+ *		the Table Length defined by Table ID. For the very
+ *		first buffer returned for any table, the offset shall be 0.
+ * Two (2) Reserved words for future use.
+ */
+struct ice_cluster_header {
+	u32 cluster_id;
+	u32 table_id;
+	u32 table_len;
+	u32 table_offset;
+	u32 reserved[2];
+};
+
+/**
+ * ice_debugfs_fw_dump - send request to FW to dump cluster and save to file
+ * @pf: pointer to pf struct
+ * @cluster_id: number or FW cluster to be dumped
+ * @read_all_clusters: if true dump all clusters
+ *
+ * Create FW configuration binary snapshot. Repeatedly send AQ requests to dump
+ * FW cluster, FW responds in 4KB blocks and sets new values for table_id
+ * and table_idx. Repeat until all tables in given cluster were read.
+ */
+static int
+ice_debugfs_fw_dump(struct ice_pf *pf, u16 cluster_id, bool read_all_clusters)
+{
+	u32 next_table_idx, table_idx = 0, ntw = 0, ctw = 0, offset = 0;
+	u16 buf_len, next_table_id, next_cluster_id, table_id = 0;
+	struct debugfs_blob_wrapper *desc_blob;
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_cluster_header header = {};
+	struct dentry *pfile;
+	u8 *vblk;
+	int i;
+
+	desc_blob = devm_kzalloc(dev, sizeof(*desc_blob), GFP_KERNEL);
+	if (!desc_blob)
+		return -ENOMEM;
+
+	vfree(pf->ice_cluster_blk);
+	pf->ice_cluster_blk = NULL;
+
+	vblk = vmalloc(ICE_FW_DUMP_BLK_MAX * ICE_FW_DUMP_BLK_SIZE);
+	if (!vblk)
+		return -ENOMEM;
+
+	for (i = 0; i < ICE_FW_DUMP_BLK_MAX; i++) {
+		int res;
+
+		/* Skip the header bytes */
+		ntw += sizeof(struct ice_cluster_header);
+
+		res = ice_aq_get_internal_data(&pf->hw, cluster_id,
+					       table_id, table_idx, vblk + ntw,
+					       ICE_FW_DUMP_DATA_SIZE,
+					       &buf_len, &next_cluster_id,
+					       &next_table_id, &next_table_idx,
+					       NULL);
+		if (res) {
+			dev_err(dev, "Internal FW error %d while dumping cluster %d\n",
+				res, cluster_id);
+			devm_kfree(dev, desc_blob);
+			vfree(vblk);
+			return -EINVAL;
+		}
+		ntw += buf_len;
+
+		header.cluster_id = cluster_id;
+		header.table_id = table_id;
+		header.table_len = buf_len;
+		header.table_offset = offset;
+
+		memcpy(vblk + ctw, &header, sizeof(header));
+		ctw = ntw;
+		memset(&header, 0, sizeof(header));
+
+		offset += buf_len;
+
+		if (table_idx == next_table_idx)
+			table_idx = ICE_FW_DUMP_LAST_IDX;
+		else
+			table_idx = next_table_idx;
+
+		if (table_idx != ICE_FW_DUMP_LAST_IDX)
+			continue;
+
+		table_idx = 0;
+		offset = 0;
+
+		if (next_cluster_id == ICE_FW_DUMP_LAST_ID2)
+			break;
+
+		/* Some clusters return end of table as 0xFF
+		 * and some are 0xFFFF
+		 */
+		if (!(next_table_id == ICE_FW_DUMP_LAST_ID ||
+		      next_table_id == ICE_FW_DUMP_LAST_ID2))
+			table_id = next_table_id;
+
+		/* End of cluster */
+		if (cluster_id != next_cluster_id) {
+			if (read_all_clusters) {
+				dev_info(dev, "All FW clusters dump - cluster %d appended",
+					 cluster_id);
+				cluster_id = next_cluster_id;
+				table_id = 0;
+			} else {
+				break;
+			}
+		}
+	}
+
+	desc_blob->size = (unsigned long)ntw;
+	desc_blob->data = vblk;
+
+	pfile = debugfs_create_blob(ICE_FW_DUMP_FILENAME, 0400,
+				    pf->ice_debugfs_fw, desc_blob);
+	if (!pfile)
+		return -ENODEV;
+
+	pf->ice_cluster_blk = vblk;
+
+	if (read_all_clusters)
+		dev_info(dev, "Created FW dump of all available clusters in file %s\n",
+			 ICE_FW_DUMP_FILENAME);
+	else
+		dev_info(dev, "Created FW dump of cluster %d in file %s\n",
+			 cluster_id, ICE_FW_DUMP_FILENAME);
+
+	return 0;
+}
+
+/**
+ * dump_cluster_id_read - show currently set FW cluster id to dump
+ * @file: kernel file struct
+ * @buf: user space buffer to fill with correct data
+ * @len: buf's length
+ * @offset: current position in buf
+ */
+static ssize_t dump_cluster_id_read(struct file *file, char __user *buf,
+				    size_t len, loff_t *offset)
+{
+	struct ice_pf *pf = file->private_data;
+	char temp_buf[11];
+	int ret;
+
+	ret = snprintf(temp_buf, sizeof(temp_buf), "%u\n",
+		       pf->fw_dump_cluster_id);
+
+	return simple_read_from_buffer(buf, len, offset, temp_buf, ret);
+}
+
+/**
+ * dump_cluster_id_write - set FW cluster id to dump
+ * @file: kernel file struct
+ * @buf: user space buffer containing data to read
+ * @len: buf's length
+ * @offset: current position in buf
+ */
+static ssize_t dump_cluster_id_write(struct file *file, const char __user *buf,
+				     size_t len, loff_t *offset)
+{
+	struct ice_pf *pf = file->private_data;
+	bool read_all_clusters = false;
+	char kbuf[11] = { 0 };
+	int bytes_read, err;
+	u16 cluster_id;
+
+	bytes_read = simple_write_to_buffer(kbuf, sizeof(kbuf), offset, buf,
+					    len);
+	if (bytes_read < 0)
+		return -EINVAL;
+
+	if (bytes_read == 1 && kbuf[0] == '\n') {
+		cluster_id = 0;
+		read_all_clusters = true;
+	} else {
+		err = kstrtou16(kbuf, 10, &cluster_id);
+		if (err)
+			return err;
+	}
+
+	debugfs_lookup_and_remove(ICE_FW_DUMP_FILENAME, pf->ice_debugfs_fw);
+	err = ice_debugfs_fw_dump(pf, cluster_id, read_all_clusters);
+	if (err)
+		return err;
+
+	/* Not all cluster IDs are supported in every FW version, save
+	 * the value only when FW returned success
+	 */
+	pf->fw_dump_cluster_id = cluster_id;
+
+	return bytes_read;
+}
+
+static const struct file_operations dump_cluster_id_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read = dump_cluster_id_read,
+	.write = dump_cluster_id_write,
+};
+
 static void ice_dump_pf(struct ice_pf *pf)
 {
 	struct device *dev = ice_pf_to_dev(pf);
@@ -22,7 +241,15 @@ static void ice_dump_pf(struct ice_pf *pf)
 	dev_info(dev, "\tnum_lan_rx = %d\n", pf->num_lan_rx);
 	dev_info(dev, "\tnum_avail_tx = %d\n", ice_get_avail_txq_count(pf));
 	dev_info(dev, "\tnum_avail_rx = %d\n", ice_get_avail_rxq_count(pf));
+	dev_info(dev, "\tmsix total = %d\n",
+		 pf->msix.eth + pf->msix.rdma + pf->msix.misc + pf->msix.vf);
 	dev_info(dev, "\tmsix.eth = %d\n", pf->msix.eth);
+	dev_info(dev, "\tmsix.misc = %d\n", pf->msix.misc);
+#ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
+	dev_info(dev, "\tmsix.vf occ = %lld\n", ice_sriov_get_vf_used_msix(pf));
+	dev_info(dev, "\tmsix.vf free = %lld\n",
+		 pf->msix.vf - ice_sriov_get_vf_used_msix(pf));
+#endif
 	dev_info(dev, "\tmsix.rdma = %d\n", pf->msix.rdma);
 	dev_info(dev, "\trdma_base_vector = %d\n", pf->rdma_base_vector);
 #ifdef HAVE_NDO_DFWD_OPS
@@ -34,7 +261,6 @@ static void ice_dump_pf(struct ice_pf *pf)
 	dev_info(dev, "\tirq_tracker->end = %d\n", pf->irq_tracker->end);
 	dev_info(dev, "\tirq_tracker valid count = %d\n",
 		 ice_get_valid_res_count(pf->irq_tracker));
-	dev_info(dev, "\tnum_avail_sw_msix = %d\n", pf->num_avail_sw_msix);
 	dev_info(dev, "\tsriov_base_vector = %d\n", pf->sriov_base_vector);
 	dev_info(dev, "\tnum_alloc_vfs = %d\n", ice_get_num_vfs(pf));
 	dev_info(dev, "\tnum_qps_per_vf = %d\n", pf->vfs.num_qps_per);
@@ -326,7 +552,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		return status;
 
 	if (abilities.cgu_part_num ==
-	    ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032) {
+	    ICE_AQC_GET_LINK_TOPO_NODE_NR_ZL30632_80032) {
 		cnt = snprintf(buff, bytes_left, "Found ZL80032 CGU\n");
 
 		/* Read DPLL config version from AQ */
@@ -343,7 +569,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		cnt += snprintf(&buff[cnt], bytes_left - cnt,
 				"DPLL FW ver: %i\n", cgu_fw_ver);
 	} else if (abilities.cgu_part_num ==
-		   ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384) {
+		   ICE_AQC_GET_LINK_TOPO_NODE_NR_SI5383_5384) {
 		cnt = snprintf(buff, bytes_left, "Found SI5383/5384 CGU\n");
 	}
 
@@ -426,7 +652,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 
 		if (pf->ptp_dpll_state != ICE_CGU_STATE_INVALID)
 			cnt += snprintf(&buff[cnt], bytes_left - cnt,
-					"\tPhase offset [ns]:\t\t\t%lld\n",
+					"\tPhase offset [ps]:\t\t\t%lld\n",
 					pf->ptp_dpll_phase_offset);
 	}
 
@@ -879,15 +1105,21 @@ static const struct file_operations ice_debugfs_command_fops = {
 void ice_debugfs_pf_init(struct ice_pf *pf)
 {
 	const char *name = pci_name(pf->pdev);
-	struct dentry *pfile;
 
 	pf->ice_debugfs_pf = debugfs_create_dir(name, ice_debugfs_root);
 	if (IS_ERR(pf->ice_debugfs_pf))
 		return;
 
-	pfile = debugfs_create_file("command", 0600, pf->ice_debugfs_pf, pf,
-				    &ice_debugfs_command_fops);
-	if (!pfile)
+	pf->ice_debugfs_fw = debugfs_create_dir("fw", pf->ice_debugfs_pf);
+	if (IS_ERR(pf->ice_debugfs_fw))
+		return;
+
+	if (!debugfs_create_file("command", 0600, pf->ice_debugfs_pf,
+				 pf, &ice_debugfs_command_fops))
+		goto create_failed;
+
+	if (!debugfs_create_file("dump_cluster_id", 0600, pf->ice_debugfs_fw,
+				 pf, &dump_cluster_id_fops))
 		goto create_failed;
 
 	/* Expose external CGU debugfs interface if CGU available*/
@@ -911,6 +1143,11 @@ create_failed:
 void ice_debugfs_pf_exit(struct ice_pf *pf)
 {
 	debugfs_remove_recursive(pf->ice_debugfs_pf);
+
+	vfree(pf->ice_cluster_blk);
+	pf->ice_cluster_blk = NULL;
+
+	pf->ice_debugfs_fw = NULL;
 	pf->ice_debugfs_pf = NULL;
 }
 

@@ -36,6 +36,8 @@
 #define _ICE_TRACE_H_
 
 #include "ice_txrx.h"
+#include "ice_ptp.h"
+#include <linux/ptp_classify.h>
 #include <linux/tracepoint.h>
 
 /**
@@ -64,7 +66,11 @@
 
 #define ice_trace(trace_name, args...) ICE_TRACE_NAME(trace_name)(args)
 
+#ifdef HAVE_TRACE_ENABLED_SUPPORT
 #define ice_trace_enabled(trace_name) ICE_TRACE_NAME(trace_name##_enabled)()
+#else /* HAVE_TRACE_ENABLED_SUPPORT */
+#define ice_trace_enabled(trace_name) true
+#endif /* HAVE_TRACE_ENABLED_SUPPORT */
 
 /*
  * This is for events common to PF. Corresponding versions will be named
@@ -260,29 +266,62 @@ DEFINE_XMIT_TEMPLATE_OP_EVENT(ice_xmit_frame_ring);
 DEFINE_XMIT_TEMPLATE_OP_EVENT(ice_xmit_frame_ring_drop);
 
 DECLARE_EVENT_CLASS(ice_tx_tstamp_template,
-		    TP_PROTO(struct sk_buff *skb, int idx),
+		    TP_PROTO(struct device *dev, struct ice_ptp_tx *tx,
+			     struct sk_buff *skb, int idx),
 
-		    TP_ARGS(skb, idx),
+		    TP_ARGS(dev, tx, skb, idx),
 
-		    TP_STRUCT__entry(__field(void *, skb)
-				     __field(int, idx)),
+		    TP_STRUCT__entry(__string(dev_name, dev_name(dev))
+				     __string(netdev_name,
+					      netdev_name(skb->dev))
+				     __field(void *, skb)
+				     __field(int, seq)
+				     __field(int, idx)
+				     __field(int, block)
+				     __field(int, offset)
+				     __field(int, len)
+				     __field(int, in_use)
+				     __field(u8, init)
+				     __field(u8, calibrating)),
 
-		    TP_fast_assign(__entry->skb = skb;
-				   __entry->idx = idx;),
+		    TP_fast_assign(lockdep_assert_held(&tx->lock);
+				   __assign_str(dev_name, dev_name(dev));
+				   __assign_str(netdev_name,
+						netdev_name(skb->dev));
+				   __entry->skb = skb;
+				   __entry->seq = ice_ptp_get_seq_id(skb);
+				   __entry->idx = idx;
+				   __entry->block = tx->block;
+				   __entry->offset = tx->offset;
+				   __entry->len = tx->len;
+				   __entry->in_use = bitmap_weight(tx->in_use,
+								   tx->len);
+				   __entry->init = tx->init;
+				   __entry->calibrating = tx->calibrating;),
 
-		    TP_printk("skb %pK idx %d",
-			      __entry->skb, __entry->idx)
+		    TP_printk("dev=%s netdev=%s skb=%pK sequence_id=%d block=%d offset=%d len=%d in_use=%d init=%d calibrating=%d idx=%d",
+			      __get_str(dev_name), __get_str(netdev_name),
+			      __entry->skb, __entry->seq,
+			      __entry->block, __entry->offset, __entry->len,
+			      __entry->in_use, __entry->init,
+			      __entry->calibrating, __entry->idx)
 );
 #define DEFINE_TX_TSTAMP_OP_EVENT(name) \
 DEFINE_EVENT(ice_tx_tstamp_template, name, \
-	     TP_PROTO(struct sk_buff *skb, int tracker_idx), \
-	     TP_ARGS(skb, tracker_idx))
+	     TP_PROTO(struct device *dev, struct ice_ptp_tx *tx, \
+		      struct sk_buff *skb, int tracker_idx), \
+	     TP_ARGS(dev, tx, skb, tracker_idx))
 
-DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_intr);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_request);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_tracker_down);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_idx_full);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_complete);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_req);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_done);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_timeout);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_invalid);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_stale);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_dropped);
 
 /* End tracepoints */
 

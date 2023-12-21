@@ -83,8 +83,8 @@ int ice_vsi_stop_xdp_tx_rings(struct ice_vsi *vsi);
 
 #endif /* HAVE_XDP_SUPPORT */
 
-bool ice_vsi_is_vlan_pruning_ena(struct ice_vsi *vsi);
-
+void ice_dis_sw_lldp(struct ice_pf *pf);
+bool ice_is_mc_lldp_eth_addr(const u8 *mac);
 void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create);
 
 int ice_set_link(struct ice_vsi *vsi, bool ena);
@@ -185,7 +185,9 @@ void ice_vsi_ctx_clear_antispoof(struct ice_vsi_ctx *ctx);
 #endif /* HAVE_METADATA_PORT_INFO */
 void ice_vsi_ctx_set_allow_override(struct ice_vsi_ctx *ctx);
 void ice_vsi_ctx_clear_allow_override(struct ice_vsi_ctx *ctx);
+#ifndef HAVE_NETDEV_MIN_MAX_MTU
 int ice_check_mtu_valid(struct net_device *netdev, int new_mtu);
+#endif /* !HAVE_NETDEV_MIN_MAX_MTU */
 int ice_vsi_add_vlan_zero(struct ice_vsi *vsi);
 int ice_vsi_del_vlan_zero(struct ice_vsi *vsi);
 bool ice_vsi_has_non_zero_vlans(struct ice_vsi *vsi);

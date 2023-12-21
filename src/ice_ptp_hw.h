@@ -121,6 +121,28 @@ struct ice_cgu_pll_params_e822 {
 extern const struct
 ice_cgu_pll_params_e822 e822_cgu_params[NUM_ICE_TIME_REF_FREQ];
 
+/**
+ * struct ice_cgu_pll_params_e825c
+ * @tspll_ck_refclkfreq: tspll_ck_refclkfreq selection
+ * @tspll_ndivratio: ndiv ratio that goes directly to the pll
+ * @tspll_fbdiv_intgr: TS PLL integer feedback divide
+ * @tspll_fbdiv_frac:  TS PLL fractional feedback divide
+ * @ref1588_ck_div: clock divider for tspll ref
+ *
+ * Clock Generation Unit parameters used to program the PLL based on the
+ * selected TIME_REF/TCXO frequency.
+ */
+struct ice_cgu_pll_params_e825c {
+	u32 tspll_ck_refclkfreq;
+	u32 tspll_ndivratio;
+	u32 tspll_fbdiv_intgr;
+	u32 tspll_fbdiv_frac;
+	u32 ref1588_ck_div;
+};
+
+extern const struct
+ice_cgu_pll_params_e825c e825c_cgu_params[NUM_ICE_TIME_REF_FREQ];
+
 enum ice_e825c_ref_clk {
 	ICE_REF_CLK_ENET = 1,
 	ICE_REF_CLK_EREF0,
@@ -209,77 +231,48 @@ extern const struct ice_vernier_info_e822 e822_vernier[NUM_ICE_PTP_LNK_SPD];
 
 /* Device agnostic functions */
 u8 ice_get_ptp_src_clock_index(struct ice_hw *hw);
-u64 ice_ptp_read_src_incval(struct ice_hw *hw);
 bool ice_ptp_lock(struct ice_hw *hw);
 void ice_ptp_unlock(struct ice_hw *hw);
 void ice_ptp_src_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd);
-int ice_ptp_init_time(struct ice_hw *hw, u64 time,
-				  bool wr_main_tmr);
-int ice_ptp_write_incval(struct ice_hw *hw, u64 incval,
-				     bool wr_main_tmr);
+int ice_ptp_init_time(struct ice_hw *hw, u64 time, bool wr_main_tmr);
+int ice_ptp_write_incval(struct ice_hw *hw, u64 incval, bool wr_main_tmr);
 int ice_ptp_write_incval_locked(struct ice_hw *hw, u64 incval,
-					    bool wr_main_tmr);
-int ice_ptp_adj_clock(struct ice_hw *hw, s32 adj, bool lock_sbq);
-int
-ice_ptp_adj_clock_at_time(struct ice_hw *hw, u64 at_time, s32 adj);
+				bool wr_main_tmr);
+int ice_ptp_adj_clock(struct ice_hw *hw, s32 adj);
 int ice_ptp_clear_phy_offset_ready(struct ice_hw *hw);
-int
-ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp);
-int
-ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx);
+int ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp);
+int ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx);
 void ice_ptp_reset_ts_memory(struct ice_hw *hw);
 int ice_ptp_init_phc(struct ice_hw *hw);
 bool refsync_pin_id_valid(struct ice_hw *hw, u8 id);
-int
-ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready);
-int
-ice_ptp_one_port_cmd(struct ice_hw *hw, u8 port, enum ice_ptp_tmr_cmd cmd,
-		     bool lock_sbq);
-int
-ice_ptp_read_port_capture(struct ice_hw *hw, u8 port, u64 *tx_ts, u64 *rx_ts);
-int
-ice_ptp_read_phy_incval(struct ice_hw *hw, u8 port, u64 *incval);
+int ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready);
+int ice_ptp_one_port_cmd(struct ice_hw *hw, u8 configured_port,
+			 enum ice_ptp_tmr_cmd configured_cmd);
 
 /* E822 family functions */
 #define LOCKED_INCVAL_E822 0x100000000ULL
 
-int
-ice_read_phy_reg_e822(struct ice_hw *hw, u8 port, u16 offset, u32 *val);
-int
-ice_write_phy_reg_e822(struct ice_hw *hw, u8 port, u16 offset, u32 val);
-int
-ice_read_quad_reg_e822(struct ice_hw *hw, u8 quad, u16 offset, u32 *val);
-int
-ice_write_quad_reg_e822(struct ice_hw *hw, u8 quad, u16 offset, u32 val);
-int
-ice_ptp_prep_port_adj_e822(struct ice_hw *hw, u8 port, s64 time,
-			   bool lock_sbq);
-int
-ice_ptp_read_phy_incval_e822(struct ice_hw *hw, u8 port, u64 *incval);
-int
-ice_ptp_read_port_capture_e822(struct ice_hw *hw, u8 port,
-			       u64 *tx_ts, u64 *rx_ts);
-int
-ice_ptp_one_port_cmd_e822(struct ice_hw *hw, u8 port,
-			  enum ice_ptp_tmr_cmd cmd, bool lock_sbq);
+int ice_read_phy_reg_e822(struct ice_hw *hw, u8 port, u16 offset, u32 *val);
+int ice_read_quad_reg_e822(struct ice_hw *hw, u8 quad, u16 offset, u32 *val);
+int ice_write_quad_reg_e822(struct ice_hw *hw, u8 quad, u16 offset, u32 val);
 const char *ice_clk_freq_str(u8 clk_freq);
 const char *ice_clk_src_str(u8 clk_src);
 void ice_ptp_reset_ts_memory_quad_e822(struct ice_hw *hw, u8 quad);
-int
-ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
-		     enum ice_clk_src *clk_src);
-int
-ice_cfg_cgu_pll_e825c(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
-		      enum ice_clk_src *clk_src);
-int
-ice_cgu_ts_pll_lost_lock_e825c(struct ice_hw *hw, bool *lost_lock);
+int ice_cfg_cgu_pll_e822(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
+			 enum ice_clk_src *clk_src);
+int ice_cfg_cgu_pll_e825c(struct ice_hw *hw, enum ice_time_ref_freq *clk_freq,
+			  enum ice_clk_src *clk_src);
+int ice_cgu_ts_pll_lost_lock_e825c(struct ice_hw *hw, bool *lost_lock);
 int ice_cgu_ts_pll_restart_e825c(struct ice_hw *hw);
-int
-ice_cgu_bypass_mux_port_active_e825c(struct ice_hw *hw, u8 port, bool *active);
-int
-ice_cfg_cgu_bypass_mux_e825c(struct ice_hw *hw, u8 port_num, bool clock_1588,
-			     unsigned int ena);
-int ice_cfg_synce_ethdiv_e825c(struct ice_hw *hw, u8 *divider);
+int ice_cgu_bypass_mux_port_active_e825c(struct ice_hw *hw, u8 port,
+					 bool *active,
+					 enum ice_e825c_clk_synce output);
+int ice_cfg_cgu_bypass_mux_e825c(struct ice_hw *hw, u8 port,
+				 enum ice_e825c_clk_synce output,
+				 bool clock_1588,
+				 unsigned int ena);
+int ice_cfg_synce_ethdiv_e825c(struct ice_hw *hw, u8 *divider,
+			       enum ice_e825c_clk_synce output);
 
 /**
  * ice_e822_time_ref - Get the current TIME_REF from capabilities
@@ -323,40 +316,25 @@ static inline u64 ice_e822_pps_delay(enum ice_time_ref_freq time_ref)
 
 /* E822 Vernier calibration functions */
 int ice_ptp_set_vernier_wl(struct ice_hw *hw);
-int
-ice_phy_get_speed_and_fec_e822(struct ice_hw *hw, u8 port,
-			       enum ice_ptp_link_spd *link_out,
-			       enum ice_ptp_fec_mode *fec_out);
-void ice_phy_cfg_lane_e822(struct ice_hw *hw, u8 port);
-int
-ice_stop_phy_timer_e822(struct ice_hw *hw, u8 port, bool soft_reset);
-int
-ice_start_phy_timer_e822(struct ice_hw *hw, u8 port);
+int ice_stop_phy_timer_e822(struct ice_hw *hw, u8 port, bool soft_reset);
+int ice_start_phy_timer_e822(struct ice_hw *hw, u8 port);
 int ice_phy_cfg_tx_offset_e822(struct ice_hw *hw, u8 port);
 int ice_phy_cfg_rx_offset_e822(struct ice_hw *hw, u8 port);
-int
-ice_phy_cfg_intr_e822(struct ice_hw *hw, u8 quad, bool ena, u8 threshold);
+int ice_phy_cfg_intr_e822(struct ice_hw *hw, u8 quad, bool ena, u8 threshold);
 
 /* E810 family functions */
-bool ice_is_phy_rclk_present(struct ice_hw *hw);
-bool ice_is_clock_mux_present_e810t(struct ice_hw *hw);
-int ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx);
-bool ice_is_gps_present_e810t(struct ice_hw *hw);
 int ice_ptp_init_phy_e810(struct ice_hw *hw);
-int
-ice_read_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 *data);
-int
-ice_write_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 data);
+int ice_read_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 *data);
+int ice_write_pca9575_reg_e810t(struct ice_hw *hw, u8 offset, u8 data);
 int ice_read_sma_ctrl_e810t(struct ice_hw *hw, u8 *data);
 int ice_write_sma_ctrl_e810t(struct ice_hw *hw, u8 data);
 bool ice_is_pca9575_present(struct ice_hw *hw);
 
-int
-ice_change_tx_clk_eth56g(struct ice_hw *hw, u8 port,
-			 enum ice_e825c_ref_clk clk);
+int ice_change_tx_clk_eth56g(struct ice_hw *hw, u8 port,
+			     enum ice_e825c_ref_clk clk);
 int ice_enable_all_clk_refs(struct ice_hw *hw);
-void
-ice_ptp_process_cgu_err(struct ice_hw *hw, struct ice_rq_event_info *event);
+void ice_ptp_process_cgu_err(struct ice_hw *hw,
+			     struct ice_rq_event_info *event);
 bool ice_is_cgu_present(struct ice_hw *hw);
 const char *ice_cgu_state_to_name(int state);
 enum ice_cgu_state
@@ -365,54 +343,35 @@ ice_get_cgu_state(struct ice_hw *hw, u8 dpll_idx, u8 *pin, s64 *phase_offset,
 const char *ice_zl_pin_idx_to_name_e810t(u8 pin);
 const char *ice_pin_idx_to_name_e823(struct ice_hw *hw, u8 pin);
 /* ETH56G family functions */
-int
-ice_read_phy_reg_eth56g(struct ice_hw *hw, u8 port, u16 offset, u32 *val);
-int
-ice_write_phy_reg_eth56g(struct ice_hw *hw, u8 port, u16 offset, u32 val);
-int
-ice_read_phy_mem_eth56g(struct ice_hw *hw, u8 port, u16 offset, u32 *val);
-int
-ice_write_phy_mem_eth56g(struct ice_hw *hw, u8 port, u16 offset, u32 val);
-
-int
-ice_ptp_prep_port_adj_eth56g(struct ice_hw *hw, u8 port, s64 time,
-			     bool lock_sbq);
-
-int
-ice_ptp_read_phy_incval_eth56g(struct ice_hw *hw, u8 port, u64 *incval);
-int
-ice_ptp_read_port_capture_eth56g(struct ice_hw *hw, u8 port,
-				 u64 *tx_ts, u64 *rx_ts);
-int
-ice_ptp_one_port_cmd_eth56g(struct ice_hw *hw, u8 port,
-			    enum ice_ptp_tmr_cmd cmd, bool lock_sbq);
-int
-ice_ptp_read_tx_hwtstamp_status_eth56g(struct ice_hw *hw, u32 *ts_status);
-int
-ice_stop_phy_timer_eth56g(struct ice_hw *hw, u8 port, bool soft_reset);
-int
-ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port);
+int ice_ptp_read_tx_hwtstamp_status_eth56g(struct ice_hw *hw, u32 *ts_status);
+int ice_stop_phy_timer_eth56g(struct ice_hw *hw, u8 port, bool soft_reset);
+int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port);
 int ice_phy_cfg_tx_offset_eth56g(struct ice_hw *hw, u8 port);
 int ice_phy_cfg_rx_offset_eth56g(struct ice_hw *hw, u8 port);
-int
-ice_phy_cfg_intr_eth56g(struct ice_hw *hw, u8 port, bool ena, u8 threshold);
+int ice_phy_cfg_intr_eth56g(struct ice_hw *hw, u8 port, bool ena, u8 threshold);
+
+int ice_phy_cfg_ptp_1step_eth56g(struct ice_hw *hw, u8 port, bool enable,
+				 u32 peer_delay, u8 ts_point);
 
 #define ICE_ETH56G_PLL_FREQ		800000000
 #define ICE_ETH56G_NOMINAL_INCVAL	0x140000000ULL
+#define ICE_ETH56G_NOMINAL_PCS_REF_TUS	0x100000000ULL
+#define ICE_ETH56G_NOMINAL_PCS_REF_INC	0x300000000ULL
+#define ICE_ETH56G_NOMINAL_THRESH4	0x7777
+#define ICE_ETH56G_NOMINAL_TX_THRESH	0x6
 
 static inline u64 ice_eth56g_pps_delay(void)
 {
 	return 0;
 }
 
-int ice_ptp_init_phy_model(struct ice_hw *hw);
+void ice_ptp_init_hw(struct ice_hw *hw);
 
 /**
  * ice_ptp_get_pll_freq - Get PLL frequency
  * @hw: Board private structure
  */
-static inline u64
-ice_ptp_get_pll_freq(struct ice_hw *hw)
+static inline u64 ice_ptp_get_pll_freq(struct ice_hw *hw)
 {
 	switch (hw->phy_model) {
 	case ICE_PHY_ETH56G:
@@ -426,8 +385,7 @@ ice_ptp_get_pll_freq(struct ice_hw *hw)
 	}
 }
 
-static inline u64
-ice_prop_delay(struct ice_hw *hw)
+static inline u64 ice_prop_delay(struct ice_hw *hw)
 {
 	switch (hw->phy_model) {
 	case ICE_PHY_ETH56G:
@@ -441,8 +399,7 @@ ice_prop_delay(struct ice_hw *hw)
 	}
 }
 
-static inline enum ice_time_ref_freq
-ice_time_ref(struct ice_hw *hw)
+static inline enum ice_time_ref_freq ice_time_ref(struct ice_hw *hw)
 {
 	switch (hw->phy_model) {
 	case ICE_PHY_ETH56G:
@@ -455,8 +412,8 @@ ice_time_ref(struct ice_hw *hw)
 	}
 }
 
-static inline u64
-ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
+static inline u64 ice_get_base_incval(struct ice_hw *hw,
+				      enum ice_src_tmr_mode src_tmr_mode)
 {
 	switch (hw->phy_model) {
 	case ICE_PHY_ETH56G:
@@ -506,6 +463,8 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 #define TS_CMD_MASK_E810		0xFF
 #define TS_CMD_MASK			0xF
 #define SYNC_EXEC_CMD			0x3
+#define TS_CMD_RX_TYPE_S		0x4
+#define TS_CMD_RX_TYPE			ICE_M(0x18, TS_CMD_RX_TYPE_S)
 
 /* Macros to derive port low and high addresses on both quads */
 #define P_Q0_L(a, p) ((((a) + (0x2000 * (p)))) & 0xFFFF)
@@ -700,14 +659,10 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 
 /* Tx timestamp low latency read definitions */
 #define TS_LL_READ_RETRIES		200
+#define TS_LL_READ_TS_HIGH		GENMASK(23, 16)
+#define TS_LL_READ_TS_IDX		GENMASK(29, 24)
 #define TS_LL_READ_TS_INTR		BIT(30)
 #define TS_LL_READ_TS			BIT(31)
-#define TS_LL_READ_TS_IDX_S		24
-#define TS_LL_READ_TS_IDX_M		ICE_M(0x3F, 0)
-#define TS_LL_READ_TS_IDX(__idx)	(TS_LL_READ_TS | \
-					 (((__idx) & TS_LL_READ_TS_IDX_M) << \
-					  TS_LL_READ_TS_IDX_S))
-#define TS_LL_READ_TS_HIGH_S		16
 
 /* Internal PHY timestamp address */
 #define TS_L(a, idx) ((a) + ((idx) * BYTES_PER_IDX_ADDR_L_U))
@@ -756,24 +711,32 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 #define ICE_ZL30632_CGU_PIN_FREQ_1HZ	1
 
 /* 56G PHY quad register base addresses */
-#define ICE_PHY0_BASE			0x092000
-#define ICE_PHY1_BASE			0x126000
-#define ICE_PHY2_BASE			0x1BA000
-#define ICE_PHY3_BASE			0x24E000
-#define ICE_PHY4_BASE			0x2E2000
+#define ICE_PHY_PTP_BASE0		0x092000
+#define ICE_PHY_PTP_BASE1		0x126000
+#define ICE_PHY_PTP_BASE2		0x1BA000
+#define ICE_PHY_PTP_BASE3		0x24E000
+#define ICE_PHY_PTP_BASE4		0x2E2000
 
 /* Timestamp memory */
 #define PHY_PTP_LANE_ADDR_STEP		0x98
 
 #define PHY_PTP_MEM_START		0x1000
-#define PHY_PTP_MEM_LANE_STEP		0x04A0
+#define PHY_PTP_MEM_LANE_STEP		0x0200
 #define PHY_PTP_MEM_LOCATIONS		0x40
 
-/* Number of PHY ports */
-#define ICE_NUM_PHY_PORTS		5
+/* Number of PHY blocks */
+#define ICE_NUM_PHY_BLOCKS		5
 /* Timestamp PHY incval registers */
 #define PHY_REG_TIMETUS_L		0x8
 #define PHY_REG_TIMETUS_U		0xC
+
+/* Timestamp PCS registers */
+#define PHY_PCS_REF_TUS_L		0x18
+#define PHY_PCS_REF_TUS_U		0x1C
+
+/* Timestamp PCS ref incval registers */
+#define PHY_PCS_REF_INC_L		0x20
+#define PHY_PCS_REF_INC_U		0x24
 
 /* Timestamp init registers */
 #define PHY_REG_RX_TIMER_INC_PRE_L	0x64
@@ -817,12 +780,51 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 /* Interrupt config register */
 #define PHY_REG_TS_INT_CONFIG		0x88
 
+/* XIF mode config register */
+#define PHY_MAC_XIF_MODE		0x24
+#define PHY_MAC_XIF_1STEP_ENA_S		5
+#define PHY_MAC_XIF_1STEP_ENA_M		ICE_M(0x1, 5)
+#define PHY_MAC_XIF_TS_BIN_MODE_S	11
+#define PHY_MAC_XIF_TS_BIN_MODE_M	ICE_M(0x1, 11)
+#define PHY_MAC_XIF_TS_SFD_ENA_S	20
+#define PHY_MAC_XIF_TS_SFD_ENA_M	ICE_M(0x1, 20)
+#define PHY_MAC_XIF_GMII_TS_SEL_S	21
+#define PHY_MAC_XIF_GMII_TS_SEL_M	ICE_M(0x1, 21)
+
+#define PHY_GPCS_CONFIG_REG0_TX_THR_S	24
+#define PHY_GPCS_CONFIG_REG0_TX_THR_M	ICE_M(0xF, 24)
+
 #define PHY_PTP_INT_STATUS		0x7FD140
+
+#define PHY_REG_DESKEW			0x94
+#define PHY_REG_DESKEW_M		ICE_M(0x3F, 0)
+
+/* GPCS config register */
+#define PHY_GPCS_CONFIG_REG0		0x268
+#define PHY_GPCS_CONFIG_REG0_TX_THR_S	24
+#define PHY_GPCS_CONFIG_REG0_TX_THR_M	ICE_M(0xF, 24)
+
+#define PHY_REG_SD_BIT_SLIP		0x29C
 
 #define PHY_TS_INT_CONFIG_THRESHOLD_S	0
 #define PHY_TS_INT_CONFIG_THRESHOLD_M	ICE_M(0x3F, 0)
 #define PHY_TS_INT_CONFIG_ENA_S		6
 #define PHY_TS_INT_CONFIG_ENA_M		BIT(6)
+
+/* 1-step PTP config */
+#define PHY_PTP_1STEP_CONFIG		0x270
+#define PHY_PTP_1STEP_T1S_UP64_M	ICE_M(0xF, 4)
+#define PHY_PTP_1STEP_T1S_UP64_S	4
+#define PHY_PTP_1STEP_T1S_DELTA_M	ICE_M(0xF, 8)
+#define PHY_PTP_1STEP_T1S_DELTA_S	8
+
+#define PHY_PTP_1STEP_PEER_DELAY(_port)	(0x274 + 4 * (_port))
+#define PHY_PTP_1STEP_PD_ADD_PD_M	ICE_M(0x1, 0)
+#define PHY_PTP_1STEP_PD_ADD_PD_S	0
+#define PHY_PTP_1STEP_PD_DELAY_M	ICE_M(0x3fffffff, 1)
+#define PHY_PTP_1STEP_PD_DELAY_S	1
+#define PHY_PTP_1STEP_PD_DLY_V_M	ICE_M(0x1, 31)
+#define PHY_PTP_1STEP_PD_DLY_V_S	31
 
 /* Macros to derive offsets for TimeStampLow and TimeStampHigh */
 #define PHY_TSTAMP_L(x) (((x) * 8) + 0)
@@ -830,5 +832,59 @@ ice_get_base_incval(struct ice_hw *hw, enum ice_src_tmr_mode src_tmr_mode)
 
 #define PHY_REG_REVISION		0x85000
 #define PHY_REVISION_ETH56G		0x10200
+
+#define ICE_PHY_XPCS_BASE0		0x000000
+#define ICE_PHY_XPCS_BASE1		0x009400
+#define ICE_PHY_XPCS_BASE2		0x128000
+#define ICE_PHY_XPCS_BASE3		0x1BC000
+#define ICE_PHY_XPCS_BASE4		0x250000
+
+#define PHY_XPCS_LANE_ADDR_STEP		0x21000
+
+#define PHY_VENDOR_TXLANE_THRESH	0x2000C
+
+#define ICE_PHY_MAC_BASE0		0x085000
+#define ICE_PHY_MAC_BASE1		0x119000
+#define ICE_PHY_MAC_BASE2		0x1AD000
+#define ICE_PHY_MAC_BASE3		0x241000
+#define ICE_PHY_MAC_BASE4		0x2D5000
+
+#define PHY_MAC_LANE_ADDR_STEP		0x1000
+
+#define PHY_MAC_TSU_CONFIG		0x40
+#define PHY_MAC_TSU_CFG_RX_MODE_M	ICE_M(0x7, 0)
+#define PHY_MAC_TSU_CFG_RX_MODE_S	0
+#define PHY_MAC_TSU_CFG_RX_MII_CW_DLY_M	ICE_M(0x7, 4)
+#define PHY_MAC_TSU_CFG_RX_MII_CW_DLY_S	4
+#define PHY_MAC_TSU_CFG_RX_MII_MK_DLY_M	ICE_M(0x7, 8)
+#define PHY_MAC_TSU_CFG_RX_MII_MK_DLY_S	8
+#define PHY_MAC_TSU_CFG_TX_MODE_M	ICE_M(0x7, 12)
+#define PHY_MAC_TSU_CFG_TX_MODE_S	12
+#define PHY_MAC_TSU_CFG_TX_MII_CW_DLY_M	ICE_M(0x1F, 16)
+#define PHY_MAC_TSU_CFG_TX_MII_CW_DLY_S	16
+#define PHY_MAC_TSU_CFG_TX_MII_MK_DLY_M	ICE_M(0x1F, 21)
+#define PHY_MAC_TSU_CFG_TX_MII_MK_DLY_S	21
+#define PHY_MAC_TSU_CFG_BLKS_PER_CLK_M	ICE_M(0x1, 28)
+#define PHY_MAC_TSU_CFG_BLKS_PER_CLK_S	28
+
+#define PHY_MAC_RX_MODULO		0x44
+#define PHY_MAC_RX_OFFSET		0x48
+
+#define PHY_MAC_RX_OFFSET_M		ICE_M(0xFFFFFF, 0)
+
+#define PHY_MAC_TX_MODULO		0x4C
+#define PHY_MAC_BLOCKTIME		0x50
+#define PHY_MAC_MARKERTIME		0x54
+#define PHY_MAC_TX_OFFSET		0x58
+
+#define ICE_PHY_GPCS_BASE0		0x084000
+#define ICE_PHY_GPCS_BASE1		0x118000
+#define ICE_PHY_GPCS_BASE2		0x1AC000
+#define ICE_PHY_GPCS_BASE3		0x240000
+#define ICE_PHY_GPCS_BASE4		0x2D4000
+
+#define PHY_GPCS_LANE_ADDR_STEP		0x400
+
+#define PHY_GPCS_BITSLIP		0x5C
 
 #endif /* _ICE_PTP_HW_H_ */

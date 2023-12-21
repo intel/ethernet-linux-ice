@@ -58,14 +58,15 @@ int
 ice_fltr_set_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi,
 			      unsigned long *promisc_mask)
 {
-	struct ice_pf *pf = (struct ice_pf *)hw->back;
+	struct ice_pf *pf = hw->back;
 	int result;
 
 	result = ice_set_vlan_vsi_promisc(hw, vsi->idx, promisc_mask, false);
 	if (result && result != -EEXIST)
 		dev_err(ice_pf_to_dev(pf),
-			"Error setting promisc mode on VSI %i (rc=%d\n",
+			"Error setting promisc mode on VSI %i (rc=%d)\n",
 			vsi->vsi_num, result);
+
 	return result;
 }
 
@@ -81,14 +82,15 @@ int
 ice_fltr_clear_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi,
 				unsigned long *promisc_mask)
 {
-	struct ice_pf *pf = (struct ice_pf *)hw->back;
+	struct ice_pf *pf = hw->back;
 	int result;
 
 	result = ice_set_vlan_vsi_promisc(hw, vsi->idx, promisc_mask, true);
 	if (result && result != -EEXIST)
 		dev_err(ice_pf_to_dev(pf),
-			"Error setting promisc mode on VSI %i (rc=%d\n",
+			"Error clearing promisc mode on VSI %i (rc=%d)\n",
 			vsi->vsi_num, result);
+
 	return result;
 }
 
@@ -104,7 +106,7 @@ int
 ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
 			   unsigned long *promisc_mask, u16 vid, u8 lport)
 {
-	struct ice_pf *pf = (struct ice_pf *)hw->back;
+	struct ice_pf *pf = hw->back;
 	int result;
 
 	result = ice_clear_vsi_promisc(hw, vsi_handle, promisc_mask, vid);
@@ -112,6 +114,7 @@ ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
 		dev_err(ice_pf_to_dev(pf),
 			"Error clearing promisc mode on VSI %i for VID %u (rc=%d)\n",
 			ice_get_hw_vsi_num(hw, vsi_handle), vid, result);
+
 	return result;
 }
 
@@ -127,7 +130,7 @@ int
 ice_fltr_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
 			 unsigned long *promisc_mask, u16 vid, u8 lport)
 {
-	struct ice_pf *pf = (struct ice_pf *)hw->back;
+	struct ice_pf *pf = hw->back;
 	int result;
 
 	result = ice_set_vsi_promisc(hw, vsi_handle, promisc_mask, vid);
@@ -135,6 +138,7 @@ ice_fltr_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
 		dev_err(ice_pf_to_dev(pf),
 			"Error setting promisc mode on VSI %i for VID %u (rc=%d)\n",
 			ice_get_hw_vsi_num(hw, vsi_handle), vid, result);
+
 	return result;
 }
 
@@ -479,9 +483,8 @@ ice_fltr_prepare_eth(struct ice_vsi *vsi, u16 ethertype, u16 flag,
  * @mac: MAC to add
  * @action: action to be performed on filter match
  */
-int
-ice_fltr_add_mac(struct ice_vsi *vsi, const u8 *mac,
-		 enum ice_sw_fwd_act_type action)
+int ice_fltr_add_mac(struct ice_vsi *vsi, const u8 *mac,
+		     enum ice_sw_fwd_act_type action)
 {
 	return ice_fltr_prepare_mac(vsi, mac, action, ice_fltr_add_mac_list);
 }
@@ -506,9 +509,8 @@ ice_fltr_add_mac_and_broadcast(struct ice_vsi *vsi, const u8 *mac,
  * @mac: filter MAC to remove
  * @action: action to remove
  */
-int
-ice_fltr_remove_mac(struct ice_vsi *vsi, const u8 *mac,
-		    enum ice_sw_fwd_act_type action)
+int ice_fltr_remove_mac(struct ice_vsi *vsi, const u8 *mac,
+			enum ice_sw_fwd_act_type action)
 {
 	return ice_fltr_prepare_mac(vsi, mac, action, ice_fltr_remove_mac_list);
 }
@@ -570,9 +572,8 @@ ice_fltr_remove_mac_vlan(struct ice_vsi *vsi, const u8 *mac, u16 vlan_id,
  * @flag: direction of packet to be filtered, Tx or Rx
  * @action: action to be performed on filter match
  */
-int
-ice_fltr_add_eth(struct ice_vsi *vsi, u16 ethertype, u16 flag,
-		 enum ice_sw_fwd_act_type action)
+int ice_fltr_add_eth(struct ice_vsi *vsi, u16 ethertype, u16 flag,
+		     enum ice_sw_fwd_act_type action)
 {
 	return ice_fltr_prepare_eth(vsi, ethertype, flag, action,
 				    ice_fltr_add_eth_list);
@@ -585,9 +586,8 @@ ice_fltr_add_eth(struct ice_vsi *vsi, u16 ethertype, u16 flag,
  * @flag: direction of filter
  * @action: action to remove
  */
-int
-ice_fltr_remove_eth(struct ice_vsi *vsi, u16 ethertype, u16 flag,
-		    enum ice_sw_fwd_act_type action)
+int ice_fltr_remove_eth(struct ice_vsi *vsi, u16 ethertype, u16 flag,
+			enum ice_sw_fwd_act_type action)
 {
 	return ice_fltr_prepare_eth(vsi, ethertype, flag, action,
 				    ice_fltr_remove_eth_list);

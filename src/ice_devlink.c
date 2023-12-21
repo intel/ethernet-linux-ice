@@ -10,6 +10,9 @@
 #include "ice_adminq_cmd.h"
 #include "ice_dcb_lib.h"
 #include "ice_idc_int.h"
+#ifdef CONFIG_PCI_IOV
+#include "ice_virtchnl_allowlist.h"
+#endif /* CONFIG_PCI_IOV */
 
 #ifdef HAVE_DEVLINK_INFO_GET
 /* context for devlink info version reporting */
@@ -503,11 +506,9 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
-	struct ice_rq_event_info event;
+	struct ice_aq_task task = {};
 	u16 completion_retval;
 	int err;
-
-	memset(&event, 0, sizeof(event));
 
 	switch (id) {
 	case ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV:
@@ -522,6 +523,8 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 		return -EINVAL;
 	}
 
+	ice_aq_prep_for_event(pf, &task, ice_aqc_opc_nvm_write_activate);
+
 	err = ice_update_nvm_minsrevs(&pf->hw, &minsrevs);
 	if (err) {
 		dev_warn(dev, "Failed to update minimum security revision data\n");
@@ -529,14 +532,13 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
 	}
 
 	/* Wait for FW to finish Dumping the Shadow RAM */
-	err = ice_aq_wait_for_event(pf, ice_aqc_opc_nvm_write_activate, 3 * HZ,
-				    &event);
+	err = ice_aq_wait_for_event(pf, &task, 3 * HZ);
 	if (err) {
 		dev_warn(dev, "Timed out waiting for firmware to dump Shadow RAM\n");
 		return -ETIMEDOUT;
 	}
 
-	completion_retval = le16_to_cpu(event.desc.retval);
+	completion_retval = le16_to_cpu(task.event.desc.retval);
 	if (completion_retval) {
 		dev_warn(dev, "Failed to dump Shadow RAM\n");
 		return -EIO;
@@ -896,6 +898,11 @@ static void ice_devlink_read_resources_size(struct ice_pf *pf)
 			       ICE_DEVL_RES_ID_MSIX_RDMA,
 			       &size_new);
 	pf->req_msix.rdma = size_new;
+
+	pf->req_msix.all_host = pf->req_msix.eth +
+			       pf->req_msix.rdma +
+			       pf->req_msix.siov +
+			       pf->req_msix.misc;
 }
 
 /**
@@ -945,11 +952,10 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 	int err, max_pf_msix;
 	const char *res_name;
 	int max_rdma_msix;
+	int max_vf_msix;
 
-	max_pf_msix = min_t(int, num_online_cpus(), ICE_MAX_LG_RSS_QS);
-	max_rdma_msix = max_pf_msix + ICE_RDMA_NUM_AEQ_MSIX;
-	if (req->eth > max_pf_msix)
-		max_pf_msix = req->eth;
+	max_pf_msix = min_t(int, all, ICE_MAX_LG_RSS_QS);
+	max_rdma_msix = num_online_cpus() + ICE_RDMA_NUM_AEQ_MSIX;
 
 	devlink_resource_size_params_init(&params, all, all, 1,
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
@@ -982,7 +988,9 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 	if (err)
 		goto res_create_err;
 
-	devlink_resource_size_params_init(&params, 0, all - req->misc, 1,
+	max_vf_msix = all - req->misc - ICE_MIN_LAN_MSIX;
+	max_vf_msix -= ICE_MIN_RDMA_MSIX;
+	devlink_resource_size_params_init(&params, 0, max_vf_msix, 1,
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
 
 	res_name = ICE_DEVL_RES_NAME_MSIX_VF;
@@ -1094,6 +1102,12 @@ ice_devlink_reload_empr_start(struct ice_pf *pf,
 		return err;
 	}
 
+	err = wait_event_interruptible_timeout(pf->reset_wait_queue,
+					       ice_is_reset_in_progress(pf->state),
+					       msecs_to_jiffies(1000));
+	if (err <= 0)
+		dev_err(dev, "Device has not reached the reset state, err %d\n", err);
+
 	return 0;
 }
 
@@ -1130,6 +1144,13 @@ ice_devlink_reload_down(struct devlink *devlink, bool netns_change,
 					   "Remove all VFs before doing reinit\n");
 			return -EOPNOTSUPP;
 		}
+#ifdef HAVE_NETDEV_UPPER_INFO
+		if (pf->lag && pf->lag->bonded) {
+			NL_SET_ERR_MSG_MOD(extack,
+					   "Remove all associated Bonds before doing reinit\n");
+			return -EBUSY;
+		}
+#endif   /* HAVE_NETDEV_UPPER_INFO */
 		ice_unload(pf);
 		return 0;
 	case DEVLINK_RELOAD_ACTION_FW_ACTIVATE:
@@ -1538,6 +1559,10 @@ static bool ice_enable_custom_tx(struct ice_pf *pf)
 {
 	struct ice_port_info *pi = ice_get_main_vsi(pf)->port_info;
 	struct device *dev = ice_pf_to_dev(pf);
+#ifdef CONFIG_PCI_IOV
+	struct ice_vf *vf;
+	unsigned int bkt;
+#endif /* CONFIG_PCI_IOV */
 
 	if (pi->is_custom_tx_enabled)
 		/* already enabled, return true */
@@ -1554,6 +1579,10 @@ static bool ice_enable_custom_tx(struct ice_pf *pf)
 			"Hierarchical QoS configuration is not supported because RDMA is configured. Please disable these features and try again\n");
 		return false;
 	}
+#ifdef CONFIG_PCI_IOV
+	ice_for_each_vf(pf, bkt, vf)
+		ice_vc_set_hqos_allowlist(vf);
+#endif /* CONFIG_PCI_IOV */
 
 	pi->is_custom_tx_enabled = true;
 
@@ -1993,6 +2022,15 @@ static int ice_devlink_set_parent(struct devlink_rate *devlink_rate,
 }
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 
+#ifdef HAVE_DEVLINK_PORT_OPS
+static const struct devlink_port_ops ice_devlink_port_ops = {
+#ifdef HAVE_DEVLINK_PORT_SPLIT
+	.port_split = ice_devlink_port_split,
+	.port_unsplit = ice_devlink_port_unsplit,
+#endif /* HAVE_DEVLINK_PORT_SPLIT */
+};
+#endif /* HAVE_DEVLINK_PORT_OPS */
+
 static const struct devlink_ops ice_devlink_ops = {
 #ifdef HAVE_DEVLINK_FLASH_UPDATE_PARAMS
 	.supported_flash_update_params = DEVLINK_SUPPORT_FLASH_UPDATE_OVERWRITE_MASK,
@@ -2003,10 +2041,10 @@ static const struct devlink_ops ice_devlink_ops = {
 	.reload_down = ice_devlink_reload_down,
 	.reload_up = ice_devlink_reload_up,
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
-#ifdef HAVE_DEVLINK_PORT_SPLIT
+#if defined(HAVE_DEVLINK_PORT_SPLIT) && !defined(HAVE_DEVLINK_PORT_OPS)
 	.port_split = ice_devlink_port_split,
 	.port_unsplit = ice_devlink_port_unsplit,
-#endif /* HAVE_DEVLINK_PORT_SPLIT */
+#endif /* HAVE_DEVLINK_PORT_SPLIT && !HAVE_DEVLINK_PORT_OPS */
 	.eswitch_mode_get = ice_eswitch_mode_get,
 	.eswitch_mode_set = ice_eswitch_mode_set,
 #ifdef HAVE_DEVLINK_INFO_GET
@@ -2263,7 +2301,12 @@ int ice_devlink_create_pf_port(struct ice_pf *pf)
 	devlink_port_attrs_set(devlink_port, &attrs);
 	devlink = priv_to_devlink(pf);
 
+#ifdef HAVE_DEVLINK_PORT_OPS
+	err = devlink_port_register_with_ops(devlink, devlink_port, vsi->idx,
+					     &ice_devlink_port_ops);
+#else
 	err = devlink_port_register(devlink, devlink_port, vsi->idx);
+#endif
 	if (err) {
 		ice_dev_err_errno(dev, err,
 				  "Failed to create devlink port for PF %d",
@@ -2752,6 +2795,7 @@ void ice_devlink_init_mdd_reporter(struct ice_pf *pf)
 	if (IS_ERR(pf->mdd_reporter.reporter)) {
 		ice_dev_err_errno(dev, PTR_ERR(pf->mdd_reporter.reporter),
 				  "failed to create devlink MDD health reporter");
+		pf->mdd_reporter.reporter = NULL;
 	}
 }
 

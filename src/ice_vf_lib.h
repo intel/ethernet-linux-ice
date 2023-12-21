@@ -27,13 +27,16 @@
 /* Maximum number of queue pairs to configure by default for a VF */
 #define ICE_MAX_DFLT_QS_PER_VF         16
 
+#define ICE_VFR_WAIT_COUNT 100
+
 struct ice_pf;
 struct ice_vf;
 struct ice_virtchnl_ops;
 
 /* VF capabilities */
-enum ice_virtchnl_cap {
-	ICE_VIRTCHNL_VF_CAP_PRIVILEGE = 0,
+enum ice_vf_cap {
+	ICE_VF_CAP_TRUSTED = 0,
+	ICE_VF_CAP_NBITS
 };
 
 /* Specific VF states */
@@ -45,6 +48,7 @@ enum ice_vf_states {
 	ICE_VF_STATE_MC_PROMISC,
 	ICE_VF_STATE_UC_PROMISC,
 	ICE_VF_STATE_REPLAY_VC,
+	ICE_VF_STATE_IN_RESET,		/* VF reset in progress*/
 	ICE_VF_STATES_NBITS
 };
 
@@ -187,6 +191,7 @@ struct ice_vf {
 	struct ice_fdir_prof_info fdir_prof_info[ICE_MAX_PTGS];
 	struct ice_vf_fsub fsub;
 	struct device_attribute rss_lut_attr;
+	struct device_attribute transmit_lldp_attr;
 	struct ice_vf_hash_ctx hash_ctx;
 	struct ice_rss_prof_info rss_prof_info[ICE_MAX_PTGS];
 	struct ice_vf_qs_bw qs_bw[ICE_MAX_QS_PER_VF];
@@ -208,6 +213,7 @@ struct ice_vf {
 	u8 pf_set_mac:1;		/* VF MAC address set by VMM admin */
 	u8 trusted:1;
 	u8 spoofchk:1;
+	u8 transmit_lldp:1;
 #ifdef HAVE_NDO_SET_VF_LINK_STATE
 	u8 link_forced:1;
 	u8 link_up:1;			/* only valid if VF link is forced */
@@ -220,8 +226,8 @@ struct ice_vf {
 	unsigned int min_tx_rate;	/* Minimum Tx bandwidth limit in Mbps */
 	unsigned int max_tx_rate;	/* Maximum Tx bandwidth limit in Mbps */
 	DECLARE_BITMAP(vf_states, ICE_VF_STATES_NBITS);	/* VF runtime states */
-
-	unsigned long vf_caps;		/* VF's adv. capabilities */
+	/* VF's adv. capabilities */
+	DECLARE_BITMAP(vf_caps, ICE_VF_CAP_NBITS);
 	u16 num_req_qs;			/* num of queue pairs requested by VF */
 	u16 num_mac;
 	u16 num_vf_qs;			/* num of queue configured per VF */
@@ -351,8 +357,26 @@ int ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 int ice_reset_vf(struct ice_vf *vf, u32 flags);
 void ice_reset_all_vfs(struct ice_pf *pf);
 int ice_init_vf_sysfs(struct ice_vf *vf);
+int ice_handle_vf_tx_lldp(struct ice_vf *vf, bool ena);
+void ice_ena_all_vfs_rx_lldp(struct ice_pf *pf);
+int ice_ena_vf_rx_lldp(struct ice_vf *vf);
+int ice_vf_reconfig_vsi(struct ice_vf *vf);
 #else /* CONFIG_PCI_IOV */
+static inline void ice_ena_all_vfs_rx_lldp(struct ice_pf *pf)
+{
+}
+
+static inline int ice_handle_vf_tx_lldp(struct ice_vf *vf, bool ena)
+{
+	return -EOPNOTSUPP;
+}
+
 static inline int ice_init_vf_sysfs(struct ice_vf *vf)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int ice_vf_reconfig_vsi(struct ice_vf *vf)
 {
 	return -EOPNOTSUPP;
 }

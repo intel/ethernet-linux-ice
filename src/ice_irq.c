@@ -104,7 +104,7 @@ static int ice_adq_max_qps(struct ice_pf *pf)
 	if (pf->hw.func_caps.common_cap.num_msix_vectors >= 1024)
 		return ICE_ADQ_MAX_QPS;
 
-	return ice_normalize_cpu_count(num_online_cpus());
+	return num_online_cpus();
 }
 
 /**
@@ -190,7 +190,11 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
 		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
 		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
+#if defined(HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT)
+		max_t(int, default_lan_qp, ICE_MIN_LAN_MSIX),
+#else
 		max_t(int, ice_adq_max_qps(pf), ICE_MIN_LAN_MSIX),
+#endif /* DEVLINK_SUPPORT && HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 	};
 	int fdir_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_FDIR_MSIX, ICE_FDIR_MSIX, ICE_FDIR_MSIX,
@@ -304,7 +308,11 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	}
 	pf->msix.misc += macvlan_adj_vec[adj_step];
 #endif /* HAVE_NDO_DFWD_OPS */
+#if defined(HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT)
+	pf->max_adq_qps = !ice_is_safe_mode(pf) ? ice_adq_max_qps(pf) : 1;
+#else
 	pf->max_adq_qps = !ice_is_safe_mode(pf) ? lan_adj_vec[adj_step] : 1;
+#endif /* DEVLINK_SUPPORT && HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 	pf->msix.misc += fdir_adj_vec[ICE_ADJ_VEC_BEST_CASE];
 	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags) &&
 	    !scalable_adj_vec[adj_step]) {

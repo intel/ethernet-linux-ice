@@ -185,6 +185,11 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_FLOW_SUBSCRIBE = 114,
 	VIRTCHNL_OP_FLOW_UNSUBSCRIBE = 115,
 	/* opcode 116 through 130 are reserved */
+	VIRTCHNL_OP_HQOS_TREE_READ = 131,
+	VIRTCHNL_OP_HQOS_ELEMS_ADD = 132,
+	VIRTCHNL_OP_HQOS_ELEMS_DEL = 133,
+	VIRTCHNL_OP_HQOS_ELEMS_MOVE = 134,
+	VIRTCHNL_OP_HQOS_ELEMS_CONF = 135,
 	VIRTCHNL_OP_MAX,
 };
 
@@ -303,6 +308,16 @@ static inline const char *virtchnl_op_str(enum virtchnl_ops v_opcode)
 		return "VIRTCHNL_OP_FLOW_SUBSCRIBE";
 	case VIRTCHNL_OP_FLOW_UNSUBSCRIBE:
 		return "VIRTCHNL_OP_FLOW_UNSUBSCRIBE";
+	case VIRTCHNL_OP_HQOS_TREE_READ:
+		return "VIRTCHNL_OP_HQOS_TREE_READ";
+	case VIRTCHNL_OP_HQOS_ELEMS_ADD:
+		return "VIRTCHNL_OP_HQOS_ELEMS_ADD";
+	case VIRTCHNL_OP_HQOS_ELEMS_DEL:
+		return "VIRTCHNL_OP_HQOS_ELEMS_DEL";
+	case VIRTCHNL_OP_HQOS_ELEMS_MOVE:
+		return "VIRTCHNL_OP_HQOS_ELEMS_MOVE";
+	case VIRTCHNL_OP_HQOS_ELEMS_CONF:
+		return "VIRTCHNL_OP_HQOS_ELEMS_CONF";
 	case VIRTCHNL_OP_MAX:
 		return "VIRTCHNL_OP_MAX";
 	default:
@@ -2173,6 +2188,34 @@ struct virtchnl_quanta_cfg {
 
 VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_quanta_cfg);
 
+/*
+ * VIRTCHNL_OP_HQOS_READ_TREE
+ * VIRTCHNL_OP_HQOS_ELEM_ADD
+ * VIRTCHNL_OP_HQOS_ELEM_DEL
+ * VIRTCHNL_OP_HQOS_ELEM_BW_SET
+ * List with tc and queus HW QoS values
+ */
+struct virtchnl_hqos_cfg {
+#define VIRTCHNL_HQOS_ELEM_TYPE_NODE	0
+#define VIRTCHNL_HQOS_ELEM_TYPE_LEAF	1
+	u8 node_type;
+	u8 pad[7];
+	u32 teid;
+	u32 parent_teid;
+	u64 tx_max;
+	u64 tx_share;
+	u32 tx_priority;
+	u32 tx_weight;
+};
+VIRTCHNL_CHECK_STRUCT_LEN(40, virtchnl_hqos_cfg);
+
+struct virtchnl_hqos_cfg_list {
+	u16 num_elem;
+	u8 pad[6];
+	struct virtchnl_hqos_cfg cfg[1];
+};
+VIRTCHNL_CHECK_STRUCT_LEN(48, virtchnl_hqos_cfg_list);
+
 /* Since VF messages are limited by u16 size, precalculate the maximum possible
  * values of nested elements in virtchnl structures that virtual channel can
  * possibly handle in a single message.
@@ -2213,6 +2256,9 @@ enum virtchnl_vector_limits {
 	VIRTCHNL_OP_ADD_DEL_VLAN_V2_MAX		=
 		((u16)(~0) - sizeof(struct virtchnl_vlan_filter_list_v2)) /
 		sizeof(struct virtchnl_vlan_filter),
+	VIRTCHNL_OP_HQOS_ELEMS_MAX		=
+		((u16)(~0) - sizeof(struct virtchnl_hqos_cfg_list)) /
+		sizeof(struct virtchnl_hqos_cfg),
 };
 
 /**
@@ -2555,6 +2601,25 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 			valid_len += (v_qp->num_qv_maps - 1) *
 				      sizeof(struct virtchnl_queue_vector);
 		}
+		break;
+	case VIRTCHNL_OP_HQOS_ELEMS_ADD:
+	case VIRTCHNL_OP_HQOS_ELEMS_DEL:
+	case VIRTCHNL_OP_HQOS_ELEMS_MOVE:
+	case VIRTCHNL_OP_HQOS_ELEMS_CONF:
+		valid_len = sizeof(struct virtchnl_hqos_cfg_list);
+		if (msglen >= valid_len) {
+			struct virtchnl_hqos_cfg_list *v_hcl =
+				(struct virtchnl_hqos_cfg_list *)msg;
+			if (v_hcl->num_elem == 0 ||
+			    v_hcl->num_elem > VIRTCHNL_OP_HQOS_ELEMS_MAX) {
+				err_msg_format = true;
+				break;
+			}
+			valid_len += (v_hcl->num_elem - 1) *
+				     sizeof(struct virtchnl_hqos_cfg);
+		}
+		break;
+	case VIRTCHNL_OP_HQOS_TREE_READ:
 		break;
 	/* These are always errors coming from the VF. */
 	case VIRTCHNL_OP_EVENT:

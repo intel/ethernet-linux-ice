@@ -11,7 +11,7 @@
 #include <linux/bitops.h>
 
 #define IEPS_VERSION_PEER_MAJOR    1
-#define IEPS_VERSION_PEER_MINOR    1
+#define IEPS_VERSION_PEER_MINOR    2
 
 struct ieps_peer_api_version {
 	__u8  major;
@@ -69,7 +69,7 @@ enum ieps_peer_phy_type {
 	IEPS_PEER_PHY_TYPE_10G_SFI_DA         = 13,
 	IEPS_PEER_PHY_TYPE_10GBASE_SR         = 14,
 	IEPS_PEER_PHY_TYPE_10GBASE_LR         = 15,
-	IEPS_PEER_PHY_TYPE_10GBASE_KR_CR1     = 16,
+	IEPS_PEER_PHY_TYPE_10GBASE_KR         = 16,
 	IEPS_PEER_PHY_TYPE_10G_SFI_AOC_ACC    = 17,
 	IEPS_PEER_PHY_TYPE_10G_SFI_C2C        = 18,
 	IEPS_PEER_PHY_TYPE_25GBASE_T          = 19,
@@ -221,10 +221,20 @@ struct ieps_peer_port_attr_data {
 	union ieps_peer_port_attr_cfg cfg;
 };
 
+enum ieps_peer_sbq_dev_msg {
+	IEPS_PEER_SBQ_DEV_ETH56G_0 = 2,
+	IEPS_PEER_SBQ_DEV_ETH56G_1 = 13,
+	IEPS_PEER_SBQ_DEV_RMN_0    = 2,
+	IEPS_PEER_SBQ_DEV_RMN_1    = 3,
+	IEPS_PEER_SBQ_DEV_RMN_2    = 4,
+	IEPS_PEER_SBQ_DEV_CGU      = 6,
+};
+
 struct ieps_peer_intphy_reg_rw {
 	__u64 reg;
 	__u32 data;
 	bool is_write;
+	enum ieps_peer_sbq_dev_msg dest_dev;
 };
 
 enum ieps_peer_cmd {
@@ -235,6 +245,7 @@ enum ieps_peer_cmd {
 	IEPS_PEER_CMD_MDIO_WRITE,
 	IEPS_PEER_CMD_GPIO_GET,
 	IEPS_PEER_CMD_GPIO_SET,
+	IEPS_PEER_CMD_BUS_LAST = IEPS_PEER_CMD_GPIO_SET,
 
 	/* INTPHY */
 	IEPS_PEER_CMD_GET_NVM_PHY_CAPS,

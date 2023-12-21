@@ -25,7 +25,7 @@
  * an appropriate message.
  */
 #define IIDC_MAJOR_VER		10
-#define IIDC_MINOR_VER		2
+#define IIDC_MINOR_VER		3
 
 enum iidc_event_type {
 	IIDC_EVENT_BEFORE_MTU_CHANGE,
@@ -93,6 +93,17 @@ struct iidc_rdma_qset_params {
 	u16 qs_handle; /* RDMA driver provides this */
 	u16 vport_id; /* VSI index */
 	u8 tc; /* TC branch the QSet should belong to */
+};
+
+struct iidc_rdma_multi_qset_params {
+	u32 teid[2]; /* qset TEID(s) */
+	u16 qs_handle[2]; /* Provided by RDMA, used in AQ command */
+	u8 qset_port[2]; /* port where qset currently resides */
+	u16 vport_id; /* VSI Index */
+	u8 tc; /* Traffic class the QSet(s) belong to */
+	u8 num; /* Number of qsets in this param set (1-2) */
+	u8 rdma_port[2]; /* Port for each qset to talk out of */
+	u8 active_ports; /* bitmap of which ports are active */
 };
 
 struct iidc_qos_info {
@@ -177,6 +188,10 @@ struct iidc_core_ops {
 				      struct iidc_qvlist_info *qvl_info,
 				      bool map);
 	int (*ieps_entry)(struct iidc_core_dev_info *obj, void *arg);
+	int (*alloc_multi_res)(struct iidc_core_dev_info *cdev_info,
+			       struct iidc_rdma_multi_qset_params *qset);
+	int (*free_multi_res)(struct iidc_core_dev_info *cdev_info,
+			      struct iidc_rdma_multi_qset_params *qset);
 };
 
 #define IIDC_RDMA_ROCE_NAME	"roce"
@@ -251,6 +266,12 @@ struct iidc_core_dev_info {
 	u8 pf_id;
 	u8 main_pf_port;
 	u8 rdma_active_port;
+#define IIDC_RDMA_PRIMARY_PORT		0x1
+#define IIDC_RDMA_SECONDARY_PORT	0x2
+#define IIDC_RDMA_BOTH_PORT		0x3
+	u8 rdma_ports[2];
+	u8 bond_aa; /* is 1 if the bond is a supported active-active mode */
+	u8 rdma_port_bitmap; /* bitmap of port's link on active-active bond */
 };
 
 struct iidc_auxiliary_dev {

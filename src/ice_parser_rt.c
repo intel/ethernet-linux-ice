@@ -760,7 +760,7 @@ static void _result_resolve(struct ice_parser_rt *rt,
  * @rslt: input/output parameter to save parser result
  */
 int ice_parser_rt_execute(struct ice_parser_rt *rt,
-				      struct ice_parser_result *rslt)
+			  struct ice_parser_result *rslt)
 {
 	struct ice_pg_nm_cam_item *pg_nm_cam;
 	struct ice_parser *psr = rt->psr;

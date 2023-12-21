@@ -41,6 +41,19 @@ AF_XDP zero-copy on kernel 4.18 and later. Note that XDP is blocked for frame
 sizes larger than 3KB.
 
 
+Related Documentation
+=====================
+
+See the "Intel(R) Ethernet Adapters and Devices User Guide" for additional
+information on features. It is available on the Intel website at either of the
+following:
+
+- https://cdrdv2.intel.com/v1/dl/getContent/705831
+-
+https://www.intel.com/content/www/us/en/download/19373/adapter-user-guide-for-in
+tel-ethernet-adapters.html
+
+
 Identifying Your Adapter
 ========================
 The driver is compatible with devices based on the following:
@@ -1796,7 +1809,7 @@ Removing the limit:
 NAPI
 ----
 This driver supports NAPI (Rx polling mode). For more information on NAPI, see
-https://www.linuxfoundation.org/collaborate/workgroups/networking/napi.
+https://docs.kernel.org/networking/napi.html.
 
 
 MACVLAN

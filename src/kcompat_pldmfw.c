@@ -6,6 +6,8 @@
 
 /* This is taken from upstream "lib/pldmfw/pldmfw.c" */
 
+#include "kcompat.h"
+
 #include <asm/unaligned.h>
 #include <linux/crc32.h>
 #include <linux/device.h>
@@ -16,7 +18,6 @@
 #include <linux/slab.h>
 #include <linux/uuid.h>
 
-#include "kcompat.h"
 #include "kcompat_pldmfw.h"
 
 #if IS_ENABLED(CONFIG_PLDMFW)

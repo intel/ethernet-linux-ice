@@ -24,7 +24,7 @@ static inline bool ice_is_tc_ena(unsigned long bitmap, u8 tc)
 
 static inline u64 round_up_64bit(u64 a, u32 b)
 {
-	return div64_u64(((a) + (b) / 2), (b));
+	return div64_long(((a) + (b) / 2), (b));
 }
 
 static inline u32 ice_round_to_num(u32 N, u32 R)
@@ -40,8 +40,6 @@ static inline u32 ice_round_to_num(u32 N, u32 R)
 #define ICE_MS_TO_GTIME(time)		((time) * 1000)
 
 /* Data type manipulation macros. */
-#define ICE_HI_WORD(x)		((u16)(((x) >> 16) & 0xFFFF))
-#define ICE_LO_WORD(x)		((u16)((x) & 0xFFFF))
 #define ICE_HI_BYTE(x)		((u8)(((x) >> 8) & 0xFF))
 #define ICE_LO_BYTE(x)		((u8)((x) & 0xFF))
 
@@ -223,8 +221,8 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_50GBASE_CR2 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_CR4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4 | \
-					 ICE_PHY_TYPE_LOW_50GBASE_CP | \
-					 ICE_PHY_TYPE_LOW_100GBASE_CP2)
+					 ICE_PHY_TYPE_LOW_50GBASE_CR | \
+					 ICE_PHY_TYPE_LOW_100GBASE_CR2)
 
 #define ICE_MEDIA_C2C_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_100M_SGMII | \
 					 ICE_PHY_TYPE_LOW_1G_SGMII | \
@@ -325,6 +323,7 @@ struct ice_phy_info {
 enum ice_fltr_ptype {
 	/* NONE - used for undef/error */
 	ICE_FLTR_PTYPE_NONF_NONE = 0,
+	ICE_FLTR_PTYPE_NONF_ETH,
 	ICE_FLTR_PTYPE_NONF_IPV4_UDP,
 	ICE_FLTR_PTYPE_NONF_IPV4_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV4_SCTP,
@@ -689,6 +688,7 @@ struct ice_hw_common_caps {
 #define ICE_TS_TMR_ENA_M		BIT(2)
 #define ICE_TS_TMR_IDX_OWND_S		4
 #define ICE_TS_TMR_IDX_OWND_M		BIT(4)
+#define ICE_TS_GPIO_1PPS_ASSOC		BIT(12)
 #define ICE_TS_CLK_FREQ_S		16
 #define ICE_TS_CLK_FREQ_M		ICE_M(0x7, ICE_TS_CLK_FREQ_S)
 #define ICE_TS_CLK_SRC_S		20
@@ -718,6 +718,12 @@ enum ice_clk_src {
 	NUM_ICE_CLK_SRC
 };
 
+enum ice_e825c_clk_synce {
+	ICE_E825C_CLK_SYNCE0,
+	ICE_E825C_CLK_SYNCE1,
+	ICE_E825C_CLK_SYNCE_NUM,
+};
+
 struct ice_ts_func_info {
 	/* Function specific info */
 	enum ice_time_ref_freq time_ref;
@@ -727,6 +733,7 @@ struct ice_ts_func_info {
 	u8 tmr_index_owned : 1;
 	u8 src_tmr_owned : 1;
 	u8 tmr_ena : 1;
+	u8 gpio_1pps : 1;
 };
 
 /* Device specific definitions */
@@ -978,12 +985,13 @@ struct ice_sched_node {
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 	char *name;
 	struct devlink_rate *rate_node;
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	u64 tx_max;
 	u64 tx_share;
 	u32 id;
+	u16 tx_queue_id;
 	u32 tx_priority;
 	u32 tx_weight;
-#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	u32 agg_id;			/* aggregator group ID */
 	u16 vsi_handle;
 	u8 in_use;			/* suspended or in use */
@@ -1038,10 +1046,13 @@ enum ice_rl_type {
 #define ICE_SCHED_MAX_BW		100000000	/* in Kbps */
 #define ICE_SCHED_DFLT_BW		0xFFFFFFFF	/* unlimited */
 #define ICE_SCHED_NO_PRIORITY		0
+#define ICE_SCHED_MAX_PRIORITY		7
 #define ICE_SCHED_NO_BW_WT		0
+#define ICE_SCHED_MIN_BW_WT		1
+#define ICE_SCHED_DFLT_BW_WT		4
+#define ICE_SCHED_MAX_BW_WT		200
 #define ICE_SCHED_DFLT_RL_PROF_ID	0
 #define ICE_SCHED_NO_SHARED_RL_PROF_ID	0xFFFF
-#define ICE_SCHED_DFLT_BW_WT		4
 #define ICE_SCHED_INVAL_PROF_ID		0xFFFF
 #define ICE_SCHED_DFLT_BURST_SIZE	(15 * 1024)	/* in bytes (15k) */
 
@@ -1425,6 +1436,10 @@ struct ice_hw {
 #define ICE_PORTS_PER_PHY_E810		4
 #define ICE_NUM_EXTERNAL_PORTS		(ICE_MAX_QUAD * ICE_PORTS_PER_QUAD)
 
+	bool ptp_1step_en;
+	bool ptp_sfd_en;
+	u32 ptp_peer_delay;
+
 	/* Active package version (currently active) */
 	struct ice_pkg_ver active_pkg_ver;
 	u32 pkg_seg_id;
@@ -1485,6 +1500,8 @@ struct ice_hw {
 	u8 dvm_ena;
 	u16 io_expander_handle;
 	u8 cgu_part_number;
+
+	bool subscribable_recipes_supported;
 };
 
 /* Statistics collected by each port, VSI, VEB, and S-channel */
@@ -1748,11 +1765,17 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_FW_API_REPORT_DFLT_CFG_MIN		7
 #define ICE_FW_API_REPORT_DFLT_CFG_PATCH	3
 
+/* FW branch number for hardware families */
+#define ICE_FW_VER_BRANCH_E82X			0
+#define ICE_FW_VER_BRANCH_E810			1
+
 /* FW version for FEC disable in Auto FEC mode */
-#define ICE_FW_FEC_DIS_AUTO_BRANCH		1
 #define ICE_FW_FEC_DIS_AUTO_MAJ			7
 #define ICE_FW_FEC_DIS_AUTO_MIN			0
 #define ICE_FW_FEC_DIS_AUTO_PATCH		5
+#define ICE_FW_FEC_DIS_AUTO_MAJ_E82X		7
+#define ICE_FW_FEC_DIS_AUTO_MIN_E82X		1
+#define ICE_FW_FEC_DIS_AUTO_PATCH_E82X		2
 
 /* AQ API version for FW health reports */
 #define ICE_FW_API_HEALTH_REPORT_MAJ		1

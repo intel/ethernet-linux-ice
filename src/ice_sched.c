@@ -30,9 +30,9 @@ ice_sched_add_root_node(struct ice_port_info *pi,
 	if (!root)
 		return -ENOMEM;
 
-	/* coverity[suspicious_sizeof] */
 	root->children = devm_kcalloc(ice_hw_to_dev(hw), hw->max_children[0],
-				      sizeof(*root), GFP_KERNEL);
+				      sizeof(*root->children), GFP_KERNEL);
+
 	if (!root->children) {
 		devm_kfree(ice_hw_to_dev(hw), root);
 		return -ENOMEM;
@@ -58,6 +58,9 @@ struct ice_sched_node *
 ice_sched_find_node_by_teid(struct ice_sched_node *start_node, u32 teid)
 {
 	u16 i;
+
+	if (!start_node)
+		return NULL;
 
 	/* The TEID is same as that of the start_node */
 	if (ICE_TXSCHED_GET_NODE_TEID(start_node) == teid)
@@ -146,13 +149,14 @@ ice_aq_query_sched_elems(struct ice_hw *hw, u16 elems_req,
  * @layer: Scheduler layer of the node
  * @info: Scheduler element information from firmware
  * @prealloc_node: preallocated ice_sched_node struct for SW DB
+ * @txq_id: the index of tx queue
  *
  * This function inserts a scheduler node to the SW DB.
  */
 int
 ice_sched_add_node(struct ice_port_info *pi, u8 layer,
 		   struct ice_aqc_txsched_elem_data *info,
-		   struct ice_sched_node *prealloc_node)
+		   struct ice_sched_node *prealloc_node, u16 txq_id)
 {
 	struct ice_aqc_txsched_elem_data elem;
 	struct ice_sched_node *parent;
@@ -189,21 +193,34 @@ ice_sched_add_node(struct ice_port_info *pi, u8 layer,
 	if (!node)
 		return -ENOMEM;
 	if (hw->max_children[layer]) {
-		/* coverity[suspicious_sizeof] */
 		node->children = devm_kcalloc(ice_hw_to_dev(hw),
 					      hw->max_children[layer],
-					      sizeof(*node), GFP_KERNEL);
+					      sizeof(*node->children),
+					      GFP_KERNEL);
 		if (!node->children) {
 			devm_kfree(ice_hw_to_dev(hw), node);
 			return -ENOMEM;
 		}
 	}
 
+	if (info->data.elem_type == ICE_AQC_ELEM_TYPE_LEAF)
+		node->tx_queue_id = txq_id;
+
+	parent->children[parent->num_children++] = node;
 	node->in_use = true;
 	node->parent = parent;
 	node->tx_sched_layer = layer;
-	parent->children[parent->num_children++] = node;
 	node->info = elem;
+	node->tx_weight = ICE_SCHED_DFLT_BW_WT;
+	node->tx_share = ICE_SCHED_DFLT_BW;
+	node->tx_max = ICE_SCHED_DFLT_BW;
+
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	node->name = kzalloc(SCHED_NODE_NAME_MAX_LEN, GFP_KERNEL);
+	if (!node->name)
+		return -ENOMEM;
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
+
 	return 0;
 }
 
@@ -1012,9 +1029,12 @@ ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 	/* add nodes to the SW DB */
 	for (i = 0; i < num_nodes; i++) {
 		if (prealloc_nodes)
-			status = ice_sched_add_node(pi, layer, &buf->generic[i], prealloc_nodes[i]);
+			status = ice_sched_add_node(pi, layer,
+						    &buf->generic[i],
+						    prealloc_nodes[i], 0);
 		else
-			status = ice_sched_add_node(pi, layer, &buf->generic[i], NULL);
+			status = ice_sched_add_node(pi, layer,
+						    &buf->generic[i], NULL, 0);
 
 		if (status) {
 			ice_debug(hw, ICE_DBG_SCHED, "add nodes in SW DB failed status =%d\n",
@@ -1032,13 +1052,6 @@ ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 		new_node->sibling = NULL;
 		new_node->tc_num = tc_node->tc_num;
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
-		new_node->tx_weight = ICE_SCHED_DFLT_BW_WT;
-		new_node->tx_share = ICE_SCHED_DFLT_BW;
-		new_node->tx_max = ICE_SCHED_DFLT_BW;
-		new_node->name = kzalloc(SCHED_NODE_NAME_MAX_LEN, GFP_KERNEL);
-		if (!new_node->name)
-			return -ENOMEM;
-
 		status = xa_alloc(&pi->sched_node_ids, &new_node->id, NULL, XA_LIMIT(0, UINT_MAX),
 				  GFP_KERNEL);
 		if (status) {
@@ -1193,7 +1206,7 @@ ice_sched_add_nodes_to_layer(struct ice_port_info *pi,
  *
  * This function returns the current queue group layer number
  */
-static u8 ice_sched_get_qgrp_layer(struct ice_hw *hw)
+u8 ice_sched_get_qgrp_layer(struct ice_hw *hw)
 {
 	/* It's always total layers - 1, the array is 0 relative so -2 */
 	return hw->num_tx_sched_layers - ICE_QGRP_LAYER_OFFSET;
@@ -1374,7 +1387,8 @@ int ice_sched_init_port(struct ice_port_info *pi)
 			    ICE_AQC_ELEM_TYPE_ENTRY_POINT)
 				hw->sw_entry_point_layer = j;
 
-			status = ice_sched_add_node(pi, j, &buf[i].generic[j], NULL);
+			status = ice_sched_add_node(pi, j, &buf[i].generic[j],
+						    NULL, 0);
 			if (status)
 				goto err_init_port;
 		}
@@ -2456,6 +2470,82 @@ move_err_exit:
 }
 
 /**
+ * ice_sched_move_leaves - move child leaves to a given parent
+ * @pi: port information structure
+ * @parent: pointer to parent node
+ * @num_items: number of child leaves to be moved
+ * @list: pointer to child leaves teids
+ *
+ * This function move the child nodes to a given parent.
+ */
+int
+ice_sched_move_leaves(struct ice_port_info *pi, struct ice_sched_node *parent,
+		      u16 num_items, u32 *list)
+{
+	struct ice_sched_node *leaf, *old_parent;
+	struct ice_aqc_move_txqs_data *buf;
+	u16 buf_len, i = 0;
+	struct ice_hw *hw;
+	u32 blocked_cgds;
+	int status = 0;
+	u8 txqs_moved;
+
+	hw = pi->hw;
+
+	if (!parent || !num_items)
+		return -EINVAL;
+
+	/* Does parent have enough space */
+	if (parent->num_children + num_items >
+	    hw->max_children[parent->tx_sched_layer])
+		return -ENOSPC;
+
+	buf_len = struct_size(buf, txqs, 1);
+	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	for (i = 0; i < num_items; i++) {
+		leaf = ice_sched_find_node_by_teid(pi->root, list[i]);
+		if (!leaf) {
+			status = -EINVAL;
+			goto move_err_exit;
+		}
+
+		old_parent = ice_sched_find_node_by_teid(pi->root,
+							 le32_to_cpu(leaf->info.parent_teid));
+
+		if (!old_parent) {
+			status = -EINVAL;
+			goto move_err_exit;
+		}
+
+		buf->src_teid = old_parent->info.node_teid;
+		buf->dest_teid = parent->info.node_teid;
+		buf->txqs[0].txq_id = cpu_to_le16(leaf->tx_queue_id);
+		buf->txqs[0].q_cgd = 0;
+		buf->txqs[0].q_teid = leaf->info.node_teid;
+
+		status = ice_aq_move_recfg_lan_txq(hw, 1, true, false,
+						   false, false, 50,
+						   &blocked_cgds, buf,
+						   buf_len, &txqs_moved,
+						   NULL);
+
+		if (status && txqs_moved != 1) {
+			status = -EIO;
+			goto move_err_exit;
+		}
+
+		ice_sched_update_parent(parent, leaf);
+	}
+
+move_err_exit:
+	devm_kfree(ice_hw_to_dev(hw), buf);
+	return status;
+}
+
+/**
  * ice_sched_move_vsi_to_agg - move VSI to aggregator node
  * @pi: port information structure
  * @vsi_handle: software VSI handle
@@ -3488,6 +3578,131 @@ ice_sched_save_agg_bw(struct ice_port_info *pi, u32 agg_id, u8 tc,
 }
 
 /**
+ * ice_sched_get_node_by_id_type - get node from ID type
+ * @pi: port information structure
+ * @id: identifier
+ * @agg_type: type of aggregator
+ * @tc: traffic class
+ *
+ * This function returns node identified by ID of type aggregator, and
+ * based on traffic class (TC). This function needs to be called with
+ * the scheduler lock held.
+ */
+static struct ice_sched_node *
+ice_sched_get_node_by_id_type(struct ice_port_info *pi, u32 id,
+			      enum ice_agg_type agg_type, u8 tc)
+{
+	struct ice_sched_node *node = NULL;
+
+	switch (agg_type) {
+	case ICE_AGG_TYPE_VSI: {
+		struct ice_vsi_ctx *vsi_ctx;
+		u16 vsi_handle = (u16)id;
+
+		if (!ice_is_vsi_valid(pi->hw, vsi_handle))
+			break;
+		/* Get sched_vsi_info */
+		vsi_ctx = ice_get_vsi_ctx(pi->hw, vsi_handle);
+		if (!vsi_ctx)
+			break;
+		node = vsi_ctx->sched.vsi_node[tc];
+		break;
+	}
+
+	case ICE_AGG_TYPE_AGG: {
+		struct ice_sched_node *tc_node;
+
+		tc_node = ice_sched_get_tc_node(pi, tc);
+		if (tc_node)
+			node = ice_sched_get_agg_node(pi, tc_node, id);
+		break;
+	}
+
+	case ICE_AGG_TYPE_Q:
+		/* The current implementation allows single queue to modify */
+		node = ice_sched_find_node_by_teid(pi->root, id);
+		break;
+
+	case ICE_AGG_TYPE_QG: {
+		struct ice_sched_node *child_node;
+
+		/* The current implementation allows single qg to modify */
+		child_node = ice_sched_find_node_by_teid(pi->root, id);
+		if (!child_node)
+			break;
+		node = child_node->parent;
+		break;
+	}
+
+	default:
+		break;
+	}
+
+	return node;
+}
+
+/**
+ * ice_sched_set_node_bw_dflt_lmt - set node's BW limit to default
+ * @pi: port information structure
+ * @node: pointer to node structure
+ * @rl_type: rate limit type min, max, or shared
+ *
+ * This function configures node element's BW rate limit profile ID of
+ * type CIR, EIR, or SRL to default. This function needs to be called
+ * with the scheduler lock held.
+ */
+static int
+ice_sched_set_node_bw_dflt_lmt(struct ice_port_info *pi,
+			       struct ice_sched_node *node,
+			       enum ice_rl_type rl_type)
+{
+	return ice_sched_set_node_bw_lmt(pi, node, rl_type,
+					 ICE_SCHED_DFLT_BW);
+}
+
+/**
+ * ice_sched_set_node_bw_lmt_per_tc - set node BW limit per TC
+ * @pi: port information structure
+ * @id: ID (software VSI handle or AGG ID)
+ * @agg_type: aggregator type (VSI or AGG type node)
+ * @tc: traffic class
+ * @rl_type: min or max
+ * @bw: bandwidth in Kbps
+ *
+ * This function sets BW limit of VSI or Aggregator scheduling node
+ * based on TC information from passed in argument BW.
+ */
+static int
+ice_sched_set_node_bw_lmt_per_tc(struct ice_port_info *pi, u32 id,
+				 enum ice_agg_type agg_type, u8 tc,
+				 enum ice_rl_type rl_type, u32 bw)
+{
+	struct ice_sched_node *node;
+	int status = -EINVAL;
+
+	if (!pi)
+		return status;
+
+	if (rl_type == ICE_UNKNOWN_BW)
+		return status;
+
+	mutex_lock(&pi->sched_lock);
+	node = ice_sched_get_node_by_id_type(pi, id, agg_type, tc);
+	if (!node) {
+		ice_debug(pi->hw, ICE_DBG_SCHED, "Wrong id, agg type, or tc\n");
+		goto exit_set_node_bw_lmt_per_tc;
+	}
+	if (bw == ICE_SCHED_DFLT_BW)
+		status = ice_sched_set_node_bw_dflt_lmt(pi, node, rl_type);
+	else
+		status = ice_sched_set_node_bw_lmt(pi, node, rl_type, bw);
+
+exit_set_node_bw_lmt_per_tc:
+	mutex_unlock(&pi->sched_lock);
+	return status;
+}
+
+/**
  * ice_cfg_vsi_bw_lmt_per_tc - configure VSI BW limit per TC
  * @pi: port information structure
  * @vsi_handle: software VSI handle
@@ -3964,8 +4179,8 @@ static u16 ice_sched_calc_wakeup(struct ice_hw *hw, s32 bw)
 	u16 wakeup = 0;
 
 	/* Get the wakeup integer value */
-	bytes_per_sec = div64_s64((s64)bw * 1000, BITS_PER_BYTE);
-	wakeup_int = div64_s64(hw->psm_clk_freq, bytes_per_sec);
+	bytes_per_sec = div64_long((s64)bw * 1000, BITS_PER_BYTE);
+	wakeup_int = div64_long(hw->psm_clk_freq, bytes_per_sec);
 	if (wakeup_int > 63) {
 		wakeup = (u16)((1 << 15) | wakeup_int);
 	} else {
@@ -3973,18 +4188,18 @@ static u16 ice_sched_calc_wakeup(struct ice_hw *hw, s32 bw)
 		 * Convert Integer value to a constant multiplier
 		 */
 		wakeup_b = (s64)ICE_RL_PROF_MULTIPLIER * wakeup_int;
-		wakeup_a = div64_s64((s64)ICE_RL_PROF_MULTIPLIER * hw->psm_clk_freq,
-				     bytes_per_sec);
+		wakeup_a = div64_long((s64)ICE_RL_PROF_MULTIPLIER *
+				      hw->psm_clk_freq, bytes_per_sec);
 
 		/* Get Fraction value */
 		wakeup_f = wakeup_a - wakeup_b;
 
 		/* Round up the Fractional value via Ceil(Fractional value) */
-		if (wakeup_f > div64_s64(ICE_RL_PROF_MULTIPLIER, 2))
+		if (wakeup_f > div64_long(ICE_RL_PROF_MULTIPLIER, 2))
 			wakeup_f += 1;
 
-		wakeup_f_int = (s32)div64_s64(wakeup_f * ICE_RL_PROF_FRACTION,
-					      ICE_RL_PROF_MULTIPLIER);
+		wakeup_f_int = (s32)div64_long(wakeup_f * ICE_RL_PROF_FRACTION,
+					       ICE_RL_PROF_MULTIPLIER);
 		wakeup |= (u16)(wakeup_int << 9);
 		wakeup |= (u16)(0x1ff & wakeup_f_int);
 	}
@@ -4016,20 +4231,20 @@ ice_sched_bw_to_rl_profile(struct ice_hw *hw, u32 bw,
 		return status;
 
 	/* Bytes per second from Kbps */
-	bytes_per_sec = div64_s64((s64)bw * 1000, BITS_PER_BYTE);
+	bytes_per_sec = div64_long((s64)bw * 1000, BITS_PER_BYTE);
 
 	/* encode is 6 bits but really useful are 5 bits */
 	for (i = 0; i < 64; i++) {
 		u64 pow_result = BIT_ULL(i);
 
-		ts_rate = div64_s64((s64)hw->psm_clk_freq,
-				    pow_result * ICE_RL_PROF_TS_MULTIPLIER);
+		ts_rate = div64_long((s64)hw->psm_clk_freq,
+				     pow_result * ICE_RL_PROF_TS_MULTIPLIER);
 		if (ts_rate <= 0)
 			continue;
 
 		/* Multiplier value */
-		mv_tmp = div64_s64(bytes_per_sec * ICE_RL_PROF_MULTIPLIER,
-				   ts_rate);
+		mv_tmp = div64_long(bytes_per_sec * ICE_RL_PROF_MULTIPLIER,
+				    ts_rate);
 
 		/* Round to the nearest ICE_RL_PROF_MULTIPLIER */
 		mv = round_up_64bit(mv_tmp, ICE_RL_PROF_MULTIPLIER);
@@ -4513,25 +4728,6 @@ ice_sched_set_node_bw_lmt(struct ice_port_info *pi, struct ice_sched_node *node,
 }
 
 /**
- * ice_sched_set_node_bw_dflt_lmt - set node's BW limit to default
- * @pi: port information structure
- * @node: pointer to node structure
- * @rl_type: rate limit type min, max, or shared
- *
- * This function configures node element's BW rate limit profile ID of
- * type CIR, EIR, or SRL to default. This function needs to be called
- * with the scheduler lock held.
- */
-static int
-ice_sched_set_node_bw_dflt_lmt(struct ice_port_info *pi,
-			       struct ice_sched_node *node,
-			       enum ice_rl_type rl_type)
-{
-	return ice_sched_set_node_bw_lmt(pi, node, rl_type,
-					 ICE_SCHED_DFLT_BW);
-}
-
-/**
  * ice_sched_validate_srl_node - Check node for SRL applicability
  * @node: sched node to configure
  * @sel_layer: selected SRL layer
@@ -4717,6 +4913,9 @@ ice_sched_save_tc_node_bw(struct ice_port_info *pi, u8 tc,
 	return 0;
 }
 
+#define ICE_SCHED_GENERIC_STRICT_MODE		BIT(4)
+#define ICE_SCHED_GENERIC_PRIO_S		1
+
 /**
  * ice_sched_set_tc_node_bw_lmt - sets TC node BW limit
  * @pi: port information structure
@@ -4730,6 +4929,8 @@ static int
 ice_sched_set_tc_node_bw_lmt(struct ice_port_info *pi, u8 tc,
 			     enum ice_rl_type rl_type, u32 bw)
 {
+	struct ice_aqc_txsched_elem_data buf;
+	struct ice_aqc_txsched_elem *data;
 	struct ice_sched_node *tc_node;
 	int status = -EINVAL;
 
@@ -4739,6 +4940,17 @@ ice_sched_set_tc_node_bw_lmt(struct ice_port_info *pi, u8 tc,
 	tc_node = ice_sched_get_tc_node(pi, tc);
 	if (!tc_node)
 		goto exit_set_tc_node_bw;
+
+	/* update node's generic field */
+	buf = tc_node->info;
+	data = &buf.data;
+	data->valid_sections = ICE_AQC_ELEM_VALID_GENERIC;
+	data->generic = (tc << ICE_SCHED_GENERIC_PRIO_S) |
+		ICE_SCHED_GENERIC_STRICT_MODE;
+	status = ice_sched_update_elem(pi->hw, tc_node, &buf);
+	if (status)
+		goto exit_set_tc_node_bw;
+
 	if (bw == ICE_SCHED_DFLT_BW)
 		status = ice_sched_set_node_bw_dflt_lmt(pi, tc_node, rl_type);
 	else
@@ -4911,112 +5123,6 @@ ice_sched_set_agg_bw_dflt_lmt(struct ice_port_info *pi, u16 vsi_handle)
 			break;
 	}
 
-	return status;
-}
-
-/**
- * ice_sched_get_node_by_id_type - get node from ID type
- * @pi: port information structure
- * @id: identifier
- * @agg_type: type of aggregator
- * @tc: traffic class
- *
- * This function returns node identified by ID of type aggregator, and
- * based on traffic class (TC). This function needs to be called with
- * the scheduler lock held.
- */
-static struct ice_sched_node *
-ice_sched_get_node_by_id_type(struct ice_port_info *pi, u32 id,
-			      enum ice_agg_type agg_type, u8 tc)
-{
-	struct ice_sched_node *node = NULL;
-
-	switch (agg_type) {
-	case ICE_AGG_TYPE_VSI: {
-		struct ice_vsi_ctx *vsi_ctx;
-		u16 vsi_handle = (u16)id;
-
-		if (!ice_is_vsi_valid(pi->hw, vsi_handle))
-			break;
-		/* Get sched_vsi_info */
-		vsi_ctx = ice_get_vsi_ctx(pi->hw, vsi_handle);
-		if (!vsi_ctx)
-			break;
-		node = vsi_ctx->sched.vsi_node[tc];
-		break;
-	}
-
-	case ICE_AGG_TYPE_AGG: {
-		struct ice_sched_node *tc_node;
-
-		tc_node = ice_sched_get_tc_node(pi, tc);
-		if (tc_node)
-			node = ice_sched_get_agg_node(pi, tc_node, id);
-		break;
-	}
-
-	case ICE_AGG_TYPE_Q:
-		/* The current implementation allows single queue to modify */
-		node = ice_sched_find_node_by_teid(pi->root, id);
-		break;
-
-	case ICE_AGG_TYPE_QG: {
-		struct ice_sched_node *child_node;
-
-		/* The current implementation allows single qg to modify */
-		child_node = ice_sched_find_node_by_teid(pi->root, id);
-		if (!child_node)
-			break;
-		node = child_node->parent;
-		break;
-	}
-
-	default:
-		break;
-	}
-
-	return node;
-}
-
-/**
- * ice_sched_set_node_bw_lmt_per_tc - set node BW limit per TC
- * @pi: port information structure
- * @id: ID (software VSI handle or AGG ID)
- * @agg_type: aggregator type (VSI or AGG type node)
- * @tc: traffic class
- * @rl_type: min or max
- * @bw: bandwidth in Kbps
- *
- * This function sets BW limit of VSI or Aggregator scheduling node
- * based on TC information from passed in argument BW.
- */
-int
-ice_sched_set_node_bw_lmt_per_tc(struct ice_port_info *pi, u32 id,
-				 enum ice_agg_type agg_type, u8 tc,
-				 enum ice_rl_type rl_type, u32 bw)
-{
-	struct ice_sched_node *node;
-	int status = -EINVAL;
-
-	if (!pi)
-		return status;
-
-	if (rl_type == ICE_UNKNOWN_BW)
-		return status;
-
-	mutex_lock(&pi->sched_lock);
-	node = ice_sched_get_node_by_id_type(pi, id, agg_type, tc);
-	if (!node) {
-		ice_debug(pi->hw, ICE_DBG_SCHED, "Wrong id, agg type, or tc\n");
-		goto exit_set_node_bw_lmt_per_tc;
-	}
-	if (bw == ICE_SCHED_DFLT_BW)
-		status = ice_sched_set_node_bw_dflt_lmt(pi, node, rl_type);
-	else
-		status = ice_sched_set_node_bw_lmt(pi, node, rl_type, bw);
-
-exit_set_node_bw_lmt_per_tc:
-	mutex_unlock(&pi->sched_lock);
 	return status;
 }
 

@@ -2252,7 +2252,9 @@ int _kc_kstrtobool(const char *s, bool *res);
 #else /* >= 4.6.0 */
 #define HAVE_PAGE_COUNT_BULK_UPDATE
 #define HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
+#ifdef CONFIG_X86
 #define HAVE_PTP_CROSSTIMESTAMP
+#endif
 #define HAVE_TC_SETUP_CLSFLOWER
 #define HAVE_TC_SETUP_CLSU32
 #endif /* 4.6.0 */
@@ -2883,14 +2885,10 @@ void _kc_pcie_print_link_status(struct pci_dev *dev);
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,18,0))
-#include "kcompat_overflow.h"
-
 #if (SLE_VERSION_CODE < SLE_VERSION(15,1,0))
 #define firmware_request_nowarn	request_firmware_direct
 #endif /* SLES < 15.1 */
-
 #else
-#include <linux/overflow.h>
 #include <net/xdp_sock.h>
 #define HAVE_XDP_FRAME_STRUCT
 #define HAVE_XDP_SOCK
@@ -3183,8 +3181,6 @@ u64 _kc_pci_get_dsn(struct pci_dev *dev);
 /* RHEL >= 8.4 */
 #define HAVE_XDP_BUFF_FRAME_SZ
 #endif
-#define flex_array_size(p, member, count) \
-	array_size(count, sizeof(*(p)->member) + __must_be_array((p)->member))
 #else /* >= 5.8.0 */
 #define HAVE_TC_FLOW_INDIR_DEV
 #define HAVE_TC_FLOW_INDIR_BLOCK_CLEANUP

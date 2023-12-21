@@ -312,7 +312,7 @@ void ice_parser_destroy(struct ice_parser *psr)
  * @rslt: input/output parameter to save parser result.
  */
 int ice_parser_run(struct ice_parser *psr, const u8 *pkt_buf,
-			       int pkt_len, struct ice_parser_result *rslt)
+		   int pkt_len, struct ice_parser_result *rslt)
 {
 	ice_parser_rt_reset(&psr->rt);
 	ice_parser_rt_pktbuf_set(&psr->rt, pkt_buf, pkt_len);
@@ -417,7 +417,7 @@ _tunnel_port_set(struct ice_parser *psr, const char *prefix, u16 udp_port,
  * @on: true to turn on; false to turn off
  */
 int ice_parser_vxlan_tunnel_set(struct ice_parser *psr,
-					    u16 udp_port, bool on)
+				u16 udp_port, bool on)
 {
 	return _tunnel_port_set(psr, "TNL_VXLAN", udp_port, on);
 }
@@ -429,7 +429,7 @@ int ice_parser_vxlan_tunnel_set(struct ice_parser *psr,
  * @on: true to turn on; false to turn off
  */
 int ice_parser_geneve_tunnel_set(struct ice_parser *psr,
-					     u16 udp_port, bool on)
+				 u16 udp_port, bool on)
 {
 	return _tunnel_port_set(psr, "TNL_GENEVE", udp_port, on);
 }
@@ -441,7 +441,7 @@ int ice_parser_geneve_tunnel_set(struct ice_parser *psr,
  * @on: true to turn on; false to turn off
  */
 int ice_parser_ecpri_tunnel_set(struct ice_parser *psr,
-					    u16 udp_port, bool on)
+				u16 udp_port, bool on)
 {
 	return _tunnel_port_set(psr, "TNL_UDP_ECPRI", udp_port, on);
 }
@@ -490,10 +490,10 @@ static bool _nearest_proto_id(struct ice_parser_result *rslt, u16 offset,
  * @prof: input/output parameter to save the profile
  */
 int ice_parser_profile_init(struct ice_parser_result *rslt,
-					const u8 *pkt_buf, const u8 *msk_buf,
-					int buf_len, enum ice_block blk,
-					bool prefix_match,
-					struct ice_parser_profile *prof)
+			    const u8 *pkt_buf, const u8 *msk_buf,
+			    int buf_len, enum ice_block blk,
+			    bool prefix_match,
+			    struct ice_parser_profile *prof)
 {
 	u8 proto_id = 0xff;
 	u16 proto_off = 0;

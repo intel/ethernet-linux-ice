@@ -3307,7 +3307,7 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 		u8 *keys, *inverts;
 		u16 entry_idx;
 
-		keys = e->entry;
+		keys = (u8 *)e->entry;
 		inverts = keys + (e->entry_sz / 2);
 		prio = ice_flow_acl_convert_to_acl_prio(e->priority);
 
@@ -3496,7 +3496,7 @@ out:
  * @entry_h: handle to the flow entry to be removed
  */
 int ice_flow_rem_entry(struct ice_hw *hw, enum ice_block blk,
-				   u64 entry_h)
+		       u64 entry_h)
 {
 	struct ice_flow_entry *entry;
 	struct ice_flow_prof *prof;
@@ -3665,7 +3665,7 @@ ice_flow_add_fld_raw(struct ice_flow_seg_info *seg, u16 off, u8 len,
  * vsi handle and disassociates the vsi from the flow profile.
  */
 int ice_flow_rem_vsi_prof(struct ice_hw *hw, enum ice_block blk, u16 vsi_handle,
-				      u64 prof_id)
+			  u64 prof_id)
 {
 	struct ice_flow_prof *prof = NULL;
 	int status = 0;

@@ -344,7 +344,9 @@ minimum_kver_check = $(eval $(call _minimum_kver_check,${1},${2},${3}))
 # since is_kcompat_defined() is a macro, it's "computed" before any target
 # recipe, kcompat_generated_defs.h is needed prior to that, so needs to be
 # generated also via $(shell) call, which makes error handling ugly
-$(if $(shell KSRC=${KSRC} OUT=${src}/kcompat_generated_defs.h CONFFILE=${CONFIG_FILE} \
+$(if $(shell \
+    $(if $(findstring 1,${V}),,QUIET_COMPAT=1) \
+    KSRC=${KSRC} OUT=${src}/kcompat_generated_defs.h CONFFILE=${CONFIG_FILE} \
     bash ${src}/kcompat-generator.sh && echo ok), , $(error kcompat-generator.sh failed))
 
 KCOMPAT_DEFINITIONS := $(shell ${CC} ${EXTRA_CFLAGS} -E -dM \
@@ -429,14 +431,15 @@ export INSTALL_AUX_DIR ?= updates/drivers/net/ethernet/intel/auxiliary
 
 # If we're installing auxiliary bus out-of-tree, the following steps are
 # necessary to ensure the relevant files get put in place.
-AUX_BUS_HEADER ?= linux/auxiliary_bus.h
+AUX_BUS_HEADERS ?= linux/auxiliary_bus.h auxiliary_compat.h kcompat_generated_defs.h
 ifeq (${NEED_AUX_BUS},2)
 define auxiliary_post_install
 	install -D -m 644 Module.symvers ${INSTALL_MOD_PATH}/lib/modules/${KVER}/extern-symvers/intel_auxiliary.symvers
 	install -d ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_AUX_DIR}
 	mv -f ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_MOD_DIR}/intel_auxiliary.ko* \
 	      ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_AUX_DIR}/
-	install -D -m 644 ${AUX_BUS_HEADER} ${INSTALL_MOD_PATH}/${KSRC}/include/linux/auxiliary_bus.h
+	install -d ${INSTALL_MOD_PATH}/${KSRC}/include/linux
+	install -D -m 644 ${AUX_BUS_HEADERS} -t ${INSTALL_MOD_PATH}/${KSRC}/include/linux
 endef
 else
 auxiliary_post_install =
@@ -447,6 +450,8 @@ define auxiliary_post_uninstall
 	rm -f ${INSTALL_MOD_PATH}/lib/modules/${KVER}/extern-symvers/intel_auxiliary.symvers
 	rm -f ${INSTALL_MOD_PATH}/lib/modules/${KVER}/${INSTALL_AUX_DIR}/intel_auxiliary.ko*
 	rm -f ${INSTALL_MOD_PATH}/${KSRC}/include/linux/auxiliary_bus.h
+	rm -f ${INSTALL_MOD_PATH}/${KSRC}/include/linux/auxiliary_compat.h
+	rm -f ${INSTALL_MOD_PATH}/${KSRC}/include/linux/kcompat_generated_defs.h
 endef
 else
 auxiliary_post_uninstall =

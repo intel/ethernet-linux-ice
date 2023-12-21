@@ -10,7 +10,11 @@
 #define ICE_RXBUF_3072		3072
 #define ICE_RXBUF_2048		2048
 #define ICE_RXBUF_1536		1536
+#ifndef CONFIG_ICE_USE_SKB
 #define ICE_MAX_CHAINED_RX_BUFS	5
+#else
+#define ICE_MAX_CHAINED_RX_BUFS	1
+#endif /* CONFIG_ICE_USE_SKB */
 #define ICE_MAX_BUF_TXD		8
 #define ICE_MIN_TX_LEN		17
 
@@ -457,7 +461,6 @@ struct ice_tx_ring {
 #endif /* HAVE_XDP_SUPPORT */
 	u8 flags;
 	u8 dcb_tc;			/* Traffic class of ring */
-	u8 ptp_tx:1;
 } ____cacheline_internodealigned_in_smp;
 
 static inline bool ice_ring_uses_build_skb(struct ice_rx_ring *ring)

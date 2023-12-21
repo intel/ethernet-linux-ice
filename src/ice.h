@@ -30,9 +30,6 @@
 #include <linux/timer.h>
 #include <linux/delay.h>
 #include <linux/bitmap.h>
-#ifdef HAVE_INCLUDE_BITFIELD
-#include <linux/bitfield.h>
-#endif /* HAVE_INCLUDE_BITFIELD */
 #include <linux/hashtable.h>
 #include <linux/log2.h>
 #include <linux/ip.h>
@@ -48,6 +45,9 @@
 #ifdef HAVE_XDP_SUPPORT
 #include <linux/bpf.h>
 #include <linux/filter.h>
+#ifdef HAVE_XDP_BUFF_RXQ
+#include <net/xdp.h>
+#endif /* HAVE_XDP_BUFF_RXQ */
 #endif /* HAVE_XDP_SUPPORT */
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 #include <net/xdp_sock.h>
@@ -221,7 +221,7 @@ extern const char ice_drv_ver[];
 
 #define ICE_ACL_ENTIRE_SLICE         1
 #define ICE_ACL_HALF_SLICE           2
-#define ICE_TCAM_DIVIDER_THRESHOLD   6
+#define ICE_TCAM_DIVIDER_THRESHOLD   5
 
 /* Minimum BW limit is 500 Kbps for any scheduler node */
 #define ICE_MIN_BW_LIMIT		500
@@ -253,9 +253,12 @@ extern const char ice_drv_ver[];
 #define ice_for_each_vsi(pf, i) \
 	for ((i) = 0; (i) < (pf)->num_alloc_vsi; (i)++)
 
-/* Macros for each Tx/Rx ring in a VSI */
+/* Macros for each Tx/Xdp/Rx ring in a VSI */
 #define ice_for_each_txq(vsi, i) \
 	for ((i) = 0; (i) < (vsi)->num_txq; (i)++)
+
+#define ice_for_each_xdp_txq(vsi, i) \
+	for ((i) = 0; (i) < (vsi)->num_xdp_txq; (i)++)
 
 #define ice_for_each_rxq(vsi, i) \
 	for ((i) = 0; (i) < (vsi)->num_rxq; (i)++)
@@ -316,7 +319,6 @@ enum ice_feature {
 	ICE_F_PHY_RCLK,
 	ICE_F_SMA_CTRL,
 	ICE_F_GNSS,
-	ICE_F_FIXED_TIMING_PINS,
 	ICE_F_LAG,
 	ICE_F_MAX
 };
@@ -521,6 +523,8 @@ struct ice_vsi {
 	u32 tx_busy;
 	u32 rx_buf_failed;
 	u32 rx_page_failed;
+	u8 lldp_macs;			/* counter for LLDP MACs added to VSI */
+	u8 rx_lldp_ena : 1;		/* Rx LLDP filter enabled */
 #ifdef ICE_ADD_PROBES
 	u32 rx_page_reuse;
 #endif /* ICE_ADD_PROBES */
@@ -588,7 +592,6 @@ struct ice_vsi {
 	u16 req_rxq;			 /* User requested Rx queues */
 	u16 num_rx_desc;
 	u16 num_tx_desc;
-	u16 qset_handle[ICE_MAX_TRAFFIC_CLASS];
 	struct ice_tc_cfg tc_cfg;
 #ifdef HAVE_XDP_SUPPORT
 	struct bpf_prog *xdp_prog;
@@ -829,7 +832,6 @@ enum ice_pf_flags {
 	ICE_FLAG_DCB_ENA,
 	ICE_FLAG_FD_ENA,
 	ICE_FLAG_PTP_SUPPORTED,		/* NVM PTP support */
-	ICE_FLAG_PTP,			/* PTP successfully initialized */
 	ICE_FLAG_PLUG_AUX_DEV,
 	ICE_FLAG_UNPLUG_AUX_DEV,
 	ICE_FLAG_MTU_CHANGED,
@@ -867,6 +869,14 @@ enum ice_pf_flags {
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
+};
+
+enum ice_misc_thread_tasks {
+#if IS_ENABLED(CONFIG_PREEMPT_RT) && !defined(HAVE_RT_IRQ_SCHED_FIX)
+	ICE_MISC_THREAD_EXTTS_EVENT,
+#endif /* CONFIG_PREEMPT_RT && !HAVE_RT_IRQ_SCHED_FIX */
+	ICE_MISC_THREAD_TX_TSTAMP,
+	ICE_MISC_THREAD_NBITS		/* must be last */
 };
 
 #ifdef HAVE_NDO_DFWD_OPS
@@ -986,11 +996,15 @@ struct ice_pf {
 	u16 eswitch_mode;		/* current mode of eswitch */
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *ice_debugfs_pf;
+	struct dentry *ice_debugfs_fw;
+	u16 fw_dump_cluster_id;
+	void *ice_cluster_blk;
 #endif /* CONFIG_DEBUG_FS */
 	struct ice_vfs vfs;
 	DECLARE_BITMAP(features, ICE_F_MAX);
 	DECLARE_BITMAP(state, ICE_STATE_NBITS);
 	DECLARE_BITMAP(flags, ICE_PF_FLAGS_NBITS);
+	DECLARE_BITMAP(misc_thread, ICE_MISC_THREAD_NBITS);
 	unsigned long *avail_txqs;	/* bitmap to track PF Tx queue usage */
 	unsigned long *avail_rxqs;	/* bitmap to track PF Rx queue usage */
 	unsigned long serv_tmr_period;
@@ -1026,7 +1040,6 @@ struct ice_pf {
 	u32 hw_csum_rx_error;
 	u32 oicr_err_reg;
 	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
-	u16 oicr_misc;		/* Misc interrupts to handle in bottom half */
 	u16 ll_ts_int_idx;	/* LL_TS interrupt MSIX vector index */
 	u16 num_avail_sw_msix;	/* remaining MSIX SW vectors left unclaimed */
 	u16 max_pf_txqs;	/* Total Tx queues PF wide */
@@ -1129,6 +1142,9 @@ struct ice_pf {
 	u8 ptp_ref_pin;
 	s64 ptp_dpll_phase_offset;
 	u8 n_quanta_prof_used;
+#ifdef HAVE_HWMON_DEVICE_REGISTER_WITH_INFO
+	struct device *hwmon_dev;
+#endif
 };
 
 extern struct ice_pf *
@@ -1757,8 +1773,25 @@ static inline void ice_clear_rdma_cap(struct ice_pf *pf)
 int ice_get_num_local_cpus(struct device *dev);
 const char *ice_aq_str(enum ice_aq_err aq_err);
 bool ice_is_wol_supported(struct ice_hw *hw);
-int ice_aq_wait_for_event(struct ice_pf *pf, u16 opcode, unsigned long timeout,
-			  struct ice_rq_event_info *event);
+
+enum ice_aq_task_state {
+	ICE_AQ_TASK_NOT_PREPARED,
+	ICE_AQ_TASK_WAITING,
+	ICE_AQ_TASK_COMPLETE,
+	ICE_AQ_TASK_CANCELED,
+};
+
+struct ice_aq_task {
+	struct hlist_node entry;
+	struct ice_rq_event_info event;
+	enum ice_aq_task_state state;
+	u16 opcode;
+};
+
+void ice_aq_prep_for_event(struct ice_pf *pf, struct ice_aq_task *task,
+			   u16 opcode);
+int ice_aq_wait_for_event(struct ice_pf *pf, struct ice_aq_task *task,
+			  unsigned long timeout);
 void ice_fdir_del_all_fltrs(struct ice_vsi *vsi);
 int
 ice_fdir_write_fltr(struct ice_pf *pf, struct ice_fdir_fltr *input, bool add,
@@ -1778,6 +1811,8 @@ ice_ntuple_l4_proto_to_port(enum ice_flow_seg_hdr l4_proto,
 			    enum ice_flow_field *dst_port);
 int ice_ntuple_check_ip4_seg(struct ethtool_tcpip4_spec *tcp_ip4_spec);
 int ice_ntuple_check_ip4_usr_seg(struct ethtool_usrip4_spec *usr_ip4_spec);
+int ice_set_ether_flow_seg(struct ice_flow_seg_info *seg,
+			   struct ethhdr *eth_spec);
 int
 ice_get_fdir_fltr_ids(struct ice_hw *hw, struct ethtool_rxnfc *cmd,
 		      u32 *rule_locs);

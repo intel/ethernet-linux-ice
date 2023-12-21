@@ -4,6 +4,10 @@
 #ifndef _ICE_COMMON_H_
 #define _ICE_COMMON_H_
 
+#ifdef HAVE_INCLUDE_BITFIELD
+#include <linux/bitfield.h>
+#endif /* HAVE_INCLUDE_BITFIELD */
+
 #include "ice_type.h"
 #include "ice_nvm.h"
 #include "ice_flex_pipe.h"
@@ -22,8 +26,6 @@ enum ice_fw_modes {
 	ICE_FW_MODE_ROLLBACK
 };
 
-int ice_init_fltr_mgmt_struct(struct ice_hw *hw);
-void ice_cleanup_fltr_mgmt_struct(struct ice_hw *hw);
 void ice_set_umac_shared(struct ice_hw *hw);
 int ice_init_hw(struct ice_hw *hw);
 void ice_deinit_hw(struct ice_hw *hw);
@@ -52,10 +54,6 @@ ice_aq_alloc_free_res(struct ice_hw *hw, u16 num_entries,
 		      struct ice_aqc_alloc_free_res_elem *buf, u16 buf_size,
 		      enum ice_adminq_opc opc, struct ice_sq_cd *cd);
 int
-ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
-		       struct ice_aq_desc *desc, void *buf, u16 buf_size,
-		       struct ice_sq_cd *cd);
-int
 ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 		struct ice_aq_desc *desc, void *buf, u16 buf_size,
 		struct ice_sq_cd *cd);
@@ -65,10 +63,10 @@ int ice_get_caps(struct ice_hw *hw);
 void ice_set_safe_mode_caps(struct ice_hw *hw);
 
 int
-ice_aq_get_internal_data(struct ice_hw *hw, u8 cluster_id, u16 table_id,
+ice_aq_get_internal_data(struct ice_hw *hw, u16 cluster_id, u16 table_id,
 			 u32 start, void *buf, u16 buf_size, u16 *ret_buf_size,
-			 u16 *ret_next_table, u32 *ret_next_index,
-			 struct ice_sq_cd *cd);
+			 u16 *ret_next_cluster, u16 *ret_next_table,
+			 u32 *ret_next_index, struct ice_sq_cd *cd);
 
 int
 ice_write_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
@@ -149,6 +147,11 @@ ice_aq_get_netlist_node(struct ice_hw *hw, struct ice_aqc_get_link_topo *cmd,
 int
 ice_find_netlist_node(struct ice_hw *hw, u8 node_type_ctx, u8 node_part_number,
 		      u16 *node_handle);
+int ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx);
+bool ice_is_pf_c827(struct ice_hw *hw);
+bool ice_is_phy_rclk_in_netlist(struct ice_hw *hw);
+bool ice_is_clock_mux_in_netlist(struct ice_hw *hw);
+bool ice_is_gps_in_netlist(struct ice_hw *hw);
 int
 ice_aq_list_caps(struct ice_hw *hw, void *buf, u16 buf_size, u32 *cap_count,
 		 enum ice_adminq_opc opc, struct ice_sq_cd *cd);
@@ -266,8 +269,6 @@ int ice_replay_vsi(struct ice_hw *hw, u16 vsi_handle);
 void ice_replay_post(struct ice_hw *hw);
 struct ice_q_ctx *
 ice_get_lan_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 q_handle);
-int ice_sbq_rw_reg_lp(struct ice_hw *hw,
-				  struct ice_sbq_msg_input *in, bool lock);
 void ice_sbq_lock(struct ice_hw *hw);
 void ice_sbq_unlock(struct ice_hw *hw);
 int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in);
@@ -361,7 +362,7 @@ ice_aq_read_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
 		struct ice_sq_cd *cd);
 int
 ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
-		 u16 bus_addr, __le16 addr, u8 params, u8 *data,
+		 u16 bus_addr, __le16 addr, u8 params, const u8 *data,
 		 struct ice_sq_cd *cd);
 int
 ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,

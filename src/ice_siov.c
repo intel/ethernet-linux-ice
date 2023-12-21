@@ -336,6 +336,36 @@ static void ice_siov_clear_mbx_register(struct ice_vf *vf)
 }
 
 /**
+ * ice_siov_poll_reset_status - poll S-IOV VF reset status
+ * @vf: pointer to VF structure
+ *
+ * Returns true when reset is successful, else returns false
+ */
+static bool ice_siov_poll_reset_status(struct ice_vf *vf)
+{
+	struct ice_adi_priv *priv = vf_to_adi_priv(vf);
+	struct ice_hw *hw = &vf->pf->hw;
+	unsigned int i;
+	u32 reg;
+
+	for (i = 0; i < ICE_VFR_WAIT_COUNT; i++) {
+		/* VF reset requires driver to first reset the VF and then
+		 * poll the status register to make sure that the reset
+		 * completed successfully.
+		 */
+		reg = rd32(hw, VSIGEN_RSTAT(vf->vf_id));
+		if (reg & VSIGEN_RSTAT_VMRD_M) {
+			priv->reset_state = VIRTCHNL_VFR_COMPLETED;
+			return true;
+		}
+
+		/* only sleep if the reset is not done */
+		usleep_range(10, 20);
+	}
+	return false;
+}
+
+/**
  * ice_siov_trigger_reset_register - trigger VF reset for S-IOV VF
  * @vf: pointer to VF structure
  * @is_vflr: true if reset occurred due to VFLR
@@ -362,6 +392,11 @@ static void ice_siov_trigger_reset_register(struct ice_vf *vf, bool is_vflr)
 	 * VSIGEN_RTRIG register.
 	 */
 	if (!is_vflr) {
+		/* Waiting for reset finish by virt driver */
+		if (!ice_siov_poll_reset_status(vf))
+			dev_info(ice_pf_to_dev(pf), "Reset VF %d never finished",
+				 vf->vf_id);
+
 		reg = rd32(hw, VSIGEN_RTRIG(vf->vf_id));
 		reg |= VSIGEN_RTRIG_VMSWR_M;
 		wr32(hw, VSIGEN_RTRIG(vf->vf_id), reg);
@@ -379,36 +414,6 @@ static void ice_siov_trigger_reset_register(struct ice_vf *vf, bool is_vflr)
 			vf->vf_id);
 		udelay(ICE_PCI_CIAD_WAIT_DELAY_US);
 	}
-}
-
-/**
- * ice_siov_poll_reset_status - poll S-IOV VF reset status
- * @vf: pointer to VF structure
- *
- * Returns true when reset is successful, else returns false
- */
-static bool ice_siov_poll_reset_status(struct ice_vf *vf)
-{
-	struct ice_adi_priv *priv = vf_to_adi_priv(vf);
-	struct ice_hw *hw = &vf->pf->hw;
-	unsigned int i;
-	u32 reg;
-
-	for (i = 0; i < 10; i++) {
-		/* VF reset requires driver to first reset the VF and then
-		 * poll the status register to make sure that the reset
-		 * completed successfully.
-		 */
-		reg = rd32(hw, VSIGEN_RSTAT(vf->vf_id));
-		if (reg & VSIGEN_RSTAT_VMRD_M) {
-			priv->reset_state = VIRTCHNL_VFR_COMPLETED;
-			return true;
-		}
-
-		/* only sleep if the reset is not done */
-		usleep_range(10, 20);
-	}
-	return false;
 }
 
 /**

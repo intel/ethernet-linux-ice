@@ -32,7 +32,37 @@ static const u8 dummy_eth_header[DUMMY_ETH_HDR_LEN] = { 0x2, 0, 0, 0, 0, 0,
 							0x2, 0, 0, 0, 0, 0,
 							0x81, 0, 0, 0};
 
-static const struct ice_dummy_pkt_offsets dummy_gre_tcp_packet_offsets[] = {
+enum {
+	ICE_PKT_OUTER_IPV6			= BIT(0),
+	ICE_PKT_TUN_GTPC			= BIT(1),
+	ICE_PKT_TUN_GTPU			= BIT(2),
+	ICE_PKT_TUN_NVGRE			= BIT(3),
+	ICE_PKT_TUN_UDP				= BIT(4),
+	ICE_PKT_INNER_IPV6			= BIT(5),
+	ICE_PKT_INNER_TCP			= BIT(6),
+	ICE_PKT_INNER_UDP			= BIT(7),
+	ICE_PKT_GTP_NOPAY			= BIT(8),
+	ICE_PKT_PPPOE				= BIT(10),
+	ICE_PKT_L2TPV3				= BIT(11),
+	ICE_PKT_OUTER_VLAN			= BIT(12),
+	ICE_PKT_INNER_VLAN			= BIT(13),
+};
+
+#define ICE_DECLARE_PKT_OFFSETS(type)				\
+	static const struct ice_dummy_pkt_offsets		\
+	ice_dummy_##type##_packet_offsets[]
+
+#define ICE_DECLARE_PKT_TEMPLATE(type)				\
+	static const u8 ice_dummy_##type##_packet[]
+
+#define ICE_PKT_PROFILE(type, m) {				\
+	.offsets	= ice_dummy_##type##_packet_offsets,	\
+	.pkt		= ice_dummy_##type##_packet,		\
+	.match		= (m),					\
+	.pkt_len	= sizeof(ice_dummy_##type##_packet),	\
+}
+
+ICE_DECLARE_PKT_OFFSETS(gre_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -44,7 +74,7 @@ static const struct ice_dummy_pkt_offsets dummy_gre_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_gre_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(gre_tcp) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -79,7 +109,7 @@ static const u8 dummy_gre_tcp_packet[] = {
 	0x00, 0x00, 0x00, 0x00
 };
 
-static const struct ice_dummy_pkt_offsets dummy_gre_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(gre_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -91,7 +121,7 @@ static const struct ice_dummy_pkt_offsets dummy_gre_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_gre_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(gre_udp) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -123,7 +153,7 @@ static const u8 dummy_gre_udp_packet[] = {
 	0x00, 0x08, 0x00, 0x00,
 };
 
-static const struct ice_dummy_pkt_offsets dummy_udp_tun_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(udp_tun_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -138,7 +168,7 @@ static const struct ice_dummy_pkt_offsets dummy_udp_tun_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_udp_tun_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(udp_tun_tcp) = {
 	0x00, 0x00, 0x00, 0x00,  /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -176,7 +206,7 @@ static const u8 dummy_udp_tun_tcp_packet[] = {
 	0x00, 0x00, 0x00, 0x00
 };
 
-static const struct ice_dummy_pkt_offsets dummy_udp_tun_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(udp_tun_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -191,7 +221,7 @@ static const struct ice_dummy_pkt_offsets dummy_udp_tun_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_udp_tun_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(udp_tun_udp) = {
 	0x00, 0x00, 0x00, 0x00,  /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -226,8 +256,7 @@ static const u8 dummy_udp_tun_udp_packet[] = {
 	0x00, 0x08, 0x00, 0x00,
 };
 
-static const struct ice_dummy_pkt_offsets
-dummy_gre_ipv6_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(gre_ipv6_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -239,7 +268,7 @@ dummy_gre_ipv6_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_gre_ipv6_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(gre_ipv6_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -279,8 +308,7 @@ static const u8 dummy_gre_ipv6_tcp_packet[] = {
 	0x00, 0x00, 0x00, 0x00
 };
 
-static const struct ice_dummy_pkt_offsets
-dummy_gre_ipv6_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(gre_ipv6_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -292,7 +320,7 @@ dummy_gre_ipv6_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_gre_ipv6_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(gre_ipv6_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -329,8 +357,7 @@ static const u8 dummy_gre_ipv6_udp_packet[] = {
 	0x00, 0x08, 0x00, 0x00,
 };
 
-static const struct ice_dummy_pkt_offsets
-dummy_udp_tun_ipv6_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(udp_tun_ipv6_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -345,7 +372,7 @@ dummy_udp_tun_ipv6_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_udp_tun_ipv6_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(udp_tun_ipv6_tcp) = {
 	0x00, 0x00, 0x00, 0x00,	 /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -388,8 +415,7 @@ static const u8 dummy_udp_tun_ipv6_tcp_packet[] = {
 	0x00, 0x00, 0x00, 0x00
 };
 
-static const struct ice_dummy_pkt_offsets
-dummy_udp_tun_ipv6_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(udp_tun_ipv6_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -404,7 +430,7 @@ dummy_udp_tun_ipv6_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_udp_tun_ipv6_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(udp_tun_ipv6_udp) = {
 	0x00, 0x00, 0x00, 0x00,	 /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -445,7 +471,7 @@ static const u8 dummy_udp_tun_ipv6_udp_packet[] = {
 };
 
 /* offset info for MAC + IPv4 + UDP dummy packet */
-static const struct ice_dummy_pkt_offsets dummy_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -454,7 +480,7 @@ static const struct ice_dummy_pkt_offsets dummy_udp_packet_offsets[] = {
 };
 
 /* Dummy packet for MAC + IPv4 + UDP */
-static const u8 dummy_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(udp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -474,7 +500,7 @@ static const u8 dummy_udp_packet[] = {
 };
 
 /* offset info for MAC + VLAN + IPv4 + UDP dummy packet */
-static const struct ice_dummy_pkt_offsets dummy_vlan_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(vlan_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -484,7 +510,7 @@ static const struct ice_dummy_pkt_offsets dummy_vlan_udp_packet_offsets[] = {
 };
 
 /* C-tag (801.1Q), IPv4:UDP dummy packet */
-static const u8 dummy_vlan_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(vlan_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -506,7 +532,7 @@ static const u8 dummy_vlan_udp_packet[] = {
 };
 
 /* offset info for MAC + IPv4 + TCP dummy packet */
-static const struct ice_dummy_pkt_offsets dummy_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -515,7 +541,7 @@ static const struct ice_dummy_pkt_offsets dummy_tcp_packet_offsets[] = {
 };
 
 /* Dummy packet for MAC + IPv4 + TCP */
-static const u8 dummy_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -538,7 +564,7 @@ static const u8 dummy_tcp_packet[] = {
 };
 
 /* offset info for MAC + VLAN (C-tag, 802.1Q) + IPv4 + TCP dummy packet */
-static const struct ice_dummy_pkt_offsets dummy_vlan_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(vlan_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -548,7 +574,7 @@ static const struct ice_dummy_pkt_offsets dummy_vlan_tcp_packet_offsets[] = {
 };
 
 /* C-tag (801.1Q), IPv4:TCP dummy packet */
-static const u8 dummy_vlan_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(vlan_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -572,7 +598,7 @@ static const u8 dummy_vlan_tcp_packet[] = {
 	0x00, 0x00,	/* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_tcp_ipv6_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(tcp_ipv6) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV6_OFOS,	14 },
@@ -580,7 +606,7 @@ static const struct ice_dummy_pkt_offsets dummy_tcp_ipv6_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_tcp_ipv6_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(tcp_ipv6) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -608,8 +634,7 @@ static const u8 dummy_tcp_ipv6_packet[] = {
 };
 
 /* C-tag (802.1Q): IPv6 + TCP */
-static const struct ice_dummy_pkt_offsets
-dummy_vlan_tcp_ipv6_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(vlan_tcp_ipv6) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -619,7 +644,7 @@ dummy_vlan_tcp_ipv6_packet_offsets[] = {
 };
 
 /* C-tag (802.1Q), IPv6 + TCP dummy packet */
-static const u8 dummy_vlan_tcp_ipv6_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(vlan_tcp_ipv6) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -649,7 +674,7 @@ static const u8 dummy_vlan_tcp_ipv6_packet[] = {
 };
 
 /* IPv6 + UDP */
-static const struct ice_dummy_pkt_offsets dummy_udp_ipv6_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(udp_ipv6) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV6_OFOS,	14 },
@@ -658,7 +683,7 @@ static const struct ice_dummy_pkt_offsets dummy_udp_ipv6_packet_offsets[] = {
 };
 
 /* IPv6 + UDP dummy packet */
-static const u8 dummy_udp_ipv6_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(udp_ipv6) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -686,8 +711,7 @@ static const u8 dummy_udp_ipv6_packet[] = {
 };
 
 /* C-tag (802.1Q): IPv6 + UDP */
-static const struct ice_dummy_pkt_offsets
-dummy_vlan_udp_ipv6_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(vlan_udp_ipv6) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -697,7 +721,7 @@ dummy_vlan_udp_ipv6_packet_offsets[] = {
 };
 
 /* C-tag (802.1Q), IPv6 + UDP dummy packet */
-static const u8 dummy_vlan_udp_ipv6_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(vlan_udp_ipv6) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -724,7 +748,7 @@ static const u8 dummy_vlan_udp_ipv6_packet[] = {
 };
 
 /* Outer IPv4 + Outer UDP + GTP + Inner IPv4 + Inner TCP */
-static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv4_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv4_gtpu_ipv4_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV4_OFOS,	14 },
 	{ ICE_UDP_OF,		34 },
@@ -734,7 +758,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv4_tcp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv4_gtpu_ipv4_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv4_gtpu_ipv4_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -772,7 +796,7 @@ static const u8 dummy_ipv4_gtpu_ipv4_tcp_packet[] = {
 };
 
 /* Outer IPv4 + Outer UDP + GTP + Inner IPv4 + Inner UDP */
-static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv4_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv4_gtpu_ipv4_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV4_OFOS,	14 },
 	{ ICE_UDP_OF,		34 },
@@ -782,7 +806,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv4_udp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv4_gtpu_ipv4_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv4_gtpu_ipv4_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -817,7 +841,7 @@ static const u8 dummy_ipv4_gtpu_ipv4_udp_packet[] = {
 };
 
 /* Outer IPv6 + Outer UDP + GTP + Inner IPv4 + Inner TCP */
-static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv6_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv4_gtpu_ipv6_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV4_OFOS,	14 },
 	{ ICE_UDP_OF,		34 },
@@ -827,7 +851,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv6_tcp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv4_gtpu_ipv6_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv4_gtpu_ipv6_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -869,7 +893,7 @@ static const u8 dummy_ipv4_gtpu_ipv6_tcp_packet[] = {
 	0x00, 0x00, /* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv6_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv4_gtpu_ipv6_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV4_OFOS,	14 },
 	{ ICE_UDP_OF,		34 },
@@ -879,7 +903,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv4_gtpu_ipv6_udp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv4_gtpu_ipv6_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv4_gtpu_ipv6_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -918,7 +942,7 @@ static const u8 dummy_ipv4_gtpu_ipv6_udp_packet[] = {
 	0x00, 0x00, /* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv4_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv6_gtpu_ipv4_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV6_OFOS,	14 },
 	{ ICE_UDP_OF,		54 },
@@ -928,7 +952,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv4_tcp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv6_gtpu_ipv4_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv6_gtpu_ipv4_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -970,7 +994,7 @@ static const u8 dummy_ipv6_gtpu_ipv4_tcp_packet[] = {
 	0x00, 0x00, /* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv4_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv6_gtpu_ipv4_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV6_OFOS,	14 },
 	{ ICE_UDP_OF,		54 },
@@ -980,7 +1004,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv4_udp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv6_gtpu_ipv4_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv6_gtpu_ipv4_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1019,7 +1043,7 @@ static const u8 dummy_ipv6_gtpu_ipv4_udp_packet[] = {
 	0x00, 0x00, /* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv6_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv6_gtpu_ipv6_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV6_OFOS,	14 },
 	{ ICE_UDP_OF,		54 },
@@ -1029,7 +1053,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv6_tcp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv6_gtpu_ipv6_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv6_gtpu_ipv6_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1076,7 +1100,7 @@ static const u8 dummy_ipv6_gtpu_ipv6_tcp_packet[] = {
 	0x00, 0x00, /* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv6_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv6_gtpu_ipv6_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV6_OFOS,	14 },
 	{ ICE_UDP_OF,		54 },
@@ -1086,7 +1110,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv6_gtpu_ipv6_udp_packet_offset
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv6_gtpu_ipv6_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv6_gtpu_ipv6_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* Ethernet 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1130,7 +1154,15 @@ static const u8 dummy_ipv6_gtpu_ipv6_udp_packet[] = {
 	0x00, 0x00, /* 2 bytes for 4 byte alignment */
 };
 
-static const u8 dummy_ipv4_gtpu_ipv4_packet[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv4_gtp) = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_IPV4_OFOS,	14 },
+	{ ICE_UDP_OF,		34 },
+	{ ICE_GTP_NO_PAY,	42 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+ICE_DECLARE_PKT_TEMPLATE(ipv4_gtp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1145,7 +1177,7 @@ static const u8 dummy_ipv4_gtpu_ipv4_packet[] = {
 	0x08, 0x68, 0x08, 0x68, /* ICE_UDP_OF 34 */
 	0x00, 0x00, 0x00, 0x00,
 
-	0x34, 0xff, 0x00, 0x28,  /* ICE_GTP 42 */
+	0x34, 0xff, 0x00, 0x28, /* ICE_GTP 42 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x85,
 
@@ -1160,17 +1192,7 @@ static const u8 dummy_ipv4_gtpu_ipv4_packet[] = {
 	0x00, 0x00,
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_ipv4_gtp_no_pay_packet_offsets[] = {
-	{ ICE_MAC_OFOS,		0 },
-	{ ICE_IPV4_OFOS,	14 },
-	{ ICE_UDP_OF,		34 },
-	{ ICE_GTP_NO_PAY,	42 },
-	{ ICE_PROTOCOL_LAST,	0 },
-};
-
-static const
-struct ice_dummy_pkt_offsets dummy_ipv6_gtp_no_pay_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv6_gtp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_IPV6_OFOS,	14 },
 	{ ICE_UDP_OF,		54 },
@@ -1178,7 +1200,7 @@ struct ice_dummy_pkt_offsets dummy_ipv6_gtp_no_pay_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv6_gtp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv6_gtp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1201,10 +1223,10 @@ static const u8 dummy_ipv6_gtp_packet[] = {
 	0x30, 0x00, 0x00, 0x28, /* ICE_GTP 62 */
 	0x00, 0x00, 0x00, 0x00,
 
-	0x00, 0x00,
+	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_qinq_ipv4_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv4) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_EX,		12 },
 	{ ICE_VLAN_IN,		16 },
@@ -1213,7 +1235,7 @@ static const struct ice_dummy_pkt_offsets dummy_qinq_ipv4_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_qinq_ipv4_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv4) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1231,8 +1253,7 @@ static const u8 dummy_qinq_ipv4_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_qinq_ipv4_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv4_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_EX,		12 },
 	{ ICE_VLAN_IN,		16 },
@@ -1242,7 +1263,7 @@ struct ice_dummy_pkt_offsets dummy_qinq_ipv4_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_qinq_ipv4_udp_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv4_udp) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1263,8 +1284,7 @@ static const u8 dummy_qinq_ipv4_udp_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_qinq_ipv4_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv4_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_EX,		12 },
 	{ ICE_VLAN_IN,		16 },
@@ -1274,7 +1294,7 @@ struct ice_dummy_pkt_offsets dummy_qinq_ipv4_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_qinq_ipv4_tcp_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv4_tcp) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1298,7 +1318,7 @@ static const u8 dummy_qinq_ipv4_tcp_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_qinq_ipv6_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv6) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_EX,		12 },
 	{ ICE_VLAN_IN,		16 },
@@ -1307,7 +1327,7 @@ static const struct ice_dummy_pkt_offsets dummy_qinq_ipv6_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_qinq_ipv6_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv6) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1330,8 +1350,7 @@ static const u8 dummy_qinq_ipv6_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_qinq_ipv6_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv6_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_EX,		12 },
 	{ ICE_VLAN_IN,		16 },
@@ -1341,7 +1360,7 @@ struct ice_dummy_pkt_offsets dummy_qinq_ipv6_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_qinq_ipv6_udp_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv6_udp) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1367,8 +1386,7 @@ static const u8 dummy_qinq_ipv6_udp_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_qinq_ipv6_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv6_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_EX,		12 },
 	{ ICE_VLAN_IN,		16 },
@@ -1378,7 +1396,7 @@ struct ice_dummy_pkt_offsets dummy_qinq_ipv6_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_qinq_ipv6_tcp_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv6_tcp) = {
 	0x00, 0x00, 0x00, 0x00,	/* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1407,7 +1425,78 @@ static const u8 dummy_qinq_ipv6_tcp_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_ipv4_l2tpv3_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(qinq_pppoe_ipv4) = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_VLAN_EX,		12 },
+	{ ICE_VLAN_IN,		16 },
+	{ ICE_ETYPE_OL,		20 },
+	{ ICE_PPPOE,		22 },
+	{ ICE_IPV4_OFOS,	30 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+ICE_DECLARE_PKT_TEMPLATE(qinq_pppoe_ipv4) = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x91, 0x00, 0x00, 0x00,	/* ICE_VLAN_EX 12 */
+	0x81, 0x00, 0x00, 0x00, /* ICE_VLAN_IN 16 */
+	0x88, 0x64,		/* ICE_ETYPE_OL 20 */
+
+	0x11, 0x00, 0x00, 0x00, /* ICE_PPPOE 22 */
+	0x00, 0x16,
+
+	0x00, 0x21,		/* PPP Link Layer 28 */
+
+	0x45, 0x00, 0x00, 0x14, /* ICE_IPV4_OFOS 30 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00,		/* 2 bytes for 4 byte alignment */
+};
+
+ICE_DECLARE_PKT_OFFSETS(qinq_pppoe_ipv6) = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_VLAN_EX,		12 },
+	{ ICE_VLAN_IN,		16 },
+	{ ICE_ETYPE_OL,		20 },
+	{ ICE_PPPOE,		22 },
+	{ ICE_IPV6_OFOS,	30 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+ICE_DECLARE_PKT_TEMPLATE(qinq_pppoe_ipv6) = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x91, 0x00, 0x00, 0x00,	/* ICE_VLAN_EX 12 */
+	0x81, 0x00, 0x00, 0x00, /* ICE_VLAN_IN 16 */
+	0x88, 0x64,		/* ICE_ETYPE_OL 20 */
+
+	0x11, 0x00, 0x00, 0x00, /* ICE_PPPOE 22 */
+	0x00, 0x2a,
+
+	0x00, 0x57,		/* PPP Link Layer 28*/
+
+	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_OFOS 30 */
+	0x00, 0x00, 0x3b, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
+};
+
+ICE_DECLARE_PKT_OFFSETS(ipv4_l2tpv3) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV4_OFOS,	14 },
@@ -1415,7 +1504,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv4_l2tpv3_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv4_l2tpv3_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv4_l2tpv3) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1434,7 +1523,7 @@ static const u8 dummy_ipv4_l2tpv3_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
 };
 
-static const struct ice_dummy_pkt_offsets dummy_ipv6_l2tpv3_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(ipv6_l2tpv3) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
 	{ ICE_IPV6_OFOS,	14 },
@@ -1442,7 +1531,7 @@ static const struct ice_dummy_pkt_offsets dummy_ipv6_l2tpv3_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_ipv6_l2tpv3_pkt[] = {
+ICE_DECLARE_PKT_TEMPLATE(ipv6_l2tpv3) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1466,8 +1555,7 @@ static const u8 dummy_ipv6_l2tpv3_pkt[] = {
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_pppoe_ipv4_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(pppoe_ipv4_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -1477,7 +1565,7 @@ struct ice_dummy_pkt_offsets dummy_pppoe_ipv4_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_pppoe_ipv4_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(pppoe_ipv4_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1506,8 +1594,7 @@ static const u8 dummy_pppoe_ipv4_tcp_packet[] = {
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_pppoe_ipv4_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(pppoe_ipv4_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -1517,7 +1604,7 @@ struct ice_dummy_pkt_offsets dummy_pppoe_ipv4_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_pppoe_ipv4_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(pppoe_ipv4_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1543,8 +1630,7 @@ static const u8 dummy_pppoe_ipv4_udp_packet[] = {
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_pppoe_ipv6_tcp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(pppoe_ipv6_tcp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -1554,7 +1640,7 @@ struct ice_dummy_pkt_offsets dummy_pppoe_ipv6_tcp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_pppoe_ipv6_tcp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(pppoe_ipv6_tcp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1588,8 +1674,7 @@ static const u8 dummy_pppoe_ipv6_tcp_packet[] = {
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
 };
 
-static const
-struct ice_dummy_pkt_offsets dummy_pppoe_ipv6_udp_packet_offsets[] = {
+ICE_DECLARE_PKT_OFFSETS(pppoe_ipv6_udp) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_VLAN_OFOS,	12 },
 	{ ICE_ETYPE_OL,		16 },
@@ -1599,7 +1684,7 @@ struct ice_dummy_pkt_offsets dummy_pppoe_ipv6_udp_packet_offsets[] = {
 	{ ICE_PROTOCOL_LAST,	0 },
 };
 
-static const u8 dummy_pppoe_ipv6_udp_packet[] = {
+ICE_DECLARE_PKT_TEMPLATE(pppoe_ipv6_udp) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
@@ -1628,6 +1713,79 @@ static const u8 dummy_pppoe_ipv6_udp_packet[] = {
 	0x00, 0x08, 0x00, 0x00,
 
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
+};
+
+static const struct ice_dummy_pkt_profile ice_dummy_pkt_profiles[] = {
+	ICE_PKT_PROFILE(qinq_pppoe_ipv6, ICE_PKT_OUTER_VLAN |
+					 ICE_PKT_INNER_VLAN |
+					 ICE_PKT_OUTER_IPV6 | ICE_PKT_PPPOE),
+	ICE_PKT_PROFILE(qinq_pppoe_ipv4, ICE_PKT_OUTER_VLAN |
+					 ICE_PKT_INNER_VLAN | ICE_PKT_PPPOE),
+	ICE_PKT_PROFILE(qinq_ipv6_udp, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN |
+				       ICE_PKT_OUTER_IPV6 | ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(qinq_ipv6_tcp, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN |
+				       ICE_PKT_OUTER_IPV6 | ICE_PKT_INNER_TCP),
+	ICE_PKT_PROFILE(qinq_ipv6, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN |
+				   ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(qinq_ipv4_udp, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN |
+				       ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(qinq_ipv4_tcp, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN |
+				       ICE_PKT_INNER_TCP),
+	ICE_PKT_PROFILE(qinq_ipv4, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN),
+	ICE_PKT_PROFILE(ipv6_gtp, ICE_PKT_TUN_GTPU | ICE_PKT_OUTER_IPV6 |
+				  ICE_PKT_GTP_NOPAY),
+	ICE_PKT_PROFILE(ipv6_gtpu_ipv6_udp, ICE_PKT_TUN_GTPU |
+					    ICE_PKT_OUTER_IPV6 |
+					    ICE_PKT_INNER_IPV6 |
+					    ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(ipv6_gtpu_ipv6_tcp, ICE_PKT_TUN_GTPU |
+					    ICE_PKT_OUTER_IPV6 |
+					    ICE_PKT_INNER_IPV6),
+	ICE_PKT_PROFILE(ipv6_gtpu_ipv4_udp, ICE_PKT_TUN_GTPU |
+					    ICE_PKT_OUTER_IPV6 |
+					    ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(ipv6_gtpu_ipv4_tcp, ICE_PKT_TUN_GTPU |
+					    ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(ipv4_gtp, ICE_PKT_TUN_GTPU | ICE_PKT_GTP_NOPAY),
+	ICE_PKT_PROFILE(ipv4_gtpu_ipv6_udp, ICE_PKT_TUN_GTPU |
+					    ICE_PKT_INNER_IPV6 |
+					    ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(ipv4_gtpu_ipv6_tcp, ICE_PKT_TUN_GTPU |
+					    ICE_PKT_INNER_IPV6),
+	ICE_PKT_PROFILE(ipv4_gtpu_ipv4_udp, ICE_PKT_TUN_GTPU |
+					    ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(ipv4_gtpu_ipv4_tcp, ICE_PKT_TUN_GTPU),
+	ICE_PKT_PROFILE(ipv6_gtp, ICE_PKT_TUN_GTPC | ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(ipv4_gtp, ICE_PKT_TUN_GTPC),
+	ICE_PKT_PROFILE(pppoe_ipv6_udp, ICE_PKT_PPPOE | ICE_PKT_OUTER_IPV6 |
+					ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(pppoe_ipv6_tcp, ICE_PKT_PPPOE | ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(pppoe_ipv4_udp, ICE_PKT_PPPOE | ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(pppoe_ipv4_tcp, ICE_PKT_PPPOE),
+	ICE_PKT_PROFILE(gre_ipv6_tcp, ICE_PKT_TUN_NVGRE | ICE_PKT_INNER_IPV6 |
+				      ICE_PKT_INNER_TCP),
+	ICE_PKT_PROFILE(gre_tcp, ICE_PKT_TUN_NVGRE | ICE_PKT_INNER_TCP),
+	ICE_PKT_PROFILE(gre_ipv6_udp, ICE_PKT_TUN_NVGRE | ICE_PKT_INNER_IPV6),
+	ICE_PKT_PROFILE(gre_udp, ICE_PKT_TUN_NVGRE),
+	ICE_PKT_PROFILE(gre_udp, ICE_ALL_TUNNELS),
+	ICE_PKT_PROFILE(udp_tun_ipv6_tcp, ICE_PKT_TUN_UDP |
+					  ICE_PKT_INNER_IPV6 |
+					  ICE_PKT_INNER_TCP),
+	ICE_PKT_PROFILE(ipv6_l2tpv3, ICE_PKT_L2TPV3 | ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(ipv4_l2tpv3, ICE_PKT_L2TPV3),
+	ICE_PKT_PROFILE(udp_tun_tcp, ICE_PKT_TUN_UDP | ICE_PKT_INNER_TCP),
+	ICE_PKT_PROFILE(udp_tun_ipv6_udp, ICE_PKT_TUN_UDP |
+					  ICE_PKT_INNER_IPV6),
+	ICE_PKT_PROFILE(udp_tun_udp, ICE_PKT_TUN_UDP),
+	ICE_PKT_PROFILE(vlan_udp_ipv6, ICE_PKT_OUTER_IPV6 | ICE_PKT_INNER_UDP |
+				       ICE_PKT_OUTER_VLAN),
+	ICE_PKT_PROFILE(udp_ipv6, ICE_PKT_OUTER_IPV6 | ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(vlan_udp, ICE_PKT_INNER_UDP | ICE_PKT_OUTER_VLAN),
+	ICE_PKT_PROFILE(udp, ICE_PKT_INNER_UDP),
+	ICE_PKT_PROFILE(vlan_tcp_ipv6, ICE_PKT_OUTER_IPV6 | ICE_PKT_OUTER_VLAN),
+	ICE_PKT_PROFILE(tcp_ipv6, ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(vlan_tcp, ICE_PKT_OUTER_VLAN),
+	ICE_PKT_PROFILE(tcp, 0),
 };
 
 /* this is a recipe to profile association bitmap */
@@ -1748,14 +1906,14 @@ static enum ice_sw_tunnel_type ice_get_tun_type_for_recipe(u8 rid, bool vlan)
  * @recps: struct that we need to populate
  * @rid: recipe ID that we are populating
  * @refresh_required: true if we should get recipe to profile mapping from FW
+ * @is_add: flag of adding recipe
  *
- * This function is used to populate all the necessary entries into our
- * bookkeeping so that we have a current list of all the recipes that are
- * programmed in the firmware.
+ * Populate all the necessary entries into SW bookkeeping so that we have a
+ * current list of all the recipes that are programmed in the firmware.
  */
 static int
 ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
-		    bool *refresh_required)
+		    bool *refresh_required, bool *is_add)
 {
 	DECLARE_BITMAP(result_bm, ICE_MAX_FV_WORDS);
 	struct ice_aqc_recipe_data_elem *tmp;
@@ -1827,8 +1985,8 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 				result_bm);
 
 		/* get the first profile that is associated with rid */
-		prof = (u8)find_first_bit(recipe_to_profile[idx],
-					  ICE_MAX_NUM_PROFILES);
+		prof = (u8) find_first_bit(recipe_to_profile[idx],
+					   ICE_MAX_NUM_PROFILES);
 		for (i = 0; i < ICE_NUM_WORDS_RECIPE; i++) {
 			u8 lkup_indx = root_bufs.content.lkup_indx[i + 1];
 
@@ -1857,7 +2015,7 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 			lkup_exts->field_mask[fv_word_idx] =
 				rg_entry->fv_mask[i];
 			if (prot == ICE_META_DATA_ID_HW &&
-			    off == ICE_TUN_FLAG_MDID_OFF(1))
+			    off == ICE_PKT_TUNNEL_MDID_OFFSET)
 				vlan = true;
 			fv_word_idx++;
 		}
@@ -1878,8 +2036,12 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 			recps[idx].chain_idx = ICE_INVAL_CHAIN_IND;
 		}
 
-		if (!is_root)
+		if (hw->subscribable_recipes_supported && !is_root) {
+			if (*is_add)
+				recps[idx].recp_created = true;
+
 			continue;
+		}
 
 		/* Only do the following for root recipes entries */
 		memcpy(recps[idx].r_bitmap, root_bufs.recipe_bitmap,
@@ -1893,7 +2055,8 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 	lkup_exts->n_val_words = fv_word_idx;
 	recps[rid].big_recp = (num_recps > 1);
 	recps[rid].n_grp_count = (u8)num_recps;
-	recps[rid].tun_type = ice_get_tun_type_for_recipe(rid, vlan);
+	if (!recps[rid].recp_created)
+		recps[rid].tun_type = ice_get_tun_type_for_recipe(rid, vlan);
 	recps[rid].root_buf = devm_kmemdup(ice_hw_to_dev(hw), tmp,
 					   recps[rid].n_grp_count * sizeof(*recps[rid].root_buf),
 					   GFP_KERNEL);
@@ -1902,7 +2065,8 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 
 	/* Copy result indexes */
 	bitmap_copy(recps[rid].res_idxs, result_bm, ICE_MAX_FV_WORDS);
-	recps[rid].recp_created = true;
+	if (hw->subscribable_recipes_supported && *is_add)
+		recps[rid].recp_created = true;
 
 err_unroll:
 	devm_kfree(ice_hw_to_dev(hw), tmp);
@@ -3182,11 +3346,26 @@ ice_aq_get_recipe_to_profile(struct ice_hw *hw, u32 profile_id, u8 *r_bitmap,
 }
 
 /**
- * ice_alloc_recipe - add recipe resource
+ * ice_init_chk_subscribable_recipe_support - are subscribable recipes available
+ * @hw: pointer to the hardware structure
+ */
+void ice_init_chk_subscribable_recipe_support(struct ice_hw *hw)
+{
+	struct ice_nvm_info *nvm = &hw->flash.nvm;
+
+	if (nvm->major >= 0x04 && nvm->minor >= 0x30)
+		hw->subscribable_recipes_supported = true;
+	else
+		hw->subscribable_recipes_supported = false;
+}
+
+/**
+ * ice_alloc_legacy_shared_recipe - alloc legacy shared recipe
  * @hw: pointer to the hardware structure
  * @rid: recipe ID returned as response to AQ call
  */
-int ice_alloc_recipe(struct ice_hw *hw, u16 *rid)
+static int
+ice_alloc_legacy_shared_recipe(struct ice_hw *hw, u16 *rid)
 {
 	struct ice_aqc_alloc_free_res_elem *sw_buf;
 	u16 buf_len;
@@ -3207,6 +3386,172 @@ int ice_alloc_recipe(struct ice_hw *hw, u16 *rid)
 		*rid = le16_to_cpu(sw_buf->elem[0].e.sw_resp);
 	devm_kfree(ice_hw_to_dev(hw), sw_buf);
 
+	return status;
+}
+
+/**
+ * ice_alloc_subscribable_recipe - alloc shared recipe that can be subscribed to
+ * @hw: pointer to the hardware structure
+ * @rid: recipe ID returned as response to AQ call
+ */
+static int
+ice_alloc_subscribable_recipe(struct ice_hw *hw, u16 *rid)
+{
+	struct ice_aqc_alloc_free_res_elem *buf;
+	int status;
+	u16 buf_len;
+
+	buf_len = struct_size(buf, elem, 1);
+	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	/* Prepare buffer to allocate resource */
+	buf->num_elems = cpu_to_le16(1);
+	buf->res_type = cpu_to_le16((ICE_AQC_RES_TYPE_RECIPE <<
+				     ICE_AQC_RES_TYPE_S) |
+				    ICE_AQC_RES_TYPE_FLAG_SUBSCRIBE_SHARED);
+
+	status = ice_aq_alloc_free_res(hw, 1, buf, buf_len,
+				       ice_aqc_opc_alloc_res, NULL);
+
+	if (status)
+		goto exit;
+
+	memcpy(rid, buf->elem, sizeof(*buf->elem) * 1);
+
+exit:
+	devm_kfree(ice_hw_to_dev(hw), buf);
+	return status;
+}
+
+/**
+ * ice_alloc_recipe - add recipe resource
+ * @hw: pointer to the hardware structure
+ * @rid: recipe ID returned as response to AQ call
+ */
+int ice_alloc_recipe(struct ice_hw *hw, u16 *rid)
+{
+	if (hw->subscribable_recipes_supported)
+		return ice_alloc_subscribable_recipe(hw, rid);
+	else
+		return ice_alloc_legacy_shared_recipe(hw, rid);
+}
+
+/**
+ * ice_free_recipe_res - free recipe resource
+ * @hw: pointer to the hardware structure
+ * @rid: recipe ID to free
+ */
+static int ice_free_recipe_res(struct ice_hw *hw, u16 rid)
+{
+	return ice_free_hw_res(hw, ICE_AQC_RES_TYPE_RECIPE, 1, &rid);
+}
+
+/*
+ * ice_subscribe_recipe - subscribe to an existing recipe
+ * @hw: pointer to the hardware structure
+ * @rid: recipe ID to subscribe to
+ */
+static int ice_subscribe_recipe(struct ice_hw *hw, u16 rid)
+{
+	struct ice_aqc_alloc_free_res_elem *buf;
+	int status;
+	u16 buf_len;
+
+	buf_len = struct_size(buf, elem, 1);
+	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	/* Prepare buffer to allocate resource */
+	buf->num_elems = cpu_to_le16(1);
+	buf->res_type = cpu_to_le16((ICE_AQC_RES_TYPE_RECIPE <<
+				     ICE_AQC_RES_TYPE_S) |
+				    ICE_AQC_RES_TYPE_FLAG_SUBSCRIBE_SHARED |
+				    ICE_AQC_RES_TYPE_FLAG_SUBSCRIBE_CTL);
+
+	buf->elem[0].e.flu_resp = cpu_to_le16(rid);
+
+	status = ice_aq_alloc_free_res(hw, 1, buf, buf_len,
+				       ice_aqc_opc_alloc_res, NULL);
+
+	devm_kfree(ice_hw_to_dev(hw), buf);
+	return status;
+}
+
+/**
+ * ice_subscribable_recp_shared - share an existing subscribable recipe
+ * @hw: pointer to the hardware structure
+ * @rid: recipe ID to subscribe to
+ */
+static void ice_subscribable_recp_shared(struct ice_hw *hw, u16 rid)
+{
+	DECLARE_BITMAP(sub_bitmap, ICE_MAX_NUM_RECIPES);
+	struct ice_sw_recipe *recps;
+	u16 i, cnt;
+
+	recps = hw->switch_info->recp_list;
+	bitmap_copy(sub_bitmap, recps[rid].r_bitmap, ICE_MAX_NUM_RECIPES);
+	cnt = bitmap_weight(sub_bitmap, ICE_MAX_NUM_RECIPES);
+	for (i = 0; i < cnt; i++) {
+		u8 sub_rid;
+
+		sub_rid = (u8) find_first_bit(sub_bitmap, ICE_MAX_NUM_RECIPES);
+		ice_subscribe_recipe(hw, sub_rid);
+		clear_bit(sub_rid, sub_bitmap);
+	}
+}
+
+/**
+ * ice_release_recipe_res - disassociate and free recipe resource
+ * @hw: pointer to the hardware structure
+ * @recp: the recipe struct resource to unassociate and free
+ */
+static int ice_release_recipe_res(struct ice_hw *hw,
+				  struct ice_sw_recipe *recp)
+{
+	DECLARE_BITMAP(r_bitmap, ICE_MAX_NUM_RECIPES);
+	struct ice_switch_info *sw = hw->switch_info;
+	int status = 0;
+	u16 num_recp, num_prof;
+	u8 rid, prof, i, j;
+
+	num_recp = bitmap_weight(recp->r_bitmap, ICE_MAX_NUM_RECIPES);
+	for (i = 0; i < num_recp; i++) {
+		rid = (u8) find_first_bit(recp->r_bitmap, ICE_MAX_NUM_RECIPES);
+		num_prof = bitmap_weight(recipe_to_profile[rid],
+					 ICE_MAX_NUM_PROFILES);
+		for (j = 0; j < num_prof; j++) {
+			prof = (u8) find_first_bit(recipe_to_profile[rid],
+						   ICE_MAX_NUM_PROFILES);
+			status = ice_aq_get_recipe_to_profile(hw, prof,
+							      (u8 *)r_bitmap,
+							      NULL);
+			if (status)
+				goto exit;
+
+			bitmap_andnot(r_bitmap, r_bitmap, recp->r_bitmap,
+				      ICE_MAX_NUM_RECIPES);
+			ice_aq_map_recipe_to_profile(hw, prof,
+						     (u8 *)r_bitmap, NULL);
+
+			clear_bit(rid, profile_to_recipe[prof]);
+			clear_bit(prof, recipe_to_profile[rid]);
+		}
+
+		status = ice_free_recipe_res(hw, rid);
+		if (status)
+			goto exit;
+
+		sw->recp_list[rid].recp_created = false;
+		sw->recp_list[rid].adv_rule = false;
+		memset(&sw->recp_list[rid].lkup_exts, 0,
+		       sizeof(struct ice_prot_lkup_ext));
+		clear_bit(rid, recp->r_bitmap);
+	}
+
+exit:
 	return status;
 }
 
@@ -3709,7 +4054,7 @@ ice_add_marker_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 	 *    1. Large Action
 	 *    2. Look up Tx Rx
 	 */
-	lg_act_size = (u16)struct_size(lg_act, act, num_lg_acts);
+	lg_act_size = (u16) struct_size(lg_act, act, num_lg_acts);
 	rules_size = lg_act_size +
 		     struct_size(rx_tx, hdr_data, DUMMY_ETH_HDR_LEN);
 	lg_act = devm_kzalloc(ice_hw_to_dev(hw), rules_size, GFP_KERNEL);
@@ -3807,7 +4152,7 @@ ice_add_counter_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 	 * 1. Large Action
 	 * 2. Look up Tx Rx
 	 */
-	lg_act_size = (u16)struct_size(lg_act, act, num_acts);
+	lg_act_size = (u16) struct_size(lg_act, act, num_acts);
 	rules_size = lg_act_size +
 		     struct_size(rx_tx, hdr_data, DUMMY_ETH_HDR_LEN);
 	lg_act = devm_kzalloc(ice_hw_to_dev(hw), rules_size, GFP_KERNEL);
@@ -3941,7 +4286,7 @@ ice_update_vsi_list_rule(struct ice_hw *hw, u16 *vsi_handle_arr, u16 num_vsi,
 	else
 		return -EINVAL;
 
-	s_rule_size = (u16)struct_size(s_rule, vsi, num_vsi);
+	s_rule_size = (u16) struct_size(s_rule, vsi, num_vsi);
 	s_rule = devm_kzalloc(ice_hw_to_dev(hw), s_rule_size, GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
@@ -4095,9 +4440,9 @@ ice_update_pkt_fwd_rule(struct ice_hw *hw, struct ice_fltr_info *f_info)
 int ice_update_sw_rule_bridge_mode(struct ice_hw *hw)
 {
 	struct ice_fltr_mgmt_list_entry *fm_entry;
-	struct ice_switch_info *sw = NULL;
 	struct list_head *rule_head;
 	struct mutex *rule_lock; /* Lock to protect filter rule list */
+	struct ice_switch_info *sw;
 	int status = 0;
 
 	sw = hw->switch_info;
@@ -4178,7 +4523,7 @@ ice_add_update_vsi_list(struct ice_hw *hw,
 		u16 vsi_handle_arr[2];
 
 		/* A rule already exists with the new VSI being added */
-		if (cur_fltr->fwd_id.hw_vsi_id == new_fltr->fwd_id.hw_vsi_id)
+		if (cur_fltr->vsi_handle == new_fltr->vsi_handle)
 			return -EEXIST;
 
 		vsi_handle_arr[0] = cur_fltr->vsi_handle;
@@ -4226,7 +4571,7 @@ ice_add_update_vsi_list(struct ice_hw *hw,
 
 		/* A rule already exists with the new VSI being added */
 		if (test_bit(vsi_handle, m_entry->vsi_list_info->vsi_map))
-			return 0;
+			return -EEXIST;
 
 		/* Update the previously created VSI list set with
 		 * the new VSI ID passed in
@@ -6671,6 +7016,10 @@ exit_error:
 	return ret;
 }
 
+#define ICE_PROTOCOL_ENTRY(id, ...) {		\
+	.prot_type	= id,			\
+	.offs		= {__VA_ARGS__},	\
+}
 /* This is mapping table entry that maps every word within a given protocol
  * structure to the real byte offset as per the specification of that
  * protocol header.
@@ -6681,35 +7030,44 @@ exit_error:
  * structure is added to that union.
  */
 static const struct ice_prot_ext_tbl_entry ice_prot_ext[ICE_PROTOCOL_LAST] = {
-	{ ICE_MAC_OFOS,		{ 0, 2, 4, 6, 8, 10, 12 } },
-	{ ICE_MAC_IL,		{ 0, 2, 4, 6, 8, 10, 12 } },
-	{ ICE_ETYPE_OL,		{ 0 } },
-	{ ICE_ETYPE_IL,		{ 0 } },
-	{ ICE_VLAN_OFOS,	{ 2, 0 } },
-	{ ICE_IPV4_OFOS,	{ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18 } },
-	{ ICE_IPV4_IL,		{ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18 } },
-	{ ICE_IPV6_OFOS,	{ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24,
-				 26, 28, 30, 32, 34, 36, 38 } },
-	{ ICE_IPV6_IL,		{ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24,
-				 26, 28, 30, 32, 34, 36, 38 } },
-	{ ICE_TCP_IL,		{ 0, 2 } },
-	{ ICE_UDP_OF,		{ 0, 2 } },
-	{ ICE_UDP_ILOS,		{ 0, 2 } },
-	{ ICE_SCTP_IL,		{ 0, 2 } },
-	{ ICE_VXLAN,		{ 8, 10, 12, 14 } },
-	{ ICE_GENEVE,		{ 8, 10, 12, 14 } },
-	{ ICE_VXLAN_GPE,	{ 8, 10, 12, 14 } },
-	{ ICE_NVGRE,		{ 0, 2, 4, 6 } },
-	{ ICE_GTP,		{ 8, 10, 12, 14, 16, 18, 20, 22 } },
-	{ ICE_GTP_NO_PAY,	{ 8, 10, 12, 14 } },
-	{ ICE_PPPOE,		{ 0, 2, 4, 6 } },
-	{ ICE_PFCP,		{ 8, 10, 12, 14, 16, 18, 20, 22 } },
-	{ ICE_L2TPV3,		{ 0, 2, 4, 6, 8, 10 } },
-	{ ICE_ESP,		{ 0, 2, 4, 6 } },
-	{ ICE_AH,		{ 0, 2, 4, 6, 8, 10 } },
-	{ ICE_NAT_T,		{ 8, 10, 12, 14 } },
-	{ ICE_VLAN_EX,		{ 2, 0 } },
-	{ ICE_VLAN_IN,		{ 2, 0 } },
+	ICE_PROTOCOL_ENTRY(ICE_MAC_OFOS, 0, 2, 4, 6, 8, 10, 12),
+	ICE_PROTOCOL_ENTRY(ICE_MAC_IL, 0, 2, 4, 6, 8, 10, 12),
+	ICE_PROTOCOL_ENTRY(ICE_ETYPE_OL, 0),
+	ICE_PROTOCOL_ENTRY(ICE_ETYPE_IL, 0),
+	ICE_PROTOCOL_ENTRY(ICE_VLAN_OFOS, 2, 0),
+	ICE_PROTOCOL_ENTRY(ICE_IPV4_OFOS, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18),
+	ICE_PROTOCOL_ENTRY(ICE_IPV4_IL, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18),
+	ICE_PROTOCOL_ENTRY(ICE_IPV6_OFOS, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18,
+			   20, 22, 24, 26, 28, 30, 32, 34, 36, 38),
+	ICE_PROTOCOL_ENTRY(ICE_IPV6_IL, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20,
+			   22, 24, 26, 28, 30, 32, 34, 36, 38),
+	ICE_PROTOCOL_ENTRY(ICE_TCP_IL, 0, 2),
+	ICE_PROTOCOL_ENTRY(ICE_UDP_OF, 0, 2),
+	ICE_PROTOCOL_ENTRY(ICE_UDP_ILOS, 0, 2),
+	ICE_PROTOCOL_ENTRY(ICE_SCTP_IL, 0, 2),
+	ICE_PROTOCOL_ENTRY(ICE_VXLAN, 8, 10, 12, 14),
+	ICE_PROTOCOL_ENTRY(ICE_GENEVE, 8, 10, 12, 14),
+	ICE_PROTOCOL_ENTRY(ICE_VXLAN_GPE, 8, 10, 12, 14),
+	ICE_PROTOCOL_ENTRY(ICE_NVGRE, 0, 2, 4, 6),
+	ICE_PROTOCOL_ENTRY(ICE_GTP, 8, 10, 12, 14, 16, 18, 20, 22),
+	ICE_PROTOCOL_ENTRY(ICE_GTP_NO_PAY, 8, 10, 12, 14),
+	ICE_PROTOCOL_ENTRY(ICE_PPPOE, 0, 2, 4, 6),
+	ICE_PROTOCOL_ENTRY(ICE_PFCP, 8, 10, 12, 14, 16, 18, 20, 22),
+	ICE_PROTOCOL_ENTRY(ICE_L2TPV3, 0, 2, 4, 6, 8, 10),
+	ICE_PROTOCOL_ENTRY(ICE_ESP, 0, 2, 4, 6),
+	ICE_PROTOCOL_ENTRY(ICE_AH, 0, 2, 4, 6, 8, 10),
+	ICE_PROTOCOL_ENTRY(ICE_NAT_T, 8, 10, 12, 14),
+	ICE_PROTOCOL_ENTRY(ICE_VLAN_EX, 2, 0),
+	ICE_PROTOCOL_ENTRY(ICE_VLAN_IN, 2, 0),
+	ICE_PROTOCOL_ENTRY(ICE_HW_METADATA,
+			   ICE_SOURCE_PORT_MDID_OFFSET,
+			   ICE_PTYPE_MDID_OFFSET,
+			   ICE_PACKET_LENGTH_MDID_OFFSET,
+			   ICE_SOURCE_VSI_MDID_OFFSET,
+			   ICE_PKT_VLAN_MDID_OFFSET,
+			   ICE_PKT_TUNNEL_MDID_OFFSET,
+			   ICE_PKT_TCP_MDID_OFFSET,
+			   ICE_PKT_ERROR_MDID_OFFSET),
 };
 
 /* The following table describes preferred grouping of recipes.
@@ -6746,7 +7104,7 @@ static struct ice_protocol_entry ice_prot_id_tbl[ICE_PROTOCOL_LAST] = {
 	{ ICE_NAT_T,		ICE_UDP_ILOS_HW },
 	{ ICE_VLAN_EX,		ICE_VLAN_OF_HW },
 	{ ICE_VLAN_IN,		ICE_VLAN_OL_HW },
-	{ ICE_FLG_DIR,		ICE_META_DATA_ID_HW},
+	{ ICE_HW_METADATA,	ICE_META_DATA_ID_HW },
 };
 
 /*
@@ -6755,11 +7113,13 @@ static struct ice_protocol_entry ice_prot_id_tbl[ICE_PROTOCOL_LAST] = {
  * @lkup_exts: extension sequence to match
  * @tun_type: tunnel type of switch filter
  * @priority: priority of switch filter
+ * @is_add: flag of adding recipe
  *
  * Returns index of matching recipe, or ICE_MAX_NUM_RECIPES if not found.
  */
 static u16 ice_find_recp(struct ice_hw *hw, struct ice_prot_lkup_ext *lkup_exts,
-			 enum ice_sw_tunnel_type tun_type, u32 priority)
+			 enum ice_sw_tunnel_type tun_type, u32 priority,
+			 bool *is_add)
 {
 	bool refresh_required = true;
 	struct ice_sw_recipe *recp;
@@ -6773,11 +7133,12 @@ static u16 ice_find_recp(struct ice_hw *hw, struct ice_prot_lkup_ext *lkup_exts,
 		 * entry update it in our SW bookkeeping and continue with the
 		 * matching.
 		 */
-		if (!recp[i].recp_created)
+		if (hw->subscribable_recipes_supported) {
 			if (ice_get_recp_frm_fw(hw,
 						hw->switch_info->recp_list, i,
-						&refresh_required))
+						&refresh_required, is_add))
 				continue;
+		}
 
 		/* Skip inverse action recipes */
 		if (recp[i].root_buf && recp[i].root_buf->content.act_ctrl &
@@ -7100,7 +7461,7 @@ ice_find_free_recp_res_idx(struct ice_hw *hw, const unsigned long *profiles,
 	bitmap_xor(free_idx, used_idx, possible_idx, ICE_MAX_FV_WORDS);
 
 	/* return number of free indexes */
-	return (u16)bitmap_weight(free_idx, ICE_MAX_FV_WORDS);
+	return bitmap_weight(free_idx, ICE_MAX_FV_WORDS);
 }
 
 static void ice_set_recipe_index(unsigned long idx, u8 *bitmap)
@@ -7178,7 +7539,7 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 	/* Allocate the recipe resources, and configure them according to the
 	 * match fields from protocol headers and extracted field vectors.
 	 */
-	chain_idx = (u8)find_first_bit(result_idx_bm, ICE_MAX_FV_WORDS);
+	chain_idx = (u8) find_first_bit(result_idx_bm, ICE_MAX_FV_WORDS);
 	list_for_each_entry(entry, &rm->rg_list, l_entry) {
 		u8 i;
 
@@ -7235,8 +7596,8 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 				((chain_idx << ICE_AQ_RECIPE_RESULT_DATA_S) &
 				 ICE_AQ_RECIPE_RESULT_DATA_M);
 			clear_bit(chain_idx, result_idx_bm);
-			chain_idx = (u8)find_first_bit(result_idx_bm,
-						       ICE_MAX_FV_WORDS);
+			chain_idx = (u8) find_first_bit(result_idx_bm,
+							ICE_MAX_FV_WORDS);
 		}
 
 		/* fill recipe dependencies */
@@ -7439,108 +7800,6 @@ ice_create_recipe_group(struct ice_hw *hw, struct ice_sw_recipe *rm,
 	return status;
 }
 
-/**
- * ice_tun_type_match_word - determine if tun type needs a match mask
- * @rinfo: other information regarding the rule e.g. priority and action info
- * @off: offset of packet flag
- * @mask: mask to be used for the tunnel
- */
-static bool
-ice_tun_type_match_word(struct ice_adv_rule_info *rinfo, u16 *off, u16 *mask)
-{
-	switch (rinfo->tun_type) {
-	case ICE_SW_TUN_VXLAN_GPE:
-	case ICE_SW_TUN_GENEVE:
-	case ICE_SW_TUN_VXLAN:
-	case ICE_SW_TUN_NVGRE:
-	case ICE_SW_TUN_UDP:
-	case ICE_ALL_TUNNELS:
-	case ICE_SW_TUN_GTPU:
-	case ICE_SW_TUN_GTPC:
-		*mask = ICE_TUN_FLAG_MASK;
-		*off = ICE_TUN_FLAG_MDID_OFF(1);
-		return true;
-
-	case ICE_SW_TUN_AND_NON_TUN:
-		if (rinfo->add_dir_lkup) {
-			*mask = ICE_DIR_FLAG_MASK;
-			*off = ICE_TUN_FLAG_MDID_OFF(0);
-			return true;
-		}
-		*mask = 0;
-		*off = 0;
-		return false;
-
-	case ICE_SW_TUN_GENEVE_VLAN:
-	case ICE_SW_TUN_VXLAN_VLAN:
-		*mask = ICE_TUN_FLAG_MASK & ~(ICE_TUN_FLAG_VLAN_MASK |
-			ICE_TUN_FLAG_IN_VLAN_MASK);
-		*off = ICE_TUN_FLAG_MDID_OFF(1);
-		return true;
-
-	default:
-		*mask = 0;
-		*off = 0;
-		return false;
-	}
-}
-
-/**
- * ice_add_special_words - Add words that are not protocols, such as metadata
- * @rinfo: other information regarding the rule e.g. priority and action info
- * @lkup_exts: lookup word structure
- * @dvm_ena: is double VLAN mode enabled
- */
-static int
-ice_add_special_words(struct ice_adv_rule_info *rinfo,
-		      struct ice_prot_lkup_ext *lkup_exts, bool dvm_ena)
-{
-	u16 mask;
-	u16 off;
-
-	/* Always add direction flag */
-	if (lkup_exts->n_val_words < ICE_MAX_CHAIN_WORDS) {
-		u8 word = lkup_exts->n_val_words++;
-
-		lkup_exts->fv_words[word].prot_id = ICE_META_DATA_ID_HW;
-		lkup_exts->fv_words[word].off = ICE_TUN_FLAG_MDID_OFF(0);
-		lkup_exts->field_mask[word] = ICE_FROM_NETWORK_FLAG_MASK;
-	} else {
-		return -ENOSPC;
-	}
-
-	/* If this is a tunneled packet, then add recipe index to match the
-	 * tunnel bit in the packet metadata flags. If this is a tun_and_non_tun
-	 * packet, then add recipe index to match the direction bit in the flag.
-	 */
-	if (ice_tun_type_match_word(rinfo, &off, &mask)) {
-		if (lkup_exts->n_val_words < ICE_MAX_CHAIN_WORDS) {
-			u8 word = lkup_exts->n_val_words++;
-
-			lkup_exts->fv_words[word].prot_id = ICE_META_DATA_ID_HW;
-			lkup_exts->fv_words[word].off = off;
-			lkup_exts->field_mask[word] = mask;
-		} else {
-			return -ENOSPC;
-		}
-	}
-
-	if (rinfo->vlan_type != 0 && dvm_ena) {
-		if (lkup_exts->n_val_words < ICE_MAX_CHAIN_WORDS) {
-			u8 word = lkup_exts->n_val_words++;
-
-			lkup_exts->fv_words[word].prot_id = ICE_META_DATA_ID_HW;
-			lkup_exts->fv_words[word].off = ICE_VLAN_FLAG_MDID_OFF;
-			lkup_exts->field_mask[word] =
-					ICE_PKT_FLAGS_0_TO_15_VLAN_FLAGS_MASK;
-		} else {
-			return -ENOSPC;
-		}
-	}
-
-	return 0;
-}
-
 /* ice_get_compat_fv_bitmap - Get compatible field vector bitmap for rule
  * @hw: pointer to hardware structure
  * @rinfo: other information regarding the rule e.g. priority and action info
@@ -7622,8 +7881,10 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	struct ice_recp_grp_entry *r_tmp;
 	struct ice_sw_fv_list_entry *tmp;
 	struct ice_sw_recipe *rm;
+	u8 i, rid_tmp;
+	bool is_add = true;
 	int status = 0;
-	u8 i;
+	u16 cnt;
 
 	if (!lkups_cnt)
 		return -EINVAL;
@@ -7673,13 +7934,6 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	if (status)
 		goto err_unroll;
 
-	/* Create any special protocol/offset pairs, such as looking at tunnel
-	 * bits by extracting metadata
-	 */
-	status = ice_add_special_words(rinfo, lkup_exts, ice_is_dvm_ena(hw));
-	if (status)
-		goto err_free_lkup_exts;
-
 	/* Group match words into recipes using preferred recipe grouping
 	 * criteria.
 	 */
@@ -7724,10 +7978,15 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	}
 
 	/* Look for a recipe which matches our requested fv / mask list */
-	*rid = ice_find_recp(hw, lkup_exts, rinfo->tun_type, rinfo->priority);
-	if (*rid < ICE_MAX_NUM_RECIPES)
+	*rid = ice_find_recp(hw, lkup_exts, rinfo->tun_type,
+			     rinfo->priority, &is_add);
+	if (*rid < ICE_MAX_NUM_RECIPES) {
 		/* Success if found a recipe that match the existing criteria */
+		if (hw->subscribable_recipes_supported)
+			ice_subscribable_recp_shared(hw, *rid);
+
 		goto err_unroll;
+	}
 
 	rm->tun_type = rinfo->tun_type;
 	/* Recipe we need does not exist, add a recipe */
@@ -7744,22 +8003,34 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 
 		status = ice_aq_get_recipe_to_profile(hw, fvit->profile_id,
 						      (u8 *)r_bitmap, NULL);
-		if (status)
-			goto err_unroll;
+		if (status) {
+			if (hw->subscribable_recipes_supported)
+				goto err_free_recipe;
+			else
+				goto err_unroll;
+		}
 
 		bitmap_or(r_bitmap, r_bitmap, rm->r_bitmap,
 			  ICE_MAX_NUM_RECIPES);
 		status = ice_acquire_change_lock(hw, ICE_RES_WRITE);
-		if (status)
-			goto err_unroll;
+		if (status) {
+			if (hw->subscribable_recipes_supported)
+				goto err_free_recipe;
+			else
+				goto err_unroll;
+		}
 
 		status = ice_aq_map_recipe_to_profile(hw, fvit->profile_id,
 						      (u8 *)r_bitmap,
 						      NULL);
 		ice_release_change_lock(hw);
 
-		if (status)
-			goto err_unroll;
+		if (status) {
+			if (hw->subscribable_recipes_supported)
+				goto err_free_recipe;
+			else
+				goto err_unroll;
+		}
 
 		/* Update profile to recipe bitmap array */
 		bitmap_copy(profile_to_recipe[fvit->profile_id], r_bitmap,
@@ -7773,6 +8044,18 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	*rid = rm->root_rid;
 	memcpy(&hw->switch_info->recp_list[*rid].lkup_exts, lkup_exts,
 	       sizeof(*lkup_exts));
+	goto err_unroll;
+
+err_free_recipe:
+	cnt = bitmap_weight(rm->r_bitmap, ICE_MAX_NUM_RECIPES);
+	for (i = 0; i < cnt; i++) {
+		rid_tmp = (u8) find_first_bit(rm->r_bitmap,
+					      ICE_MAX_NUM_RECIPES);
+		if (hw->subscribable_recipes_supported) {
+			if (!ice_free_recipe_res(hw, rid_tmp))
+				clear_bit(rid_tmp, rm->r_bitmap);
+		}
+	}
 err_unroll:
 	list_for_each_entry_safe(r_entry, r_tmp, &rm->rg_list, l_entry) {
 		list_del(&r_entry->l_entry);
@@ -7796,359 +8079,105 @@ err_free_lkup_exts:
 }
 
 /**
- * ice_find_dummy_packet - find dummy packet by tunnel type
+ * ice_find_dummy_packet - find dummy packet
  *
  * @lkups: lookup elements or match criteria for the advanced recipe, one
  *	   structure per protocol header
  * @lkups_cnt: number of protocols
- * @tun_type: tunnel type from the match criteria
- * @pkt: dummy packet to fill according to filter match criteria
- * @pkt_len: packet length of dummy packet
- * @offsets: pointer to receive the pointer to the offsets for the packet
+ * @tun_type: tunnel type
+ *
+ * Returns the &ice_dummy_pkt_profile corresponding to these lookup params.
  */
-void
+const struct ice_dummy_pkt_profile *
 ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
-		      enum ice_sw_tunnel_type tun_type, const u8 **pkt,
-		      u16 *pkt_len,
-		      const struct ice_dummy_pkt_offsets **offsets)
+		      enum ice_sw_tunnel_type tun_type)
 {
-	bool tcp = false, udp = false, outer_ipv6 = false, vlan = false;
-	bool inner_ipv6 = false, pppoe = false;
-	bool gtp_no_pay = false, l2tpv3 = false;
-	bool cvlan = false;
+	const struct ice_dummy_pkt_profile *ret = ice_dummy_pkt_profiles;
+	u32 match = 0;
 	u16 i;
+
+	switch (tun_type) {
+	case ICE_SW_TUN_GTPC:
+		match |= ICE_PKT_TUN_GTPC;
+		break;
+	case ICE_SW_TUN_GTPU:
+		match |= ICE_PKT_TUN_GTPU;
+		break;
+	case ICE_SW_TUN_NVGRE:
+		match |= ICE_PKT_TUN_NVGRE;
+		break;
+	case ICE_SW_TUN_GENEVE:
+	case ICE_SW_TUN_VXLAN:
+	case ICE_SW_TUN_UDP:
+	case ICE_SW_TUN_VXLAN_GPE:
+	case ICE_SW_TUN_GENEVE_VLAN:
+	case ICE_SW_TUN_VXLAN_VLAN:
+		match |= ICE_PKT_TUN_UDP;
+		break;
+	case ICE_ALL_TUNNELS:
+		match |= ICE_PKT_TUN_NVGRE;
+		break;
+	case ICE_SW_IPV4_TCP:
+		match |= ICE_PKT_INNER_TCP;
+		break;
+	case ICE_SW_IPV4_UDP:
+		match |= ICE_PKT_INNER_UDP;
+		break;
+	case ICE_SW_IPV6_TCP:
+		match |= ICE_PKT_OUTER_IPV6 | ICE_PKT_INNER_TCP;
+		break;
+	case ICE_SW_IPV6_UDP:
+		match |= ICE_PKT_OUTER_IPV6 | ICE_PKT_INNER_UDP;
+		break;
+	default:
+		break;
+	}
 
 	for (i = 0; i < lkups_cnt; i++) {
 		if (lkups[i].type == ICE_UDP_ILOS)
-			udp = true;
+			match |= ICE_PKT_INNER_UDP;
 		else if (lkups[i].type == ICE_TCP_IL)
-			tcp = true;
+			match |= ICE_PKT_INNER_TCP;
 		else if (lkups[i].type == ICE_IPV6_OFOS)
-			outer_ipv6 = true;
+			match |= ICE_PKT_OUTER_IPV6;
 		else if (lkups[i].type == ICE_VLAN_OFOS ||
 			 lkups[i].type == ICE_VLAN_EX)
-			vlan = true;
+			match |= ICE_PKT_OUTER_VLAN;
 
 		else if (lkups[i].type == ICE_VLAN_IN)
-			cvlan = true;
+			match |= ICE_PKT_INNER_VLAN;
 		else if (lkups[i].type == ICE_ETYPE_OL &&
 			 lkups[i].h_u.ethertype.ethtype_id ==
 				cpu_to_be16(ICE_IPV6_ETHER_ID) &&
 			 lkups[i].m_u.ethertype.ethtype_id ==
 				cpu_to_be16(0xFFFF))
-			outer_ipv6 = true;
+			match |= ICE_PKT_OUTER_IPV6;
 		else if (lkups[i].type == ICE_ETYPE_IL &&
 			 lkups[i].h_u.ethertype.ethtype_id ==
 				cpu_to_be16(ICE_IPV6_ETHER_ID) &&
 			 lkups[i].m_u.ethertype.ethtype_id ==
 				cpu_to_be16(0xFFFF))
-			inner_ipv6 = true;
+			match |= ICE_PKT_INNER_IPV6;
 		else if (lkups[i].type == ICE_PPPOE) {
-			pppoe = true;
+			match |= ICE_PKT_PPPOE;
 			if (lkups[i].h_u.pppoe_hdr.ppp_prot_id ==
 				cpu_to_be16(ICE_PPP_IPV6_PROTO_ID) &&
 			    lkups[i].m_u.pppoe_hdr.ppp_prot_id ==
 				cpu_to_be16(0xFFFF))
-				outer_ipv6 = true;
+				match |= ICE_PKT_OUTER_IPV6;
 		}
 		else if (lkups[i].type == ICE_IPV6_IL)
-			inner_ipv6 = true;
+			match |= ICE_PKT_INNER_IPV6;
 		else if (lkups[i].type == ICE_GTP_NO_PAY)
-			gtp_no_pay = true;
+			match |= ICE_PKT_GTP_NOPAY;
 		else if (lkups[i].type == ICE_L2TPV3)
-			l2tpv3 = true;
+			match |= ICE_PKT_L2TPV3;
 	}
 
-	if (cvlan && vlan) {
-		if (outer_ipv6) {
-			if (tcp) {
-				*pkt = dummy_qinq_ipv6_tcp_pkt;
-				*pkt_len = sizeof(dummy_qinq_ipv6_tcp_pkt);
-				*offsets = dummy_qinq_ipv6_tcp_packet_offsets;
-				return;
-			}
+	while (ret->match && (match & ret->match) != ret->match)
+		ret++;
 
-			if (udp) {
-				*pkt = dummy_qinq_ipv6_udp_pkt;
-				*pkt_len = sizeof(dummy_qinq_ipv6_udp_pkt);
-				*offsets = dummy_qinq_ipv6_udp_packet_offsets;
-				return;
-			}
-
-			*pkt = dummy_qinq_ipv6_pkt;
-			*pkt_len = sizeof(dummy_qinq_ipv6_pkt);
-			*offsets = dummy_qinq_ipv6_packet_offsets;
-			return;
-		} else  {
-			if (tcp) {
-				*pkt = dummy_qinq_ipv4_tcp_pkt;
-				*pkt_len = sizeof(dummy_qinq_ipv4_tcp_pkt);
-				*offsets = dummy_qinq_ipv4_tcp_packet_offsets;
-				return;
-			}
-
-			if (udp) {
-				*pkt = dummy_qinq_ipv4_udp_pkt;
-				*pkt_len = sizeof(dummy_qinq_ipv4_udp_pkt);
-				*offsets = dummy_qinq_ipv4_udp_packet_offsets;
-				return;
-			}
-
-			*pkt = dummy_qinq_ipv4_pkt;
-			*pkt_len = sizeof(dummy_qinq_ipv4_pkt);
-			*offsets = dummy_qinq_ipv4_packet_offsets;
-			return;
-		}
-	}
-
-	if (tun_type == ICE_SW_IPV4_TCP) {
-		*pkt = dummy_tcp_packet;
-		*pkt_len = sizeof(dummy_tcp_packet);
-		*offsets = dummy_tcp_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_SW_IPV4_UDP) {
-		*pkt = dummy_udp_packet;
-		*pkt_len = sizeof(dummy_udp_packet);
-		*offsets = dummy_udp_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_SW_IPV6_TCP) {
-		*pkt = dummy_tcp_ipv6_packet;
-		*pkt_len = sizeof(dummy_tcp_ipv6_packet);
-		*offsets = dummy_tcp_ipv6_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_SW_IPV6_UDP) {
-		*pkt = dummy_udp_ipv6_packet;
-		*pkt_len = sizeof(dummy_udp_ipv6_packet);
-		*offsets = dummy_udp_ipv6_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_SW_TUN_GTPU) {
-		if (outer_ipv6) {
-			if (gtp_no_pay) {
-				*pkt = dummy_ipv6_gtp_packet;
-				*pkt_len = sizeof(dummy_ipv6_gtp_packet);
-				*offsets = dummy_ipv6_gtp_no_pay_packet_offsets;
-				return;
-			}
-			if (inner_ipv6 && udp) {
-				*pkt = dummy_ipv6_gtpu_ipv6_udp_packet;
-				*pkt_len =
-					sizeof(dummy_ipv6_gtpu_ipv6_udp_packet);
-				*offsets =
-					dummy_ipv6_gtpu_ipv6_udp_packet_offsets;
-				return;
-			}
-			if (inner_ipv6) {
-				*pkt = dummy_ipv6_gtpu_ipv6_tcp_packet;
-				*pkt_len =
-					sizeof(dummy_ipv6_gtpu_ipv6_tcp_packet);
-				*offsets =
-					dummy_ipv6_gtpu_ipv6_tcp_packet_offsets;
-				return;
-			}
-			if (udp) {
-				*pkt = dummy_ipv6_gtpu_ipv4_udp_packet;
-				*pkt_len =
-					sizeof(dummy_ipv6_gtpu_ipv4_udp_packet);
-				*offsets =
-					dummy_ipv6_gtpu_ipv4_udp_packet_offsets;
-				return;
-			}
-			*pkt = dummy_ipv6_gtpu_ipv4_tcp_packet;
-			*pkt_len = sizeof(dummy_ipv6_gtpu_ipv4_tcp_packet);
-			*offsets = dummy_ipv6_gtpu_ipv4_tcp_packet_offsets;
-			return;
-		}
-		if (gtp_no_pay) {
-			*pkt = dummy_ipv4_gtpu_ipv4_packet;
-			*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_packet);
-			*offsets = dummy_ipv4_gtp_no_pay_packet_offsets;
-			return;
-		}
-		if (inner_ipv6 && udp) {
-			*pkt = dummy_ipv4_gtpu_ipv6_udp_packet;
-			*pkt_len = sizeof(dummy_ipv4_gtpu_ipv6_udp_packet);
-			*offsets = dummy_ipv4_gtpu_ipv6_udp_packet_offsets;
-			return;
-		}
-		if (inner_ipv6) {
-			*pkt = dummy_ipv4_gtpu_ipv6_tcp_packet;
-			*pkt_len = sizeof(dummy_ipv4_gtpu_ipv6_tcp_packet);
-			*offsets = dummy_ipv4_gtpu_ipv6_tcp_packet_offsets;
-			return;
-		}
-		if (udp) {
-			*pkt = dummy_ipv4_gtpu_ipv4_udp_packet;
-			*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_udp_packet);
-			*offsets = dummy_ipv4_gtpu_ipv4_udp_packet_offsets;
-			return;
-		}
-		*pkt = dummy_ipv4_gtpu_ipv4_tcp_packet;
-		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_tcp_packet);
-		*offsets = dummy_ipv4_gtpu_ipv4_tcp_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_SW_TUN_GTPC) {
-		if (outer_ipv6) {
-			*pkt = dummy_ipv6_gtp_packet;
-			*pkt_len = sizeof(dummy_ipv6_gtp_packet);
-			*offsets = dummy_ipv6_gtp_no_pay_packet_offsets;
-			return;
-		}
-		*pkt = dummy_ipv4_gtpu_ipv4_packet;
-		*pkt_len = sizeof(dummy_ipv4_gtpu_ipv4_packet);
-		*offsets = dummy_ipv4_gtp_no_pay_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_ALL_TUNNELS) {
-		*pkt = dummy_gre_udp_packet;
-		*pkt_len = sizeof(dummy_gre_udp_packet);
-		*offsets = dummy_gre_udp_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_SW_TUN_NVGRE) {
-		if (tcp && inner_ipv6) {
-			*pkt = dummy_gre_ipv6_tcp_packet;
-			*pkt_len = sizeof(dummy_gre_ipv6_tcp_packet);
-			*offsets = dummy_gre_ipv6_tcp_packet_offsets;
-			return;
-		}
-
-		if (tcp) {
-			*pkt = dummy_gre_tcp_packet;
-			*pkt_len = sizeof(dummy_gre_tcp_packet);
-			*offsets = dummy_gre_tcp_packet_offsets;
-			return;
-		}
-
-		if (inner_ipv6) {
-			*pkt = dummy_gre_ipv6_udp_packet;
-			*pkt_len = sizeof(dummy_gre_ipv6_udp_packet);
-			*offsets = dummy_gre_ipv6_udp_packet_offsets;
-			return;
-		}
-
-		*pkt = dummy_gre_udp_packet;
-		*pkt_len = sizeof(dummy_gre_udp_packet);
-		*offsets = dummy_gre_udp_packet_offsets;
-		return;
-	}
-
-	if (tun_type == ICE_SW_TUN_VXLAN || tun_type == ICE_SW_TUN_GENEVE ||
-	    tun_type == ICE_SW_TUN_VXLAN_GPE || tun_type == ICE_SW_TUN_UDP ||
-	    tun_type == ICE_SW_TUN_GENEVE_VLAN ||
-	    tun_type == ICE_SW_TUN_VXLAN_VLAN) {
-		if (tcp && inner_ipv6) {
-			*pkt = dummy_udp_tun_ipv6_tcp_packet;
-			*pkt_len = sizeof(dummy_udp_tun_ipv6_tcp_packet);
-			*offsets = dummy_udp_tun_ipv6_tcp_packet_offsets;
-			return;
-		}
-
-		if (tcp) {
-			*pkt = dummy_udp_tun_tcp_packet;
-			*pkt_len = sizeof(dummy_udp_tun_tcp_packet);
-			*offsets = dummy_udp_tun_tcp_packet_offsets;
-			return;
-		}
-
-		if (inner_ipv6) {
-			*pkt = dummy_udp_tun_ipv6_udp_packet;
-			*pkt_len = sizeof(dummy_udp_tun_ipv6_udp_packet);
-			*offsets = dummy_udp_tun_ipv6_udp_packet_offsets;
-			return;
-		}
-
-		*pkt = dummy_udp_tun_udp_packet;
-		*pkt_len = sizeof(dummy_udp_tun_udp_packet);
-		*offsets = dummy_udp_tun_udp_packet_offsets;
-		return;
-	}
-
-	if (udp && !outer_ipv6) {
-		if (vlan) {
-			*pkt = dummy_vlan_udp_packet;
-			*pkt_len = sizeof(dummy_vlan_udp_packet);
-			*offsets = dummy_vlan_udp_packet_offsets;
-			return;
-		} else if (pppoe) {
-			*pkt = dummy_pppoe_ipv4_udp_packet;
-			*pkt_len = sizeof(dummy_pppoe_ipv4_udp_packet);
-			*offsets = dummy_pppoe_ipv4_udp_packet_offsets;
-			return;
-		}
-		*pkt = dummy_udp_packet;
-		*pkt_len = sizeof(dummy_udp_packet);
-		*offsets = dummy_udp_packet_offsets;
-		return;
-	} else if (udp && outer_ipv6) {
-		if (vlan) {
-			*pkt = dummy_vlan_udp_ipv6_packet;
-			*pkt_len = sizeof(dummy_vlan_udp_ipv6_packet);
-			*offsets = dummy_vlan_udp_ipv6_packet_offsets;
-			return;
-		} else if (pppoe) {
-			*pkt = dummy_pppoe_ipv6_udp_packet;
-			*pkt_len = sizeof(dummy_pppoe_ipv6_udp_packet);
-			*offsets = dummy_pppoe_ipv6_udp_packet_offsets;
-			return;
-		}
-		*pkt = dummy_udp_ipv6_packet;
-		*pkt_len = sizeof(dummy_udp_ipv6_packet);
-		*offsets = dummy_udp_ipv6_packet_offsets;
-		return;
-	} else if ((tcp && outer_ipv6) || outer_ipv6) {
-		if (vlan) {
-			*pkt = dummy_vlan_tcp_ipv6_packet;
-			*pkt_len = sizeof(dummy_vlan_tcp_ipv6_packet);
-			*offsets = dummy_vlan_tcp_ipv6_packet_offsets;
-			return;
-		} else if (pppoe) {
-			*pkt = dummy_pppoe_ipv6_tcp_packet;
-			*pkt_len = sizeof(dummy_pppoe_ipv6_tcp_packet);
-			*offsets = dummy_pppoe_ipv6_tcp_packet_offsets;
-			return;
-		} else if (l2tpv3) {
-			*pkt = dummy_ipv6_l2tpv3_pkt;
-			*pkt_len = sizeof(dummy_ipv6_l2tpv3_pkt);
-			*offsets = dummy_ipv6_l2tpv3_packet_offsets;
-			return;
-		}
-		*pkt = dummy_tcp_ipv6_packet;
-		*pkt_len = sizeof(dummy_tcp_ipv6_packet);
-		*offsets = dummy_tcp_ipv6_packet_offsets;
-		return;
-	}
-
-	if (vlan) {
-		*pkt = dummy_vlan_tcp_packet;
-		*pkt_len = sizeof(dummy_vlan_tcp_packet);
-		*offsets = dummy_vlan_tcp_packet_offsets;
-	} else if (pppoe) {
-		*pkt = dummy_pppoe_ipv4_tcp_packet;
-		*pkt_len = sizeof(dummy_pppoe_ipv4_tcp_packet);
-		*offsets = dummy_pppoe_ipv4_tcp_packet_offsets;
-		return;
-	} else if (l2tpv3) {
-		*pkt = dummy_ipv4_l2tpv3_pkt;
-		*pkt_len = sizeof(dummy_ipv4_l2tpv3_pkt);
-		*offsets = dummy_ipv4_l2tpv3_packet_offsets;
-		return;
-	} else {
-		*pkt = dummy_tcp_packet;
-		*pkt_len = sizeof(dummy_tcp_packet);
-		*offsets = dummy_tcp_packet_offsets;
-	}
+	return ret;
 }
 
 /**
@@ -8158,15 +8187,12 @@ ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
  *	   structure per protocol header
  * @lkups_cnt: number of protocols
  * @s_rule: stores rule information from the match criteria
- * @dummy_pkt: dummy packet to fill according to filter match criteria
- * @pkt_len: packet length of dummy packet
- * @offsets: offset info for the dummy packet
+ * @profile: dummy packet profile (the template, its size and header offsets)
  */
 int
 ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 			  struct ice_sw_rule_lkup_rx_tx *s_rule,
-			  const u8 *dummy_pkt, u16 pkt_len,
-			  const struct ice_dummy_pkt_offsets *offsets)
+			  const struct ice_dummy_pkt_profile *profile)
 {
 	u8 *pkt;
 	u16 i;
@@ -8176,9 +8202,10 @@ ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 	 */
 	pkt = s_rule->hdr_data;
 
-	memcpy(pkt, dummy_pkt, pkt_len);
+	memcpy(pkt, profile->pkt, profile->pkt_len);
 
 	for (i = 0; i < lkups_cnt; i++) {
+		const struct ice_dummy_pkt_offsets *offsets = profile->offsets;
 		enum ice_protocol_type type;
 		u16 offset = 0, len = 0, j;
 		bool found = false;
@@ -8187,6 +8214,10 @@ ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 		 * was already checked when search for the dummy packet
 		 */
 		type = lkups[i].type;
+		/* metadata isn't present in the packet */
+		if (type == ICE_HW_METADATA)
+			continue;
+
 		for (j = 0; offsets[j].type != ICE_PROTOCOL_LAST; j++) {
 			if (type == offsets[j].type) {
 				offset = offsets[j].offset;
@@ -8262,28 +8293,18 @@ ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 		 * indicated by the mask to make sure we don't improperly write
 		 * over any significant packet data.
 		 */
-		for (j = 0; j < len / sizeof(u16); j++)
-#ifdef __CHECKER__
-			/* cppcheck-suppress objectIndex */
-#endif /* __CHECKER__ */
-			if (((u16 *)&lkups[i].m_u)[j])
-				((u16 *)(pkt + offset))[j] =
-					(((u16 *)(pkt + offset))[j] &
-#ifdef __CHECKER__
-					 /* cppcheck-suppress objectIndex */
-#endif /* __CHECKER__ */
-					 ~((u16 *)&lkups[i].m_u)[j]) |
-#ifdef __CHECKER__
-					/* cppcheck-suppress objectIndex */
-#endif /* __CHECKER__ */
-					(((u16 *)&lkups[i].h_u)[j] &
-#ifdef __CHECKER__
-					 /* cppcheck-suppress objectIndex */
-#endif /* __CHECKER__ */
-					 ((u16 *)&lkups[i].m_u)[j]);
+		for (j = 0; j < len / sizeof(u16); j++) {
+			u16 *ptr = (u16 *)(pkt + offset);
+			u16 mask = lkups[i].m_raw[j];
+
+			if (!mask)
+				continue;
+
+			ptr[j] = (ptr[j] & ~mask) | (lkups[i].h_raw[j] & mask);
+		}
 	}
 
-	s_rule->hdr_len = cpu_to_le16(pkt_len);
+	s_rule->hdr_len = cpu_to_le16(profile->pkt_len);
 
 	return 0;
 }
@@ -8302,7 +8323,6 @@ ice_fill_adv_packet_tun(struct ice_hw *hw, enum ice_sw_tunnel_type tun_type,
 	u16 open_port, i;
 
 	switch (tun_type) {
-	case ICE_SW_TUN_AND_NON_TUN:
 	case ICE_SW_TUN_VXLAN_GPE:
 	case ICE_SW_TUN_VXLAN:
 	case ICE_SW_TUN_VXLAN_VLAN:
@@ -8339,15 +8359,20 @@ ice_fill_adv_packet_tun(struct ice_hw *hw, enum ice_sw_tunnel_type tun_type,
 
 /**
  * ice_fill_adv_packet_vlan - fill dummy packet with VLAN tag type
+ * @hw: pointer to hw structure
  * @vlan_type: VLAN tag type
  * @pkt: dummy packet to fill in
  * @offsets: offset info for the dummy packet
  */
 static int
-ice_fill_adv_packet_vlan(u16 vlan_type, u8 *pkt,
+ice_fill_adv_packet_vlan(struct ice_hw *hw, u16 vlan_type, u8 *pkt,
 			 const struct ice_dummy_pkt_offsets *offsets)
 {
 	u16 i;
+
+	/* Check if there is something to do */
+	if (!vlan_type || !ice_is_dvm_ena(hw))
+		return 0;
 
 	/* Find VLAN header and insert VLAN TPID */
 	for (i = 0; offsets[i].type != ICE_PROTOCOL_LAST; i++) {
@@ -8365,6 +8390,15 @@ ice_fill_adv_packet_vlan(u16 vlan_type, u8 *pkt,
 	}
 
 	return -EIO;
+}
+
+static bool ice_rules_equal(const struct ice_adv_rule_info *first,
+			    const struct ice_adv_rule_info *second)
+{
+	return first->sw_act.flag == second->sw_act.flag &&
+	       first->tun_type == second->tun_type &&
+	       first->vlan_type == second->vlan_type &&
+	       first->src_vsi == second->src_vsi;
 }
 
 /**
@@ -8400,9 +8434,7 @@ ice_find_adv_rule_entry(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 				lkups_matched = false;
 				break;
 			}
-		if (rinfo->sw_act.flag == list_itr->rule_info.sw_act.flag &&
-		    rinfo->tun_type == list_itr->rule_info.tun_type &&
-		    rinfo->vlan_type == list_itr->rule_info.vlan_type &&
+		if (ice_rules_equal(rinfo, &list_itr->rule_info) &&
 		    lkups_matched)
 			return list_itr;
 	}
@@ -8518,6 +8550,42 @@ ice_adv_add_update_vsi_list(struct ice_hw *hw,
 	return status;
 }
 
+void ice_rule_add_tunnel_metadata(struct ice_adv_lkup_elem *lkup,
+				  struct ice_adv_rule_info *rule_info,
+				  enum ice_sw_tunnel_type tun_type)
+{
+	lkup->type = ICE_HW_METADATA;
+
+	if (tun_type == ICE_SW_TUN_AND_NON_TUN && rule_info->add_dir_lkup)
+		lkup->m_u.metadata.flags[ICE_PKT_FLAGS_MDID20] |=
+			cpu_to_be16(ICE_PKT_SRC_RX);
+
+	lkup->m_u.metadata.flags[ICE_PKT_FLAGS_MDID21] |=
+		cpu_to_be16(ICE_PKT_TUNNEL_MASK);
+}
+
+void ice_rule_add_direction_metadata(struct ice_adv_lkup_elem *lkup)
+{
+	lkup->type = ICE_HW_METADATA;
+	lkup->m_u.metadata.flags[ICE_PKT_FLAGS_MDID20] |=
+		cpu_to_be16(ICE_PKT_FROM_NETWORK);
+}
+
+#ifdef HAVE_TCF_VLAN_TPID
+void ice_rule_add_vlan_metadata(struct ice_adv_lkup_elem *lkup)
+{
+	lkup->type = ICE_HW_METADATA;
+	lkup->m_u.metadata.flags[ICE_PKT_FLAGS_MDID20] |=
+		cpu_to_be16(ICE_PKT_VLAN_MASK);
+}
+#endif /* HAVE_TCF_VLAN_TPID */
+
+void ice_rule_add_src_vsi_metadata(struct ice_adv_lkup_elem *lkup)
+{
+	lkup->type = ICE_HW_METADATA;
+	lkup->m_u.metadata.source_vsi = cpu_to_be16(ICE_MDID_SOURCE_VSI_MASK);
+}
+
 /**
  * ice_add_adv_rule - helper function to create an advanced switch rule
  * @hw: pointer to the hardware structure
@@ -8542,13 +8610,12 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		 struct ice_rule_query_data *added_entry)
 {
 	struct ice_adv_fltr_mgmt_list_entry *m_entry, *adv_fltr = NULL;
-	u16 rid = 0, i, pkt_len, rule_buf_sz, vsi_handle;
-	const struct ice_dummy_pkt_offsets *pkt_offsets;
 	struct ice_sw_rule_lkup_rx_tx *s_rule = NULL;
+	const struct ice_dummy_pkt_profile *profile;
+	u16 rid = 0, i, rule_buf_sz, vsi_handle;
 	struct ice_sw_rule_lkup_rx_tx *rx_tx;
 	struct list_head *rule_head;
 	struct ice_switch_info *sw;
-	const u8 *pkt = NULL;
 	u16 num_rules = 1;
 	u16 word_cnt;
 	u32 act = 0;
@@ -8567,14 +8634,10 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	/* get # of words we need to match */
 	word_cnt = 0;
 	for (i = 0; i < lkups_cnt; i++) {
-		u16 j, *ptr;
+		u16 j;
 
-		ptr = (u16 *)&lkups[i].m_u;
-		for (j = 0; j < sizeof(lkups->m_u) / sizeof(u16); j++)
-#ifdef __CHECKER__
-			/* cppcheck-suppress objectIndex */
-#endif /* __CHECKER__ */
-			if (ptr[j] != 0)
+		for (j = 0; j < ARRAY_SIZE(lkups->m_raw); j++)
+			if (lkups[i].m_raw[j])
 				word_cnt++;
 	}
 
@@ -8584,13 +8647,8 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	if (word_cnt > ICE_MAX_CHAIN_WORDS)
 		return -ENOSPC;
 
-	/* make sure that we can locate a dummy packet */
-	ice_find_dummy_packet(lkups, lkups_cnt, rinfo->tun_type, &pkt, &pkt_len,
-			      &pkt_offsets);
-	if (!pkt) {
-		status = -EINVAL;
-		goto err_ice_add_adv_rule;
-	}
+	/* locate a dummy packet */
+	profile = ice_find_dummy_packet(lkups, lkups_cnt, rinfo->tun_type);
 
 	if (!(rinfo->sw_act.fltr_act == ICE_FWD_TO_VSI ||
 	      rinfo->sw_act.fltr_act == ICE_FWD_TO_Q ||
@@ -8605,7 +8663,10 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	if (rinfo->sw_act.fltr_act == ICE_FWD_TO_VSI)
 		rinfo->sw_act.fwd_id.hw_vsi_id =
 			ice_get_hw_vsi_num(hw, vsi_handle);
-	if (rinfo->sw_act.flag & ICE_FLTR_TX)
+
+	if (rinfo->src_vsi)
+		rinfo->sw_act.src = ice_get_hw_vsi_num(hw, rinfo->src_vsi);
+	else
 		rinfo->sw_act.src = ice_get_hw_vsi_num(hw, vsi_handle);
 
 	status = ice_add_adv_recipe(hw, lkups, lkups_cnt, rinfo, &rid);
@@ -8631,7 +8692,7 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		}
 		return status;
 	}
-	rule_buf_sz = struct_size(s_rule, hdr_data, 0) + pkt_len;
+	rule_buf_sz = struct_size(s_rule, hdr_data, 0) + profile->pkt_len;
 	s_rule = devm_kzalloc(ice_hw_to_dev(hw), rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
@@ -8670,45 +8731,39 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		goto err_ice_add_adv_rule;
 	}
 
-	/* Set the rule LOOKUP type based on caller specified 'Rx'
-	 * instead of hardcoding it to be either LOOKUP_TX/RX
+	/* If there is no matching criteria for direction there
+	 * is only one difference between Rx and Tx:
+	 * - get switch id base on VSI number from source field (Tx)
+	 * - get switch id base on port number (Rx)
 	 *
-	 * for 'Rx' set the source to be the port number
-	 * for 'Tx' set the source to be the source HW VSI number (determined
-	 * by caller)
+	 * If matching on direction metadata is chose rule direction is
+	 * extracted from type value set here.
 	 */
-	if (rinfo->rx) {
-		s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
-		s_rule->src = cpu_to_le16(hw->port_info->lport);
-	} else {
+	if (rinfo->sw_act.flag & ICE_FLTR_TX) {
 		s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_TX);
 		s_rule->src = cpu_to_le16(rinfo->sw_act.src);
+	} else {
+		s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
+		s_rule->src = cpu_to_le16(hw->port_info->lport);
 	}
 
 	s_rule->recipe_id = cpu_to_le16(rid);
 	s_rule->act = cpu_to_le32(act);
 
-	status = ice_fill_adv_dummy_packet(lkups, lkups_cnt, s_rule, pkt,
-					   pkt_len, pkt_offsets);
+	status = ice_fill_adv_dummy_packet(lkups, lkups_cnt, s_rule, profile);
 	if (status)
 		goto err_ice_add_adv_rule;
 
-	if (rinfo->tun_type != ICE_NON_TUN &&
-	    rinfo->tun_type != ICE_SW_TUN_AND_NON_TUN) {
-		status = ice_fill_adv_packet_tun(hw, rinfo->tun_type,
-						 s_rule->hdr_data,
-						 pkt_offsets);
-		if (status)
-			goto err_ice_add_adv_rule;
-	}
+	status = ice_fill_adv_packet_tun(hw, rinfo->tun_type, s_rule->hdr_data,
+					 profile->offsets);
+	if (status)
+		goto err_ice_add_adv_rule;
 
-	if (rinfo->vlan_type != 0 && ice_is_dvm_ena(hw)) {
-		status = ice_fill_adv_packet_vlan(rinfo->vlan_type,
-						  s_rule->hdr_data,
-						  pkt_offsets);
-		if (status)
-			goto err_ice_add_adv_rule;
-	}
+	status = ice_fill_adv_packet_vlan(hw, rinfo->vlan_type,
+					  s_rule->hdr_data,
+					  profile->offsets);
+	if (status)
+		goto err_ice_add_adv_rule;
 
 	rx_tx = s_rule;
 
@@ -8876,6 +8931,7 @@ ice_rem_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	bool remove_rule = false;
 	struct mutex *rule_lock; /* Lock to protect filter rule list */
 	u16 i, rid, vsi_handle;
+	bool is_add = false;
 	int status = 0;
 
 	memset(&lkup_exts, 0, sizeof(lkup_exts));
@@ -8890,14 +8946,8 @@ ice_rem_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 			return -EIO;
 	}
 
-	/* Create any special protocol/offset pairs, such as looking at tunnel
-	 * bits by extracting metadata
-	 */
-	status = ice_add_special_words(rinfo, &lkup_exts, ice_is_dvm_ena(hw));
-	if (status)
-		return status;
-
-	rid = ice_find_recp(hw, &lkup_exts, rinfo->tun_type, rinfo->priority);
+	rid = ice_find_recp(hw, &lkup_exts, rinfo->tun_type,
+			    rinfo->priority, &is_add);
 	/* If did not find a recipe that match the existing criteria */
 	if (rid == ICE_MAX_NUM_RECIPES)
 		return -EINVAL;
@@ -8941,14 +8991,21 @@ ice_rem_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 					 ice_aqc_opc_remove_sw_rules, NULL);
 		if (!status || status == -ENOENT) {
 			struct ice_switch_info *sw = hw->switch_info;
+			struct ice_sw_recipe *r_list = sw->recp_list;
 
 			mutex_lock(rule_lock);
 			list_del(&list_elem->list_entry);
 			devm_kfree(ice_hw_to_dev(hw), list_elem->lkups);
 			devm_kfree(ice_hw_to_dev(hw), list_elem);
 			mutex_unlock(rule_lock);
-			if (list_empty(&sw->recp_list[rid].filt_rules))
-				sw->recp_list[rid].adv_rule = false;
+			if (list_empty(&r_list[rid].filt_rules)) {
+				r_list[rid].adv_rule = false;
+
+				/* All rules for this recipe are now removed */
+				if (hw->subscribable_recipes_supported)
+					ice_release_recipe_res(hw,
+							       &r_list[rid]);
+			}
 		}
 		devm_kfree(ice_hw_to_dev(hw), s_rule);
 	}
@@ -8998,7 +9055,7 @@ ice_rem_adv_rule_by_id(struct ice_hw *hw,
  *
  * This function is used to remove all the rules for a given VSI and as soon
  * as removing a rule fails, it will return immediately with the error code,
- * else it will return success.
+ * else it will return 0.
  */
 int ice_rem_adv_rule_for_vsi(struct ice_hw *hw, u16 vsi_handle)
 {

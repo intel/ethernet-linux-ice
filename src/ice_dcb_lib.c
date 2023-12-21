@@ -229,10 +229,10 @@ void ice_vsi_cfg_dcb_rings(struct ice_vsi *vsi)
 
 	if (!test_bit(ICE_FLAG_DCB_ENA, vsi->back->flags)) {
 		/* Reset the TC information */
-		for (i = 0; i < vsi->num_txq; i++)
+		ice_for_each_txq(vsi, i)
 			vsi->tx_rings[i]->dcb_tc = 0;
 
-		for (i = 0; i < vsi->num_rxq; i++)
+		ice_for_each_rxq(vsi, i)
 			vsi->rx_rings[i]->dcb_tc = 0;
 
 		return;

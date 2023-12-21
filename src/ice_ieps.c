@@ -3,8 +3,8 @@
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver IEPS extensions */
 
-#include "ice_ieps.h"
 #include "ice.h"
+#include "ice_ieps.h"
 #include "ice_lib.h"
 
 static struct ieps_peer_api_version ice_ieps_version = {
@@ -863,7 +863,7 @@ ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
 #define ICE_IEPS_SBQ_ADDR_HIGH_M 0xFFFFFFFF
 #define ICE_IEPS_SBQ_ADDR_LOW_M  0xFFFF
 
-	sbq_msg.dest_dev = rmn_0;
+	sbq_msg.dest_dev = rw->dest_dev;
 	sbq_msg.msg_addr_low = rw->reg & ICE_IEPS_SBQ_ADDR_LOW_M;
 	sbq_msg.msg_addr_high = (rw->reg >> ICE_IEPS_SBQ_ADDR_HIGH_S) &
 				ICE_IEPS_SBQ_ADDR_HIGH_M;

@@ -1,7 +1,7 @@
 # adqsetup
 
 _SPDX-License-Identifier: BSD-3-Clause_  
-_Copyright (C) 2022 - 2023 Intel Corporation_  
+_Copyright (c) 2022, Intel Corporation_  
 
 **Dependencies:** _Python 2.7-3.10_
 
@@ -63,6 +63,8 @@ command line options.
 - **busyread**: (integer) _busy_read value_
 - **cpus**: (integer list|'auto') _CPUs to use for handling 'default' 
 traffic, default 'auto'_
+- **min-rate**: (integer) _minimum rate for bandwidth shaping (in Mb/s)_
+- **max-rate**: (integer) _maximum rate for bandwidth shaping (in Mb/s)_
 - **numa**: (integer|'local'|'remote'|'all') _Numa node to use for 'default' 
 traffic, default 'all' (prefer local)_
 - **dev**: (string) _Network interface device to configure_
@@ -80,7 +82,10 @@ traffic, default 'all' (prefer local)_
 - **addrs**: (string list) _Local IP addresses of traffic_
 - **cpus**: (integer list|'auto') _CPUs to use for handling traffic, 
 default 'auto'_
+- **mac**: (string) _Local MAC addresses of traffic_
 - **mode**: ('exclusive'|'shared') _Mode for traffic class_
+- **min-rate**: (integer) _minimum rate for bandwidth shaping (in Mb/s)_
+- **max-rate**: (integer) _maximum rate for bandwidth shaping (in Mb/s)_
 - **numa**: (integer|'local'|'remote'|'all') _Numa node to use for traffic, 
 default 'all' (prefer local)_
 - **pollers**: (integer) _Number of independent pollers, default 0_

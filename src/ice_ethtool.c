@@ -2164,6 +2164,8 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 
 			pf->dcbx_cap &= ~DCB_CAP_DCBX_LLD_MANAGED;
 			pf->dcbx_cap |= DCB_CAP_DCBX_HOST;
+
+			ice_ena_all_vfs_rx_lldp(pf);
 		} else {
 			bool dcbx_agent_status;
 
@@ -2186,10 +2188,10 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 				goto ethtool_exit;
 			}
 
-			/* Remove rule to direct LLDP packets to default VSI.
+			/* Remove rules to direct LLDP packets to PF/VF VSIs.
 			 * The FW LLDP engine will now be consuming them.
 			 */
-			ice_cfg_sw_lldp(vsi, false, false);
+			ice_dis_sw_lldp(pf);
 
 			/* AQ command to start FW LLDP agent will return an
 			 * error if the agent is already started
@@ -2540,7 +2542,7 @@ ice_get_ethtool_stats(struct net_device *netdev,
 					 ICE_PHY_TYPE_LOW_100G_AUI4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4 | \
-					 ICE_PHY_TYPE_LOW_100GBASE_CP2 | \
+					 ICE_PHY_TYPE_LOW_100GBASE_CR2 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_SR2 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_DR)
 
@@ -3476,7 +3478,7 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 	case ICE_PHY_TYPE_LOW_100G_AUI4:
 	case ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4:
 	case ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4:
-	case ICE_PHY_TYPE_LOW_100GBASE_CP2:
+	case ICE_PHY_TYPE_LOW_100GBASE_CR2:
 	case ICE_PHY_TYPE_LOW_100GBASE_SR2:
 	case ICE_PHY_TYPE_LOW_100GBASE_DR:
 		netdev_warn(netdev, "100G PHY type detected but this can't be reported to ethtool as your kernel is too old\n");
@@ -4294,13 +4296,13 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 
 	/* set for the next time the netdev is started */
 	if (!netif_running(vsi->netdev)) {
-		for (i = 0; i < vsi->alloc_txq; i++)
+		ice_for_each_txq(vsi, i)
 			vsi->tx_rings[i]->count = new_tx_cnt;
-		for (i = 0; i < vsi->alloc_rxq; i++)
+		ice_for_each_rxq(vsi, i)
 			vsi->rx_rings[i]->count = new_rx_cnt;
 #ifdef HAVE_XDP_SUPPORT
 		if (ice_is_xdp_ena_vsi(vsi))
-			for (i = 0; i < vsi->num_xdp_txq; i++)
+			ice_for_each_xdp_txq(vsi, i)
 				vsi->xdp_rings[i]->count = new_tx_cnt;
 #endif /* HAVE_XDP_SUPPORT */
 		vsi->num_tx_desc = (u16)new_tx_cnt;
@@ -4353,7 +4355,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		goto free_tx;
 	}
 
-	for (i = 0; i < vsi->num_xdp_txq; i++) {
+	ice_for_each_xdp_txq(vsi, i) {
 		/* clone ring and setup updated count */
 		xdp_rings[i] = *vsi->xdp_rings[i];
 		xdp_rings[i].count = new_tx_cnt;
@@ -4455,7 +4457,7 @@ process_link:
 
 #ifdef HAVE_XDP_SUPPORT
 		if (xdp_rings) {
-			for (i = 0; i < vsi->num_xdp_txq; i++) {
+			ice_for_each_xdp_txq(vsi, i) {
 				ice_free_tx_ring(vsi->xdp_rings[i]);
 				*vsi->xdp_rings[i] = xdp_rings[i];
 			}
@@ -4883,8 +4885,8 @@ ice_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
 {
 	struct ice_pf *pf = ice_netdev_to_pf(dev);
 
-	/* only report timestamping if PTP is enabled */
-	if (!test_bit(ICE_FLAG_PTP, pf->flags))
+	/* do not report timestamping support if PTP is not supported */
+	if (!ice_is_ptp_supported(pf))
 		return ethtool_op_get_ts_info(dev, info);
 
 	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
@@ -4909,8 +4911,8 @@ ice_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
  */
 static int ice_get_max_txq(struct ice_pf *pf)
 {
-	return min3(pf->msix.eth, pf->max_qps,
-		    (u16)pf->hw.func_caps.common_cap.num_txq);
+	return min_t(u16, pf->max_qps,
+		    pf->hw.func_caps.common_cap.num_txq);
 }
 
 /**
@@ -4919,8 +4921,8 @@ static int ice_get_max_txq(struct ice_pf *pf)
  */
 static int ice_get_max_rxq(struct ice_pf *pf)
 {
-	return min3(pf->msix.eth, pf->max_qps,
-		    (u16)pf->hw.func_caps.common_cap.num_rxq);
+	return min_t(u16, pf->max_qps,
+		    pf->hw.func_caps.common_cap.num_rxq);
 }
 
 /**
@@ -4993,6 +4995,9 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
 	int new_rx = 0, new_tx = 0;
+#ifdef HAVE_AF_XDP_ZC_SUPPORT
+	int max_xsk_qp = 0, xsk_qp;
+#endif /* HAVE_AF_XDP_ZC_SUPPORT */
 	u32 curr_combined;
 	int err;
 
@@ -5065,6 +5070,16 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 			   ice_get_max_txq(pf));
 		return -EINVAL;
 	}
+#ifdef HAVE_AF_XDP_ZC_SUPPORT
+	for_each_set_bit(xsk_qp, vsi->af_xdp_zc_qps,
+			 max_t(int, vsi->alloc_txq, vsi->alloc_rxq))
+		max_xsk_qp = xsk_qp;
+
+	if (min_t(int, new_tx, new_rx) <= max_xsk_qp) {
+		netdev_err(dev, "Requested channel counts are too low for existing zerocopy AF_XDP sockets\n");
+		return -EINVAL;
+	}
+#endif /* HAVE_AF_XDP_ZC_SUPPORT */
 
 	set_bit(ICE_SET_CHANNELS, pf->state);
 	err = ice_vsi_recfg_qs(vsi, new_rx, new_tx);

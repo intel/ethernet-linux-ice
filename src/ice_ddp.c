@@ -133,7 +133,7 @@ ice_aq_update_pkg(struct ice_hw *hw, struct ice_buf_hdr *pkg_buf, u16 buf_size,
  * success it returns a pointer to the segment header, otherwise it will
  * return NULL.
  */
-struct ice_generic_seg_hdr *
+static struct ice_generic_seg_hdr *
 ice_find_seg_in_pkg(struct ice_hw *hw, u32 seg_type,
 		    struct ice_pkg_hdr *pkg_hdr)
 {
@@ -990,7 +990,7 @@ ice_find_label_value(struct ice_seg *ice_seg, char const *name, u32 type,
  * Verifies various attributes of the package file, including length, format
  * version, and the requirement of at least one segment.
  */
-enum ice_ddp_state ice_verify_pkg(struct ice_pkg_hdr *pkg, u32 len)
+static enum ice_ddp_state ice_verify_pkg(struct ice_pkg_hdr *pkg, u32 len)
 {
 	u32 seg_count;
 	u32 i;
@@ -1235,11 +1235,8 @@ ice_get_ddp_pkg_state(struct ice_hw *hw, bool already_loaded)
 	} else if (hw->active_pkg_ver.major != ICE_PKG_SUPP_VER_MAJ ||
 		   hw->active_pkg_ver.minor != ICE_PKG_SUPP_VER_MNR) {
 		return ICE_DDP_PKG_ALREADY_LOADED_NOT_SUPPORTED;
-	} else if (hw->active_pkg_ver.major == ICE_PKG_SUPP_VER_MAJ &&
-		   hw->active_pkg_ver.minor == ICE_PKG_SUPP_VER_MNR) {
-		return ICE_DDP_PKG_COMPATIBLE_ALREADY_LOADED;
 	} else {
-		return ICE_DDP_PKG_ERR;
+		return ICE_DDP_PKG_COMPATIBLE_ALREADY_LOADED;
 	}
 }
 
@@ -1256,7 +1253,6 @@ static void ice_init_pkg_regs(struct ice_hw *hw)
 	/* setup Switch block input mask, which is 48-bits in two parts */
 	wr32(hw, GL_PREEXT_L2_PMASK0(ICE_SW_BLK_IDX), ICE_SW_BLK_INP_MASK_L);
 	wr32(hw, GL_PREEXT_L2_PMASK1(ICE_SW_BLK_IDX), ICE_SW_BLK_INP_MASK_H);
-
 }
 
 /**
@@ -2415,11 +2411,16 @@ ice_get_set_tx_topo(struct ice_hw *hw, u8 *buf, u16 buf_size,
 		if (buf)
 			cmd->set_flags |= ICE_AQC_TX_TOPO_FLAGS_SRC_RAM |
 					  ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW;
+		if (ice_is_e825c(hw))
+			desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 	} else {
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_tx_topo);
 		cmd->get_flags = ICE_AQC_TX_TOPO_GET_RAM;
 	}
-	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+
+	if (!ice_is_e825c(hw))
+		desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+
 	status = ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
 	if (status)
 		return status;

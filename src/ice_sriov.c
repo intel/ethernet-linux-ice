@@ -729,6 +729,33 @@ static void ice_sriov_clear_mbx_register(struct ice_vf *vf)
 }
 
 /**
+ * ice_sriov_poll_reset_status - poll SRIOV VF reset status
+ * @vf: pointer to VF structure
+ *
+ * Returns true when reset is successful, else returns false
+ */
+static bool ice_sriov_poll_reset_status(struct ice_vf *vf)
+{
+	struct ice_pf *pf = vf->pf;
+	unsigned int i;
+	u32 reg;
+
+	for (i = 0; i < ICE_VFR_WAIT_COUNT; i++) {
+		/* VF reset requires driver to first reset the VF and then
+		 * poll the status register to make sure that the reset
+		 * completed successfully.
+		 */
+		reg = rd32(&pf->hw, VPGEN_VFRSTAT(vf->vf_id));
+		if (reg & VPGEN_VFRSTAT_VFRD_M)
+			return true;
+
+		/* only sleep if the reset is not done */
+		usleep_range(10, 20);
+	}
+	return false;
+}
+
+/**
  * ice_sriov_trigger_reset_register - trigger VF reset for SRIOV VF
  * @vf: pointer to VF structure
  * @is_vflr: true if reset occurred due to VFLR
@@ -752,6 +779,12 @@ static void ice_sriov_trigger_reset_register(struct ice_vf *vf, bool is_vflr)
 	 * VFRTRIG register.
 	 */
 	if (!is_vflr) {
+		/* Waiting for reset finish by virt driver */
+		if (!ice_sriov_poll_reset_status(vf))
+			dev_info(dev, "Reset VF %d never finished",
+				 vf->vf_id);
+
+		/* Reset VF using VPGEN_VFRTRIG register. */
 		reg = rd32(hw, VPGEN_VFRTRIG(vf->vf_id));
 		reg |= VPGEN_VFRTRIG_VFSWR_M;
 		wr32(hw, VPGEN_VFRTRIG(vf->vf_id), reg);
@@ -777,33 +810,6 @@ static void ice_sriov_trigger_reset_register(struct ice_vf *vf, bool is_vflr)
 }
 
 /**
- * ice_sriov_poll_reset_status - poll SRIOV VF reset status
- * @vf: pointer to VF structure
- *
- * Returns true when reset is successful, else returns false
- */
-static bool ice_sriov_poll_reset_status(struct ice_vf *vf)
-{
-	struct ice_pf *pf = vf->pf;
-	unsigned int i;
-	u32 reg;
-
-	for (i = 0; i < 10; i++) {
-		/* VF reset requires driver to first reset the VF and then
-		 * poll the status register to make sure that the reset
-		 * completed successfully.
-		 */
-		reg = rd32(&pf->hw, VPGEN_VFRSTAT(vf->vf_id));
-		if (reg & VPGEN_VFRSTAT_VFRD_M)
-			return true;
-
-		/* only sleep if the reset is not done */
-		usleep_range(10, 20);
-	}
-	return false;
-}
-
-/**
  * ice_sriov_clear_reset_trigger - enable VF to access hardware
  * @vf: VF to enabled hardware access for
  */
@@ -816,24 +822,6 @@ static void ice_sriov_clear_reset_trigger(struct ice_vf *vf)
 	reg &= ~VPGEN_VFRTRIG_VFSWR_M;
 	wr32(hw, VPGEN_VFRTRIG(vf->vf_id), reg);
 	ice_flush(hw);
-}
-
-/**
- * ice_sriov_create_vsi - Create a new VSI for a VF
- * @vf: VF to create the VSI for
- *
- * This is called by ice_vf_recreate_vsi to create the new VSI after the old
- * VSI has been released.
- */
-static int ice_sriov_create_vsi(struct ice_vf *vf)
-{
-	struct ice_vsi *vsi;
-
-	vsi = ice_vf_vsi_setup(vf);
-	if (!vsi)
-		return -ENOMEM;
-
-	return 0;
 }
 
 /**
@@ -983,7 +971,6 @@ static const struct ice_vf_ops ice_sriov_vf_ops = {
 	.poll_reset_status = ice_sriov_poll_reset_status,
 	.clear_reset_trigger = ice_sriov_clear_reset_trigger,
 	.irq_close = NULL,
-	.create_vsi = ice_sriov_create_vsi,
 	.post_vsi_rebuild = ice_sriov_post_vsi_rebuild,
 	.get_q_vector = ice_sriov_get_q_vector,
 	.cfg_rdma_irq_map = ice_sriov_cfg_rdma_irq_map,
@@ -1351,8 +1338,7 @@ int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
 	if (vf->first_vector_idx < 0)
 		goto unroll;
 
-	ice_vf_vsi_release(vf);
-	if (vf->vf_ops->create_vsi(vf)) {
+	if (ice_vf_reconfig_vsi(vf)) {
 		/* Try to rebuild with previous values */
 		needs_rebuild = true;
 		goto unroll;
@@ -1377,7 +1363,7 @@ unroll:
 	vf->num_vf_qs = prev_queues;
 	vf->first_vector_idx = ice_sriov_get_irqs(pf, vf->num_msix, vf->vf_id);
 	if (needs_rebuild)
-		vf->vf_ops->create_vsi(vf);
+		ice_vf_reconfig_vsi(vf);
 
 	ice_ena_vf_mappings(vf);
 	ice_put_vf(vf);
@@ -1887,6 +1873,7 @@ static bool
 ice_min_tx_rate_oversubscribed(struct ice_vf *vf, int min_tx_rate)
 {
 	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+	struct device *dev = ice_pf_to_dev(vf->pf);
 	int all_vfs_min_tx_rate;
 	int link_speed_mbps;
 
@@ -1900,6 +1887,11 @@ ice_min_tx_rate_oversubscribed(struct ice_vf *vf, int min_tx_rate)
 	all_vfs_min_tx_rate -= vf->min_tx_rate;
 
 	if (all_vfs_min_tx_rate + min_tx_rate > link_speed_mbps) {
+		if (ice_calc_all_vfs_min_tx_rate(vf->pf) > link_speed_mbps) {
+			dev_info(dev, "The sum of min_tx_rate for all VF's is greater than the link speed\n");
+			dev_info(dev, "Set the min_tx_rate to 0 on the VF(s) to resolve oversubscription\n");
+		}
+
 		dev_err(ice_pf_to_dev(vf->pf), "min_tx_rate of %d Mbps on VF %u would cause oversubscription of %d Mbps based on the current link speed %d Mbps\n",
 			min_tx_rate, vf->vf_id,
 			all_vfs_min_tx_rate + min_tx_rate - link_speed_mbps,
@@ -1969,7 +1961,7 @@ int ice_set_vf_bw(struct net_device *netdev, int vf_id, int max_tx_rate)
 		goto out_put_vf;
 	}
 
-	if (ice_min_tx_rate_oversubscribed(vf, min_tx_rate)) {
+	if (min_tx_rate && ice_min_tx_rate_oversubscribed(vf, min_tx_rate)) {
 		ret = -EINVAL;
 		goto out_put_vf;
 	}
@@ -2152,6 +2144,9 @@ ice_set_vf_port_vlan(struct net_device *netdev, int vf_id, u16 vlan_id, u8 qos)
 		ret = 0;
 		goto out_put_vf;
 	}
+
+	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
+		goto out_put_vf;
 
 	mutex_lock(&vf->cfg_lock);
 
@@ -2345,7 +2340,9 @@ static void ice_dump_vf(struct ice_vf *vf)
 	dev_info(dev, "\tvf_ver.major = %d vf_ver.minor = %d\n",
 		 vf->vf_ver.major, vf->vf_ver.minor);
 	dev_info(dev, "\tdriver_caps = 0x%08x\n", vf->driver_caps);
-	dev_info(dev, "\tvf_caps = 0x%08lx\n", vf->vf_caps);
+	dev_info(dev, "\tvf_caps:\n");
+	if (test_bit(ICE_VF_CAP_TRUSTED, vf->vf_caps))
+		dev_info(dev, "\t\tICE_VF_CAP_TRUSTED\n");
 	dev_info(dev, "\tvf_states:\n");
 	if (test_bit(ICE_VF_STATE_INIT, vf->vf_states))
 		dev_info(dev, "\t\tICE_VF_STATE_INIT\n");

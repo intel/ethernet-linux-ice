@@ -342,6 +342,8 @@ struct ice_aqc_set_port_params {
 #define ICE_AQC_RES_TYPE_FLAG_SHARED			BIT(7)
 #define ICE_AQC_RES_TYPE_FLAG_SCAN_BOTTOM		BIT(12)
 #define ICE_AQC_RES_TYPE_FLAG_IGNORE_INDEX		BIT(13)
+#define ICE_AQC_RES_TYPE_FLAG_SUBSCRIBE_SHARED		BIT(14)
+#define ICE_AQC_RES_TYPE_FLAG_SUBSCRIBE_CTL		BIT(15)
 
 #define ICE_AQC_RES_TYPE_FLAG_DEDICATED			0x00
 
@@ -619,10 +621,10 @@ struct ice_aqc_vsi_props {
 #define ICE_AQ_VSI_Q_OPT_RSS_GBL_LUT_M		(0xF << ICE_AQ_VSI_Q_OPT_RSS_GBL_LUT_S)
 #define ICE_AQ_VSI_Q_OPT_RSS_HASH_S		6
 #define ICE_AQ_VSI_Q_OPT_RSS_HASH_M		(0x3 << ICE_AQ_VSI_Q_OPT_RSS_HASH_S)
-#define ICE_AQ_VSI_Q_OPT_RSS_TPLZ		(0x0 << ICE_AQ_VSI_Q_OPT_RSS_HASH_S)
-#define ICE_AQ_VSI_Q_OPT_RSS_SYM_TPLZ		(0x1 << ICE_AQ_VSI_Q_OPT_RSS_HASH_S)
-#define ICE_AQ_VSI_Q_OPT_RSS_XOR		(0x2 << ICE_AQ_VSI_Q_OPT_RSS_HASH_S)
-#define ICE_AQ_VSI_Q_OPT_RSS_JHASH		(0x3 << ICE_AQ_VSI_Q_OPT_RSS_HASH_S)
+#define ICE_AQ_VSI_Q_OPT_RSS_HASH_TPLZ		0x0U
+#define ICE_AQ_VSI_Q_OPT_RSS_HASH_SYM_TPLZ	0x1U
+#define ICE_AQ_VSI_Q_OPT_RSS_HASH_XOR		0x2U
+#define ICE_AQ_VSI_Q_OPT_RSS_HASH_JHASH		0x3U
 	u8 q_opt_tc;
 #define ICE_AQ_VSI_Q_OPT_TC_OVR_S		0
 #define ICE_AQ_VSI_Q_OPT_TC_OVR_M		(0x1F << ICE_AQ_VSI_Q_OPT_TC_OVR_S)
@@ -788,7 +790,7 @@ struct ice_aqc_recipe_content {
 #define ICE_AQ_RECIPE_ID_S		0
 #define ICE_AQ_RECIPE_ID_M		(0x3F << ICE_AQ_RECIPE_ID_S)
 #define ICE_AQ_RECIPE_ID_IS_ROOT	BIT(7)
-#define	ICE_AQ_SW_ID_LKUP_IDX		0
+#define ICE_AQ_SW_ID_LKUP_IDX		0
 	u8 lkup_indx[5];
 #define ICE_AQ_RECIPE_LKUP_DATA_S	0
 #define ICE_AQ_RECIPE_LKUP_DATA_M	(0x3F << ICE_AQ_RECIPE_LKUP_DATA_S)
@@ -1405,7 +1407,7 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_LOW_50G_LAUI2		BIT_ULL(41)
 #define ICE_PHY_TYPE_LOW_50G_AUI2_AOC_ACC	BIT_ULL(42)
 #define ICE_PHY_TYPE_LOW_50G_AUI2		BIT_ULL(43)
-#define ICE_PHY_TYPE_LOW_50GBASE_CP		BIT_ULL(44)
+#define ICE_PHY_TYPE_LOW_50GBASE_CR		BIT_ULL(44)
 #define ICE_PHY_TYPE_LOW_50GBASE_SR		BIT_ULL(45)
 #define ICE_PHY_TYPE_LOW_50GBASE_FR		BIT_ULL(46)
 #define ICE_PHY_TYPE_LOW_50GBASE_LR		BIT_ULL(47)
@@ -1422,7 +1424,7 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_LOW_100G_AUI4		BIT_ULL(58)
 #define ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4	BIT_ULL(59)
 #define ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4	BIT_ULL(60)
-#define ICE_PHY_TYPE_LOW_100GBASE_CP2		BIT_ULL(61)
+#define ICE_PHY_TYPE_LOW_100GBASE_CR2		BIT_ULL(61)
 #define ICE_PHY_TYPE_LOW_100GBASE_SR2		BIT_ULL(62)
 #define ICE_PHY_TYPE_LOW_100GBASE_DR		BIT_ULL(63)
 #define ICE_PHY_TYPE_LOW_MAX_INDEX		63
@@ -1991,13 +1993,13 @@ struct ice_aqc_link_topo_addr {
 struct ice_aqc_get_link_topo {
 	struct ice_aqc_link_topo_addr addr;
 	u8 node_part_num;
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_PCA9575			0x21
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_ZL30632_80032		0x24
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_SI5383_5384		0x25
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_E822_PHY			0x30
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_C827			0x31
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX		0x47
-#define ICE_ACQ_GET_LINK_TOPO_NODE_NR_GEN_GPS			0x48
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_PCA9575			0x21
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_ZL30632_80032		0x24
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_SI5383_5384		0x25
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_E822_PHY			0x30
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_C827			0x31
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX		0x47
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_GEN_GPS			0x48
 	u8 rsvd[9];
 };
 
@@ -2677,13 +2679,11 @@ enum ice_lut_type {
 	ICE_LUT_VSI = 0,
 	ICE_LUT_PF = 1,
 	ICE_LUT_GLOBAL = 2,
-	ICE_LUT_TYPE_MASK = 3,
-	ICE_LUT_PF_SMALL = 5, /* yields ICE_LUT_PF when &= ICE_LUT_TYPE_MASK */
+	ICE_LUT_TYPE_MASK = 3
 };
 
 enum ice_lut_size {
 	ICE_LUT_VSI_SIZE = 64,
-	ICE_LUT_PF_SMALL_SIZE = 128,
 	ICE_LUT_GLOBAL_SIZE = 512,
 	ICE_LUT_PF_SIZE = 2048,
 };
@@ -3631,15 +3631,6 @@ struct ice_aqc_driver_shared_params {
 };
 
 enum ice_aqc_driver_params {
-	/* OS clock index for PTP timer Domain 0 */
-	ICE_AQC_DRIVER_PARAM_CLK_IDX_TMR0 = 0,
-	/* OS clock index for PTP timer Domain 1 */
-	ICE_AQC_DRIVER_PARAM_CLK_IDX_TMR1,
-	/* Request ID to recalibrate PHC logic */
-	ICE_AQC_DRIVER_PARAM_PHC_RECALC,
-	/* Indicates that PTP clock controller failed */
-	ICE_AQC_DRIVER_PARAM_PTP_CC_FAILED,
-
 	/* Add new parameters above */
 	ICE_AQC_DRIVER_PARAM_MAX = 16,
 };
@@ -3653,7 +3644,7 @@ struct ice_aqc_event_lan_overflow {
 
 /* Debug Dump Internal Data (indirect 0xFF08) */
 struct ice_aqc_debug_dump_internals {
-	u8 cluster_id;
+	__le16 cluster_id; /* Expresses next cluster ID in response */
 #define ICE_AQC_DBG_DUMP_CLUSTER_ID_SW			0
 #define ICE_AQC_DBG_DUMP_CLUSTER_ID_ACL			1
 #define ICE_AQC_DBG_DUMP_CLUSTER_ID_TXSCHED		2
@@ -3667,8 +3658,7 @@ struct ice_aqc_debug_dump_internals {
 #define ICE_AQC_DBG_DUMP_CLUSTER_ID_L2P			8
 #define ICE_AQC_DBG_DUMP_CLUSTER_ID_QUEUE_MNG		9
 #define ICE_AQC_DBG_DUMP_CLUSTER_ID_FULL_CSR_SPACE	21
-#define ICE_ACQ_DBG_DUMP_CLUSTER_ID_MNG_TRANSACTION	22
-	u8 reserved;
+#define ICE_AQC_DBG_DUMP_CLUSTER_ID_MNG_TRANSACTIONS	22
 	__le16 table_id; /* Used only for non-memory clusters */
 	__le32 idx; /* In table entries for tables, in bytes for memory */
 	__le32 addr_high;

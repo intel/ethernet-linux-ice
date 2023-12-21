@@ -69,6 +69,7 @@ ice-y := ice_main.o	\
 	 ice_pf_vsi_vlan_ops.o \
 	 ice_vsi_vlan_ops.o \
 	 ice_vsi_vlan_lib.o \
+	 ice_hwmon.o \
 	 ice_tc_lib.o	\
 	 ice_fdir.o	\
 	 ice_ethtool_fdir.o	\
@@ -90,7 +91,7 @@ ice-y := ice_main.o	\
 	 ice_flg_rd.o		\
 	 ice_xlt_kb.o		\
 	 ice_parser_rt.o	\
-	ice_peer_support.o	\
+	ice_aux_support.o	\
 	 ice_lag.o		\
 	 ice_fwlog.o		\
 	 ice_ieps.o		\
@@ -98,7 +99,7 @@ ice-y := ice_main.o	\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
-ice-y += ice_peer_support.o
+ice-y += ice_aux_support.o
 ice-y += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
 
@@ -158,6 +159,7 @@ else	# ifneq($(KERNELRELEASE),)
 # normal makefile
 
 DRIVER := ice
+EXTRA_CFLAGS += -std=gnu11
 
 # ice does not support building on kernels older than 3.10.0
 $(call minimum_kver_check,3,10,0)

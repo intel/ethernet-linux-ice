@@ -451,7 +451,7 @@ ice_vc_parse_fsub_pattern(struct ice_vf *vf,
 	}
 
 	rule_info->tun_type = tun_type;
-	rule_info->rx = 1;
+	rule_info->sw_act.flag |= ICE_FLTR_RX;
 	rule_info->add_dir_lkup = true;
 	rule_info->priority = ICE_FSUB_PRI_BASE - fltr->priority;
 
@@ -797,7 +797,7 @@ int ice_vc_flow_unsub_fltr(struct ice_vf *vf, u8 *msg)
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		status = VIRTCHNL_FSUB_FAILURE_RULE_NORESOURCE;
 		dev_dbg(dev, "Delete FSUB filter from VF %d\n", vf->vf_id);
-		goto err_free;
+		goto err_exit;
 	}
 
 	ice_vc_fsub_remove_entry(vf, conf, fltr->flow_id);
@@ -808,10 +808,6 @@ int ice_vc_flow_unsub_fltr(struct ice_vf *vf, u8 *msg)
 	kfree(conf->fsub_fltr.list);
 	kfree(conf);
 	return ret;
-
-err_free:
-	kfree(conf->fsub_fltr.list);
-	kfree(conf);
 
 err_exit:
 	stat = kzalloc(sizeof(*stat), GFP_KERNEL);

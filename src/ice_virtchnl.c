@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2023 Intel Corporation */
 
+#include "ice.h"
 #include "ice_virtchnl.h"
 #include "ice_vf_lib_private.h"
-#include "ice.h"
 #include "ice_base.h"
 #include "ice_lib.h"
 #include "ice_fltr.h"
@@ -569,9 +569,9 @@ ice_vc_send_response_to_vf(struct ice_vf *vf, u32 v_opcode,
 	aq_ret = ice_aq_send_msg_to_vf(&pf->hw, vf->vf_id, v_opcode, v_retval,
 				       msg, msglen, NULL);
 	if (aq_ret && pf->hw.mailboxq.sq_last_status != ICE_AQ_RC_ENOSYS) {
-		dev_info(dev, "Unable to send the message to VF %d ret %d aq_err %s\n",
-			 vf->vf_id, aq_ret,
-			 ice_aq_str(pf->hw.mailboxq.sq_last_status));
+		dev_err(dev, "Unable to send the message to VF %d ret %d aq_err %s\n",
+			vf->vf_id, aq_ret,
+			ice_aq_str(pf->hw.mailboxq.sq_last_status));
 		return -EIO;
 	}
 
@@ -693,7 +693,8 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 	/* Don't process if GET_VF_RESOURCES is already negotiated */
-	if (test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
+	if (test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states) &&
+	    ice_dcf_get_state(pf) == ICE_DCF_STATE_ON) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto err;
 	}
@@ -781,7 +782,8 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_USO)
 		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_USO;
 
-	if (vf->driver_caps & VIRTCHNL_VF_LARGE_NUM_QPAIRS)
+	if (vf->driver_caps & VIRTCHNL_VF_LARGE_NUM_QPAIRS &&
+	    vsi->rss_lut_type != ICE_LUT_VSI)
 		vfres->vf_cap_flags |= VIRTCHNL_VF_LARGE_NUM_QPAIRS;
 
 	/* Negotiate DCF capability. */
@@ -943,7 +945,8 @@ ice_vc_rss_hash_update(struct ice_hw *hw, struct ice_vsi *vsi, u8 hash_type)
 	ctx->info.q_opt_rss = vsi->info.q_opt_rss &
 		~(ICE_AQ_VSI_Q_OPT_RSS_HASH_M);
 	/* hash_type is passed in as ICE_AQ_VSI_Q_OPT_RSS_<XOR|TPLZ|SYM_TPLZ */
-	ctx->info.q_opt_rss |= hash_type;
+	ctx->info.q_opt_rss |= ((hash_type << ICE_AQ_VSI_Q_OPT_RSS_HASH_S) &
+				ICE_AQ_VSI_Q_OPT_RSS_HASH_M);
 
 	/* Preserve existing queueing option setting */
 	ctx->info.q_opt_tc = vsi->info.q_opt_tc;
@@ -2297,15 +2300,15 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 	}
 
 	if (rss_cfg->rss_algorithm == VIRTCHNL_RSS_ALG_R_ASYMMETRIC) {
-		hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_XOR :
-				     ICE_AQ_VSI_Q_OPT_RSS_TPLZ;
+		hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_HASH_XOR :
+				  ICE_AQ_VSI_Q_OPT_RSS_HASH_TPLZ;
 
 		v_ret = ice_vc_rss_hash_update(hw, vsi, hash_type);
 		goto error_param;
 	}
 
-	hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_SYM_TPLZ :
-			ICE_AQ_VSI_Q_OPT_RSS_TPLZ;
+	hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_HASH_SYM_TPLZ :
+			  ICE_AQ_VSI_Q_OPT_RSS_HASH_TPLZ;
 	v_ret = ice_vc_rss_hash_update(hw, vsi, hash_type);
 	if (v_ret)
 		goto error_param;
@@ -4047,11 +4050,16 @@ ice_vc_add_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 			 * the primary MAC in ice_vfhw_mac_add() below
 			 */
 		} else if (ret) {
-			dev_err(dev, "Failed to add MAC %pM for VF %d\n, error %d\n",
+			dev_err(dev, "Failed to add MAC %pM for VF %d, error %d\n",
 				mac_addr, vf->vf_id, ret);
 			return ret;
 		} else {
 			vf->num_mac++;
+
+			if (ice_is_mc_lldp_eth_addr(mac_addr)) {
+				vsi->lldp_macs++;
+				ice_ena_vf_rx_lldp(vf);
+			}
 		}
 
 		ice_vfhw_mac_add(vf, vc_ether_addr);
@@ -4127,7 +4135,7 @@ ice_vc_del_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	u8 *mac_addr = vc_ether_addr->addr;
-	int status;
+	int status = 0;
 
 	if (!ice_can_vf_change_mac(vf) &&
 	    ether_addr_equal(vf->dev_lan_addr.addr, mac_addr))
@@ -4143,6 +4151,12 @@ ice_vc_del_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 			mac_addr, vf->vf_id, status);
 		return -EIO;
 	}
+
+	if (ice_is_mc_lldp_eth_addr(mac_addr))
+		vsi->lldp_macs--;
+
+	if (vsi->rx_lldp_ena && !vsi->lldp_macs)
+		ice_cfg_sw_lldp(vsi, false, false);
 
 	ice_vfhw_mac_del(vf, vc_ether_addr);
 
@@ -4259,19 +4273,17 @@ static int ice_vc_del_mac_addr_msg(struct ice_vf *vf, u8 *msg)
  */
 static bool ice_check_avail_qs_contig(struct ice_pf *pf, u16 num_queues)
 {
-	u16 txqs_offset, rxqs_offset;
+	u16 txqs_index, rxqs_index;
 
 	mutex_lock(&pf->avail_q_mutex);
 
-	txqs_offset = bitmap_find_next_zero_area(pf->avail_txqs,
-						 pf->max_pf_txqs,
-						 0, num_queues, 0);
-	rxqs_offset = bitmap_find_next_zero_area(pf->avail_rxqs,
-						 pf->max_pf_rxqs,
-						 0, num_queues, 0);
+	txqs_index = bitmap_find_next_zero_area(pf->avail_txqs, pf->max_pf_txqs,
+						0, num_queues, 0);
+	rxqs_index = bitmap_find_next_zero_area(pf->avail_rxqs, pf->max_pf_rxqs,
+						0, num_queues, 0);
 	mutex_unlock(&pf->avail_q_mutex);
 
-	if (txqs_offset < pf->max_pf_txqs && rxqs_offset < pf->max_pf_rxqs)
+	if (txqs_index < pf->max_pf_txqs && rxqs_index < pf->max_pf_rxqs)
 		return true;
 	else
 		return false;
@@ -4305,8 +4317,9 @@ static int ice_vc_request_qs_msg(struct ice_vf *vf, u8 *msg)
 	do {
 		if (test_bit(ICE_FLAG_SRIOV_ENA, pf->flags))
 			break;
+		cnt++;
 		msleep_interruptible(50);
-	} while (++cnt < 200);
+	} while (cnt < 200);
 
 	if (cnt == 200) {
 		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
@@ -7324,6 +7337,647 @@ out:
 				    v_ret, NULL, 0);
 }
 
+/**
+ * ice_vc_hqos_validate_tree - check new scheduling tree elements for errors
+ * @vf: pointer to the VF info
+ * @vsi_node: pointer to vsi node in scheduling tree
+ * @vhcl: configuration passed in virtchnl maessage
+ *
+ * Return VIRTCHNL_STATUS_SUCCESS (0) in case no errors found,
+ * VIRTCHNL_STATUS_ERR_PARAM in case configuration has errors.
+ */
+static enum virtchnl_status_code
+ice_vc_hqos_validate_tree(struct ice_vf *vf, struct ice_sched_node *vsi_node,
+			  struct virtchnl_hqos_cfg_list *vhcl)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct virtchnl_hqos_cfg *cfg_item;
+	struct ice_hw *hw = &vf->pf->hw;
+	struct ice_port_info *pi = hw->port_info;
+	struct ice_sched_node *parent;
+	int i;
+
+	mutex_lock(&pi->sched_lock);
+
+	for (i = 0; i < vhcl->num_elem; i++) {
+		cfg_item = &vhcl->cfg[i];
+
+		parent = ice_sched_find_node_by_teid(vsi_node,
+						     cfg_item->parent_teid);
+
+		if (!parent) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			break;
+		}
+
+		if (parent->tx_sched_layer >= ice_sched_get_qgrp_layer(hw)) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node creation request failed. Element %d exceeds maximum tree Depth: %d",
+				vf->vf_id, i, ice_sched_get_qgrp_layer(hw));
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			break;
+		}
+
+		if (parent->num_children >=
+		    hw->max_children[parent->tx_sched_layer]) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node creation request failed. Element %d parent already has max number of children: %d",
+				vf->vf_id, i,
+				hw->max_children[parent->tx_sched_layer]);
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			break;
+		}
+	}
+
+	mutex_unlock(&pi->sched_lock);
+
+	return v_ret;
+}
+
+/**
+ * ice_vc_hqos_validate_cfg - check new scheduling configuration for errors
+ * @vf: pointer to the VF info
+ * @vsi_node: pointer to vsi node in scheduling tree
+ * @vhcl: configuration passed in virtchnl maessage
+ *
+ * Respond with VIRTCHNL_STATUS_SUCCESS in case no errors found,
+ * VIRTCHNL_STATUS_ERR_PARAM in case configuration has errors.
+ */
+static enum virtchnl_status_code
+ice_vc_hqos_validate_cfg(struct ice_vf *vf, struct ice_sched_node *vsi_node,
+			 struct virtchnl_hqos_cfg_list *vhcl)
+{
+	struct virtchnl_hqos_cfg *cfg_item;
+	int i;
+
+	for (i = 0; i < vhcl->num_elem; i++) {
+		cfg_item = &vhcl->cfg[i];
+
+		if (cfg_item->tx_share &&
+		    (cfg_item->tx_share < ICE_SCHED_MIN_BW ||
+		     cfg_item->tx_share > ICE_SCHED_MAX_BW)) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node configuration incorrect. Element %d share is out of bounds",
+				vf->vf_id, i);
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		}
+
+		if (cfg_item->tx_max && (cfg_item->tx_max < ICE_SCHED_MIN_BW ||
+					 cfg_item->tx_max > ICE_SCHED_MAX_BW)) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node configuration incorrect. Element %d tx_max is out of bounds",
+				vf->vf_id, i);
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		}
+
+		if (cfg_item->tx_share > cfg_item->tx_max) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node configuration incorrect. Element %d tx_share is greater than tx_max",
+				vf->vf_id, i);
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		}
+
+		if (cfg_item->tx_weight &&
+		    (cfg_item->tx_weight < ICE_SCHED_MIN_BW_WT ||
+		     cfg_item->tx_weight > ICE_SCHED_MAX_BW_WT)) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node configuration incorrect. Element %d tx_weight is out of bounds",
+				vf->vf_id, i);
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		}
+
+		if (cfg_item->tx_priority > ICE_SCHED_MAX_PRIORITY) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node configuration incorrect. Element %d tx_priority is out of bounds",
+				vf->vf_id, i);
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		}
+
+		if (cfg_item->node_type != VIRTCHNL_HQOS_ELEM_TYPE_NODE &&
+		    cfg_item->node_type != VIRTCHNL_HQOS_ELEM_TYPE_LEAF) {
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d node configuration incorrect. Element %d has incorrect type",
+				vf->vf_id, i);
+			return VIRTCHNL_STATUS_ERR_PARAM;
+		}
+	}
+
+	return VIRTCHNL_STATUS_SUCCESS;
+}
+
+/**
+ * ice_vc_hqos_apply_cfg - apply new Tx scheduling configuration
+ * @pi: pointer to the port_info instance
+ * @vsi_node: pointer to vsi node in scheduling tree
+ * @vhcl: configuration passed in virtchnl maessage
+ *
+ * Respond with 0 in case no errors occurred, VIRTCHNL_STATUS_ERR_PARAM in case
+ * configuration has errors.
+ */
+static enum virtchnl_status_code
+ice_vc_hqos_apply_cfg(struct ice_port_info *pi,
+		      struct ice_sched_node *vsi_node,
+		      struct virtchnl_hqos_cfg_list *vhcl)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct virtchnl_hqos_cfg *cfg_item;
+	struct ice_sched_node *node;
+	int i, status = 0;
+
+	mutex_lock(&pi->sched_lock);
+
+	for (i = 0; i < vhcl->num_elem; i++) {
+		cfg_item = &vhcl->cfg[i];
+
+		node = ice_sched_find_node_by_teid(vsi_node, cfg_item->teid);
+
+		if (!node) {
+			pr_err("Node not found");
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			break;
+		}
+
+		if (cfg_item->tx_share) {
+			node->tx_share = cfg_item->tx_share;
+			status = ice_sched_set_node_bw_lmt(pi, node,
+							   ICE_MIN_BW,
+							   node->tx_share);
+		}
+
+		if (status) {
+			v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
+			break;
+		}
+
+		if (cfg_item->tx_max) {
+			node->tx_max = cfg_item->tx_max;
+			status = ice_sched_set_node_bw_lmt(pi, node,
+							   ICE_MAX_BW,
+							   node->tx_max);
+		}
+
+		if (status) {
+			v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
+			break;
+		}
+
+		if (cfg_item->tx_priority) {
+			node->tx_priority = cfg_item->tx_priority;
+			status = ice_sched_set_node_priority(pi, node,
+							     node->tx_priority);
+		}
+
+		if (status) {
+			v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
+			break;
+		}
+
+		if (cfg_item->tx_weight) {
+			node->tx_weight = cfg_item->tx_weight;
+			status = ice_sched_set_node_weight(pi, node,
+							   node->tx_weight);
+		}
+
+		if (status) {
+			v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
+			break;
+		}
+	}
+
+	mutex_unlock(&pi->sched_lock);
+
+	return v_ret;
+}
+
+/**
+ * ice_vc_count_subtree_elements - function for getting number of scheduling
+ * nodes in the subtree starting from given node.
+ *
+ * @node: pointer to node in scheduling tree
+ *
+ * Return size of the subtree from given node (including the node)
+ */
+static int ice_vc_count_subtree_elements(struct ice_sched_node *node)
+{
+	int ret = 1;
+	int i;
+
+	for (i = 0; i < node->num_children; i++)
+		ret += ice_vc_count_subtree_elements(node->children[i]);
+
+	return ret;
+}
+
+/**
+ * ice_vc_fill_cfg - function for filling hqos_cfg_list with data of all
+ * elements in scheduling subtree, starting from the provided node.
+ *
+ * @node: pointer to node in scheduling tree
+ * @list: pointer to pre-allocated variable structure for sending
+ *	  scheduling info
+ * @idx: index to first free element in elements array
+ * @table_size: size of the elements array
+ *
+ * Return number of scheduling nodes information added to table or -ENOMEM
+ * in case of error.
+ */
+static int
+ice_vc_fill_cfg(struct ice_sched_node *node,
+		struct virtchnl_hqos_cfg_list *list, int idx, int table_size)
+{
+	int i;
+
+	if (idx >= table_size)
+		return -ENOMEM;
+
+	if (node->info.data.elem_type == ICE_AQC_ELEM_TYPE_LEAF)
+		list->cfg[idx].node_type = VIRTCHNL_HQOS_ELEM_TYPE_LEAF;
+	else
+		list->cfg[idx].node_type = VIRTCHNL_HQOS_ELEM_TYPE_NODE;
+
+	list->cfg[idx].teid = le32_to_cpu(node->info.node_teid);
+	list->cfg[idx].parent_teid = le32_to_cpu(node->info.parent_teid);
+	list->cfg[idx].tx_max = node->tx_max;
+	list->cfg[idx].tx_share = node->tx_share;
+	list->cfg[idx].tx_priority = node->tx_priority;
+	list->cfg[idx].tx_weight = node->tx_weight;
+	idx++;
+
+	for (i = 0; i < node->num_children; i++) {
+		idx = ice_vc_fill_cfg(node->children[i], list, idx,
+				      table_size);
+		if (idx == -ENOMEM)
+			return idx;
+	}
+
+	return idx;
+}
+
+/**
+ * ice_vc_hqos_read_tree - return Tx scheduling tree structure
+ *
+ * @vf: pointer to the VF info
+ * @msg: pointer to the msg buffer
+ *
+ * Respond with VIRTCHNL_STATUS_SUCCESS in case no errors occurred,
+ * VIRTCHNL_STATUS_ERR_PARAM in case error occurred.
+ */
+static int ice_vc_hqos_read_tree(struct ice_vf *vf, u8 *msg)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct ice_hw *hw = &vf->pf->hw;
+	struct ice_sched_node *tc_node = hw->port_info->root->children[0];
+	struct virtchnl_hqos_cfg_list *cfg_msg = NULL;
+	u16 vsi_handle = vf->lan_vsi_idx;
+	struct ice_sched_node *vsi_node;
+	struct ice_vsi *vsi;
+	int count, ret, len = 0;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	if (ice_check_vf_init(vf)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	vsi_node = ice_sched_get_vsi_node(hw->port_info, tc_node, vsi_handle);
+	if (!vsi_node) {
+		v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+		goto err;
+	}
+
+	count = ice_vc_count_subtree_elements(vsi_node);
+	len = sizeof(struct virtchnl_hqos_cfg_list) +
+		     (count - 1) * sizeof(struct virtchnl_hqos_cfg);
+
+	cfg_msg = kzalloc(len, GFP_KERNEL);
+	if (!cfg_msg) {
+		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
+		len = 0;
+		goto err;
+	}
+
+	if (count != ice_vc_fill_cfg(vsi_node, cfg_msg, 0, count)) {
+		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
+		len = 0;
+		goto err;
+	}
+
+	cfg_msg->num_elem = count;
+
+err:
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_HQOS_TREE_READ,
+				   v_ret, (u8 *)cfg_msg, len);
+	kfree(cfg_msg);
+
+	return ret;
+}
+
+/**
+ * ice_vc_hqos_elems_add - create new scheduling elements in Tx
+ * scheduling tree
+ *
+ * @vf: pointer to the VF info
+ * @msg: pointer to the msg buffer
+ *
+ * Respond with VIRTCHNL_STATUS_SUCCESS in case no errors occurred,
+ * VIRTCHNL_STATUS_ERR_PARAM in case error occurred.
+ */
+static int ice_vc_hqos_elems_add(struct ice_vf *vf, u8 *msg)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct ice_hw *hw = &vf->pf->hw;
+	struct ice_port_info *pi = hw->port_info;
+	struct ice_sched_node *tc_node = pi->root->children[0];
+	struct virtchnl_hqos_cfg_list *vhcl = NULL;
+	struct virtchnl_hqos_cfg *cfg_item;
+	u16 vsi_handle = vf->lan_vsi_idx;
+	struct ice_sched_node *vsi_node;
+	struct ice_sched_node *parent;
+	struct ice_vsi *vsi;
+	u16 num_nodes_added;
+	u32 first_node_teid;
+	int i, ret;
+
+	vhcl = (struct virtchnl_hqos_cfg_list *)msg;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	if (ice_check_vf_init(vf)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	vsi_node = ice_sched_get_vsi_node(hw->port_info, tc_node, vsi_handle);
+	if (!vsi_node) {
+		v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+		goto err;
+	}
+
+	v_ret = ice_vc_hqos_validate_tree(vf, vsi_node, vhcl);
+	if (v_ret)
+		goto err;
+
+	v_ret = ice_vc_hqos_validate_cfg(vf, vsi_node, vhcl);
+	if (v_ret)
+		goto err;
+
+	mutex_lock(&pi->sched_lock);
+
+	for (i = 0; i < vhcl->num_elem; i++) {
+		cfg_item = &vhcl->cfg[i];
+
+		parent = ice_sched_find_node_by_teid(vsi_node,
+						     cfg_item->parent_teid);
+
+		if (!parent) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			mutex_unlock(&pi->sched_lock);
+			goto err;
+		}
+
+		ret = ice_sched_add_elems(pi, tc_node, parent,
+					  parent->tx_sched_layer + 1, 1,
+					  &num_nodes_added, &first_node_teid,
+					  NULL);
+
+		if (ret) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			mutex_unlock(&pi->sched_lock);
+			goto err;
+		}
+
+		cfg_item->teid = first_node_teid;
+	}
+
+	mutex_unlock(&pi->sched_lock);
+
+	v_ret = ice_vc_hqos_apply_cfg(pi, vsi_node, vhcl);
+	if (v_ret)
+		goto err;
+
+err:
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_HQOS_ELEMS_ADD,
+				   v_ret, NULL, 0);
+
+	return ret;
+}
+
+/**
+ * ice_vc_hqos_elems_del - remove scheduling elements from Tx
+ * scheduling tree
+ *
+ * @vf: pointer to the VF info
+ * @msg: pointer to the msg buffer
+ *
+ * Respond with VIRTCHNL_STATUS_SUCCESS in case no errors occurred,
+ * VIRTCHNL_STATUS_ERR_PARAM in case error occurred.
+ */
+static int ice_vc_hqos_elems_del(struct ice_vf *vf, u8 *msg)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct ice_hw *hw = &vf->pf->hw;
+	struct ice_port_info *pi = hw->port_info;
+	struct ice_sched_node *tc_node = pi->root->children[0];
+	struct virtchnl_hqos_cfg_list *vhcl = NULL;
+	struct virtchnl_hqos_cfg *cfg_item;
+	u16 vsi_handle = vf->lan_vsi_idx;
+	struct ice_sched_node *vsi_node;
+	struct ice_sched_node *node;
+	struct ice_vsi *vsi;
+	int i, ret;
+
+	vhcl = (struct virtchnl_hqos_cfg_list *)msg;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	if (ice_check_vf_init(vf)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	vsi_node = ice_sched_get_vsi_node(hw->port_info, tc_node, vsi_handle);
+	if (!vsi_node) {
+		v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+		goto err;
+	}
+
+	mutex_lock(&pi->sched_lock);
+
+	for (i = 0; i < vhcl->num_elem; i++) {
+		cfg_item = &vhcl->cfg[i];
+
+		node = ice_sched_find_node_by_teid(vsi_node, cfg_item->teid);
+
+		if (!node) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			mutex_unlock(&pi->sched_lock);
+			goto err;
+		}
+
+		if (node->num_children) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			dev_err(ice_pf_to_dev(vf->pf), "VF %d: cannot process delete request, element 0x%x has children",
+				vf->vf_id, cfg_item->teid);
+			mutex_unlock(&pi->sched_lock);
+			goto err;
+		}
+
+		ice_free_sched_node(pi, node);
+	}
+
+	mutex_unlock(&pi->sched_lock);
+
+err:
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_HQOS_ELEMS_DEL,
+				   v_ret, NULL, 0);
+
+	return ret;
+}
+
+/**
+ * ice_vc_hqos_elems_conf - parse and apply bandwidth changes in Tx
+ * scheduling tree
+ *
+ * @vf: pointer to the VF info
+ * @msg: pointer to the msg buffer
+ *
+ * Respond with VIRTCHNL_STATUS_SUCCESS in case no errors occurred,
+ * VIRTCHNL_STATUS_ERR_PARAM in case error occurred.
+ */
+static int ice_vc_hqos_elems_conf(struct ice_vf *vf, u8 *msg)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct ice_hw *hw = &vf->pf->hw;
+	struct ice_port_info *pi = hw->port_info;
+	struct ice_sched_node *tc_node = pi->root->children[0];
+	struct virtchnl_hqos_cfg_list *vhcl = NULL;
+	u16 vsi_handle = vf->lan_vsi_idx;
+	struct ice_sched_node *vsi_node;
+	struct ice_vsi *vsi;
+	int ret;
+
+	vhcl = (struct virtchnl_hqos_cfg_list *)msg;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	if (ice_check_vf_init(vf)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	vsi_node = ice_sched_get_vsi_node(hw->port_info, tc_node, vsi_handle);
+	if (!vsi_node) {
+		v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+		goto err;
+	}
+
+	if (ice_vc_hqos_validate_cfg(vf, vsi_node, vhcl)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	if (ice_vc_hqos_apply_cfg(pi, vsi_node, vhcl)) {
+		v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
+		goto err;
+	}
+
+err:
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_HQOS_ELEMS_CONF,
+				   v_ret, NULL, 0);
+
+	return ret;
+}
+
+/**
+ * ice_vc_hqos_elems_move - parse and apply changes to scheduling
+ * tree topology.
+ *
+ * @vf: pointer to the VF info
+ * @msg: pointer to the msg buffer
+ *
+ * Respond with VIRTCHNL_STATUS_SUCCESS in case no errors occurred,
+ * VIRTCHNL_STATUS_ERR_PARAM in case error occurred.
+ */
+static int ice_vc_hqos_elems_move(struct ice_vf *vf, u8 *msg)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	struct ice_hw *hw = &vf->pf->hw;
+	struct ice_port_info *pi = hw->port_info;
+	struct ice_sched_node *tc_node = pi->root->children[0];
+	struct virtchnl_hqos_cfg_list *vhcl = NULL;
+	struct ice_sched_node *node, *parent;
+	struct virtchnl_hqos_cfg *cfg_item;
+	u16 vsi_handle = vf->lan_vsi_idx;
+	struct ice_sched_node *vsi_node;
+	struct ice_vsi *vsi;
+	u32 node_teid;
+	int ret, i;
+
+	vhcl = (struct virtchnl_hqos_cfg_list *)msg;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto done;
+	}
+
+	if (ice_check_vf_init(vf)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto done;
+	}
+
+	vsi_node = ice_sched_get_vsi_node(hw->port_info, tc_node, vsi_handle);
+	if (!vsi_node) {
+		v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+		goto done;
+	}
+
+	mutex_lock(&pi->sched_lock);
+
+	for (i = 0; i < vhcl->num_elem; i++) {
+		cfg_item = &vhcl->cfg[i];
+		node_teid = cfg_item->teid;
+
+		node = ice_sched_find_node_by_teid(vsi_node, cfg_item->teid);
+		parent = ice_sched_find_node_by_teid(vsi_node,
+						     cfg_item->parent_teid);
+
+		if (!parent || !node) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			mutex_unlock(&pi->sched_lock);
+			goto done;
+		}
+
+		if (node->info.data.elem_type == ICE_AQC_ELEM_TYPE_LEAF)
+			ret = ice_sched_move_leaves(pi, parent, 1, &node_teid);
+		else
+			ret = ice_sched_move_nodes(pi, parent, 1, &node_teid);
+
+		if (ret) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			mutex_unlock(&pi->sched_lock);
+			goto done;
+		}
+	}
+
+	mutex_unlock(&pi->sched_lock);
+
+done:
+	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_HQOS_ELEMS_MOVE,
+				   v_ret, NULL, 0);
+
+	return ret;
+}
+
 static const struct ice_virtchnl_ops ice_virtchnl_dflt_ops = {
 	.get_ver_msg = ice_vc_get_ver_msg,
 	.get_vf_res_msg = ice_vc_get_vf_res_msg,
@@ -7427,7 +8081,6 @@ static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg)
 
 	for (i = 0; i < al->num_elements; i++) {
 		u8 *mac_addr = al->list[i].addr;
-		int result;
 
 		if (!is_unicast_ether_addr(mac_addr) ||
 		    ether_addr_equal(mac_addr, vf->hw_lan_addr.addr))
@@ -7436,12 +8089,6 @@ static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg)
 		if (vf->pf_set_mac) {
 			dev_err(ice_pf_to_dev(pf), "VF attempting to override administratively set MAC address\n");
 			v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
-			goto handle_mac_exit;
-		}
-		result = ice_eswitch_add_vf_mac_rule(pf, vf, mac_addr);
-		if (result) {
-			dev_err(ice_pf_to_dev(pf), "Failed to add MAC %pM for VF %d\n, error %d\n",
-				mac_addr, vf->vf_id, result);
 			goto handle_mac_exit;
 		}
 
@@ -7503,6 +8150,11 @@ static const struct ice_virtchnl_ops ice_virtchnl_repr_ops = {
 	.cfg_promiscuous_mode_msg = ice_vc_repr_cfg_promiscuous_mode,
 	.add_vlan_msg = ice_vc_add_vlan_msg,
 	.remove_vlan_msg = ice_vc_remove_vlan_msg,
+	.hqos_read_tree = ice_vc_hqos_read_tree,
+	.hqos_elems_add = ice_vc_hqos_elems_add,
+	.hqos_elems_del = ice_vc_hqos_elems_del,
+	.hqos_elems_move = ice_vc_hqos_elems_move,
+	.hqos_elems_conf = ice_vc_hqos_elems_conf,
 	.query_rxdid = ice_vc_query_rxdid,
 	.get_rss_hena = ice_vc_get_rss_hena,
 	.set_rss_hena_msg = ice_vc_set_rss_hena,
@@ -7734,6 +8386,21 @@ error_handler:
 		break;
 	case VIRTCHNL_OP_DEL_VLAN:
 		err = ops->remove_vlan_msg(vf, msg);
+		break;
+	case VIRTCHNL_OP_HQOS_ELEMS_ADD:
+		err = ops->hqos_elems_add(vf, msg);
+		break;
+	case VIRTCHNL_OP_HQOS_ELEMS_DEL:
+		err = ops->hqos_elems_del(vf, msg);
+		break;
+	case VIRTCHNL_OP_HQOS_ELEMS_MOVE:
+		err = ops->hqos_elems_move(vf, msg);
+		break;
+	case VIRTCHNL_OP_HQOS_ELEMS_CONF:
+		err = ops->hqos_elems_conf(vf, msg);
+		break;
+	case VIRTCHNL_OP_HQOS_TREE_READ:
+		err = ops->hqos_read_tree(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_SUPPORTED_RXDIDS:
 		err = ops->query_rxdid(vf);

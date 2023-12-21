@@ -959,27 +959,27 @@ static bool ice_sq_done(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 }
 
 /**
- * ice_sq_send_cmd_nolock - send command to a control queue
+ * ice_sq_send_cmd - send command to a control queue
  * @hw: pointer to the HW struct
  * @cq: pointer to the specific Control queue
- * @desc: prefilled descriptor describing the command (non DMA mem)
+ * @desc: prefilled descriptor describing the command
  * @buf: buffer to use for indirect commands (or NULL for direct commands)
  * @buf_size: size of buffer for indirect commands (or 0 for direct commands)
  * @cd: pointer to command details structure
  *
- * This is the main send command routine for a control queue. It prepares the
- * command into a descriptor, bumps the send queue tail, waits for the command
- * to complete, captures status and data for the command, etc.
+ * Main command for the transmit side of a control queue. It puts the command
+ * on the queue, bumps the tail, waits for processing of the command, captures
+ * command status and results, etc.
  */
 int
-ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
-		       struct ice_aq_desc *desc, void *buf, u16 buf_size,
-		       struct ice_sq_cd *cd)
+ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
+		struct ice_aq_desc *desc, void *buf, u16 buf_size,
+		struct ice_sq_cd *cd)
 {
 	struct ice_dma_mem *dma_buf = NULL;
 	struct ice_aq_desc *desc_on_ring;
 	bool cmd_completed = false;
-	u32 total_delay = 0;
+	unsigned long timeout;
 	int status = 0;
 	u16 retval = 0;
 	u32 val = 0;
@@ -987,6 +987,7 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	/* if reset is in progress return a soft error */
 	if (hw->reset_ongoing)
 		return -EBUSY;
+	mutex_lock(&cq->sq_lock);
 
 	cq->sq_last_status = ICE_AQ_RC_OK;
 
@@ -1070,16 +1071,13 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	 */
 	udelay(5);
 
+	timeout = jiffies + ICE_CTL_Q_SQ_CMD_TIMEOUT;
 	do {
 		if (ice_sq_done(hw, cq))
 			break;
 
-		if (cd && cd->is_atomic_context)
-			udelay(10);
-		else
-			usleep_range(10, 20);
-		total_delay++;
-	} while (total_delay < cq->sq_cmd_timeout);
+		usleep_range(10, 20);
+	} while (time_before(jiffies, timeout));
 
 	/* if ready, copy the desc back to temp */
 	if (ice_sq_done(hw, cq)) {
@@ -1112,6 +1110,7 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	}
 
 	ice_debug(hw, ICE_DBG_AQ_MSG, "ATQ: desc and buffer writeback:\n");
+
 	ice_debug_cq(hw, cq, (void *)desc, buf, buf_size, true);
 
 	/* save writeback AQ if requested */
@@ -1131,41 +1130,7 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	}
 
 sq_send_command_error:
-	return status;
-}
-
-/**
- * ice_sq_send_cmd - send command to a control queue
- * @hw: pointer to the HW struct
- * @cq: pointer to the specific Control queue
- * @desc: prefilled descriptor describing the command
- * @buf: buffer to use for indirect commands (or NULL for direct commands)
- * @buf_size: size of buffer for indirect commands (or 0 for direct commands)
- * @cd: pointer to command details structure
- *
- * Main command for the transmit side of a control queue. It puts the command
- * on the queue, bumps the tail, waits for processing of the command, captures
- * command status and results, etc.
- */
-int
-ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
-		struct ice_aq_desc *desc, void *buf, u16 buf_size,
-		struct ice_sq_cd *cd)
-{
-	int status = 0;
-
-	/* if reset is in progress return a soft error */
-	if (hw->reset_ongoing)
-		return -EBUSY;
-
-	if (cd && cd->is_atomic_context)
-		ice_debug(hw, ICE_DBG_AQ_MSG, "%s: is_atomic_context is set, but we're about to acquire a mutex which might sleep...\n",
-			  __func__);
-
-	mutex_lock(&cq->sq_lock);
-	status = ice_sq_send_cmd_nolock(hw, cq, desc, buf, buf_size, cd);
 	mutex_unlock(&cq->sq_lock);
-
 	return status;
 }
 

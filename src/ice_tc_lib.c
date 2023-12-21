@@ -14,6 +14,7 @@
 #endif /* HAVE_TCF_MIRRED_DEV */
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
+#define ICE_TC_METADATA_LKUP_IDX 0
 
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 /**
@@ -45,7 +46,13 @@ static int
 ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 		   struct ice_tc_flower_fltr *fltr)
 {
-	int lkups_cnt = 0;
+	int lkups_cnt = 1; /* 0th lookup is metadata */
+
+	/* Always add metadata as the 0th lookup. Included elements:
+	 * - Direction flag (always present)
+	 * - ICE_TC_FLWR_FIELD_VLAN_TPID (present if specified)
+	 * - Tunnel flag (present if tunnel)
+	 */
 
 	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID)
 		lkups_cnt++;
@@ -207,10 +214,10 @@ static u16 ice_check_supported_vlan_tpid(u16 vlan_tpid)
 
 static int
 ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
-			 struct ice_adv_lkup_elem *list)
+			 struct ice_adv_lkup_elem *list,
+			 struct ice_adv_rule_info *rule_info, int i)
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *hdr = &fltr->outer_headers;
-	int i = 0;
 
 	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID) {
 		u32 tenant_id;
@@ -365,6 +372,10 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 		i++;
 	}
 
+	/* always fill matching on tunneled packets in metadata */
+	ice_rule_add_tunnel_metadata(&list[ICE_TC_METADATA_LKUP_IDX],
+				     rule_info, fltr->tunnel_type);
+
 	return i;
 }
 
@@ -393,15 +404,19 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 #ifdef HAVE_TCF_VLAN_TPID
 	u16 vlan_tpid = 0;
 #endif /* HAVE_TCF_VLAN_TPID */
-	int i = 0;
+	int i = 1; /* 0th lookup is metadata */
 
 #ifdef HAVE_TCF_VLAN_TPID
 	rule_info->vlan_type = vlan_tpid;
 #endif /* HAVE_TCF_VLAN_TPID */
 
+	/* Always add direction metadata */
+	ice_rule_add_direction_metadata(&list[ICE_TC_METADATA_LKUP_IDX]);
+
 	rule_info->tun_type = ice_sw_type_from_tunnel(tc_fltr->tunnel_type);
 	if (tc_fltr->tunnel_type != TNL_LAST) {
-		i = ice_tc_fill_tunnel_outer(flags, tc_fltr, list);
+		i = ice_tc_fill_tunnel_outer(flags, tc_fltr, list, rule_info,
+					     i);
 
 		headers = &tc_fltr->inner_headers;
 		inner = true;
@@ -439,11 +454,6 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 	/* copy VLAN info */
 	if (flags & (ICE_TC_FLWR_FIELD_VLAN | ICE_TC_FLWR_FIELD_VLAN_PRIO)) {
-#ifdef HAVE_TCF_VLAN_TPID
-		vlan_tpid = be16_to_cpu(headers->vlan_hdr.vlan_tpid);
-		rule_info->vlan_type =
-				ice_check_supported_vlan_tpid(vlan_tpid);
-#endif /* HAVE_TCF_VLAN_TPID */
 		list[i].type = ICE_VLAN_OFOS;
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
 		if (flags & ICE_TC_FLWR_FIELD_CVLAN)
@@ -464,6 +474,15 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 		i++;
 	}
+
+#ifdef HAVE_TCF_VLAN_TPID
+	if (flags & ICE_TC_FLWR_FIELD_VLAN_TPID) {
+		vlan_tpid = be16_to_cpu(headers->vlan_hdr.vlan_tpid);
+		rule_info->vlan_type = ice_check_supported_vlan_tpid(vlan_tpid);
+
+		ice_rule_add_vlan_metadata(&list[ICE_TC_METADATA_LKUP_IDX]);
+	}
+#endif /* HAVE_TCF_VLAN_TPID */
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
 	if (flags & (ICE_TC_FLWR_FIELD_CVLAN | ICE_TC_FLWR_FIELD_CVLAN_PRIO)) {
@@ -752,22 +771,41 @@ ice_is_tunnel_supported(struct net_device *dev, struct flow_rule *rule)
 #endif /* HAVE_TCF_MIRRED_DEC || HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
 
 #if defined(HAVE_TCF_MIRRED_DEV) || defined(HAVE_TC_FLOW_RULE_INFRASTRUCTURE)
+static bool
+ice_tc_is_dev_uplink(struct net_device *dev)
+{
+	return netif_is_ice(dev) ||
+		ice_is_tunnel_supported(dev, NULL);
+}
+
 static int
-ice_tc_setup_redirect_action(struct ice_tc_flower_fltr *fltr,
+ice_tc_setup_redirect_action(struct net_device *filter_dev,
+			     struct ice_tc_flower_fltr *fltr,
 			     struct net_device *target_dev)
 {
 	fltr->action.fltr_act = ICE_FWD_TO_VSI;
 
-	if (ice_is_port_repr_netdev(target_dev)) {
+	if (ice_is_port_repr_netdev(filter_dev) &&
+	    ice_is_port_repr_netdev(target_dev)) {
+		struct ice_repr *repr = ice_netdev_to_repr(target_dev);
+
+		fltr->dest_vsi = repr->src_vsi;
+		fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
+	} else if (ice_is_port_repr_netdev(filter_dev) &&
+		   ice_tc_is_dev_uplink(target_dev)) {
+		struct ice_repr *repr = ice_netdev_to_repr(filter_dev);
+
+		fltr->dest_vsi = repr->src_vsi->back->switchdev.uplink_vsi;
+		fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
+	} else if (ice_tc_is_dev_uplink(filter_dev) &&
+		   ice_is_port_repr_netdev(target_dev)) {
 		struct ice_repr *repr = ice_netdev_to_repr(target_dev);
 
 		fltr->dest_vsi = repr->src_vsi;
 		fltr->direction = ICE_ESWITCH_FLTR_INGRESS;
-	} else if (netif_is_ice(target_dev) ||
-		   ice_is_tunnel_supported(target_dev, NULL)) {
-		fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
 	} else {
-		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported netdevice in switchdev mode");
+		NL_SET_ERR_MSG_MOD(fltr->extack,
+				   "Unsupported netdevice in switchdev mode");
 		return -EINVAL;
 	}
 
@@ -777,11 +815,34 @@ ice_tc_setup_redirect_action(struct ice_tc_flower_fltr *fltr,
 
 #ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
 static int
-ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
+ice_tc_setup_drop_action(struct net_device *filter_dev,
+			 struct ice_tc_flower_fltr *fltr)
+{
+	fltr->action.fltr_act = ICE_DROP_PACKET;
+
+	if (ice_is_port_repr_netdev(filter_dev)) {
+		fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
+	} else if (ice_tc_is_dev_uplink(filter_dev)) {
+		fltr->direction = ICE_ESWITCH_FLTR_INGRESS;
+	} else {
+		NL_SET_ERR_MSG_MOD(fltr->extack,
+				   "Unsupported netdevice in switchdev mode");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#endif /* HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
+
+#ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
+static int
+ice_eswitch_tc_parse_action(struct net_device *filter_dev,
+			    struct ice_tc_flower_fltr *fltr,
 			    struct flow_action_entry *act)
 #else
 static int
-ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
+ice_eswitch_tc_parse_action(struct net_device *filter_dev,
+			    struct ice_tc_flower_fltr *fltr,
 			    struct tc_action *tc_act)
 #endif
 {
@@ -790,11 +851,14 @@ ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
 
 	switch (act->id) {
 	case FLOW_ACTION_DROP:
-		fltr->action.fltr_act = ICE_DROP_PACKET;
+		err = ice_tc_setup_drop_action(filter_dev, fltr);
+		if (err)
+			return err;
+
 		break;
 
 	case FLOW_ACTION_REDIRECT:
-		err = ice_tc_setup_redirect_action(fltr, act->dev);
+		err = ice_tc_setup_redirect_action(filter_dev, fltr, act->dev);
 		if (err)
 			return err;
 
@@ -812,7 +876,7 @@ ice_eswitch_tc_parse_action(struct ice_tc_flower_fltr *fltr,
 	if (is_tcf_gact_shot(tc_act)) {
 		fltr->action.fltr_act = ICE_DROP_PACKET;
 	} else if (is_tcf_mirred_egress_redirect(tc_act)) {
-		err = ice_tc_setup_redirect_action(fltr,
+		err = ice_tc_setup_redirect_action(filter_dev, fltr,
 						   tcf_mirred_dev(tc_act));
 		if (err)
 			return err;
@@ -852,10 +916,6 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		goto exit;
 	}
 
-	/* egress traffic is always redirect to uplink */
-	if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS)
-		fltr->dest_vsi = vsi->back->switchdev.uplink_vsi;
-
 	rule_info.sw_act.fltr_act = fltr->action.fltr_act;
 	if (fltr->action.fltr_act != ICE_DROP_PACKET)
 		rule_info.sw_act.vsi_handle = fltr->dest_vsi->idx;
@@ -868,19 +928,24 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	rule_info.priority = 7;
 
 	if (fltr->direction == ICE_ESWITCH_FLTR_INGRESS) {
+		/* PF to VF */
 		rule_info.sw_act.flag |= ICE_FLTR_RX;
 		rule_info.sw_act.src = hw->pf_id;
-		rule_info.rx = true;
 		rule_info.flags_info.act = ICE_SINGLE_ACT_LB_ENABLE;
-		rule_info.flags_info.act_valid = true;
-	} else {
+	} else if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS &&
+		   fltr->dest_vsi == vsi->back->switchdev.uplink_vsi) {
+		/* VF to PF */
 		rule_info.sw_act.flag |= ICE_FLTR_TX;
 		rule_info.sw_act.src = vsi->idx;
-		rule_info.rx = false;
 		rule_info.flags_info.act = ICE_SINGLE_ACT_LAN_ENABLE;
-		rule_info.flags_info.act_valid = true;
+	} else {
+		/* VF to VF */
+		rule_info.sw_act.flag |= ICE_FLTR_TX;
+		rule_info.sw_act.src = vsi->idx;
+		rule_info.flags_info.act = ICE_SINGLE_ACT_LB_ENABLE;
 	}
 
+	rule_info.flags_info.act_valid = true;
 	rule_info.add_dir_lkup = false;
 
 	/* specify the cookie as filter_rule_id */
@@ -1172,7 +1237,6 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		rule_info.priority = ICE_SWITCH_FLTR_PRIO_VSI;
 
 		rule_info.sw_act.src = hw->pf_id;
-		rule_info.rx = true;
 
 		dev_dbg(dev, "add switch rule for TC:%u vsi_idx:%u, lkups_cnt:%u\n",
 			tc_fltr->action.fwd.tc.tc_class,
@@ -1184,7 +1248,6 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		rule_info.sw_act.vsi_handle = ch_vsi->idx;
 		rule_info.priority = ICE_SWITCH_FLTR_PRIO_QUEUE;
 		rule_info.sw_act.src = hw->pf_id;
-		rule_info.rx = true;
 		dev_dbg(dev, "add switch rule action to forward to queue:%u (HW queue %u), lkups_cnt:%u\n",
 			tc_fltr->action.fwd.q.queue,
 			tc_fltr->action.fwd.q.hw_queue,
@@ -1193,8 +1256,6 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		rule_info.sw_act.flag |= ICE_FLTR_TX;
 		/* In case of Tx (LOOKUP_TX), src needs to be src VSI */
 		rule_info.sw_act.src = ch_vsi->idx;
-		/* 'Rx' is false, direction of rule(LOOKUPTRX) */
-		rule_info.rx = false;
 		rule_info.priority = ICE_SWITCH_FLTR_PRIO_VSI;
 	}
 
@@ -1794,12 +1855,14 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (match.mask->vlan_priority) {
 			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_PRIO;
 			headers->vlan_hdr.vlan_prio =
-				cpu_to_be16((match.key->vlan_priority <<
-					     VLAN_PRIO_SHIFT) & VLAN_PRIO_MASK);
+				be16_encode_bits(match.key->vlan_priority,
+						 VLAN_PRIO_MASK);
 		}
 #ifdef HAVE_TCF_VLAN_TPID
-		if (mask->vlan_tpid)
+		if (mask->vlan_tpid) {
 			headers->vlan_hdr.vlan_tpid = key->vlan_tpid;
+			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_TPID;
+		}
 #endif /* HAVE_TCF_VLAN_TPID */
 	}
 #else /* !HAVE_TC_FLOWER_VLAN_IN_TAGS */
@@ -1838,8 +1901,8 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (match.mask->vlan_priority) {
 			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_PRIO;
 			headers->vlan_hdr.vlan_prio =
-				cpu_to_be16((match.key->vlan_priority <<
-					     VLAN_PRIO_SHIFT) & VLAN_PRIO_MASK);
+				be16_encode_bits(match.key->vlan_priority,
+						 VLAN_PRIO_MASK);
 		}
 #ifdef HAVE_TCF_VLAN_TPID
 		if (match.mask->vlan_tpid)
@@ -1876,8 +1939,8 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		if (match.mask->vlan_priority) {
 			fltr->flags |= ICE_TC_FLWR_FIELD_CVLAN_PRIO;
 			headers->cvlan_hdr.vlan_prio =
-				cpu_to_be16((match.key->vlan_priority <<
-					     VLAN_PRIO_SHIFT) & VLAN_PRIO_MASK);
+				be16_encode_bits(match.key->vlan_priority,
+						 VLAN_PRIO_MASK);
 		}
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
@@ -2191,6 +2254,7 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 
 /**
  * ice_parse_tc_flower_actions - Parse the actions for a TC filter
+ * @filter_dev: Ingress netdev
  * @vsi: Pointer to VSI
  * @cls_flower: Pointer to TC flower offload structure
  * @fltr: Pointer to TC flower filter structure
@@ -2198,7 +2262,8 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
  * Parse the actions for a TC filter
  */
 static int
-ice_parse_tc_flower_actions(struct ice_vsi *vsi,
+ice_parse_tc_flower_actions(struct net_device *filter_dev,
+			    struct ice_vsi *vsi,
 			    struct flow_cls_offload *cls_flower,
 			    struct ice_tc_flower_fltr *fltr)
 {
@@ -2245,9 +2310,13 @@ ice_parse_tc_flower_actions(struct ice_vsi *vsi,
 #endif /* HAVE_TCF_EXTS_TO_LIST */
 		if (ice_is_eswitch_mode_switchdev(vsi->back)) {
 #ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
-			int err = ice_eswitch_tc_parse_action(fltr, act);
+			int err = ice_eswitch_tc_parse_action(filter_dev,
+							      fltr,
+							      act);
 #else
-			int err = ice_eswitch_tc_parse_action(fltr, tc_act);
+			int err = ice_eswitch_tc_parse_action(filter_dev,
+							      fltr,
+							      tc_act);
 #endif
 
 			if (err)
@@ -2364,7 +2433,7 @@ ice_add_tc_fltr(struct net_device *netdev, struct ice_vsi *vsi,
 	if (err < 0)
 		goto err;
 
-	err = ice_parse_tc_flower_actions(vsi, f, fltr);
+	err = ice_parse_tc_flower_actions(netdev, vsi, f, fltr);
 	if (err < 0)
 		goto err;
 

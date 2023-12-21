@@ -43,6 +43,8 @@ static struct in6_addr zero_ipv6_addr_mask = {
 static int ice_fltr_to_ethtool_flow(enum ice_fltr_ptype flow)
 {
 	switch (flow) {
+	case ICE_FLTR_PTYPE_NONF_ETH:
+		return ETHER_FLOW;
 	case ICE_FLTR_PTYPE_NONF_IPV4_TCP:
 		return TCP_V4_FLOW;
 	case ICE_FLTR_PTYPE_NONF_IPV4_UDP:
@@ -76,6 +78,8 @@ static int ice_fltr_to_ethtool_flow(enum ice_fltr_ptype flow)
 enum ice_fltr_ptype ice_ethtool_flow_to_fltr(int eth)
 {
 	switch (eth) {
+	case ETHER_FLOW:
+		return ICE_FLTR_PTYPE_NONF_ETH;
 	case TCP_V4_FLOW:
 		return ICE_FLTR_PTYPE_NONF_IPV4_TCP;
 	case UDP_V4_FLOW:
@@ -143,6 +147,18 @@ int ice_get_ethtool_fdir_entry(struct ice_hw *hw, struct ethtool_rxnfc *cmd)
 	memset(&fsp->m_ext, 0, sizeof(fsp->m_ext));
 
 	switch (fsp->flow_type) {
+	case ETHER_FLOW:
+		fsp->h_u.ether_spec.h_proto = rule->eth.type;
+		fsp->m_u.ether_spec.h_proto = rule->eth_mask.type;
+		memcpy(fsp->h_u.ether_spec.h_dest, rule->eth.dst,
+		       sizeof(fsp->h_u.ether_spec.h_dest));
+		memcpy(fsp->m_u.ether_spec.h_dest, rule->eth_mask.dst,
+		       sizeof(fsp->m_u.ether_spec.h_dest));
+		memcpy(fsp->h_u.ether_spec.h_source, rule->eth.src,
+		       sizeof(fsp->h_u.ether_spec.h_source));
+		memcpy(fsp->m_u.ether_spec.h_source, rule->eth_mask.src,
+		       sizeof(fsp->m_u.ether_spec.h_source));
+		break;
 	case IPV4_USER_FLOW:
 		fsp->h_u.usr_ip4_spec.ip_ver = ETH_RX_NFC_IP4;
 		fsp->h_u.usr_ip4_spec.proto = 0;
@@ -1312,6 +1328,143 @@ ice_set_fdir_ip6_usr_seg(struct ice_flow_seg_info *seg,
 #endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
 
 /**
+ * ice_fdir_vlan_valid - validate vlan data for Flow Director rule
+ * @fsp: pointer to ethtool Rx flow specification
+ *
+ * Returns true if vlan data is valid.
+ */
+static bool
+ice_fdir_vlan_valid(struct ethtool_rx_flow_spec *fsp)
+{
+	if (fsp->m_ext.vlan_etype &&
+	    ntohs(fsp->h_ext.vlan_etype) & ~(ETH_P_8021Q | ETH_P_8021AD))
+		return false;
+
+	if (fsp->m_ext.vlan_tci &&
+	    ntohs(fsp->h_ext.vlan_tci) >= VLAN_N_VID)
+		return false;
+
+	return true;
+}
+
+/**
+ * ice_ntuple_check_ether_input
+ * @eth_spec: mask data from ethtool
+ */
+static int ice_ntuple_check_ether_input(struct ethhdr *eth_spec)
+{
+	if (!eth_spec->h_proto &&
+	    is_zero_ether_addr(eth_spec->h_source) &&
+	    is_zero_ether_addr(eth_spec->h_dest))
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
+ * ice_set_ether_flow_seg
+ * @seg: flow segment for programming
+ * @eth_spec: mask data from ethtool
+ */
+int ice_set_ether_flow_seg(struct ice_flow_seg_info *seg,
+			   struct ethhdr *eth_spec)
+{
+	u16 val_loc, mask_loc;
+	int ret;
+
+	ret = ice_ntuple_check_ether_input(eth_spec);
+	if (ret)
+		return ret;
+
+	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_ETH);
+
+	/* Ethertype */
+	if (eth_spec->h_proto) {
+		if (eth_spec->h_proto != htons(0xFFFF)) {
+			/* ACL filter */
+			val_loc = offsetof(struct ice_fdir_fltr, eth.type);
+			mask_loc = offsetof(struct ice_fdir_fltr,
+					    eth_mask.type);
+		} else {
+			/* FD filter */
+			val_loc = ICE_FLOW_FLD_OFF_INVAL;
+			mask_loc = ICE_FLOW_FLD_OFF_INVAL;
+		}
+
+		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_ETH_TYPE, val_loc,
+				 mask_loc, ICE_FLOW_FLD_OFF_INVAL, false);
+	}
+
+	/* Source MAC address */
+	if (!is_zero_ether_addr(eth_spec->h_source)) {
+		if (!is_broadcast_ether_addr(eth_spec->h_source)) {
+			/* ACL filter */
+			val_loc = offsetof(struct ice_fdir_fltr, eth.src);
+			mask_loc = offsetof(struct ice_fdir_fltr, eth_mask.src);
+		} else {
+			/* FD filter */
+			val_loc = ICE_FLOW_FLD_OFF_INVAL;
+			mask_loc = ICE_FLOW_FLD_OFF_INVAL;
+		}
+
+		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_ETH_SA, val_loc,
+				 mask_loc, ICE_FLOW_FLD_OFF_INVAL, false);
+	}
+
+	/* Destination MAC address */
+	if (!is_zero_ether_addr(eth_spec->h_dest)) {
+		if (!is_broadcast_ether_addr(eth_spec->h_dest)) {
+			/* ACL filter */
+			val_loc = offsetof(struct ice_fdir_fltr, eth.dst);
+			mask_loc = offsetof(struct ice_fdir_fltr, eth_mask.dst);
+		} else {
+			/* FD filter */
+			val_loc = ICE_FLOW_FLD_OFF_INVAL;
+			mask_loc = ICE_FLOW_FLD_OFF_INVAL;
+		}
+
+		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_ETH_DA, val_loc,
+				 mask_loc, ICE_FLOW_FLD_OFF_INVAL, false);
+	}
+
+	return 0;
+}
+
+/**
+ * ice_set_fdir_vlan_seg
+ * @seg: flow segment for programming
+ * @ext_masks: masks for additional RX flow fields
+ */
+static int
+ice_set_fdir_vlan_seg(struct ice_flow_seg_info *seg,
+		      struct ethtool_flow_ext *ext_masks)
+{
+	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_VLAN);
+
+	if (ext_masks->vlan_etype) {
+		if (ext_masks->vlan_etype != htons(0xFFFF))
+			return -EOPNOTSUPP;
+
+		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_S_VLAN,
+				 ICE_FLOW_FLD_OFF_INVAL,
+				 ICE_FLOW_FLD_OFF_INVAL,
+				 ICE_FLOW_FLD_OFF_INVAL, false);
+	}
+
+	if (ext_masks->vlan_tci) {
+		if (ext_masks->vlan_tci != htons(0xFFFF))
+			return -EOPNOTSUPP;
+
+		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_C_VLAN,
+				 ICE_FLOW_FLD_OFF_INVAL,
+				 ICE_FLOW_FLD_OFF_INVAL,
+				 ICE_FLOW_FLD_OFF_INVAL, false);
+	}
+
+	return 0;
+}
+
+/**
  * ice_cfg_fdir_xtrct_seq - Configure extraction sequence for the given filter
  * @pf: PF structure
  * @fsp: pointer to ethtool Rx flow specification
@@ -1327,7 +1480,7 @@ ice_cfg_fdir_xtrct_seq(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp,
 	struct device *dev = ice_pf_to_dev(pf);
 	enum ice_fltr_ptype fltr_idx;
 	struct ice_hw *hw = &pf->hw;
-	bool perfect_filter;
+	bool perfect_filter = false;
 	int ret;
 
 	seg = devm_kzalloc(dev, sizeof(*seg), GFP_KERNEL);
@@ -1382,6 +1535,16 @@ ice_cfg_fdir_xtrct_seq(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp,
 					       &perfect_filter);
 		break;
 #endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
+	case ETHER_FLOW:
+		ret = ice_set_ether_flow_seg(seg, &fsp->m_u.ether_spec);
+		if (fsp->m_ext.vlan_etype || fsp->m_ext.vlan_tci) {
+			if (!ice_fdir_vlan_valid(fsp)) {
+				ret = -EINVAL;
+				break;
+			}
+			ret = ice_set_fdir_vlan_seg(seg, &fsp->m_ext);
+		}
+		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -1872,6 +2035,7 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 {
 	struct ethtool_tcpip4_spec *tcp_ip4_spec;
 	struct ethtool_usrip4_spec *usr_ip4_spec;
+	struct ethhdr *eth_spec;
 
 	switch (fsp->flow_type & ~FLOW_EXT) {
 	case TCP_V4_FLOW:
@@ -1909,6 +2073,24 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 		/* IP destination address */
 		if (usr_ip4_spec->ip4dst &&
 		    usr_ip4_spec->ip4dst != htonl(0xFFFFFFFF))
+			return true;
+
+		break;
+	case ETHER_FLOW:
+		eth_spec = &fsp->m_u.ether_spec;
+
+		/* Destination MAC address*/
+		if (!is_broadcast_ether_addr(eth_spec->h_dest) &&
+		    !is_zero_ether_addr(eth_spec->h_dest))
+			return true;
+
+		/* Source MAC address*/
+		if (!is_broadcast_ether_addr(eth_spec->h_source) &&
+		    !is_zero_ether_addr(eth_spec->h_source))
+			return true;
+
+		/* Ethertype */
+		if (eth_spec->h_proto && eth_spec->h_proto != htons(0xFFFF))
 			return true;
 
 		break;
@@ -2067,6 +2249,18 @@ ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 		input->mask.v6.proto = fsp->m_u.usr_ip6_spec.l4_proto;
 		break;
 #endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
+	case ETHER_FLOW:
+		memcpy(input->eth.dst, fsp->h_u.ether_spec.h_dest,
+		       ETH_ALEN);
+		memcpy(input->eth.src, fsp->h_u.ether_spec.h_source,
+		       ETH_ALEN);
+		memcpy(input->eth_mask.dst, fsp->m_u.ether_spec.h_dest,
+		       ETH_ALEN);
+		memcpy(input->eth_mask.src, fsp->m_u.ether_spec.h_source,
+		       ETH_ALEN);
+		input->eth.type = fsp->h_u.ether_spec.h_proto;
+		input->eth_mask.type = fsp->m_u.ether_spec.h_proto;
+		break;
 	default:
 		/* not doing un-parsed flow types */
 		return -EINVAL;

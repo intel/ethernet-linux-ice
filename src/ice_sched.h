@@ -126,13 +126,21 @@ ice_sched_move_nodes(struct ice_port_info *pi, struct ice_sched_node *parent,
 		     u16 num_items, u32 *list);
 
 int
-ice_sched_set_node_priority(struct ice_port_info *pi, struct ice_sched_node *node,
-			    u16 priority);
+ice_sched_move_leaves(struct ice_port_info *pi, struct ice_sched_node *parent,
+		      u16 num_items, u32 *list);
+
+int
+ice_sched_set_node_priority(struct ice_port_info *pi,
+			    struct ice_sched_node *node, u16 priority);
+
 int
 ice_sched_set_node_weight(struct ice_port_info *pi, struct ice_sched_node *node,
 			  u16 weight);
 
 int ice_sched_init_port(struct ice_port_info *pi);
+
+u8 ice_sched_get_qgrp_layer(struct ice_hw *hw);
+
 int ice_sched_query_res_alloc(struct ice_hw *hw);
 void ice_sched_get_psm_clk_freq(struct ice_hw *hw);
 
@@ -148,8 +156,9 @@ ice_sched_find_node_by_teid(struct ice_sched_node *start_node, u32 teid);
 /* Add a scheduling node into SW DB for given info */
 int
 ice_sched_add_node(struct ice_port_info *pi, u8 layer,
-		   struct ice_aqc_txsched_elem_data *info,
-		   struct ice_sched_node *prealloc_node);
+		    struct ice_aqc_txsched_elem_data *info,
+		    struct ice_sched_node *prealloc_node,
+		    u16 txq_id);
 void
 ice_sched_update_parent(struct ice_sched_node *new_parent,
 			struct ice_sched_node *node);
@@ -238,10 +247,6 @@ ice_sched_find_node_in_subtree(struct ice_hw *hw, struct ice_sched_node *base,
 			       struct ice_sched_node *node);
 int
 ice_sched_set_agg_bw_dflt_lmt(struct ice_port_info *pi, u16 vsi_handle);
-int
-ice_sched_set_node_bw_lmt_per_tc(struct ice_port_info *pi, u32 id,
-				 enum ice_agg_type agg_type, u8 tc,
-				 enum ice_rl_type rl_type, u32 bw);
 int
 ice_sched_set_vsi_bw_shared_lmt(struct ice_port_info *pi, u16 vsi_handle,
 				u32 min_bw, u32 max_bw, u32 shared_bw);

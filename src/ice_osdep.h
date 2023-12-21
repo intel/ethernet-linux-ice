@@ -4,6 +4,8 @@
 #ifndef _ICE_OSDEP_H_
 #define _ICE_OSDEP_H_
 
+#include "kcompat.h"
+
 #include <linux/types.h>
 #include <linux/ctype.h>
 #include <linux/delay.h>
@@ -13,7 +15,6 @@
 #include <linux/etherdevice.h>
 #include <linux/if_ether.h>
 #include <linux/pci_ids.h>
-#include "kcompat.h"
 
 struct ice_hw;
 

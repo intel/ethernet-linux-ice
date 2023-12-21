@@ -176,6 +176,7 @@
 #define NEED_XSK_UMEM_GET_RX_FRAME_SIZE
 #else /* >= 5.8.0 */
 #undef HAVE_XSK_UNALIGNED_CHUNK_PLACEMENT
+#define HAVE_RT_IRQ_SCHED_FIX
 #endif /* 5.8.0 */
 
 /*****************************************************************************/
@@ -238,7 +239,6 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0))
 #define NEED_DEVLINK_ALLOC_SETS_DEV
 #else /* >= 5.15.0 */
-#define HAVE_ETHTOOL_COALESCE_EXTACK
 #define HAVE_DEVICE_IN_MDEV_PARENT_OPS
 #define NEED_PCI_IOV_VF_ID
 #define HAVE_DEVLINK_SET_STATE_3_PARAM

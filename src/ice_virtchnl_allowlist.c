@@ -129,6 +129,12 @@ static const u32 large_num_qpairs_allowlist_opcodes[] = {
 	VIRTCHNL_OP_MAP_QUEUE_VECTOR,
 };
 
+static const u32 hqos_allowlist_opcodes[] = {
+	VIRTCHNL_OP_HQOS_TREE_READ, VIRTCHNL_OP_HQOS_ELEMS_ADD,
+	VIRTCHNL_OP_HQOS_ELEMS_DEL, VIRTCHNL_OP_HQOS_ELEMS_MOVE,
+	VIRTCHNL_OP_HQOS_ELEMS_CONF,
+};
+
 struct allowlist_opcode_info {
 	const u32 *opcodes;
 	size_t size;
@@ -224,15 +230,32 @@ void ice_vc_set_working_allowlist(struct ice_vf *vf)
 }
 
 /**
+ * ice_vc_set_hqos_allowlist - allowlist opcodes needed for HQoS config
+ * @vf: pointer to VF structure
+ *
+ * Allowlist opcodes that aren't associated with specific caps, but
+ * are enabled in runtime by devlink.
+ */
+void ice_vc_set_hqos_allowlist(struct ice_vf *vf)
+{
+	ice_vc_allowlist_opcodes(vf, hqos_allowlist_opcodes,
+				 ARRAY_SIZE(hqos_allowlist_opcodes));
+}
+
+/**
  * ice_vc_set_caps_allowlist - allowlist VF opcodes according caps
  * @vf: pointer to VF structure
  */
 void ice_vc_set_caps_allowlist(struct ice_vf *vf)
 {
+	struct ice_port_info *pi = ice_get_main_vsi(vf->pf)->port_info;
 	unsigned long caps = vf->driver_caps;
 	unsigned int i;
 
 	for_each_set_bit(i, &caps, ARRAY_SIZE(allowlist_opcodes))
 		ice_vc_allowlist_opcodes(vf, allowlist_opcodes[i].opcodes,
 					 allowlist_opcodes[i].size);
+
+	if (pi->is_custom_tx_enabled)
+		ice_vc_set_hqos_allowlist(vf);
 }
