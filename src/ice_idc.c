@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* Inter-Driver Communication */
 #include "ice.h"
@@ -957,7 +957,6 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 		return -ENOMEM;
 
 	adev = &iadev->adev;
-
 	mutex_lock(&pf->adev_mutex);
 	cdev_info->adev = adev;
 	iadev->cdev_info = cdev_info;

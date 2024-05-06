@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
@@ -224,7 +224,7 @@ static void _imem_parse_item(struct ice_hw *hw, u16 idx, void *item,
 	_imem_bm_init(&ii->b_m, buf[0]);
 	_imem_bkb_init(&ii->b_kb, *((u16 *)(&buf[0])) >> 4);
 
-	ii->pg = (u8)((buf[1] & 0xc0) >> 6);
+	ii->pg = FIELD_GET(0xc0, buf[1]);
 	_imem_npkb_init(&ii->np_kb, *((u32 *)(&buf[2])));
 	_imem_pgkb_init(&ii->pg_kb, *((u64 *)(&buf[2])) >> 18);
 	_imem_alu_init(&ii->alu0, &buf[8]);

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_dcb.h"
@@ -73,7 +73,7 @@ static int ice_dcbnl_setets(struct net_device *netdev, struct ieee_ets *ets)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return -EBUSY;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return -EINVAL;
 #endif /* HAVE_NETDEV_UPPER_INFO */
 
@@ -256,7 +256,7 @@ static void ice_get_pfc_delay(struct ice_hw *hw, u16 *delay)
 	u32 val;
 
 	val = rd32(hw, PRTDCB_GENC);
-	*delay = (u16)((val & PRTDCB_GENC_PFCLDA_M) >> PRTDCB_GENC_PFCLDA_S);
+	*delay = FIELD_GET(PRTDCB_GENC_PFCLDA_M, val);
 }
 
 /**
@@ -301,7 +301,7 @@ static int ice_dcbnl_setpfc(struct net_device *netdev, struct ieee_pfc *pfc)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return -EBUSY;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return -EINVAL;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -384,7 +384,7 @@ static void ice_dcbnl_set_pfc_cfg(struct net_device *netdev, int prio, u8 set)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -453,7 +453,7 @@ static u8 ice_dcbnl_setstate(struct net_device *netdev, u8 state)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return ICE_DCB_NO_HW_CHG;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return ICE_DCB_NO_HW_CHG;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -532,7 +532,7 @@ ice_dcbnl_set_pg_tc_cfg_tx(struct net_device *netdev, int tc,
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -596,7 +596,7 @@ ice_dcbnl_set_pg_bwg_cfg_tx(struct net_device *netdev, int pgid, u8 bw_pct)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -825,7 +825,7 @@ static int ice_dcbnl_setapp(struct net_device *netdev, struct dcb_app *app)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return -EBUSY;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return -EINVAL;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -974,7 +974,7 @@ static int ice_dcbnl_delapp(struct net_device *netdev, struct dcb_app *app)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return -EBUSY;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return -EINVAL;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -1092,7 +1092,7 @@ static u8 ice_dcbnl_cee_set_all(struct net_device *netdev)
 	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
 		return ICE_DCB_NO_HW_CHG;
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (pf->lag->bonded)
+	if (pf->lag && pf->lag->bonded)
 		return ICE_DCB_NO_HW_CHG;
 
 #endif /* HAVE_NETDEV_UPPER_INFO */

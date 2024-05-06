@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_ddp.h"
 #include "ice_type.h"
@@ -2411,6 +2411,7 @@ ice_get_set_tx_topo(struct ice_hw *hw, u8 *buf, u16 buf_size,
 		if (buf)
 			cmd->set_flags |= ICE_AQC_TX_TOPO_FLAGS_SRC_RAM |
 					  ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW;
+
 		if (ice_is_e825c(hw))
 			desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 	} else {

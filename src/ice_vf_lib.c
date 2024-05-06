@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_vf_lib_private.h"
@@ -314,7 +314,7 @@ static void ice_vf_pre_vsi_rebuild(struct ice_vf *vf)
 		ice_migration_init_vf(vf);
 	}
 	/* Remove switch rules associated with the reset VF */
-	ice_rm_dcf_sw_vsi_rule(vf->pf, vf->lan_vsi_num);
+	ice_rm_dcf_sw_vsi_rule(vf->pf, vf);
 
 	if (ice_is_vf_dcf(vf)) {
 		if (vf->pf->hw.dcf_caps & DCF_ACL_CAP)
@@ -338,32 +338,24 @@ static void ice_vf_pre_vsi_rebuild(struct ice_vf *vf)
 int ice_vf_reconfig_vsi(struct ice_vf *vf)
 {
 	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
-	struct ice_vsi_cfg_params params = {};
 	struct ice_pf *pf = vf->pf;
 	int err;
 
 	if (WARN_ON(!vsi))
 		return -EINVAL;
 
-	params = ice_vsi_to_params(vsi);
-	params.flags = ICE_VSI_FLAG_NO_INIT;
+	vsi->flags &= ~(ICE_VSI_FLAG_INIT);
 
 	ice_vsi_decfg(vsi);
 	ice_fltr_remove_all(vsi);
 
-	err = ice_vsi_cfg(vsi, &params);
+	err = ice_vsi_cfg(vsi);
 	if (err) {
 		dev_err(ice_pf_to_dev(pf),
 			"Failed to reconfigure the VF%u's VSI, error %d\n",
 			vf->vf_id, err);
 		return err;
 	}
-
-	/* Update the lan_vsi_num field since it might have been changed. The
-	 * PF lan_vsi_idx number remains the same so we don't need to change
-	 * that.
-	 */
-	vf->lan_vsi_num = vsi->vsi_num;
 
 	ice_vf_recreate_adq_vsi(vf);
 
@@ -396,7 +388,6 @@ static int ice_vf_rebuild_vsi(struct ice_vf *vf)
 	 * vf->lan_vsi_idx
 	 */
 	vsi->vsi_num = ice_get_hw_vsi_num(&pf->hw, vsi->idx);
-	vf->lan_vsi_num = vsi->vsi_num;
 
 	if (ice_vf_rebuild_adq_vsi(vf)) {
 		dev_err(ice_pf_to_dev(pf), "failed to rebuild ADQ configuration for VF %d\n",
@@ -571,6 +562,8 @@ static void ice_vf_rebuild_host_cfg(struct ice_vf *vf)
 	if (WARN_ON(!vsi))
 		return;
 
+	vf->vm_vsi_num = vsi->vsi_num;
+
 	ice_vf_set_host_trust_cfg(vf);
 
 	if (ice_vf_rebuild_host_mac_cfg(vf))
@@ -616,7 +609,6 @@ static void ice_vf_set_initialized(struct ice_vf *vf)
 	clear_bit(ICE_VF_STATE_DIS, vf->vf_states);
 	set_bit(ICE_VF_STATE_INIT, vf->vf_states);
 	memset(&vf->vlan_v2_caps, 0, sizeof(vf->vlan_v2_caps));
-	vf->vm_vsi_num = vf->lan_vsi_num;
 }
 
 /**
@@ -1078,7 +1070,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 
 		pfe.event = VIRTCHNL_EVENT_DCF_VSI_MAP_UPDATE;
 		pfe.event_data.vf_vsi_map.vf_id = vf->vf_id;
-		pfe.event_data.vf_vsi_map.vsi_id = vf->lan_vsi_num;
+		pfe.event_data.vf_vsi_map.vsi_id = vsi->vsi_num;
 
 		ice_aq_send_msg_to_vf(&pf->hw, ICE_DCF_VFID,
 				      VIRTCHNL_OP_EVENT,
@@ -1413,7 +1405,6 @@ void ice_initialize_vf_entry(struct ice_vf *vf)
 
 	/* Initialize mailbox info for this VF */
 	ice_mbx_init_vf_info(&pf->hw, &vf->mbx_info);
-
 	mutex_init(&vf->cfg_lock);
 }
 
@@ -1727,6 +1718,8 @@ int ice_vf_init_host_cfg(struct ice_vf *vf, struct ice_vsi *vsi)
 
 	dev = ice_pf_to_dev(pf);
 
+	vf->vm_vsi_num = vsi->vsi_num;
+
 	err = ice_vsi_add_vlan_zero(vsi);
 	if (err) {
 		dev_warn(dev, "Failed to add VLAN 0 filter for VF %d\n",
@@ -1795,7 +1788,7 @@ struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf)
 	struct ice_vsi *vsi;
 
 	params.type = ICE_VSI_CTRL;
-	params.pi = ice_vf_get_port_info(vf);
+	params.port_info = ice_vf_get_port_info(vf);
 	params.vf = vf;
 	params.flags = ICE_VSI_FLAG_INIT;
 
@@ -1810,13 +1803,12 @@ struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf)
 }
 
 /**
- * ice_vf_invalidate_vsi - invalidate vsi_idx/vsi_num to remove VSI access
+ * ice_vf_invalidate_vsi - invalidate vsi_idx to remove VSI access
  * @vf: VF to remove access to VSI for
  */
 void ice_vf_invalidate_vsi(struct ice_vf *vf)
 {
 	vf->lan_vsi_idx = ICE_NO_VSI;
-	vf->lan_vsi_num = ICE_NO_VSI;
 }
 
 /**

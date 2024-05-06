@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver IEPS extensions */
 
@@ -194,8 +194,8 @@ struct ieps_peer_phy_link_status {
 	bool lse_on;
 	enum ieps_peer_phy_fec_type fec_type;
 	enum ieps_peer_phy_type phy_type;
-	__le64 phy_type_low;
-	__le64 phy_type_high;
+	__u64 phy_type_low;
+	__u64 phy_type_high;
 };
 
 enum ieps_peer_port_attr {

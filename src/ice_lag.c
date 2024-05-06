@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* Link Aggregation code */
 
@@ -267,8 +267,7 @@ static void ice_lag_del_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 	}
 
 	rule_buf_sz = struct_size(s_rule, vsi, num_vsi);
-	s_rule = (typeof(s_rule))
-		kzalloc(rule_buf_sz, GFP_KERNEL);
+	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return;
 
@@ -343,7 +342,7 @@ static int ice_lag_rdma_create_fltr(struct ice_lag *lag)
 				ICE_LAG_LA_VALID;
 
 		rule_sz = struct_size(s_rule, act, ICE_LAG_NUM_RULES);
-		s_rule = (typeof(s_rule))kzalloc(rule_sz, GFP_KERNEL);
+		s_rule = kzalloc(rule_sz, GFP_KERNEL);
 		if (!s_rule) {
 			ret = -ENOMEM;
 			goto create_fltr_out;
@@ -427,7 +426,7 @@ static void ice_lag_rdma_del_fltr(struct ice_lag *lag)
 	u16 rule_buf_sz;
 
 	rule_buf_sz = struct_size(s_rule, hdr_data, 0);
-	s_rule = (typeof(s_rule))kzalloc(rule_buf_sz, GFP_KERNEL);
+	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return;
 
@@ -1829,6 +1828,8 @@ int ice_init_lag(struct ice_pf *pf)
 	u8 i;
 
 	ice_lag_check_nvm_support(pf);
+	if (!ice_is_feature_supported(pf, ICE_F_LAG))
+		return 0;
 
 	pf->lag = kzalloc(sizeof(*lag), GFP_KERNEL);
 	if (!pf->lag)

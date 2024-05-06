@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_txrx_lib.h"
 #include "ice_eswitch.h"
@@ -172,8 +172,12 @@ ice_rx_csum(struct ice_rx_ring *ring, struct sk_buff *skb,
 	ice_rx_extra_counters(ring->vsi, rx_status0, decoded.inner_prot, ipv4);
 #endif
 
-	if (ipv4 && (rx_status0 & (BIT(ICE_RX_FLEX_DESC_STATUS0_XSUM_IPE_S) |
-				   BIT(ICE_RX_FLEX_DESC_STATUS0_XSUM_EIPE_S))))
+	if (ipv4 && (rx_status0 & BIT(ICE_RX_FLEX_DESC_STATUS0_XSUM_EIPE_S))) {
+		ring->vsi->back->hw_rx_eipe_error++;
+		return;
+	}
+
+	if (ipv4 && (rx_status0 & (BIT(ICE_RX_FLEX_DESC_STATUS0_XSUM_IPE_S))))
 		goto checksum_fail;
 
 	if (ipv6 && (rx_status0 & (BIT(ICE_RX_FLEX_DESC_STATUS0_IPV6EXADD_S))))
@@ -382,7 +386,7 @@ int ice_xmit_xdp_buff(struct xdp_buff *xdp, struct ice_tx_ring *xdp_ring)
 void ice_finalize_xdp_rx(struct ice_rx_ring *rx_ring, unsigned int xdp_res)
 {
 	if (xdp_res & ICE_XDP_REDIR)
-		xdp_do_flush_map();
+		xdp_do_flush();
 
 	if (xdp_res & ICE_XDP_TX) {
 		struct ice_tx_ring *xdp_ring =

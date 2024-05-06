@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_FLOW_H_
 #define _ICE_FLOW_H_
@@ -496,7 +496,7 @@ struct ice_flow_prof {
 	u8 acts_cnt;
 
 	/* Keep track of flow entries associated with this flow profile */
-	struct mutex entries_lock;
+	struct mutex entries_lock;	/* lock for flow entries */
 	struct list_head entries;
 
 	struct ice_flow_seg_info segs[ICE_FLOW_SEG_MAX];

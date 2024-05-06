@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_VF_ADQ_H_
 #define _ICE_VF_ADQ_H_
@@ -15,8 +15,7 @@ int ice_vf_rebuild_adq_vsi(struct ice_vf *vf);
 u16 ice_vf_get_tc_based_qid(u16 qid, u16 offset);
 void ice_vf_q_id_get_vsi_q_id(struct ice_vf *vf, u16 vf_q_id, u16 *t_tc,
 			      struct virtchnl_queue_select *vqs,
-			      struct ice_vsi **vsi_p, u16 *vsi_id,
-			      u16 *q_id);
+			      struct ice_vsi **vsi_p, u16 *q_id);
 int ice_vc_del_switch_filter(struct ice_vf *vf, u8 *msg);
 int ice_vc_add_switch_filter(struct ice_vf *vf, u8 *msg);
 int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg);

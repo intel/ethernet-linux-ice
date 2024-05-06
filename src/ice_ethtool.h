@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_ETHTOOL_H_
 #define _ICE_ETHTOOL_H_
+
+#include "ice_ethtool_common.h"
 
 struct ice_stats {
 	char stat_string[ETH_GSTRING_LEN];
@@ -85,7 +87,10 @@ struct ice_stats {
 #define ICE_PORT_RX_OVERSIZE		PICK("rx_oversize.nic", "port-rx-oversized_pkts")
 #define ICE_PORT_RX_JABBER		PICK("rx_jabber.nic", "port-rx-jabber_pkts")
 #define ICE_PORT_RX_CSUM_BAD		PICK("rx_csum_bad.nic", "port-rx-csum_errors")
+#define ICE_PORT_RX_EIPE_ERRORS		PICK("rx_eipe_errors.nic", "port-rx-eipe_errors")
+#ifdef ICE_ADD_PROBES
 #define ICE_PORT_RX_LEN_ERRORS		PICK("rx_length_errors.nic", "port-rx-length_errors")
+#endif /* ICE_ADD_PROBES */
 #define ICE_PORT_RX_DROPPED		PICK("rx_dropped.nic", "port-rx-dropped_pkts")
 #define ICE_PORT_RX_CRC_ERRORS		PICK("rx_crc_errors.nic", "port-rx-crc_errors")
 #define ICE_PORT_ILLEGAL_BYTES		PICK("illegal_bytes.nic", "port-rx-illegal_bytes")
@@ -208,6 +213,43 @@ struct ice_phy_type_to_ethtool {
 	u8 phy_type_idx;
 };
 
+struct ice_serdes_equalization_to_ethtool {
+	int rx_equalization_pre2;
+	int rx_equalization_pre1;
+	int rx_equalization_post1;
+	int rx_equalization_bflf;
+	int rx_equalization_bfhf;
+	int rx_equalization_drate;
+	int tx_equalization_pre1;
+	int tx_equalization_pre3;
+	int tx_equalization_atten;
+	int tx_equalization_post1;
+	int tx_equalization_pre2;
+};
+
+struct ice_fec_stats_to_ethtool {
+	u16 fec_corr_cnt_high;
+	u16 fec_corr_cnt_low;
+	u16 fec_uncorr_cnt_high;
+	u16 fec_uncorr_cnt_low;
+};
+
+struct ice_regdump_to_ethtool {
+	/* A multilane port can have max 4 serdes */
+	struct ice_serdes_equalization_to_ethtool equalization[4];
+	struct ice_fec_stats_to_ethtool stats;
+};
+
+/* Port topology from lport i.e.
+ * serdes mapping, pcsquad, macport, cage etc...
+ */
+struct ice_port_topology {
+	u16 pcs_port;
+	u16 primary_serdes_lane;
+	u16 serdes_lane_count;
+	u16 pcs_quad_select;
+};
+
 /* Macro to make PHY type to ethtool link mode table entry.
  * The index is the PHY type.
  */
@@ -289,7 +331,7 @@ struct ice_phy_type_to_ethtool phy_type_low_lkup[ICE_PHY_TYPE_LOW_SIZE] = {
 	/* ICE_PHY_TYPE_LOW_10GBASE_LR */
 	ICE_PHY_TYPE(15, 10GB, 10000baseT_Full),
 #endif /* HAVE_ETHTOOL_NEW_10G_BITS */
-	/* ICE_PHY_TYPE_LOW_10GBASE_KR_CR1 */
+	/* ICE_PHY_TYPE_LOW_10GBASE_KR */
 	ICE_PHY_TYPE(16, 10GB, 10000baseKR_Full),
 #ifdef HAVE_ETHTOOL_NEW_10G_BITS
 	/* ICE_PHY_TYPE_LOW_10G_SFI_AOC_ACC */
@@ -460,15 +502,15 @@ struct ice_phy_type_to_ethtool phy_type_low_lkup[ICE_PHY_TYPE_LOW_SIZE] = {
 	ICE_PHY_TYPE(58, 100GB, 100000baseCR4_Full),
 	/* ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4 */
 	ICE_PHY_TYPE(59, 100GB, 100000baseCR4_Full),
-	/* ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4 */
+	/* ICE_PHY_TYPE_LOW_100GBASE_KR4_PAM4 */
 	ICE_PHY_TYPE(60, 100GB, 100000baseKR4_Full),
 #ifdef HAVE_ETHTOOL_NEW_100G_BITS
-	/* ICE_PHY_TYPE_LOW_100GBASE_CR2 */
+	/* ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4 */
 	ICE_PHY_TYPE(61, 100GB, 100000baseCR2_Full),
 	/* ICE_PHY_TYPE_LOW_100GBASE_SR2 */
 	ICE_PHY_TYPE(62, 100GB, 100000baseSR2_Full),
 #else
-	/* ICE_PHY_TYPE_LOW_100GBASE_CR2 */
+	/* ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4 */
 	ICE_PHY_TYPE(61, 100GB, 100000baseCR4_Full),
 	/* ICE_PHY_TYPE_LOW_100GBASE_SR2 */
 	ICE_PHY_TYPE(62, 100GB, 100000baseSR4_Full),

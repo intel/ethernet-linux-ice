@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_TC_LIB_H_
 #define _ICE_TC_LIB_H_
@@ -268,6 +268,8 @@ ice_add_cls_flower(struct net_device __always_unused *netdev,
 int
 ice_del_cls_flower(struct ice_vsi *vsi, struct flow_cls_offload *cls_flower);
 void ice_replay_tc_fltrs(struct ice_pf *pf);
+int ice_rem_adv_rule_by_fltr(struct ice_hw *hw,
+			     const struct ice_tc_flower_fltr *fltr);
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
 
 #endif /* _ICE_TC_LIB_H_ */

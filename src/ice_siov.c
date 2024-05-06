@@ -1,7 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
+
+#ifdef HAVE_PASID_SUPPORT
+#ifdef HAVE_IOMMU_DEV_FEAT_AUX
+
 #include "ice_lib.h"
 #include "ice_virtchnl_allowlist.h"
 #include "ice_fltr.h"
@@ -30,13 +34,13 @@ struct ice_adi_priv {
 	struct ice_mbx ice_adi_mbx;
 };
 
-static inline struct ice_adi_priv *adi_priv(struct ice_adi *adi)
+static struct ice_adi_priv *adi_priv(struct ice_adi *adi)
 {
 	return (struct ice_adi_priv *)
 		container_of(adi, struct ice_adi_priv, adi);
 }
 
-static inline struct ice_adi_priv *vf_to_adi_priv(struct ice_vf *vf)
+static struct ice_adi_priv *vf_to_adi_priv(struct ice_vf *vf)
 {
 	return (struct ice_adi_priv *)
 		container_of(vf, struct ice_adi_priv, vf);
@@ -235,7 +239,7 @@ static struct ice_vsi *ice_adi_vsi_setup(struct ice_vf *vf)
 	dev = ice_pf_to_dev(pf);
 
 	params.type = ICE_VSI_ADI;
-	params.pi = vf->pf->hw.port_info;
+	params.port_info = vf->pf->hw.port_info;
 	params.vf = vf;
 	params.flags = ICE_VSI_FLAG_INIT;
 
@@ -246,7 +250,6 @@ static struct ice_vsi *ice_adi_vsi_setup(struct ice_vf *vf)
 		return NULL;
 	}
 	vf->lan_vsi_idx = vsi->idx;
-	vf->lan_vsi_num = vsi->vsi_num;
 	vf->vf_id = vsi->vsi_num;
 
 	err = ice_vf_init_host_cfg(vf, vsi);
@@ -475,8 +478,7 @@ static int ice_ena_siov_vf_mapping(struct ice_vf *vf)
 	if (!q_vector)
 		return -EINVAL;
 
-	reg = ((q_vector->reg_idx << VPINT_MBX_CTL_MSIX_INDX_S) &
-		VPINT_MBX_CTL_MSIX_INDX_M) | VPINT_MBX_CTL_CAUSE_ENA_M;
+	reg = FIELD_PREP(VPINT_MBX_CTL_MSIX_INDX_M, q_vector->reg_idx) | VPINT_MBX_CTL_CAUSE_ENA_M;
 	wr32(hw, VPINT_MBX_CTL(vsi->vsi_num), reg);
 
 	return 0;
@@ -1304,3 +1306,6 @@ void ice_deinit_siov_res(struct ice_pf *pf)
 
 	clear_bit(ICE_FLAG_SIOV_ENA, pf->flags);
 }
+
+#endif /* HAVE_IOMMU_DEV_FEAT_AUX */
+#endif /* HAVE_PASID_SUPPORT */

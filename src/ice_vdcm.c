@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_vdcm.h"
+
+#ifdef HAVE_PASID_SUPPORT
+#ifdef HAVE_IOMMU_DEV_FEAT_AUX
 
 #define VFIO_PCI_OFFSET_SHIFT   40
 #define VFIO_PCI_OFFSET_TO_INDEX(off)   ((off) >> VFIO_PCI_OFFSET_SHIFT)
@@ -1591,3 +1594,6 @@ void ice_vdcm_deinit(struct pci_dev *pdev)
 {
 	mdev_unregister_device(&pdev->dev);
 }
+
+#endif /* HAVE_IOMMU_DEV_FEAT_AUX */
+#endif /* HAVE_PASID_SUPPORT */

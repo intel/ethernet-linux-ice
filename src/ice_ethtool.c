@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* ethtool support for ice */
 
@@ -170,7 +170,10 @@ static const struct ice_stats ice_gstrings_pf_stats[] = {
 	ICE_PF_STAT(ICE_PORT_RX_OVERSIZE, stats.rx_oversize),
 	ICE_PF_STAT(ICE_PORT_RX_JABBER, stats.rx_jabber),
 	ICE_PF_STAT(ICE_PORT_RX_CSUM_BAD, hw_csum_rx_error),
+	ICE_PF_STAT(ICE_PORT_RX_EIPE_ERRORS, hw_rx_eipe_error),
+#ifdef ICE_ADD_PROBES
 	ICE_PF_STAT(ICE_PORT_RX_LEN_ERRORS, stats.rx_len_errors),
+#endif /* ICE_ADD_PROBES */
 	ICE_PF_STAT(ICE_PORT_RX_DROPPED, stats.eth.rx_discards),
 	ICE_PF_STAT(ICE_PORT_RX_CRC_ERRORS, stats.crc_errors),
 	ICE_PF_STAT(ICE_PORT_ILLEGAL_BYTES, stats.illegal_bytes),
@@ -257,9 +260,7 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 	ICE_PRIV_FLAG("vf-vlan-pruning", ICE_FLAG_VF_VLAN_PRUNING),
 	ICE_PRIV_FLAG("legacy-rx", ICE_FLAG_LEGACY_RX),
 	/* Flag enable/disable monitoring DPLL Admin Queue error events */
-	ICE_PRIV_FLAG("cgu_fast_lock", ICE_FLAG_DPLL_FAST_LOCK),
 	ICE_PRIV_FLAG("dpll_monitor", ICE_FLAG_DPLL_MONITOR),
-	ICE_PRIV_FLAG("extts_filter", ICE_FLAG_EXTTS_FILTER),
 	ICE_PRIV_FLAG("itu_g8262_filter_used", ICE_FLAG_ITU_G8262_FILTER_USED),
 	ICE_PRIV_FLAG("allow-no-fec-modules-in-auto",
 		      ICE_FLAG_ALLOW_FEC_DIS_AUTO),
@@ -308,7 +309,431 @@ ice_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 
 static int ice_get_regs_len(struct net_device __always_unused *netdev)
 {
-	return sizeof(ice_regs_dump_list);
+	return (sizeof(ice_regs_dump_list) +
+		sizeof(struct ice_regdump_to_ethtool));
+}
+
+/*
+ * ice_ethtool_get_maxspeed - Get the max speed for given lport
+ * @hw: pointer to the HW struct
+ * @lport: logical port for which max speed is requested
+ * @max_speed: return max speed for input lport
+ */
+static int ice_ethtool_get_maxspeed(struct ice_hw *hw, u8 lport, u8 *max_speed)
+{
+	struct ice_aqc_get_port_options_elem options[ICE_AQC_PORT_OPT_MAX];
+	u8 option_count = ICE_AQC_PORT_OPT_MAX;
+	bool active_valid, pending_valid;
+	u8 active_idx, pending_idx;
+	int status;
+
+	status = ice_aq_get_port_options(hw, options, &option_count, lport,
+					 true, &active_idx, &active_valid,
+					 &pending_idx, &pending_valid);
+
+	if (status) {
+		ice_debug(hw, ICE_DBG_PHY, "Port split read err: %d\n", status);
+		return -EIO;
+	}
+
+	if (active_valid) {
+		ice_debug(hw, ICE_DBG_PHY, "Active idx: %d\n", active_idx);
+	} else {
+		ice_debug(hw, ICE_DBG_PHY, "No valid Active option:\n");
+		return -EINVAL;
+	}
+	/* Speed values range from 0 to 7 So max speed can occupy 3 bit */
+	*max_speed = (options[active_idx].max_lane_speed & 0x7);
+	return 0;
+}
+
+/**
+ * ice_is_serdes_muxed - returns whether serdes is muxed in hardware
+ * @hw: pointer to the HW struct
+ * Returns True : when serdes is muxed False: when serdes is not muxed
+ */
+static bool ice_is_serdes_muxed(struct ice_hw *hw)
+{
+	u32 reg_value;
+
+	reg_value = rd32(hw, GLGEN_SWITCH_MODE_CONFIG);
+	return FIELD_GET(GLGEN_SWITCH_MODE_CONFIG_SELECT_25X4_ON_SINGLE_QUAD_M,
+			 reg_value);
+}
+
+/**
+ * ice_get_port_topology - returns physical topology like pcsquad, pcsport,
+ *                         serdes number
+ * @hw: pointer to the HW struct
+ * @lport: logical port for which physical info requested
+ * @port_topology: buffer to hold port topology
+ *
+ * Returns the physical component associated with the Port
+ */
+static int ice_get_port_topology(struct ice_hw *hw, u8 lport,
+				 struct ice_port_topology *port_topology)
+{
+	struct ice_aqc_get_link_topo cmd = {};
+	u16 node_handle = 0;
+	u8 cage_type = 0;
+	bool is_muxed;
+	int err;
+	u8 ctx;
+
+	if (!hw || !port_topology)
+		return -EINVAL;
+
+	ctx = ICE_AQC_LINK_TOPO_NODE_TYPE_CAGE << ICE_AQC_LINK_TOPO_NODE_TYPE_S;
+	ctx |= ICE_AQC_LINK_TOPO_NODE_CTX_PORT << ICE_AQC_LINK_TOPO_NODE_CTX_S;
+	cmd.addr.topo_params.node_type_ctx = ctx;
+
+	err = ice_aq_get_netlist_node(hw, &cmd, &cage_type, &node_handle);
+	if (err)
+		return -EINVAL;
+
+	is_muxed = ice_is_serdes_muxed(hw);
+	if (hw->device_id >= ICE_DEV_ID_E810_XXV_BACKPLANE) {
+		port_topology->serdes_lane_count = 1;
+		if (lport == 0) {
+			port_topology->pcs_quad_select = 0;
+			port_topology->pcs_port = 0;
+			port_topology->primary_serdes_lane = 0;
+		} else if (lport == 1) {
+			port_topology->pcs_quad_select = 1;
+			port_topology->pcs_port = 0;
+			port_topology->primary_serdes_lane = 1;
+		} else {
+			return -EINVAL;
+		}
+	} else {
+		if (cage_type == 0x11 ||	/* SFP+ */
+		    cage_type == 0x12) {	/* SFP28 */
+			port_topology->serdes_lane_count = 1;
+			switch (lport) {
+			case 0:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 0;
+				port_topology->primary_serdes_lane = 0;
+				break;
+			case 1:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 0;
+				if (is_muxed)
+					port_topology->primary_serdes_lane = 2;
+				else
+					port_topology->primary_serdes_lane = 4;
+				break;
+			case 2:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 1;
+				port_topology->primary_serdes_lane = 1;
+				break;
+			case 3:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 1;
+				if (is_muxed)
+					port_topology->primary_serdes_lane = 3;
+				else
+					port_topology->primary_serdes_lane = 5;
+				break;
+			case 4:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 2;
+				port_topology->primary_serdes_lane = 2;
+				break;
+			case 5:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 2;
+				port_topology->primary_serdes_lane = 6;
+				break;
+			case 6:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 3;
+				port_topology->primary_serdes_lane = 3;
+				break;
+			case 7:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 3;
+				port_topology->primary_serdes_lane = 7;
+				break;
+			default:
+				return -EINVAL;
+			}
+		} else if (cage_type == 0x13 ||	/* QSFP */
+			   cage_type == 0x14) {	/* QSFP28 */
+			u8 max_speed = 0;
+
+			err = ice_ethtool_get_maxspeed(hw, lport, &max_speed);
+			if (err)
+				return err;
+			if (max_speed == ICE_AQC_PORT_OPT_MAX_LANE_100G)
+				port_topology->serdes_lane_count = 4;
+			else if (max_speed == ICE_AQC_PORT_OPT_MAX_LANE_50G)
+				port_topology->serdes_lane_count = 2;
+			else
+				port_topology->serdes_lane_count = 1;
+
+			switch (lport) {
+			case 0:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 0;
+				port_topology->primary_serdes_lane = 0;
+				break;
+			case 1:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 0;
+				if (is_muxed)
+					port_topology->primary_serdes_lane = 2;
+				else
+					port_topology->primary_serdes_lane = 4;
+				break;
+			case 2:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 1;
+				port_topology->primary_serdes_lane = 1;
+				break;
+			case 3:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 1;
+				if (is_muxed)
+					port_topology->primary_serdes_lane = 3;
+				else
+					port_topology->primary_serdes_lane = 5;
+				break;
+			case 4:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 2;
+				port_topology->primary_serdes_lane = 2;
+				break;
+			case 5:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 2;
+				port_topology->primary_serdes_lane = 6;
+				break;
+			case 6:
+				port_topology->pcs_quad_select = 0;
+				port_topology->pcs_port = 3;
+				port_topology->primary_serdes_lane = 3;
+				break;
+			case 7:
+				port_topology->pcs_quad_select = 1;
+				port_topology->pcs_port = 3;
+				port_topology->primary_serdes_lane = 7;
+				break;
+			default:
+				return -EINVAL;
+			}
+		} else {
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
+
+/**
+ * ice_get_tx_rx_equa - read serdes tx rx equaliser param
+ * @hw: pointer to the HW struct
+ * @serdes_num: represents the serdes number
+ * @ptr: structure to read all serdes parameter for given serdes
+ * returns all serdes equalisation parameter supported per serdes number
+ */
+static int ice_get_tx_rx_equa(struct ice_hw *hw, u8 serdes_num,
+			      struct ice_serdes_equalization_to_ethtool *ptr)
+{
+	int err;
+
+	if (!ptr)
+		return -EOPNOTSUPP;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_PRE1,
+					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
+					  &ptr->tx_equalization_pre1);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_PRE3,
+					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
+					  &ptr->tx_equalization_pre3);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_ATTEN,
+					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
+					  &ptr->tx_equalization_atten);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_POST1,
+					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
+					  &ptr->tx_equalization_post1);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_PRE2,
+					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
+					  &ptr->tx_equalization_pre2);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_PRE2,
+					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
+					  &ptr->rx_equalization_pre2);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_PRE1,
+					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
+					  &ptr->rx_equalization_pre1);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_POST1,
+					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
+					  &ptr->rx_equalization_post1);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_BFLF,
+					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
+					  &ptr->rx_equalization_bflf);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_BFHF,
+					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
+					  &ptr->rx_equalization_bfhf);
+	if (err)
+		return err;
+
+	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_DRATE,
+					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
+					  &ptr->rx_equalization_drate);
+	if (err)
+		return err;
+
+	return 0;
+}
+
+/**
+ * ice_get_port_fec_stats - returns FEC correctable, uncorrectable stats per
+ *                          pcsquad, pcsport
+ * @hw: pointer to the HW struct
+ * @pcs_quad: pcsquad for input port
+ * @pcs_port: pcsport for input port
+ * @fec_stats: buffer to hold FEC statistics for given port
+ *
+ * Returns FEC stats
+ */
+static int ice_get_port_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
+				  struct ice_fec_stats_to_ethtool *fec_stats)
+{
+	u32 rs_fec_uncorr_low_val = 0, rs_fec_uncorr_high_val = 0;
+	u32 rs_fec_corr_low_val = 0, rs_fec_corr_high_val = 0;
+	int err;
+
+	if (pcs_quad > 1 || pcs_port > 3)
+		return -EINVAL;
+
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_RS_FEC_CORR_LOW,
+				   &rs_fec_corr_low_val);
+	if (err)
+		return err;
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_RS_FEC_CORR_HIGH,
+				   &rs_fec_corr_high_val);
+	if (err)
+		return err;
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
+				   ICE_RS_FEC_UNCORR_LOW,
+				   &rs_fec_uncorr_low_val);
+	if (err)
+		return err;
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
+				   ICE_RS_FEC_UNCORR_HIGH,
+				   &rs_fec_uncorr_high_val);
+	if (err)
+		return err;
+
+	fec_stats->fec_corr_cnt_low = lower_16_bits(rs_fec_corr_low_val);
+	fec_stats->fec_corr_cnt_high = lower_16_bits(rs_fec_corr_high_val);
+	fec_stats->fec_uncorr_cnt_low = lower_16_bits(rs_fec_uncorr_low_val);
+	fec_stats->fec_uncorr_cnt_high = lower_16_bits(rs_fec_uncorr_high_val);
+	return 0;
+}
+
+/**
+ * ice_get_extended_regs - returns FEC correctable, uncorrectable stats per
+ *                         pcsquad, pcsport
+ * @netdev: pointer to net device structure
+ * @p: output buffer to fill requested register dump
+ *
+ * Returns error/success
+ */
+static int ice_get_extended_regs(struct net_device *netdev, void *p)
+{
+	struct ice_regdump_to_ethtool *ice_prv_regs_buf;
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_port_topology port_topology;
+	struct ice_port_info *pi;
+	struct ice_pf *pf;
+	struct ice_hw *hw;
+	unsigned int i;
+	int err;
+
+	pf = np->vsi->back;
+	hw = &pf->hw;
+	pi = np->vsi->port_info;
+
+	if (!pi) {
+		netdev_info(netdev, "Port info structure is null\n");
+		return -EINVAL;
+	}
+
+	/* Serdes parameters are not supported if not the PF VSI */
+	if (np->vsi->type != ICE_VSI_PF) {
+		netdev_info(netdev, "Supported VSI type PF : failed\n");
+		return -EINVAL;
+	}
+
+	err = ice_get_port_topology(hw, pi->lport, &port_topology);
+	if (err) {
+		netdev_info(netdev, "Extended register dump failed Lport %d\n",
+			    pi->lport);
+		return -EINVAL;
+	}
+
+	if (port_topology.serdes_lane_count > 4) {
+		netdev_info(netdev, "Extended register dump failed:  Lport %d Serdes count %d\n",
+			    pi->lport, port_topology.serdes_lane_count);
+		return -EINVAL;
+	}
+
+	ice_prv_regs_buf = p;
+
+	/* Get serdes equalization parameter for available serdes */
+	for (i = 0; i < port_topology.serdes_lane_count; i++) {
+		u8 serdes_num = 0;
+
+		serdes_num = port_topology.primary_serdes_lane + i;
+		err = ice_get_tx_rx_equa(hw, serdes_num,
+					 &ice_prv_regs_buf->equalization[i]);
+		if (err) {
+			netdev_info(netdev, "Lport:Serd %d:%d equa get err:%d",
+				    pi->lport, serdes_num, err);
+			return -EINVAL;
+		}
+	}
+
+	/* Get FEC correctable, uncorrectable counter */
+	err = ice_get_port_fec_stats(hw, port_topology.pcs_quad_select,
+				     port_topology.pcs_port,
+				     &ice_prv_regs_buf->stats);
+	if (err) {
+		netdev_info(netdev, "FEC stats get failed Lport %d Err %d\n",
+			    pi->lport, err);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static void
@@ -320,10 +745,12 @@ ice_get_regs(struct net_device *netdev, struct ethtool_regs *regs, void *p)
 	u32 *regs_buf = p;
 	unsigned int i;
 
-	regs->version = 1;
+	regs->version = 2;
 
 	for (i = 0; i < ARRAY_SIZE(ice_regs_dump_list); ++i)
 		regs_buf[i] = rd32(hw, ice_regs_dump_list[i]);
+
+	ice_get_extended_regs(netdev, (void *)&regs_buf[i]);
 }
 
 static u32 ice_get_msglevel(struct net_device *netdev)
@@ -1004,7 +1431,7 @@ ice_self_test(struct net_device *netdev, struct ethtool_test *eth_test,
 		/* If the device is online then take it offline */
 		if (if_running)
 			/* indicate we're in test mode */
-			ice_stop(netdev);
+			dev_change_flags(netdev, netdev->flags & ~IFF_UP, NULL);
 
 		data[ICE_ETH_TEST_LINK] = ice_link_test(netdev);
 		data[ICE_ETH_TEST_EEPROM] = ice_eeprom_test(netdev);
@@ -1022,11 +1449,13 @@ ice_self_test(struct net_device *netdev, struct ethtool_test *eth_test,
 		clear_bit(ICE_TESTING, pf->state);
 
 		if (if_running) {
-			int status = ice_open(netdev);
+			int status = dev_change_flags(netdev,
+						      netdev->flags | IFF_UP,
+						      NULL);
 
 			if (status) {
 				ice_dev_err_errno(dev, status,
-						  "Could not open device %s",
+						  "Could not bring up device %s",
 						  pf->int_name);
 			}
 		}
@@ -1718,7 +2147,7 @@ __ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data,
 	}
 }
 
-static void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
+void ice_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 
@@ -1825,8 +2254,8 @@ ice_set_fecparam(struct net_device *netdev, struct ethtool_fecparam *fecparam)
 		fec = ICE_FEC_NONE;
 		break;
 	default:
-		dev_warn(ice_pf_to_dev(pf), "Unsupported FEC mode: %d\n",
-			 fecparam->fec);
+		netdev_warn(netdev, "Unsupported FEC mode: %d\n",
+			    fecparam->fec);
 		return -EINVAL;
 	}
 
@@ -2051,7 +2480,6 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 	struct ice_pf *pf = vsi->back;
 	struct device *dev;
 	int ret = 0;
-	int status;
 	u32 i;
 
 	if (flags > BIT(ICE_PRIV_FLAG_ARRAY_SIZE))
@@ -2138,6 +2566,8 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 
 	if (test_bit(ICE_FLAG_FW_LLDP_AGENT, change_flags)) {
 		if (!test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags)) {
+			int status;
+
 			/* Disable FW LLDP engine */
 			status = ice_cfg_lldp_mib_change(&pf->hw, false);
 
@@ -2168,6 +2598,7 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			ice_ena_all_vfs_rx_lldp(pf);
 		} else {
 			bool dcbx_agent_status;
+			int status;
 
 #ifdef NETIF_F_HW_TC
 			if (ice_is_adq_active(pf)) {
@@ -2255,9 +2686,9 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 		ret = -EOPNOTSUPP;
 	}
 	if (!test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags) &&
-	    pf->synce_dpll_state != ICE_CGU_STATE_UNKNOWN) {
-		pf->synce_dpll_state = ICE_CGU_STATE_UNKNOWN;
-		pf->ptp_dpll_state = ICE_CGU_STATE_UNKNOWN;
+	    pf->synce_dpll_state != 0) {
+		pf->synce_dpll_state = DPLL_LOCK_STATUS_UNLOCKED;
+		pf->ptp_dpll_state = DPLL_LOCK_STATUS_UNLOCKED;
 	}
 	if (test_bit(ICE_FLAG_DPLL_MONITOR, change_flags)) {
 		if (!ice_is_feature_supported(pf, ICE_F_CGU)) {
@@ -2276,52 +2707,6 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			ret = -EOPNOTSUPP;
 			goto ethtool_exit;
 		}
-	}
-	if (test_bit(ICE_FLAG_DPLL_FAST_LOCK, change_flags)) {
-		u8 ref_state, eec_mode, config;
-		bool fast_lock_enabled;
-		u64 phase_offset;
-		u16 dpll_state;
-
-		if (!ice_is_feature_supported(pf, ICE_F_CGU)) {
-			dev_err(dev, "cgu-fast-lock: not supported\n");
-			/* toggle bit back to previous state */
-			change_bit(ICE_FLAG_DPLL_FAST_LOCK, pf->flags);
-			ret = -EOPNOTSUPP;
-			goto ethtool_exit;
-		}
-
-		status = ice_aq_get_cgu_dpll_status(&pf->hw, ICE_CGU_DPLL_PTP,
-						    &ref_state, &dpll_state,
-						    &phase_offset, &eec_mode);
-		if (status) {
-			dev_err(dev, "cgu-fast-lock: fail to read current DPLL state.\n");
-			/* toggle bit back to previous state */
-			change_bit(ICE_FLAG_DPLL_FAST_LOCK, pf->flags);
-			goto ethtool_exit;
-		}
-
-		config = dpll_state &
-			 (ICE_AQC_GET_CGU_DPLL_STATUS_STATE_MODE |
-			  ICE_AQC_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SEL)
-			 >> ICE_AQC_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SHIFT;
-		fast_lock_enabled = test_bit(ICE_FLAG_DPLL_FAST_LOCK, pf->flags);
-		if (fast_lock_enabled)
-			ref_state |= ICE_AQC_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN;
-		else
-			ref_state &= ~ICE_AQC_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN;
-		status = ice_aq_set_cgu_dpll_config(&pf->hw, ICE_CGU_DPLL_PTP,
-						    ref_state, config,
-						    eec_mode);
-		if (status) {
-			dev_err(dev, "cgu-fast-lock: fail to set DPLL clock controller.\n");
-			/* toggle bit back to previous state */
-			change_bit(ICE_FLAG_DPLL_FAST_LOCK, pf->flags);
-			goto ethtool_exit;
-		}
-
-		dev_info(dev, "cgu-fast-lock: %s FAST LOCK for PPS DPLL",
-			 fast_lock_enabled ? "enabled" : "disabled");
 	}
 
 	if (test_bit(ICE_FLAG_ALLOW_FEC_DIS_AUTO, change_flags)) {
@@ -2357,7 +2742,7 @@ ethtool_exit:
 	return ret;
 }
 
-static int ice_get_sset_count(struct net_device *netdev, int sset)
+int ice_get_sset_count(struct net_device *netdev, int sset)
 {
 	switch (sset) {
 	case ETH_SS_STATS:
@@ -2501,9 +2886,9 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 	}
 }
 
-static void
-ice_get_ethtool_stats(struct net_device *netdev,
-		      struct ethtool_stats __always_unused *stats, u64 *data)
+void ice_get_ethtool_stats(struct net_device *netdev,
+			   struct ethtool_stats __always_unused *stats,
+			   u64 *data)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 
@@ -2528,7 +2913,7 @@ ice_get_ethtool_stats(struct net_device *netdev,
 					 ICE_PHY_TYPE_LOW_10G_SFI_DA | \
 					 ICE_PHY_TYPE_LOW_10GBASE_SR | \
 					 ICE_PHY_TYPE_LOW_10GBASE_LR | \
-					 ICE_PHY_TYPE_LOW_10GBASE_KR_CR1 | \
+					 ICE_PHY_TYPE_LOW_10GBASE_KR | \
 					 ICE_PHY_TYPE_LOW_10G_SFI_AOC_ACC | \
 					 ICE_PHY_TYPE_LOW_10G_SFI_C2C)
 
@@ -2541,8 +2926,8 @@ ice_get_ethtool_stats(struct net_device *netdev,
 					 ICE_PHY_TYPE_LOW_100G_AUI4_AOC_ACC | \
 					 ICE_PHY_TYPE_LOW_100G_AUI4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4 | \
-					 ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4 | \
-					 ICE_PHY_TYPE_LOW_100GBASE_CR2 | \
+					 ICE_PHY_TYPE_LOW_100GBASE_KR4_PAM4 | \
+					 ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_SR2 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_DR)
 
@@ -2805,7 +3190,6 @@ ice_get_settings_link_up(struct ethtool_link_ksettings *ks,
 						     Asym_Pause);
 		break;
 	}
-
 }
 
 /**
@@ -3194,6 +3578,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 	u8 autoneg_changed = 0;
 	u64 phy_type_high = 0;
 	u64 phy_type_low = 0;
+	bool lenient_mode;
 	bool linkup;
 	int err;
 
@@ -3202,10 +3587,14 @@ ice_set_link_ksettings(struct net_device *netdev,
 	if (!pi)
 		return -EIO;
 
-	if (pi->phy.media_type != ICE_MEDIA_BASET &&
-	    pi->phy.media_type != ICE_MEDIA_FIBER &&
-	    pi->phy.media_type != ICE_MEDIA_BACKPLANE &&
-	    pi->phy.media_type != ICE_MEDIA_DA &&
+	lenient_mode = test_bit(ICE_FLAG_LINK_LENIENT_MODE_ENA, pf->flags);
+
+	/* Setting the speed and duplex advertised by autonegotiation is
+	 * supported for all media types, so only return unsupported for media
+	 * type none or unknown in strict mode.
+	 */
+	if ((pi->phy.media_type == ICE_MEDIA_NONE ||
+	     (pi->phy.media_type == ICE_MEDIA_UNKNOWN && !lenient_mode)) &&
 	    pi->phy.link_info.link_info & ICE_AQ_LINK_UP)
 		return -EOPNOTSUPP;
 
@@ -3235,7 +3624,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 	if (!bitmap_subset(copy_ks.link_modes.advertising,
 			   safe_ks.link_modes.supported,
 			   __ETHTOOL_LINK_MODE_MASK_NBITS)) {
-		if (!test_bit(ICE_FLAG_LINK_LENIENT_MODE_ENA, pf->flags))
+		if (!lenient_mode)
 			netdev_info(netdev, "The selected speed is not supported by the current media. Please select a link speed that is supported by the current media.\n");
 		err = -EOPNOTSUPP;
 		goto done;
@@ -3336,7 +3725,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 		 * intersect the requested advertised speed with NVM media type
 		 * PHY types.
 		 */
-		if (test_bit(ICE_FLAG_LINK_LENIENT_MODE_ENA, pf->flags)) {
+		if (lenient_mode) {
 			config.phy_type_high = cpu_to_le64(phy_type_high) &
 					       pf->nvm_phy_type_hi;
 			config.phy_type_low = cpu_to_le64(phy_type_low) &
@@ -3434,7 +3823,7 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 		if (phy_types_low == ICE_PHY_TYPE_LOW_10GBASE_T)
 			ecmd->advertising = ADVERTISED_10000baseT_Full;
 		break;
-	case ICE_PHY_TYPE_LOW_10GBASE_KR_CR1:
+	case ICE_PHY_TYPE_LOW_10GBASE_KR:
 	case ICE_PHY_TYPE_LOW_10G_SFI_C2C:
 		ecmd->supported = SUPPORTED_10000baseKR_Full;
 		ecmd->advertising = ADVERTISED_10000baseKR_Full;
@@ -3477,8 +3866,8 @@ ice_get_legacy_settings_link_up(struct ethtool_cmd *ecmd,
 	case ICE_PHY_TYPE_LOW_100G_AUI4_AOC_ACC:
 	case ICE_PHY_TYPE_LOW_100G_AUI4:
 	case ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4:
-	case ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4:
-	case ICE_PHY_TYPE_LOW_100GBASE_CR2:
+	case ICE_PHY_TYPE_LOW_100GBASE_KR4_PAM4:
+	case ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4:
 	case ICE_PHY_TYPE_LOW_100GBASE_SR2:
 	case ICE_PHY_TYPE_LOW_100GBASE_DR:
 		netdev_warn(netdev, "100G PHY type detected but this can't be reported to ethtool as your kernel is too old\n");
@@ -3780,10 +4169,13 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 			break;
 		}
 
-	if (p->phy.media_type != ICE_MEDIA_BASET &&
-	    p->phy.media_type != ICE_MEDIA_FIBER &&
-	    p->phy.media_type != ICE_MEDIA_BACKPLANE &&
-	    p->phy.media_type != ICE_MEDIA_DA &&
+	/* Setting the speed and duplex advertised by autonegotiation is
+	 * supported for all media types, so only return unsupported for media
+	 * type none or unknown in strict mode.
+	 */
+	if ((p->phy.media_type == ICE_MEDIA_NONE ||
+	     (p->phy.media_type == ICE_MEDIA_UNKNOWN &&
+	      !test_bit(ICE_FLAG_LINK_LENIENT_MODE_ENA, pf->flags))) &&
 	    p->phy.link_info.link_info & ICE_AQ_LINK_UP)
 		return -EOPNOTSUPP;
 
@@ -3815,8 +4207,10 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	}
 
 	abilities = kzalloc(sizeof(*abilities), GFP_KERNEL);
-	if (!abilities)
-		return -ENOMEM;
+	if (!abilities) {
+		err = -ENOMEM;
+		goto done;
+	}
 
 	/* Get the current PHY config */
 	err = ice_aq_get_phy_caps(p, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
@@ -4729,20 +5123,23 @@ static u32 ice_get_rxfh_indir_size(struct net_device *netdev)
 }
 
 #ifdef HAVE_RXFH_HASHFUNC
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
 /**
  * ice_get_rxfh - get the Rx flow hash indirection table
  * @netdev: network interface device structure
- * @indir: indirection table
- * @key: hash key
- * @hfunc: hash function
+ * @rxfh: pointer to param struct (indir, key, hfunc)
  *
  * Reads the indirection table directly from the hardware.
  */
 static int
+ice_get_rxfh(struct net_device *netdev, struct ethtool_rxfh_param *rxfh)
+#else
+static int
 ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key, u8 *hfunc)
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 #else
 static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
-#endif
+#endif /* HAVE_RXFH_HASHFUNC */
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
@@ -4751,11 +5148,19 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 	u8 *lut;
 
 #ifdef HAVE_RXFH_HASHFUNC
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+	rxfh->hfunc = ETH_RSS_HASH_TOP;
+#else
 	if (hfunc)
 		*hfunc = ETH_RSS_HASH_TOP;
-#endif
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
+#endif /* HAVE_RXFH_HASHFUNC */
 
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+	if (!rxfh->indir)
+#else
 	if (!indir)
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 		return 0;
 
 	if (!test_bit(ICE_FLAG_RSS_ENA, pf->flags)) {
@@ -4768,7 +5173,11 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 	if (!lut)
 		return -ENOMEM;
 
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+	err = ice_get_rss_key(vsi, rxfh->key);
+#else
 	err = ice_get_rss_key(vsi, key);
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 	if (err)
 		goto out;
 
@@ -4777,7 +5186,11 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 		goto out;
 
 	for (i = 0; i < vsi->rss_table_size; i++)
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+		rxfh->indir[i] = (u32)(lut[i]);
+#else
 		indir[i] = (u32)(lut[i]);
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 
 out:
 	kfree(lut);
@@ -4788,16 +5201,21 @@ out:
 /**
  * ice_set_rxfh - set the Rx flow hash indirection table
  * @netdev: network interface device structure
- * @indir: indirection table
- * @key: hash key
- * @hfunc: hash function
+ * @rxfh: pointer to param struct (indir, key, hfunc)
+ * @extack: extended ACK from the Netlink message
  *
  * Returns -EINVAL if the table specifies an invalid queue ID, otherwise
  * returns 0 after programming the table.
  */
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+static int
+ice_set_rxfh(struct net_device *netdev, struct ethtool_rxfh_param *rxfh,
+	     struct netlink_ext_ack *extack)
+#else
 static int
 ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key,
 	     const u8 hfunc)
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 #elif defined(HAVE_RXFH_NONCONST)
 static int ice_set_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 #else
@@ -4813,9 +5231,15 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 
 	dev = ice_pf_to_dev(pf);
 #ifdef HAVE_RXFH_HASHFUNC
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
+	    rxfh->hfunc != ETH_RSS_HASH_TOP)
+		return -EOPNOTSUPP;
+#else
 	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP)
 		return -EOPNOTSUPP;
-#endif
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
+#endif /* HAVE_RXFH_HASHFUNC */
 
 	if (!test_bit(ICE_FLAG_RSS_ENA, pf->flags)) {
 		/* RSS not supported return error here */
@@ -4824,11 +5248,19 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 	}
 
 	/* Verify user input. */
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+	if (rxfh->indir) {
+#else
 	if (indir) {
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 		int i;
 
 		for (i = 0; i < vsi->rss_table_size; i++)
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+			if (rxfh->indir[i] >= vsi->rss_size)
+#else
 			if (indir[i] >= vsi->rss_size)
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 				return -EINVAL;
 	}
 
@@ -4839,7 +5271,11 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 	}
 
 #endif /* NETIF_F_HW_TC */
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+	if (rxfh->key) {
+#else
 	if (key) {
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 		if (!vsi->rss_hkey_user) {
 			vsi->rss_hkey_user = devm_kzalloc(dev,
 							  ICE_VSIQF_HKEY_ARRAY_SIZE,
@@ -4847,7 +5283,12 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 			if (!vsi->rss_hkey_user)
 				return -ENOMEM;
 		}
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+		memcpy(vsi->rss_hkey_user, rxfh->key,
+		       ICE_VSIQF_HKEY_ARRAY_SIZE);
+#else
 		memcpy(vsi->rss_hkey_user, key, ICE_VSIQF_HKEY_ARRAY_SIZE);
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 
 		err = ice_set_rss_key(vsi, vsi->rss_hkey_user);
 		if (err)
@@ -4862,11 +5303,19 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 	}
 
 	/* Each 32 bits pointed by 'indir' is stored with a lut entry */
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+	if (rxfh->indir) {
+#else
 	if (indir) {
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 		int i;
 
 		for (i = 0; i < vsi->rss_table_size; i++)
+#if defined(HAVE_ETHTOOL_RXFH_PARAM)
+			vsi->rss_lut_user[i] = (u8)(rxfh->indir[i]);
+#else
 			vsi->rss_lut_user[i] = (u8)(indir[i]);
+#endif /* HAVE_ETHTOOL_RXFH_PARAM */
 	} else {
 		ice_fill_rss_lut(vsi->rss_lut_user, vsi->rss_table_size,
 				 vsi->rss_size);
@@ -4941,7 +5390,8 @@ static u32 ice_get_combined_cnt(struct ice_vsi *vsi)
 		struct ice_q_vector *q_vector = vsi->q_vectors[q_idx];
 
 		if (q_vector->rx.rx_ring && q_vector->tx.tx_ring)
-			combined += q_vector->num_ring_rx;
+			combined += min(q_vector->num_ring_rx,
+					q_vector->num_ring_tx);
 	}
 
 	return combined;
@@ -5250,6 +5700,9 @@ __ice_get_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec,
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
+
+	if (ice_is_reset_in_progress(vsi->back->state))
+		return -EBUSY;
 
 	if (q_num < 0)
 		q_num = 0;

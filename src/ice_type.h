@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_TYPE_H_
 #define _ICE_TYPE_H_
@@ -88,6 +88,14 @@ enum ice_aq_res_ids {
 	ICE_GLOBAL_CFG_LOCK_RES_ID
 };
 
+enum ice_rs_fec_stats_types {
+	ICE_RS_FEC_CORR_LOW,
+	ICE_RS_FEC_CORR_HIGH,
+	ICE_RS_FEC_UNCORR_LOW,
+	ICE_RS_FEC_UNCORR_HIGH,
+	ICE_RS_FEC_MAX
+};
+
 /* FW update timeout definitions are in milliseconds */
 #define ICE_NVM_TIMEOUT			180000
 #define ICE_CHANGE_LOCK_TIMEOUT		1000
@@ -117,9 +125,10 @@ enum ice_phy_cache_mode {
 };
 
 enum ice_fec_mode {
-	ICE_FEC_NONE = 0,
-	ICE_FEC_RS,
-	ICE_FEC_BASER,
+	ICE_FEC_NONE	= 0,
+	ICE_FEC_RS	= 1,
+	ICE_FEC_BASER	= 2,
+	ICE_FEC_FC	= 2,
 	ICE_FEC_AUTO,
 	ICE_FEC_DIS_AUTO
 };
@@ -201,7 +210,7 @@ enum ice_media_type {
 #define ICE_MEDIA_BP_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_1000BASE_KX | \
 					 ICE_PHY_TYPE_LOW_2500BASE_KX | \
 					 ICE_PHY_TYPE_LOW_5GBASE_KR | \
-					 ICE_PHY_TYPE_LOW_10GBASE_KR_CR1 | \
+					 ICE_PHY_TYPE_LOW_10GBASE_KR | \
 					 ICE_PHY_TYPE_LOW_25GBASE_KR | \
 					 ICE_PHY_TYPE_LOW_25GBASE_KR_S | \
 					 ICE_PHY_TYPE_LOW_25GBASE_KR1 | \
@@ -209,7 +218,7 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_50GBASE_KR2 | \
 					 ICE_PHY_TYPE_LOW_50GBASE_KR_PAM4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_KR4 | \
-					 ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4)
+					 ICE_PHY_TYPE_LOW_100GBASE_KR4_PAM4)
 
 #define ICE_MEDIA_BP_PHY_TYPE_HIGH_M    ICE_PHY_TYPE_HIGH_100GBASE_KR2_PAM4
 
@@ -221,8 +230,8 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_50GBASE_CR2 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_CR4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4 | \
-					 ICE_PHY_TYPE_LOW_50GBASE_CR | \
-					 ICE_PHY_TYPE_LOW_100GBASE_CR2)
+					 ICE_PHY_TYPE_LOW_50GBASE_CR_PAM4 | \
+					 ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4)
 
 #define ICE_MEDIA_C2C_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_100M_SGMII | \
 					 ICE_PHY_TYPE_LOW_1G_SGMII | \
@@ -679,6 +688,7 @@ struct ice_hw_common_caps {
 	bool dyn_flattening_en;
 	/* Support for OROM update in Recovery Mode */
 	bool orom_recovery_update;
+	bool next_cluster_id_support;
 };
 
 /* IEEE 1588 TIME_SYNC specific info */
@@ -695,6 +705,14 @@ struct ice_hw_common_caps {
 #define ICE_TS_CLK_SRC_M		BIT(20)
 #define ICE_TS_TMR_IDX_ASSOC_S		24
 #define ICE_TS_TMR_IDX_ASSOC_M		BIT(24)
+
+/* Source timer mode */
+enum ice_src_tmr_mode {
+	ICE_SRC_TMR_MODE_NANOSECONDS,
+	ICE_SRC_TMR_MODE_LOCKED,
+
+	NUM_ICE_SRC_TMR_MODE
+};
 
 /* TIME_REF clock rate specification */
 enum ice_time_ref_freq {
@@ -1209,6 +1227,7 @@ struct ice_port_info {
 	u16 sw_id;			/* Initial switch ID belongs to port */
 	u16 pf_vf_num;
 	u8 port_state;
+	u8 loopback_mode;
 #define ICE_SCHED_PORT_STATE_INIT	0x0
 #define ICE_SCHED_PORT_STATE_READY	0x1
 	u8 lport;
@@ -1313,17 +1332,40 @@ struct ice_mbx_data {
 	u16 async_watermark_val;
 };
 
+#define ICE_PORTS_PER_QUAD	4
+#define ICE_GET_QUAD_NUM(port) ((port) / ICE_PORTS_PER_QUAD)
+
+struct ice_eth56g_params {
+	u8 num_phys;
+	u8 phy_addr[2];		/* PHY address */
+	bool onestep_ena;
+	bool sfd_ena;
+	u32 peer_delay;
+};
+
+union ice_phy_params {
+	struct ice_eth56g_params eth56g;
+};
+
 /* PHY model */
 enum ice_phy_model {
 	ICE_PHY_UNSUP = -1,
-	ICE_PHY_E810  = 1,
-	ICE_PHY_E822,
+	ICE_PHY_E82X = 1,
+	ICE_PHY_E810,
 	ICE_PHY_ETH56G,
 };
 
-enum ice_eth56g_mode {
-	ICE_ETH56G_MODE_0,
-	ICE_ETH56G_MODE_1,
+struct ice_ptp_hw {
+	enum ice_phy_model phy_model;
+	union ice_phy_params phy;
+	u8 num_lports;
+	u8 ports_per_phy;
+	enum ice_src_tmr_mode src_tmr_mode;
+	enum ice_time_ref_freq time_ref_freq;
+	enum ice_clk_src clk_src;
+	u32 ts_pll_lock_retries;
+	bool primary_nac;
+	struct ice_hw *primary_hw;
 };
 
 /* Port hardware description */
@@ -1350,18 +1392,6 @@ struct ice_hw {
 	u8 revision_id;
 
 	u8 pf_id;		/* device profile info */
-	enum ice_phy_model phy_model;
-	u8 phy_ports;
-	u8 max_phy_port;
-#define ICE_PHYS_PER_CPLX_E824S	1
-#define ICE_PORTS_PER_PHY_E824S	8
-
-#define ICE_PHYS_PER_CPLX_C825X	2
-#define ICE_PORTS_PER_PHY_C825X	4
-
-#define MAX_PHYS_PER_ICE	2
-	u8 num_phys;
-	u8 phy_addr[MAX_PHYS_PER_ICE];		/* PHY address */
 	u8 logical_pf_id;
 
 	u16 max_burst_size;	/* driver sets this value */
@@ -1404,7 +1434,8 @@ struct ice_hw {
 	u32 fw_build;		/* firmware build number */
 
 	struct ice_fwlog_cfg fwlog_cfg;
-	bool fwlog_support_ena; /* does hardware support FW logging? */
+	bool fwlog_supported; /* does hardware support FW logging? */
+	struct ice_fwlog_ring fwlog_ring;
 
 /* Device max aggregate bandwidths corresponding to the GL_PWR_MODE_CTL
  * register. Used for determining the ITR/INTRL granularity during
@@ -1428,17 +1459,7 @@ struct ice_hw {
 	/* true if VSIs can share unicast MAC addr */
 	u8 umac_shared;
 
-#define ICE_PHY_PER_NAC_E822		1
-#define ICE_MAX_QUAD			2
-#define ICE_QUADS_PER_PHY_E822		2
-#define ICE_PORTS_PER_PHY_E822		8
-#define ICE_PORTS_PER_QUAD		4
-#define ICE_PORTS_PER_PHY_E810		4
-#define ICE_NUM_EXTERNAL_PORTS		(ICE_MAX_QUAD * ICE_PORTS_PER_QUAD)
-
-	bool ptp_1step_en;
-	bool ptp_sfd_en;
-	u32 ptp_peer_delay;
+	struct ice_ptp_hw ptp;
 
 	/* Active package version (currently active) */
 	struct ice_pkg_ver active_pkg_ver;
@@ -1465,7 +1486,7 @@ struct ice_hw {
 	u32 pkg_size;
 
 	/* tunneling info */
-	struct mutex tnl_lock;
+	struct mutex tnl_lock;	/* lock for tunnels */
 	struct ice_tunnel_table tnl;
 
 	/* dvm boost update information */
@@ -1541,7 +1562,9 @@ struct ice_hw_port_stats {
 	u64 error_bytes;		/* errbc */
 	u64 mac_local_faults;		/* mlfc */
 	u64 mac_remote_faults;		/* mrfc */
+#ifdef ICE_ADD_PROBES
 	u64 rx_len_errors;		/* rlec */
+#endif /* ICE_ADD_PROBES */
 	u64 link_xon_rx;		/* lxonrxc */
 	u64 link_xoff_rx;		/* lxoffrxc */
 	u64 link_xon_tx;		/* lxontxc */
@@ -1593,6 +1616,7 @@ enum ice_sw_fwd_act_type {
 	ICE_FWD_TO_Q,
 	ICE_FWD_TO_QGRP,
 	ICE_DROP_PACKET,
+	ICE_MIRROR_PACKET,
 	ICE_LG_ACTION,
 	ICE_INVAL_ACT
 };
@@ -1786,9 +1810,4 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_FW_API_AUTO_DROP_MAJ		1
 #define ICE_FW_API_AUTO_DROP_MIN		4
 
-static inline bool
-ice_is_nac_dual(struct ice_hw *hw)
-{
-	return !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_DUAL_M);
-}
 #endif /* _ICE_TYPE_H_ */

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* ACL support for ice */
 
@@ -167,7 +167,7 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 		err = ice_acl_set_ip4_usr_seg(seg, &fsp->m_u.usr_ip4_spec);
 		break;
 	case ETHER_FLOW:
-		err = ice_set_ether_flow_seg(seg, &fsp->m_u.ether_spec);
+		err = ice_set_ether_flow_seg(seg, &fsp->m_u.ether_spec, false);
 		break;
 	default:
 		err = -EOPNOTSUPP;

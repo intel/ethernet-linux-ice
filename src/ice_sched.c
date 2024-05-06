@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 #include <net/devlink.h>
@@ -1507,8 +1507,7 @@ void ice_sched_get_psm_clk_freq(struct ice_hw *hw)
 	u32 val, clk_src;
 
 	val = rd32(hw, GLGEN_CLKSTAT_SRC);
-	clk_src = (val & GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_M) >>
-		GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_S;
+	clk_src = FIELD_GET(GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_M, val);
 
 	switch (clk_src) {
 	case PSM_CLK_SRC_367_MHZ:
@@ -4658,8 +4657,7 @@ ice_sched_set_node_priority(struct ice_port_info *pi, struct ice_sched_node *nod
 	data = &buf.data;
 
 	data->valid_sections |= ICE_AQC_ELEM_VALID_GENERIC;
-	data->generic |= ICE_AQC_ELEM_GENERIC_PRIO_M &
-			 (priority << ICE_AQC_ELEM_GENERIC_PRIO_S);
+	data->generic |= FIELD_PREP(ICE_AQC_ELEM_GENERIC_PRIO_M, priority);
 
 	return ice_sched_update_elem(pi->hw, node, &buf);
 }
@@ -4685,8 +4683,7 @@ ice_sched_set_node_weight(struct ice_port_info *pi, struct ice_sched_node *node,
 			       ICE_AQC_ELEM_VALID_GENERIC;
 	data->cir_bw.bw_alloc = cpu_to_le16(weight);
 	data->eir_bw.bw_alloc = cpu_to_le16(weight);
-	data->generic |= ICE_AQC_ELEM_GENERIC_SP_M &
-			 (0x0 << ICE_AQC_ELEM_GENERIC_SP_S);
+	data->generic |= FIELD_PREP(ICE_AQC_ELEM_GENERIC_SP_M, 0x0);
 
 	return ice_sched_update_elem(pi->hw, node, &buf);
 }
@@ -5601,8 +5598,7 @@ ice_sched_cfg_sibl_node_prio(struct ice_port_info *pi,
 	buf = node->info;
 	data = &buf.data;
 	data->valid_sections |= ICE_AQC_ELEM_VALID_GENERIC;
-	priority = (priority << ICE_AQC_ELEM_GENERIC_PRIO_S) &
-		   ICE_AQC_ELEM_GENERIC_PRIO_M;
+	priority = FIELD_PREP(ICE_AQC_ELEM_GENERIC_PRIO_M, priority);
 	data->generic &= ~ICE_AQC_ELEM_GENERIC_PRIO_M;
 	data->generic |= priority;
 

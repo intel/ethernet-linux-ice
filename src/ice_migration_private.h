@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_MIGRATION_PRIVATE_H_
 #define _ICE_MIGRATION_PRIVATE_H_
@@ -19,8 +19,6 @@ u32 ice_migration_supported_caps(void);
 static inline void
 ice_migration_save_vf_msg(struct ice_vf *vf,
 			  struct ice_rq_event_info *event) { }
-static inline void
-ice_migration_fix_msg_vsi(struct ice_vf *vf, u32 v_opcode, u8 *msg) { }
 static inline u32
 ice_migration_supported_caps(void)
 {

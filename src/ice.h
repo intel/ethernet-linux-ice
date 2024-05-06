@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_H_
 #define _ICE_H_
 
 #include "kcompat.h"
+#ifdef HAVE_INCLUDE_BITFIELD
+#include <linux/bitfield.h>
+#endif /* HAVE_INCLUDE_BITFIELD */
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -56,6 +59,7 @@
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #include <net/devlink.h>
 #endif /* CONFIG_NET_DEVLINK */
+#include "devlink/ice_devlink_health.h"
 #ifdef HAVE_CONFIG_DIMLIB
 #include <linux/dim.h>
 #else
@@ -130,6 +134,9 @@
 #include "ice_eswitch.h"
 #include "ice_vsi_vlan_ops.h"
 #include "ice_gnss.h"
+#if IS_ENABLED(CONFIG_DPLL)
+#include "ice_dpll.h"
+#endif
 #include "ice_migration.h"
 #include "ice_migration_private.h"
 
@@ -180,9 +187,6 @@ extern const char ice_drv_ver[];
 #define ICE_MAX_SCATTER_RXQS	16
 #define ICE_Q_WAIT_RETRY_LIMIT	10
 #define ICE_Q_WAIT_MAX_RETRY	(5 * ICE_Q_WAIT_RETRY_LIMIT)
-#define ICE_MAX_LG_RSS_QS	256
-#define ICE_MAX_MEDIUM_RSS_QS	64
-#define ICE_MAX_SMALL_RSS_QS	16
 #define ICE_RES_VALID_BIT	0x8000
 #define ICE_RES_MISC_VEC_ID	(ICE_RES_VALID_BIT - 1)
 #define ICE_RES_RDMA_VEC_ID	(ICE_RES_MISC_VEC_ID - 1)
@@ -306,18 +310,11 @@ static inline void ice_set_mcast_vlan_promisc_bits(unsigned long *promisc_mask)
 
 #define ice_pf_to_dev(pf) (&((pf)->pdev->dev))
 
-#define ice_pf_src_tmr_owned(pf) ((pf)->hw.func_caps.ts_func_info.src_tmr_owned)
-
-struct ice_fwlog_user_input {
-	unsigned long events;
-	u8 log_level;
-};
-
 enum ice_feature {
 	ICE_F_DSCP,
-	ICE_F_CGU,
 	ICE_F_PHY_RCLK,
 	ICE_F_SMA_CTRL,
+	ICE_F_CGU,
 	ICE_F_GNSS,
 	ICE_F_LAG,
 	ICE_F_MAX
@@ -505,7 +502,6 @@ struct ice_vsi {
 	struct net_device *netdev;
 	struct ice_sw *vsw;		 /* switch this VSI is on */
 	struct ice_pf *back;		 /* back pointer to PF */
-	struct ice_port_info *port_info; /* back pointer to port_info */
 	struct ice_rx_ring **rx_rings;	 /* Rx ring array */
 	struct ice_tx_ring **tx_rings;	 /* Tx ring array */
 #ifdef HAVE_NDO_DFWD_OPS
@@ -530,11 +526,8 @@ struct ice_vsi {
 #endif /* ICE_ADD_PROBES */
 	u16 num_q_vectors;
 	u16 base_vector;		/* IRQ base for OS reserved vectors */
-	enum ice_vsi_type type;
 	u16 vsi_num;			/* HW (absolute) index of this VSI */
 	u16 idx;			/* software index in pf->vsi[] */
-
-	struct ice_vf *vf;		/* VF associated with this VSI */
 
 	u16 num_gfltr;
 	u16 num_bfltr;
@@ -565,7 +558,6 @@ struct ice_vsi {
 
 	/* VSI stats */
 	struct rtnl_link_stats64 net_stats;
-	struct rtnl_link_stats64 net_stats_prev;
 	struct ice_eth_stats eth_stats;
 	struct ice_eth_stats eth_stats_prev;
 
@@ -656,13 +648,23 @@ struct ice_vsi {
 	u8 old_numtc;
 	u16 old_ena_tc;
 
-	struct ice_channel *ch;
 	u8 num_tc_devlink_params;
 
 	/* setup back reference, to which aggregator node this VSI
 	 * corresponds to
 	 */
 	struct ice_agg_node *agg_node;
+
+	struct_group_tagged(ice_vsi_cfg_params, params,
+			    struct ice_port_info *port_info;
+			    struct ice_vf *vf;
+			    u32 flags;
+			    enum ice_vsi_type type;
+			    /* channel structure of the VSI, may be NULL */
+			    struct ice_channel *ch;
+			    /* traffic class number */
+			    u8 tc;
+			   );
 } ____cacheline_internodealigned_in_smp;
 
 enum ice_chnl_vector_state {
@@ -862,11 +864,12 @@ enum ice_pf_flags {
 	ICE_FLAG_VF_VLAN_PRUNING,
 	ICE_FLAG_LINK_LENIENT_MODE_ENA,
 	ICE_FLAG_ESWITCH_CAPABLE,
-	ICE_FLAG_DPLL_FAST_LOCK,
 	ICE_FLAG_DPLL_MONITOR,
-	ICE_FLAG_EXTTS_FILTER,
 	ICE_FLAG_ITU_G8262_FILTER_USED,
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
+#if IS_ENABLED(CONFIG_DPLL)
+	ICE_FLAG_DPLL,			/* SyncE/PTP dplls initialized */
+#endif
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
@@ -921,31 +924,6 @@ struct ice_agg_node {
 	u8 valid;
 };
 
-#ifdef HAVE_DEVLINK_HEALTH
-enum ice_mdd_src {
-	ICE_MDD_SRC_NONE = 0,
-	ICE_MDD_SRC_TX_PQM,
-	ICE_MDD_SRC_TX_TCLAN,
-	ICE_MDD_SRC_TX_TDPU,
-	ICE_MDD_SRC_RX
-};
-
-struct ice_mdd_event {
-	struct list_head list;
-	enum ice_mdd_src src;
-	u8 pf_num;
-	u16 vf_num;
-	u8 event;
-	u16 queue;
-};
-
-struct ice_mdd_reporter {
-	struct devlink_health_reporter *reporter;
-	u16 count;
-	struct list_head event_list;
-};
-#endif /* HAVE_DEVLINK_HEALTH */
-
 struct ice_msix {
 	/* All on host, so sum without VF, it is because we need to store
 	 * information to call ena_msix on host. All on the card is in hw cups
@@ -960,7 +938,6 @@ struct ice_msix {
 
 struct ice_pf {
 	struct pci_dev *pdev;
-	struct pci_dev *peer_pdev;
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_REGIONS
 	struct devlink_region *nvm_region;
@@ -970,7 +947,7 @@ struct ice_pf {
 	/* devlink port data */
 	struct devlink_port devlink_port;
 #ifdef HAVE_DEVLINK_HEALTH
-	struct ice_mdd_reporter mdd_reporter;
+	struct ice_health health_reporters;
 #endif /* HAVE_DEVLINK_HEALTH */
 #endif /* CONFIG_NET_DEVLINK */
 
@@ -996,9 +973,18 @@ struct ice_pf {
 	u16 eswitch_mode;		/* current mode of eswitch */
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *ice_debugfs_pf;
+#endif /* CONFIG_DEBUG_FS */
+#ifdef CONFIG_DEBUG_FS
 	struct dentry *ice_debugfs_fw;
 	u16 fw_dump_cluster_id;
-	void *ice_cluster_blk;
+	struct debugfs_blob_wrapper *ice_fw_dump_blob;
+#endif /* CONFIG_DEBUG_FS */
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *ice_debugfs_pf_fwlog;
+	/* keep track of all the dentrys for FW log modules */
+	struct dentry **ice_debugfs_pf_fwlog_modules;
+#endif /* CONFIG_DEBUG_FS */
+#ifdef CONFIG_DEBUG_FS
 #endif /* CONFIG_DEBUG_FS */
 	struct ice_vfs vfs;
 	DECLARE_BITMAP(features, ICE_F_MAX);
@@ -1038,6 +1024,7 @@ struct ice_pf {
 	wait_queue_head_t reset_wait_queue;
 
 	u32 hw_csum_rx_error;
+	u32 hw_rx_eipe_error;
 	u32 oicr_err_reg;
 	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
 	u16 ll_ts_int_idx;	/* LL_TS interrupt MSIX vector index */
@@ -1136,9 +1123,12 @@ struct ice_pf {
 #define ICE_VF_AGG_NODE_ID_START	65
 #define ICE_MAX_VF_AGG_NODES		32
 	struct ice_agg_node vf_agg_node[ICE_MAX_VF_AGG_NODES];
-	enum ice_cgu_state synce_dpll_state;
+#if IS_ENABLED(CONFIG_DPLL)
+	struct ice_dplls dplls;
+#endif /* IS_ENABLED(CONFIG_DPLL) */
+	enum dpll_lock_status synce_dpll_state;
 	u8 synce_ref_pin;
-	enum ice_cgu_state ptp_dpll_state;
+	enum dpll_lock_status ptp_dpll_state;
 	u8 ptp_ref_pin;
 	s64 ptp_dpll_phase_offset;
 	u8 n_quanta_prof_used;
@@ -1681,13 +1671,16 @@ static inline bool ice_is_offloaded_macvlan_ena(struct ice_pf *pf)
 #ifdef CONFIG_DEBUG_FS
 void ice_debugfs_pf_init(struct ice_pf *pf);
 void ice_debugfs_pf_exit(struct ice_pf *pf);
-void ice_debugfs_init(void);
-void ice_debugfs_exit(void);
 #else
 static inline void ice_debugfs_pf_init(struct ice_pf *pf) { }
 static inline void ice_debugfs_pf_exit(struct ice_pf *pf) { }
-static inline void ice_debugfs_init(void) { }
-static inline void ice_debugfs_exit(void) { }
+#endif /* CONFIG_DEBUG_FS */
+
+#ifdef CONFIG_DEBUG_FS
+void ice_debugfs_fwlog_init(struct ice_pf *pf);
+void ice_debugfs_init(void);
+void ice_debugfs_exit(void);
+void ice_pf_fwlog_update_module(struct ice_pf *pf, int log_level, int module);
 #endif /* CONFIG_DEBUG_FS */
 
 bool netif_is_ice(struct net_device *dev);
@@ -1812,7 +1805,7 @@ ice_ntuple_l4_proto_to_port(enum ice_flow_seg_hdr l4_proto,
 int ice_ntuple_check_ip4_seg(struct ethtool_tcpip4_spec *tcp_ip4_spec);
 int ice_ntuple_check_ip4_usr_seg(struct ethtool_usrip4_spec *usr_ip4_spec);
 int ice_set_ether_flow_seg(struct ice_flow_seg_info *seg,
-			   struct ethhdr *eth_spec);
+			   struct ethhdr *eth_spec, bool fd_seg);
 int
 ice_get_fdir_fltr_ids(struct ice_hw *hw, struct ethtool_rxnfc *cmd,
 		      u32 *rule_locs);
@@ -1842,10 +1835,18 @@ ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_init_acl(struct ice_pf *pf);
 
 static inline bool
+ice_pf_src_tmr_owned(struct ice_pf *pf)
+{
+	if (ice_is_e825c(&pf->hw))
+		return !!pf->hw.func_caps.ts_func_info.src_tmr_owned &&
+		       pf->hw.ptp.primary_nac;
+	else
+		return !!pf->hw.func_caps.ts_func_info.src_tmr_owned;
+}
+
+static inline bool
 ice_is_primary(struct ice_pf *pf)
 {
-	/* The only device is always primary */
-	return !pf->peer_pdev ||
-	       !!(pf->hw.dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
+	return !!(pf->hw.dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
 }
 #endif /* _ICE_H_ */

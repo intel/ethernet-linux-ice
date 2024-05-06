@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
+
+#if IS_ENABLED(CONFIG_VFIO_PCI_CORE) && defined(HAVE_LMV1_SUPPORT)
+
 #include "ice_lib.h"
 #include "ice_fltr.h"
 #include "ice_base.h"
@@ -57,7 +60,6 @@ void ice_migration_init_vf(void *opaque)
 	vf->migration_active = true;
 	INIT_LIST_HEAD(&vf->virtchnl_msg_list);
 	vf->virtchnl_msg_num = 0;
-	vf->vm_vsi_num = vf->lan_vsi_num;
 }
 EXPORT_SYMBOL(ice_migration_init_vf);
 
@@ -288,8 +290,7 @@ ice_migration_save_tx_head(struct ice_vf *vf,
 			continue;
 
 		reg = rd32(&pf->hw, QTX_COMM_HEAD(vsi->txq_map[i]));
-		tx_head = (reg & QTX_COMM_HEAD_HEAD_M)
-					>> QTX_COMM_HEAD_HEAD_S;
+		tx_head = FIELD_GET(QTX_COMM_HEAD_HEAD_M, reg);
 
 		if (tx_head == QTX_COMM_HEAD_HEAD_M ||
 		    tx_head == (vsi->tx_rings[i]->count - 1))
@@ -532,13 +533,11 @@ ice_migration_restore_tx_head(struct ice_vf *vf,
 		writel(tx_heads[i], tx_ring->tail);
 		/* wait until tx_head equals tx_heads[i] - 1 */
 		tx_head = rd32(&pf->hw, QTX_COMM_HEAD(vsi->txq_map[i]));
-		tx_head = (tx_head & QTX_COMM_HEAD_HEAD_M)
-			   >> QTX_COMM_HEAD_HEAD_S;
+		tx_head = FIELD_GET(QTX_COMM_HEAD_HEAD_M, tx_head);
 		for (j = 0; j < 10 && tx_head != (u32)(tx_heads[i] - 1); j++) {
 			usleep_range(10, 20);
 			tx_head = rd32(&pf->hw, QTX_COMM_HEAD(vsi->txq_map[i]));
-			tx_head = (tx_head & QTX_COMM_HEAD_HEAD_M)
-				   >> QTX_COMM_HEAD_HEAD_S;
+			tx_head = FIELD_GET(QTX_COMM_HEAD_HEAD_M, tx_head);
 		}
 		if (j == 10) {
 			ret = -EIO;
@@ -628,8 +627,8 @@ int ice_migration_restore_devstate(void *opaque, const u8 *buf, u64 buf_sz,
 		event.msg_buf = (unsigned char *)msg_slot->msg_buffer;
 		ret = ice_vc_process_vf_msg(vf->pf, &event, NULL);
 		if (ret) {
-			dev_err(dev, "failed to replay virtchnl message op code: %d\n",
-				msg_slot->opcode);
+			dev_err(dev, "failed to replay virtchnl message op code: %d, err %d\n",
+				msg_slot->opcode, ret);
 			goto err;
 		}
 		if (msg_slot->opcode == VIRTCHNL_OP_CONFIG_VSI_QUEUES) {
@@ -670,90 +669,9 @@ err:
 }
 EXPORT_SYMBOL(ice_migration_restore_devstate);
 
-/**
- * ice_migration_fix_msg_vsi - change virtual channel msg VSI id
- *
- * @vf: pointer to the VF structure
- * @v_opcode: virtchnl message operation code
- * @msg: pointer to the virtual channel message
- *
- * After migration, the VSI id of virtual channel message is still
- * migration src VSI id. Some virtual channel commands will fail
- * due to unmatch VSI id.
- * Change virtual channel message payload VSI id to real VSI id.
- */
-void ice_migration_fix_msg_vsi(struct ice_vf *vf, u32 v_opcode, u8 *msg)
-{
-	if (!vf->migration_active)
-		return;
-
-	switch (v_opcode) {
-	case VIRTCHNL_OP_ADD_ETH_ADDR:
-	case VIRTCHNL_OP_DEL_ETH_ADDR:
-	case VIRTCHNL_OP_ENABLE_QUEUES:
-	case VIRTCHNL_OP_DISABLE_QUEUES:
-	case VIRTCHNL_OP_CONFIG_RSS_KEY:
-	case VIRTCHNL_OP_CONFIG_RSS_LUT:
-	case VIRTCHNL_OP_GET_STATS:
-	case VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE:
-	case VIRTCHNL_OP_ADD_FDIR_FILTER:
-	case VIRTCHNL_OP_DEL_FDIR_FILTER:
-	case VIRTCHNL_OP_ADD_VLAN:
-	case VIRTCHNL_OP_DEL_VLAN: {
-		/* Read the beginning two bytes of message for VSI id */
-		u16 *vsi_id = (u16 *)msg;
-
-		if (*vsi_id == vf->vm_vsi_num ||
-		    test_bit(ICE_VF_STATE_REPLAY_VC, vf->vf_states))
-			*vsi_id = vf->lan_vsi_num;
-		break;
-	}
-	case VIRTCHNL_OP_CONFIG_IRQ_MAP: {
-		struct virtchnl_irq_map_info *irqmap_info;
-		u16 num_q_vectors_mapped;
-		int i;
-
-		irqmap_info = (struct virtchnl_irq_map_info *)msg;
-		num_q_vectors_mapped = irqmap_info->num_vectors;
-		for (i = 0; i < num_q_vectors_mapped; i++) {
-			struct virtchnl_vector_map *map;
-
-			map = &irqmap_info->vecmap[i];
-			if (map->vsi_id == vf->vm_vsi_num ||
-			    test_bit(ICE_VF_STATE_REPLAY_VC, vf->vf_states))
-				map->vsi_id = vf->lan_vsi_num;
-		}
-		break;
-	}
-	case VIRTCHNL_OP_CONFIG_VSI_QUEUES: {
-		struct virtchnl_vsi_queue_config_info *qci;
-
-		qci = (struct virtchnl_vsi_queue_config_info *)msg;
-		if (qci->vsi_id == vf->vm_vsi_num ||
-		    test_bit(ICE_VF_STATE_REPLAY_VC, vf->vf_states)) {
-			int i;
-
-			qci->vsi_id = vf->lan_vsi_num;
-			for (i = 0; i < qci->num_queue_pairs; i++) {
-				struct virtchnl_queue_pair_info *qpi;
-
-				qpi = &qci->qpair[i];
-				qpi->txq.vsi_id = vf->lan_vsi_num;
-				qpi->rxq.vsi_id = vf->lan_vsi_num;
-			}
-		}
-		break;
-	}
-	default:
-		break;
-	}
-}
-
 #define VIRTCHNL_VF_MIGRATION_SUPPORT_FEATURE \
 				(VIRTCHNL_VF_OFFLOAD_L2 | \
 				 VIRTCHNL_VF_OFFLOAD_RSS_PF | \
-				 VIRTCHNL_VF_OFFLOAD_RSS_AQ | \
-				 VIRTCHNL_VF_OFFLOAD_RSS_REG | \
 				 VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2 | \
 				 VIRTCHNL_VF_OFFLOAD_ENCAP | \
 				 VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM | \
@@ -779,3 +697,5 @@ u32 ice_migration_supported_caps(void)
 
 	return mig_support_cap;
 }
+
+#endif /* CONFIG_VFIO_PCI_CORE && HAVE_LMV1_SUPPORT */

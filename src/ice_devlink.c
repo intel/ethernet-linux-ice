@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -435,6 +435,7 @@ enum ice_devlink_param_id {
 	ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV,
 	ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV,
 	ICE_DEVLINK_PARAM_ID_TX_BALANCE,
+	ICE_DEVLINK_PARAM_ID_TX_LOOPBACK,
 };
 
 /**
@@ -765,6 +766,121 @@ static int ice_devlink_txbalance_validate(struct devlink *devlink, u32 id,
 	return 0;
 }
 
+#define DEVLINK_LPBK_DISABLED "disabled"
+#define DEVLINK_LPBK_ENABLED "enabled"
+#define DEVLINK_LPBK_PRIORITIZED "prioritized"
+
+/**
+ * ice_devlink_loopback_mode_to_str - Get string for lpbk mode
+ * @loopback_mode: loopback_mode used in port_info struct
+ *
+ * Returns mode respective string or "Invalid".
+ */
+static const char *ice_devlink_loopback_mode_to_str(u32 loopback_mode)
+{
+	switch (loopback_mode) {
+	case ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_NORMAL:
+		return DEVLINK_LPBK_ENABLED;
+	case ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_HIGH:
+		return DEVLINK_LPBK_PRIORITIZED;
+	case ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_NO:
+		return DEVLINK_LPBK_DISABLED;
+	}
+
+	return "Invalid mode";
+}
+
+/**
+ * ice_devlink_loopback_str_to_mode - Get lpbk mode from string name
+ * @mode_str: loopback mode string
+ *
+ * Returns mode value or -1 if invalid.
+ */
+static int ice_devlink_loopback_str_to_mode(const char *mode_str)
+{
+	if (!strcmp(mode_str, DEVLINK_LPBK_ENABLED))
+		return ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_NORMAL;
+	else if (!strcmp(mode_str, DEVLINK_LPBK_PRIORITIZED))
+		return ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_HIGH;
+	else if (!strcmp(mode_str, DEVLINK_LPBK_DISABLED))
+		return ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_NO;
+
+	return -EINVAL;
+}
+
+/**
+ * ice_devlink_loopback_get - Get loopback parameter
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to store the parameter value
+ *
+ * Returns zero on success.
+ */
+static int ice_devlink_loopback_get(struct devlink *devlink, u32 id,
+				    struct devlink_param_gset_ctx *ctx)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_port_info *pi = pf->hw.port_info;
+	const char *mode_str;
+
+	mode_str = ice_devlink_loopback_mode_to_str(pi->loopback_mode);
+	snprintf(ctx->val.vstr, sizeof(ctx->val.vstr), "%s", mode_str);
+
+	return 0;
+}
+
+/**
+ * ice_devlink_loopback_set - Set loopback parameter
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to set
+ * @ctx: context to get the parameter value
+ *
+ * Returns zero on success.
+ */
+static int ice_devlink_loopback_set(struct devlink *devlink, u32 id,
+				    struct devlink_param_gset_ctx *ctx)
+{
+	int new_loopback_mode = ice_devlink_loopback_str_to_mode(ctx->val.vstr);
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_port_info *pi = pf->hw.port_info;
+	struct device *dev = ice_pf_to_dev(pf);
+
+	if (pi->loopback_mode != new_loopback_mode) {
+		pi->loopback_mode = new_loopback_mode;
+		dev_info(dev, "Setting loopback to %s\n", ctx->val.vstr);
+		ice_schedule_reset(pf, ICE_RESET_CORER);
+	}
+
+	return 0;
+}
+
+/**
+ * ice_devlink_loopback_validate - Validate passed loopback parameter value
+ * @devlink: unused pointer to devlink instance
+ * @id: the parameter ID to validate
+ * @val: value to validate
+ * @extack: netlink extended ACK structure
+ *
+ * Supported values are:
+ * "enabled" - loopback is enabled, "disabled" - loopback is disabled
+ * "prioritized" - loopback traffic is prioritized in scheduling
+ *
+ * Returns zero when passed parameter value is supported. Negative value on
+ * error.
+ */
+static int ice_devlink_loopback_validate(struct devlink *devlink, u32 id,
+					 union devlink_param_value val,
+					 struct netlink_ext_ack *extack)
+{
+	if (ice_devlink_loopback_str_to_mode(val.vstr) < 0) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Error: Requested value is not supported.");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 /* devlink parameters for the ice driver */
 static const struct devlink_param ice_devlink_params[] = {
 	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV,
@@ -788,6 +904,13 @@ static const struct devlink_param ice_devlink_params[] = {
 			     ice_devlink_txbalance_get,
 			     ice_devlink_txbalance_set,
 			     ice_devlink_txbalance_validate),
+	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_TX_LOOPBACK,
+			     "loopback",
+			     DEVLINK_PARAM_TYPE_STRING,
+			     BIT(DEVLINK_PARAM_CMODE_PERMANENT),
+			     ice_devlink_loopback_get,
+			     ice_devlink_loopback_set,
+			     ice_devlink_loopback_validate),
 };
 #endif /* HAVE_DEVLINK_PARAMS */
 
@@ -954,7 +1077,7 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 	int max_rdma_msix;
 	int max_vf_msix;
 
-	max_pf_msix = min_t(int, all, ICE_MAX_LG_RSS_QS);
+	max_pf_msix = min_t(int, all, ICE_MAX_LARGE_RSS_QS);
 	max_rdma_msix = num_online_cpus() + ICE_RDMA_NUM_AEQ_MSIX;
 
 	devlink_resource_size_params_init(&params, all, all, 1,
@@ -1126,6 +1249,10 @@ ice_devlink_reload_down(struct devlink *devlink, bool netns_change,
 			struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_vsi *vsi;
+
+	vsi = ice_get_main_vsi(pf);
+	vsi->flags |= ICE_VSI_FLAG_RELOAD;
 
 	switch (action) {
 	case DEVLINK_RELOAD_ACTION_DRIVER_REINIT:
@@ -1226,7 +1353,7 @@ static int ice_active_port_option = -1;
  */
 static const char *ice_devlink_port_opt_speed_str(u8 speed)
 {
-	switch (speed & ICE_AQC_PORT_OPT_MAX_LANE_M) {
+	switch (speed) {
 	case ICE_AQC_PORT_OPT_MAX_LANE_100M:
 		return "0.1";
 	case ICE_AQC_PORT_OPT_MAX_LANE_1G:
@@ -2024,10 +2151,10 @@ static int ice_devlink_set_parent(struct devlink_rate *devlink_rate,
 
 #ifdef HAVE_DEVLINK_PORT_OPS
 static const struct devlink_port_ops ice_devlink_port_ops = {
-#ifdef HAVE_DEVLINK_PORT_SPLIT
+#ifdef HAVE_DEVLINK_PORT_SPLIT_IN_PORT_OPS
 	.port_split = ice_devlink_port_split,
 	.port_unsplit = ice_devlink_port_unsplit,
-#endif /* HAVE_DEVLINK_PORT_SPLIT */
+#endif /* HAVE_DEVLINK_PORT_SPLIT_IN_PORT_OPS */
 };
 #endif /* HAVE_DEVLINK_PORT_OPS */
 
@@ -2041,10 +2168,10 @@ static const struct devlink_ops ice_devlink_ops = {
 	.reload_down = ice_devlink_reload_down,
 	.reload_up = ice_devlink_reload_up,
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
-#if defined(HAVE_DEVLINK_PORT_SPLIT) && !defined(HAVE_DEVLINK_PORT_OPS)
+#ifdef HAVE_DEVLINK_PORT_SPLIT_IN_OPS
 	.port_split = ice_devlink_port_split,
 	.port_unsplit = ice_devlink_port_unsplit,
-#endif /* HAVE_DEVLINK_PORT_SPLIT && !HAVE_DEVLINK_PORT_OPS */
+#endif /* HAVE_DEVLINK_PORT_SPLIT_IN_OPS */
 	.eswitch_mode_get = ice_eswitch_mode_get,
 	.eswitch_mode_set = ice_eswitch_mode_set,
 #ifdef HAVE_DEVLINK_INFO_GET
@@ -2693,196 +2820,6 @@ void ice_devlink_destroy_regions(struct ice_pf *pf)
 		devlink_region_destroy(pf->devcaps_region);
 }
 #endif /* HAVE_DEVLINK_REGIONS */
-
-#ifdef HAVE_DEVLINK_HEALTH
-
-#define ICE_MDD_SRC_TO_STR(_src) \
-	((_src) == ICE_MDD_SRC_NONE ? "none"		\
-	 : (_src) == ICE_MDD_SRC_TX_PQM ? "tx_pqm"	\
-	 : (_src) == ICE_MDD_SRC_TX_TCLAN ? "tx_tclan"	\
-	 : (_src) == ICE_MDD_SRC_TX_TDPU ? "tx_tdpu"	\
-	 : (_src) == ICE_MDD_SRC_RX ? "rx"		\
-	 : "invalid")
-
-static int
-#ifndef HAVE_DEVLINK_HEALTH_OPS_EXTACK
-ice_mdd_reporter_dump(struct devlink_health_reporter *reporter,
-		      struct devlink_fmsg *fmsg, void *priv_ctx)
-#else
-ice_mdd_reporter_dump(struct devlink_health_reporter *reporter,
-		      struct devlink_fmsg *fmsg, void *priv_ctx,
-		      struct netlink_ext_ack __always_unused *extack)
-#endif /* HAVE_DEVLINK_HEALTH_OPS_EXTACK */
-{
-	struct ice_pf *pf = devlink_health_reporter_priv(reporter);
-	struct ice_mdd_reporter *mdd_reporter = &pf->mdd_reporter;
-	struct ice_mdd_event *mdd_event;
-	int err;
-
-	err = devlink_fmsg_u32_pair_put(fmsg, "count",
-					mdd_reporter->count);
-	if (err)
-		return err;
-
-	list_for_each_entry(mdd_event, &mdd_reporter->event_list, list) {
-		char *src;
-
-		err = devlink_fmsg_obj_nest_start(fmsg);
-		if (err)
-			return err;
-
-		src = ICE_MDD_SRC_TO_STR(mdd_event->src);
-
-		err = devlink_fmsg_string_pair_put(fmsg, "src", src);
-		if (err)
-			return err;
-
-		err = devlink_fmsg_u8_pair_put(fmsg, "pf_num",
-					       mdd_event->pf_num);
-		if (err)
-			return err;
-
-		err = devlink_fmsg_u32_pair_put(fmsg, "mdd_vf_num",
-						mdd_event->vf_num);
-		if (err)
-			return err;
-
-		err = devlink_fmsg_u8_pair_put(fmsg, "mdd_event",
-					       mdd_event->event);
-		if (err)
-			return err;
-
-		err = devlink_fmsg_u32_pair_put(fmsg, "mdd_queue",
-						mdd_event->queue);
-		if (err)
-			return err;
-
-		err = devlink_fmsg_obj_nest_end(fmsg);
-		if (err)
-			return err;
-	}
-
-	return 0;
-}
-
-static const struct devlink_health_reporter_ops ice_mdd_reporter_ops = {
-	.name = "mdd",
-	.dump = ice_mdd_reporter_dump,
-};
-
-/**
- * ice_devlink_init_mdd_reporter - Initialize MDD devlink health reporter
- * @pf: the PF device structure
- *
- * Create devlink health reporter used to handle MDD events.
- */
-void ice_devlink_init_mdd_reporter(struct ice_pf *pf)
-{
-	struct devlink *devlink = priv_to_devlink(pf);
-	struct device *dev = ice_pf_to_dev(pf);
-
-	INIT_LIST_HEAD(&pf->mdd_reporter.event_list);
-
-	pf->mdd_reporter.reporter =
-		devlink_health_reporter_create(devlink,
-					       &ice_mdd_reporter_ops,
-					       0, /* graceful period */
-#ifndef HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
-					       false, /* auto recover */
-#endif /* HAVE_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER */
-					       pf); /* private data */
-
-	if (IS_ERR(pf->mdd_reporter.reporter)) {
-		ice_dev_err_errno(dev, PTR_ERR(pf->mdd_reporter.reporter),
-				  "failed to create devlink MDD health reporter");
-		pf->mdd_reporter.reporter = NULL;
-	}
-}
-
-/**
- * ice_devlink_destroy_mdd_reporter - Destroy MDD devlink health reporter
- * @pf: the PF device structure
- *
- * Remove previously created MDD health reporter for this PF.
- */
-void ice_devlink_destroy_mdd_reporter(struct ice_pf *pf)
-{
-	if (pf->mdd_reporter.reporter)
-		devlink_health_reporter_destroy(pf->mdd_reporter.reporter);
-}
-
-/**
- * ice_devlink_report_mdd_event - Report an MDD event through devlink health
- * @pf: the PF device structure
- * @src: the HW block that was the source of this MDD event
- * @pf_num: the pf_num on which the MDD event occurred
- * @vf_num: the vf_num on which the MDD event occurred
- * @event: the event type of the MDD event
- * @queue: the queue on which the MDD event occurred
- *
- * Report an MDD event that has occurred on this PF.
- */
-void
-ice_devlink_report_mdd_event(struct ice_pf *pf, enum ice_mdd_src src,
-			     u8 pf_num, u16 vf_num, u8 event, u16 queue)
-{
-	struct ice_mdd_reporter *mdd_reporter = &pf->mdd_reporter;
-	struct ice_mdd_event *mdd_event;
-	int err;
-
-	if (!mdd_reporter->reporter)
-		return;
-
-	mdd_reporter->count++;
-
-	mdd_event = devm_kzalloc(ice_pf_to_dev(pf), sizeof(*mdd_event),
-				 GFP_KERNEL);
-	if (!mdd_event)
-		return;
-
-	mdd_event->src = src;
-	mdd_event->pf_num = pf_num;
-	mdd_event->vf_num = vf_num;
-	mdd_event->event = event;
-	mdd_event->queue = queue;
-
-	list_add_tail(&mdd_event->list, &mdd_reporter->event_list);
-
-	err = devlink_health_report(mdd_reporter->reporter,
-				    "Malicious Driver Detection event\n",
-				    pf);
-	if (err)
-		dev_err(ice_pf_to_dev(pf),
-			"failed to report MDD via devlink health\n");
-}
-
-/**
- * ice_devlink_clear_after_reset - clear devlink health issues after a reset
- * @pf: the PF device structure
- *
- * Mark the PF in healthy state again after a reset has completed.
- */
-void ice_devlink_clear_after_reset(struct ice_pf *pf)
-{
-	struct ice_mdd_reporter *mdd_reporter = &pf->mdd_reporter;
-	enum devlink_health_reporter_state new_state =
-		DEVLINK_HEALTH_REPORTER_STATE_HEALTHY;
-	struct ice_mdd_event *mdd_event, *tmp;
-
-	if (!mdd_reporter->reporter)
-		return;
-
-	devlink_health_reporter_state_update(mdd_reporter->reporter,
-					     new_state);
-	pf->mdd_reporter.count = 0;
-
-	list_for_each_entry_safe(mdd_event, tmp, &mdd_reporter->event_list,
-				 list) {
-		list_del(&mdd_event->list);
-	}
-}
-
-#endif /* HAVE_DEVLINK_HEALTH */
 
 #ifdef HAVE_DEVLINK_PARAMS
 #define ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD	101
