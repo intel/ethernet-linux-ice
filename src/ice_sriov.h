@@ -98,7 +98,6 @@ ice_get_vf_stats(struct net_device *netdev, int vf_id,
 void
 ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event);
 void ice_print_vfs_mdd_events(struct ice_pf *pf);
-void ice_print_vf_rx_mdd_event(struct ice_vf *vf);
 bool ice_vc_validate_pattern(struct ice_vf *vf,
 			     struct virtchnl_proto_hdrs *proto);
 bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
@@ -110,7 +109,6 @@ static inline void
 ice_vf_lan_overflow_event(struct ice_pf *pf,
 			  struct ice_rq_event_info *event) { }
 static inline void ice_print_vfs_mdd_events(struct ice_pf *pf) { }
-static inline void ice_print_vf_rx_mdd_event(struct ice_vf *vf) { }
 static inline void ice_restore_all_vfs_msi_state(struct pci_dev *pdev) { }
 static inline int
 ice_get_vf_port_info(struct ice_pf __always_unused *pf,
