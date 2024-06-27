@@ -1,8 +1,31 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _KCOMPAT_IMPL_H_
 #define _KCOMPAT_IMPL_H_
+
+/* devlink support */
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+
+/*
+ * This change is adding buffer in enum value for ice_devlink_param_id.
+ *
+ * In upstream / OOT compiled from source it is safe to use
+ * DEVLINK_PARAM_GENERIC_ID_MAX as first value for ice_devlink_param_id
+ * enum.
+ *
+ * In case of binary release (for Secure Boot purpose) this caused issue
+ * with supporting multiple kernels because backport made by SLES changed
+ * value of DEVLINK_PARAM_GENERIC_ID_MAX. This caused -EINVAL to
+ * be returned by devlink_params_register() because
+ * ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV (compiled on older kernel) was equal
+ * to DEVLINK_PARAM_GENERIC_ID_MAX (in newer kernel).
+ */
+#define DEVLINK_PARAM_GENERIC_ID_MAX __KC_DEVLINK_PARAM_GENERIC_ID_MAX
+#include <net/devlink.h>
+#undef DEVLINK_PARAM_GENERIC_ID_MAX
+#define DEVLINK_PARAM_GENERIC_ID_MAX (__KC_DEVLINK_PARAM_GENERIC_ID_MAX + 32)
+#endif /* CONFIG_DEVLINK */
 
 /* This file contains implementations of backports from various kernels. It
  * must rely only on NEED_<FLAG> and HAVE_<FLAG> checks. It must not make any
@@ -133,6 +156,120 @@ static inline void skb_frag_off_add(skb_frag_t *frag, int delta)
 #endif /* NEED_SKB_FRAG_OFF_ADD */
 
 /*
+ * NEED_DMA_ATTRS, NEED_DMA_ATTRS_PTR and related functions
+ *
+ * dma_map_page_attrs and dma_unmap_page_attrs were added in upstream commit
+ * 0495c3d36794 ("dma: add calls for dma_map_page_attrs and
+ * dma_unmap_page_attrs")
+ *
+ * Implementing these calls in this way makes RHEL7.4 compile (which doesn't
+ * have these) and all newer kernels compile fine, while using only the new
+ * calls with no ifdeffery.
+ *
+ * In kernel 4.10 the commit ("dma-mapping: use unsigned long for dma_attrs")
+ * switched the argument from struct dma_attrs * to unsigned long.
+ *
+ * __page_frag_cache_drain was implemented in 2017, but __page_frag_drain came
+ * with the above series for _attrs, and seems to have been backported at the
+ * same time.
+ *
+ * Please note SLES12.SP3 and RHEL7.5 and newer have all three of these
+ * already.
+ *
+ * If need be in the future for some reason, we could make a separate NEED_
+ * define for __page_frag_cache_drain, but not yet.
+ *
+ * For clarity: there are three states:
+ * 1) no attrs
+ * 2) attrs but with a pointer to a struct dma_attrs
+ * 3) attrs but with unsigned long type
+ */
+#ifdef NEED_DMA_ATTRS
+static inline
+dma_addr_t __kc_dma_map_page_attrs(struct device *dev, struct page *page,
+				   size_t offset, size_t size,
+				   enum dma_data_direction dir,
+				   unsigned long __always_unused attrs)
+{
+	return dma_map_page(dev, page, offset, size, dir);
+}
+#define dma_map_page_attrs __kc_dma_map_page_attrs
+
+static inline
+void __kc_dma_unmap_page_attrs(struct device *dev,
+			       dma_addr_t addr, size_t size,
+			       enum dma_data_direction dir,
+			       unsigned long __always_unused attrs)
+{
+	dma_unmap_page(dev, addr, size, dir);
+}
+#define dma_unmap_page_attrs __kc_dma_unmap_page_attrs
+
+static inline void __page_frag_cache_drain(struct page *page,
+					   unsigned int count)
+{
+#ifdef HAVE_PAGE_COUNT_BULK_UPDATE
+	if (!page_ref_sub_and_test(page, count))
+		return;
+
+	init_page_count(page);
+#else
+	WARN_ON(count > 1);
+	if (!count)
+		return;
+#endif
+	__free_pages(page, compound_order(page));
+}
+#elif defined(NEED_DMA_ATTRS_PTR)
+static inline
+dma_addr_t __kc_dma_map_page_attrs_long(struct device *dev, struct page *page,
+				   size_t offset, size_t size,
+				   enum dma_data_direction dir,
+				   unsigned long attrs)
+{
+	struct dma_attrs dmaattrs = {};
+
+	if (attrs & DMA_ATTR_SKIP_CPU_SYNC)
+		dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &dmaattrs);
+
+	if (attrs & DMA_ATTR_WEAK_ORDERING)
+		dma_set_attr(DMA_ATTR_WEAK_ORDERING, &dmaattrs);
+
+	return dma_map_page_attrs(dev, page, offset, size, dir, &dmaattrs);
+}
+#define dma_map_page_attrs __kc_dma_map_page_attrs_long
+/* there is a nasty macro buried in dma-mapping.h which reroutes dma_map_page
+ * and dma_unmap_page to attribute versions, so take control of that macro and
+ * fix it here. */
+#ifdef dma_map_page
+#undef dma_map_page
+#define dma_map_page(a,b,c,d,r) dma_map_page_attrs(a,b,c,d,r,0)
+#endif
+
+static inline
+void __kc_dma_unmap_page_attrs_long(struct device *dev,
+			       dma_addr_t addr, size_t size,
+			       enum dma_data_direction dir,
+			       unsigned long attrs)
+{
+	struct dma_attrs dmaattrs = {};
+
+	if (attrs & DMA_ATTR_SKIP_CPU_SYNC)
+		dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &dmaattrs);
+
+	if (attrs & DMA_ATTR_WEAK_ORDERING)
+		dma_set_attr(DMA_ATTR_WEAK_ORDERING, &dmaattrs);
+
+	dma_unmap_page_attrs(dev, addr, size, dir, &dmaattrs);
+}
+#define dma_unmap_page_attrs __kc_dma_unmap_page_attrs_long
+#ifdef dma_unmap_page
+#undef dma_unmap_page
+#define dma_unmap_page(a,b,c,r) dma_unmap_page_attrs(a,b,c,r,0)
+#endif
+#endif /* NEED_DMA_ATTRS_PTR */
+
+/*
  * NETIF_F_HW_L2FW_DOFFLOAD related functions
  *
  * Support for NETIF_F_HW_L2FW_DOFFLOAD was first introduced upstream by
@@ -219,8 +356,6 @@ static inline bool macvlan_supports_dest_filter(struct net_device *dev)
 
 /* devlink support */
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
-
-#include <net/devlink.h>
 
 #ifdef HAVE_DEVLINK_REGIONS
 /* NEED_DEVLINK_REGION_CREATE_OPS
@@ -315,6 +450,25 @@ devlink_flash_update_timeout_notify(struct devlink *devlink,
 	devlink_flash_update_status_notify(devlink, status_msg, component, 0, 0);
 }
 #endif /* NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY */
+
+/* NEED_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
+ *
+ * Upstream commit ba7d16c77942 ("devlink: Implicitly set auto recover flag when
+ * registering health reporter") removed auto_recover param.
+ * CORE code does not need to bother about this param, we could simply provide
+ * it via compat.
+ */
+#ifdef NEED_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER
+static inline struct devlink_health_reporter *
+_kc_devlink_health_reporter_create(struct devlink *devlink,
+				  const struct devlink_health_reporter_ops *ops,
+				  u64 graceful_period, void *priv)
+{
+	return devlink_health_reporter_create(devlink, ops, graceful_period,
+					      !!ops->recover, priv);
+}
+#define devlink_health_reporter_create _kc_devlink_health_reporter_create
+#endif /* NEED_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER */
 
 /*
  * NEED_DEVLINK_PORT_ATTRS_SET_STRUCT
@@ -1680,6 +1834,80 @@ __printf(2, 3) void ethtool_sprintf(u8 **data, const char *fmt, ...);
 #endif /* NEED_ETHTOOL_SPRINTF */
 
 /*
+ * NEED_SYSFS_MATCH_STRING
+ *
+ * Upstream commit e1fe7b6a7b37 ("lib/string: add sysfs_match_string helper")
+ * introduced a helper for looking up strings in an array - it's pure algo stuff
+ * that is easy to backport if needed.
+ * Instead of covering sysfs_streq() by yet another flag just copy it.
+ */
+#ifdef NEED_SYSFS_MATCH_STRING
+/*
+ * sysfs_streq - return true if strings are equal, modulo trailing newline
+ * @s1: one string
+ * @s2: another string
+ *
+ * This routine returns true iff two strings are equal, treating both
+ * NUL and newline-then-NUL as equivalent string terminations.  It's
+ * geared for use with sysfs input strings, which generally terminate
+ * with newlines but are compared against values without newlines.
+ */
+static inline bool _kc_sysfs_streq(const char *s1, const char *s2)
+{
+	while (*s1 && *s1 == *s2) {
+		s1++;
+		s2++;
+	}
+
+	if (*s1 == *s2)
+		return true;
+	if (!*s1 && *s2 == '\n' && !s2[1])
+		return true;
+	if (*s1 == '\n' && !s1[1] && !*s2)
+		return true;
+	return false;
+}
+
+/*
+ * __sysfs_match_string - matches given string in an array
+ * @array: array of strings
+ * @n: number of strings in the array or -1 for NULL terminated arrays
+ * @str: string to match with
+ *
+ * Returns index of @str in the @array or -EINVAL, just like match_string().
+ * Uses sysfs_streq instead of strcmp for matching.
+ *
+ * This routine will look for a string in an array of strings up to the
+ * n-th element in the array or until the first NULL element.
+ *
+ * Historically the value of -1 for @n, was used to search in arrays that
+ * are NULL terminated. However, the function does not make a distinction
+ * when finishing the search: either @n elements have been compared OR
+ * the first NULL element was found.
+ */
+static inline int _kc___sysfs_match_string(const char * const *array, size_t n,
+					   const char *str)
+{
+	const char *item;
+	int index;
+
+	for (index = 0; index < n; index++) {
+		item = array[index];
+		if (!item)
+			break;
+		if (sysfs_streq(item, str))
+			return index;
+	}
+
+	return -EINVAL;
+}
+
+#define sysfs_match_string(_a, _s) \
+	_kc___sysfs_match_string(_a, ARRAY_SIZE(_a), _s)
+
+#endif /* NEED_SYSFS_MATCH_STRING */
+
+/*
  * NEED_SYSFS_EMIT
  *
  * Upstream introduced following function in
@@ -2047,6 +2275,22 @@ debugfs_lookup_and_remove(const char *name, struct dentry *parent)
 }
 #endif /* NEED_DEBUGFS_LOOKUP_AND_REMOVE */
 
+/* NEED_FS_FILE_DENTRY
+ *
+ * this is simple impl of file_dentry() (introduced in v4.6, backported to
+ * stable mainline 4.5 and 4.6 kernels)
+ *
+ * prior to file_dentry() existence logic of this function was open-coded,
+ * and if given kernel has had not backported it, then "oversimplification bugs"
+ * are present there anyway.
+ */
+#ifdef NEED_FS_FILE_DENTRY
+static inline struct dentry *file_dentry(const struct file *file)
+{
+	return file->f_path.dentry;
+}
+#endif /* NEED_FS_FILE_DENTRY */
+
 /* NEED_CLASS_CREATE_WITH_MODULE_PARAM
  *
  * Upstream removed owner argument form helper macro class_create in
@@ -2107,26 +2351,33 @@ static inline void assign_bit(long nr, unsigned long *addr, bool value)
 }
 #endif /* NEED_ASSIGN_BIT */
 
-/* NEED_PCI_ENABLE_PCIE_ERROR_REPORTING
- *
- * Upstream commit 6b985af556 ("PCI/AER: Remove redundant Device Control Error
- * Reporting Enable") removes symbol pci_enable_pcie_error_reporting because
- * error reporting is enabled by AER by default since
- * commit f26e58bf6f ("PCI/AER: Enable error reporting when AER is native"),
- *
- * Symbol pci_disable_pcie_error_reporting is removed by
- * commit 69b264df8a ("PCI/AER: Drop unused pci_disable_pcie_error_reporting()")
- * which is part of the same patchset.
+/*
+ * __has_builtin is supported on gcc >= 10, clang >= 3 and icc >= 21.
+ * In the meantime, to support gcc < 10, we implement __has_builtin
+ * by hand.
  */
-#ifdef NEED_PCI_ENABLE_PCIE_ERROR_REPORTING
-static inline int
-pci_enable_pcie_error_reporting(struct pci_dev __always_unused *dev)
-{
-	return 0;
-}
+#ifndef __has_builtin
+#define __has_builtin(x) (0)
+#endif
 
-#define pci_disable_pcie_error_reporting(dev) do {} while (0)
-#endif /* NEED_PCI_ENABLE_PCIE_ERROR_REPORTING */
+/* NEED___STRUCT_SIZE
+ *
+ * 9f7d69c5cd23 ("fortify: Convert to struct vs member helpers") of kernel v6.2
+ * has added two following macros, one of them used by DEFINE_FLEX()
+ */
+#ifdef NEED___STRUCT_SIZE
+/*
+ * When the size of an allocated object is needed, use the best available
+ * mechanism to find it. (For cases where sizeof() cannot be used.)
+ */
+#if __has_builtin(__builtin_dynamic_object_size)
+#define __struct_size(p)       __builtin_dynamic_object_size(p, 0)
+#define __member_size(p)       __builtin_dynamic_object_size(p, 1)
+#else
+#define __struct_size(p)       __builtin_object_size(p, 0)
+#define __member_size(p)       __builtin_object_size(p, 1)
+#endif
+#endif /* NEED___STRUCT_SIZE */
 
 /* NEED_KREALLOC_ARRAY
  *
@@ -2252,5 +2503,203 @@ unsigned long find_next_bit_wrap(const unsigned long *addr,
 		TYPE NAME[]; \
 	}
 #endif /* NEED_DECLARE_FLEX_ARRAY */
+
+#ifdef NEED_LIST_COUNT_NODES
+/* list_count_nodes was added as part of the list.h API by commit 4d70c74659d9
+ * ("i915: Move list_count() to list.h as list_count_nodes() for broader use")
+ * This landed in Linux v6.3
+ *
+ * Its straightforward to directly implement the basic loop.
+ */
+static inline size_t list_count_nodes(struct list_head *head)
+{
+	struct list_head *pos;
+	size_t count = 0;
+
+	list_for_each(pos, head)
+		count++;
+
+	return count;
+}
+#endif /* NEED_LIST_COUNT_NODES */
+#ifdef NEED_STATIC_ASSERT
+/*
+ * NEED_STATIC_ASSERT Introduced with upstream commit 6bab69c6501
+ * ("build_bug.h: add wrapper for _Static_assert")
+ *  * Available for kernels >= 5.1
+ *
+ *  Macro for _Static_assert GCC keyword (C11)
+ */
+#define static_assert(expr, ...) __static_assert(expr, ##__VA_ARGS__, #expr)
+#define __static_assert(expr, msg, ...) _Static_assert(expr, msg)
+#endif /* NEED_STATIC_ASSERT */
+
+#ifdef NEED_ETH_TYPE_VLAN
+#include <linux/if_vlan.h>
+/**
+ * eth_type_vlan was added in commit fe19c4f971a5 ("lan: Check for vlan ethernet
+ * types for 8021.q or 802.1ad").
+ *
+ * eth_type_vlan - check for valid vlan ether type.
+ * @ethertype: ether type to check
+ *
+ * Returns true if the ether type is a vlan ether type.
+ */
+static inline bool eth_type_vlan(__be16 ethertype)
+{
+	switch (ethertype) {
+	case htons(ETH_P_8021Q):
+	case htons(ETH_P_8021AD):
+		return true;
+	default:
+		return false;
+	}
+}
+#endif /* NEED_ETH_TYPE_VLAN */
+
+#ifdef NEED___STRUCT_GROUP
+/**
+ * __struct_group() - Create a mirrored named and anonyomous struct
+ *
+ * @TAG: The tag name for the named sub-struct (usually empty)
+ * @NAME: The identifier name of the mirrored sub-struct
+ * @ATTRS: Any struct attributes (usually empty)
+ * @MEMBERS: The member declarations for the mirrored structs
+ *
+ * Used to create an anonymous union of two structs with identical layout
+ * and size: one anonymous and one named. The former's members can be used
+ * normally without sub-struct naming, and the latter can be used to
+ * reason about the start, end, and size of the group of struct members.
+ * The named struct can also be explicitly tagged for layer reuse, as well
+ * as both having struct attributes appended.
+ */
+#define __struct_group(TAG, NAME, ATTRS, MEMBERS...) \
+	union { \
+		struct { MEMBERS } ATTRS; \
+		struct TAG { MEMBERS } ATTRS NAME; \
+	}
+#endif /* NEED___STRUCT_GROUP */
+
+#ifdef NEED_STRUCT_GROUP
+/**
+ * struct_group() - Wrap a set of declarations in a mirrored struct
+ *
+ * @NAME: The identifier name of the mirrored sub-struct
+ * @MEMBERS: The member declarations for the mirrored structs
+ *
+ * Used to create an anonymous union of two structs with identical
+ * layout and size: one anonymous and one named. The former can be
+ * used normally without sub-struct naming, and the latter can be
+ * used to reason about the start, end, and size of the group of
+ * struct members.
+ */
+#define struct_group(NAME, MEMBERS...)  \
+	__struct_group(/* no tag */, NAME, /* no attrs */, MEMBERS)
+
+/**
+ * struct_group_tagged() - Create a struct_group with a reusable tag
+ *
+ * @TAG: The tag name for the named sub-struct
+ * @NAME: The identifier name of the mirrored sub-struct
+ * @MEMBERS: The member declarations for the mirrored structs
+ *
+ * Used to create an anonymous union of two structs with identical
+ * layout and size: one anonymous and one named. The former can be
+ * used normally without sub-struct naming, and the latter can be
+ * used to reason about the start, end, and size of the group of
+ * struct members. Includes struct tag argument for the named copy,
+ * so the specified layout can be reused later.
+ */
+#define struct_group_tagged(TAG, NAME, MEMBERS...) \
+	__struct_group(TAG, NAME, /* no attrs */, MEMBERS)
+#endif /* NEED_STRUCT_GROUP */
+
+#ifdef NEED_READ_POLL_TIMEOUT
+/*
+ * 5f5323a14cad ("iopoll: introduce read_poll_timeout macro")
+ * Added in kernel 5.8
+ */
+#define read_poll_timeout(op, val, cond, sleep_us, timeout_us, \
+				sleep_before_read, args...) \
+({ \
+	u64 __timeout_us = (timeout_us); \
+	unsigned long __sleep_us = (sleep_us); \
+	ktime_t __timeout = ktime_add_us(ktime_get(), __timeout_us); \
+	might_sleep_if((__sleep_us) != 0); \
+	if (sleep_before_read && __sleep_us) \
+		usleep_range((__sleep_us >> 2) + 1, __sleep_us); \
+	for (;;) { \
+		(val) = op(args); \
+		if (cond) \
+			break; \
+		if (__timeout_us && \
+		    ktime_compare(ktime_get(), __timeout) > 0) { \
+			(val) = op(args); \
+			break; \
+		} \
+		if (__sleep_us) \
+			usleep_range((__sleep_us >> 2) + 1, __sleep_us); \
+		cpu_relax(); \
+	} \
+	(cond) ? 0 : -ETIMEDOUT; \
+})
+#else
+#include <linux/iopoll.h>
+#endif /* NEED_READ_POLL_TIMEOUT */
+
+#ifndef HAVE_DPLL_LOCK_STATUS_ERROR
+/* Copied from include/uapi/linux/dpll.h to have common dpll status enums
+ * between sysfs and dpll subsystem based solutions.
+ * cf4f0f1e1c465 ("dpll: extend uapi by lock status error attribute")
+ * Added in kernel 6.9
+ */
+enum dpll_lock_status_error {
+	DPLL_LOCK_STATUS_ERROR_NONE = 1,
+	DPLL_LOCK_STATUS_ERROR_UNDEFINED,
+	DPLL_LOCK_STATUS_ERROR_MEDIA_DOWN,
+	DPLL_LOCK_STATUS_ERROR_FRACTIONAL_FREQUENCY_OFFSET_TOO_HIGH,
+
+	/* private: */
+	__DPLL_LOCK_STATUS_ERROR_MAX,
+	DPLL_LOCK_STATUS_ERROR_MAX = (__DPLL_LOCK_STATUS_ERROR_MAX - 1)
+};
+
+#endif /* HAVE_DPLL_LOCK_STATUS_ERROR */
+
+#ifndef NEED_DPLL_NETDEV_PIN_SET
+#define netdev_dpll_pin_set dpll_netdev_pin_set
+#define netdev_dpll_pin_clear dpll_netdev_pin_clear
+#endif /* HAVE_DPLL_NETDEV_PIN_SET */
+
+#ifdef NEED_RADIX_TREE_EMPTY
+static inline bool radix_tree_empty(struct radix_tree_root *root)
+{
+	return !root->rnode;
+}
+#endif /* NEED_RADIX_TREE_EMPTY */
+
+#ifdef NEED_SET_SCHED_FIFO
+/*
+ * 7318d4cc14c8 ("sched: Provide sched_set_fifo()")
+ * Added in kernel 5.9,
+ * converted to a macro for kcompat
+ */
+#include <linux/sched.h>
+
+#ifdef NEED_SCHED_PARAM
+#include <uapi/linux/sched/types.h>
+#endif /* NEED_SCHED_PARAM */
+#ifdef NEED_RT_H
+#include <linux/sched/rt.h>
+#else/* NEED_RT_H */
+#include <linux/sched/prio.h>
+#endif /* NEED_RT_H */
+#define sched_set_fifo(p)						   \
+({									   \
+	struct sched_param sp = { .sched_priority = MAX_RT_PRIO / 2 };	   \
+									   \
+	WARN_ON_ONCE(sched_setscheduler_nocheck((p), SCHED_FIFO,&sp) != 0);\
+})
+#endif /* NEED_SET_SCHED_FIFO */
 
 #endif /* _KCOMPAT_IMPL_H_ */

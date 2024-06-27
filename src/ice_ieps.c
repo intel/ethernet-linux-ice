@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver IEPS extensions */
 
@@ -495,8 +495,8 @@ ice_ieps_get_phy_status(struct ice_pf *pf, struct ieps_peer_phy_link_status *st)
 	st->an_capable        = !!(link->an_info & ICE_AQ_LP_AN_ABILITY);
 	st->los               = !(link->link_info & ICE_AQ_SIGNAL_DETECT);
 
-	st->phy_type_low      = cpu_to_le64(link->phy_type_low);
-	st->phy_type_high     = cpu_to_le64(link->phy_type_high);
+	st->phy_type_low      = link->phy_type_low;
+	st->phy_type_high     = link->phy_type_high;
 	st->lse_on            = link->lse_ena;
 
 err_exit:
@@ -523,7 +523,8 @@ ice_ieps_set_mode(struct ice_pf *pf, enum ieps_peer_port_mode *mode)
 	if (*mode == IEPS_PEER_PORT_MODE_UP)
 		ena_link = true;
 
-	status = ice_aq_set_link_restart_an(hw->port_info, ena_link, NULL);
+	status = ice_aq_set_link_restart_an(hw->port_info, ena_link, NULL,
+					    ICE_AQC_RESTART_AN_REFCLK_NOCHANGE);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "ERROR: set_mode status=%d\n",
 			status);
@@ -665,6 +666,7 @@ ice_ieps_phy_type_setget(struct ice_pf *pf, bool op_set,
 			pstatus = IEPS_PEER_PHY_TYPE_NOTSUP;
 
 		phy_cfg->phy_type_high = cpu_to_le64(type_high);
+		phy_cfg->phy_type_low = 0;
 	} else {
 		u64 type_low = 1ULL << attr_data->cfg.phy_type;
 
@@ -672,6 +674,7 @@ ice_ieps_phy_type_setget(struct ice_pf *pf, bool op_set,
 			pstatus = IEPS_PEER_PHY_TYPE_NOTSUP;
 
 		phy_cfg->phy_type_low = cpu_to_le64(type_low);
+		phy_cfg->phy_type_high = 0;
 	}
 
 rel_mem_exit:
@@ -874,7 +877,7 @@ ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
 		sbq_msg.opcode = ice_sbq_msg_rd;
 	}
 
-	status = ice_sbq_rw_reg(hw, &sbq_msg);
+	status = ice_sbq_rw_reg(hw, &sbq_msg, ICE_AQ_FLAG_RD);
 	if (status) {
 		dev_dbg(ice_pf_to_dev(pf), "ERROR: sbq_rw_reg status=%d\n",
 			status);

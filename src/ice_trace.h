@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #if !IS_ENABLED(CONFIG_TRACEPOINTS) || defined(__CHECKER__)
 #if !defined(_ICE_TRACE_H_)
@@ -40,7 +40,7 @@
 #include <linux/ptp_classify.h>
 #include <linux/tracepoint.h>
 
-/**
+/*
  * ice_trace() enables trace points
  * like:
  *

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_PTP_H_
 #define _ICE_PTP_H_
@@ -13,8 +13,15 @@
 #include "ice_ptp_hw.h"
 
 enum ice_ptp_pin_e82x {
-	TIME_SYNC = 4,
-	_1PPS_OUT
+	TIME_SYNC_PIN_INDEX = 4,
+	PPS_PIN_INDEX
+};
+
+/* DPLL REF_SW state */
+enum ice_dpll_ref_sw_state {
+	ICE_DPLL_REF_SW_DISABLE,
+	ICE_DPLL_REF_SW_ENABLE,
+	NUM_ICE_DPLL_REF_SW_STATE,
 };
 
 enum ice_ptp_pin_e810 {
@@ -22,7 +29,8 @@ enum ice_ptp_pin_e810 {
 	GPIO_21,
 	GPIO_22,
 	GPIO_23,
-	NUM_PTP_PIN_E810
+	NUM_PTP_PIN_E810,
+	NO_GPIO,
 };
 
 enum ice_ptp_pin_e810t {
@@ -31,20 +39,15 @@ enum ice_ptp_pin_e810t {
 	UFL1,
 	SMA2,
 	UFL2,
-	NUM_PTP_PINS_E810T
+	NUM_PTP_PINS_E810T,
+	GPIO_NA = ICE_AQC_NVM_SDP_CFG_PIN_SIZE - 1,
+	NO_PTP_PIN
 };
 
-enum ice_phy_rclk_pins {
-	ICE_C827_RCLKA_PIN,		/* SCL pin */
-	ICE_C827_RCLKB_PIN,		/* SDA pin */
-	ICE_C827_RCLK_PINS_NUM		/* number of pins */
-};
+#define N_CHAN_E810			3
 
-#define E810T_CGU_INPUT_C827(_phy, _pin) ((_phy) * ICE_C827_RCLK_PINS_NUM + \
-					  (_pin) + ZL_REF1P)
-
-#define E822_CGU_RCLK_PHY_PINS_NUM	1
-#define E822_CGU_RCLK_PIN_NAME		"NAC_CLK_SYNCE0_PN"
+#define E82X_CGU_RCLK_PHY_PINS_NUM	1
+#define E82X_CGU_RCLK_PIN_NAME		"NAC_CLK_SYNCE0_PN"
 
 #define ICE_CGU_IN_PIN_FAIL_FLAGS (ICE_AQC_GET_CGU_IN_CFG_STATUS_SCM_FAIL | \
 				   ICE_AQC_GET_CGU_IN_CFG_STATUS_CFM_FAIL | \
@@ -56,7 +59,6 @@ enum ice_phy_rclk_pins {
 #define ICE_DPLL_PIN_STATE_VALID	"valid"
 
 struct ice_perout_channel {
-	bool present;
 	bool ena;
 	u32 gpio_pin;
 	u64 period;
@@ -66,6 +68,7 @@ struct ice_perout_channel {
 struct ice_extts_channel {
 	bool ena;
 	u32 gpio_pin;
+	u32 flags;
 };
 
 /* The ice hardware captures Tx hardware timestamps in the PHY. The timestamp
@@ -85,9 +88,9 @@ struct ice_extts_channel {
  * the blocks are split up so that indexes are assigned to each port based on
  * hardware logical port number.
  *
- * The timestamp blocks are handled differently for E810- and E822-based
+ * The timestamp blocks are handled differently for E810- and E82X-based
  * devices. In E810 devices, each port has its own block of timestamps, while in
- * E822 there is a need to logically break the block of registers into smaller
+ * E82X there is a need to logically break the block of registers into smaller
  * chunks based on the port number to avoid collisions.
  *
  * Example for port 5 in E810:
@@ -102,7 +105,7 @@ struct ice_extts_channel {
  *                                               |---  quad offset is always 0
  *                                               ---- quad number
  *
- * Example for port 5 in E822:
+ * Example for port 5 in E82X:
  * +-----------------------------+-----------------------------+
  * |  register block for quad 0  |  register block for quad 1  |
  * |+------+------+------+------+|+------+------+------+------+|
@@ -154,6 +157,28 @@ enum ice_tx_tstamp_work {
 };
 
 /**
+ * struct ice_ptp_pin_desc - hardware pin description data
+ * @pin_name_idx: index of the name of pin in ice_pin_names_e810t
+ * @index: index of pin in pin_config interface
+ * @func: the initial function assigned to the pin at load
+ * @chan: the matching channel assigned to this pin
+ * @gpio_out: the associated output GPIO pin
+ * @gpio_in: the associated input GPIO pin
+ *
+ * Structure describing a PTP-capable GPIO pin. Used to setup the ptp_pin_desc
+ * array for the device. Device families have separate sets of available pins
+ * with varying restrictions.
+ */
+struct ice_ptp_pin_desc {
+	u8 pin_name_idx;
+	int index;
+	unsigned int func;
+	unsigned int chan;
+	int gpio_out;
+	int gpio_in;
+};
+
+/**
  * struct ice_ptp_tx - Tracking structure for all Tx timestamp requests on a port
  * @lock: lock to prevent concurrent access to fields of this struct
  * @tstamps: array of len to store outstanding requests
@@ -184,7 +209,7 @@ struct ice_ptp_tx {
 
 /* Quad and port information for initializing timestamp blocks */
 #define INDEX_PER_QUAD			64
-#define INDEX_PER_PORT_E822		16
+#define INDEX_PER_PORT_E82X		16
 #define INDEX_PER_PORT_E810		64
 #define INDEX_PER_PORT_ETH56G		64
 
@@ -203,6 +228,7 @@ struct ice_ptp_tx {
  * @link_up: indicates whether the link is up
  * @tx_fifo_busy_cnt: number of times the Tx FIFO was busy
  * @port_num: the port number this structure represents
+ * @tx_clk: Tx reference clock source
  */
 struct ice_ptp_port {
 	struct list_head list_member;
@@ -213,10 +239,12 @@ struct ice_ptp_port {
 	bool link_up;
 	u8 tx_fifo_busy_cnt;
 	u8 port_num;
+	u8 rx_calibrating : 1;
+	enum ice_e825c_ref_clk tx_clk;
 };
 
-#define GLTSYN_TGT_H_IDX_NUM		4
-#define GLTSYN_EVNT_H_IDX_NUM		3
+#define GLTSYN_TGT_H_IDX_MAX		4
+#define GLTSYN_EVNT_H_IDX_MAX		3
 
 enum ice_ptp_state {
 	ICE_PTP_UNINIT = 0,
@@ -239,8 +267,9 @@ enum ice_ptp_tx_interrupt {
  * handle the timestamping feature for all attached ports.
  *
  * @aux_driver: the structure carring the auxiliary driver information
- * @ports: list of porst handled by this port owner
+ * @ports: list of ports handled by this port owner
  * @lock: protect access to ports list
+ * @tx_refclks: bitmaps table to store the information about TX reference clocks
  * @kworker: kwork thread for handling periodic work
  * @work: delayed work function for periodic tasks
  */
@@ -248,6 +277,8 @@ struct ice_ptp_port_owner {
 	struct auxiliary_driver aux_driver;
 	struct list_head ports;
 	struct mutex lock;
+#define ICE_E825_MAX_PHYS 2
+	unsigned long tx_refclks[ICE_E825_MAX_PHYS][ICE_REF_CLK_MAX];
 	struct kthread_worker *kworker;
 	struct kthread_delayed_work work;
 };
@@ -258,7 +289,6 @@ struct ice_ptp_port_owner {
  * @tx_interrupt_mode: the TX interrupt mode for the PHC device
  * @port: data for the PHY port initialization procedure
  * @ports_owner: data for the auxiliary driver owner
- * @managed_phy: driver managed PHY
  * @cached_phc_time: a cached copy of the PHC time for timestamp extension
  * @cached_phc_jiffies: jiffies when cached_phc_time was last updated
  * @ext_ts_chan: the external timestamp channel in use
@@ -268,9 +298,10 @@ struct ice_ptp_port_owner {
  * @info: structure defining PTP hardware capabilities
  * @clock: pointer to registered PTP clock device
  * @tstamp_config: hardware timestamping configuration
+ * @sdp_section_exist: true if exists
+ * @ice_pin_desc: structure defining pins
+ * @ice_pin_desc_num: how many pin_desc structs
  * @phy_kobj: pointer to phy sysfs object
- * @src_tmr_mode: current device timer mode (locked or nanoseconds)
- * @clk_src: clock source
  * @reset_time: kernel time after clock stop on reset
  * @tx_hwtstamp_skipped: number of Tx time stamp requests skipped
  * @tx_hwtstamp_timeouts: number of Tx skbs discarded with no time stamp
@@ -284,20 +315,20 @@ struct ice_ptp {
 	enum ice_ptp_tx_interrupt tx_interrupt_mode;
 	struct ice_ptp_port port;
 	struct ice_ptp_port_owner ports_owner;
-	bool managed_phy;
 	u64 cached_phc_time;
 	unsigned long cached_phc_jiffies;
 	u8 ext_ts_chan;
 	u8 ext_ts_irq;
-	struct ice_perout_channel perout_channels[GLTSYN_TGT_H_IDX_NUM];
-	struct ice_extts_channel extts_channels[GLTSYN_EVNT_H_IDX_NUM];
+	struct ice_perout_channel perout_channels[GLTSYN_TGT_H_IDX_MAX];
+	struct ice_extts_channel extts_channels[GLTSYN_EVNT_H_IDX_MAX];
 	struct ptp_clock_info info;
 	struct ptp_clock *clock;
 	struct hwtstamp_config tstamp_config;
+	bool sdp_section_exist;
+	struct ice_ptp_pin_desc *ice_pin_desc;
+	u8 ice_pin_desc_num;
 	struct kobject *phy_kobj;
-	enum ice_src_tmr_mode src_tmr_mode;
-	enum ice_clk_src clk_src;
-	u32 ts_pll_lock_retries;
+	struct kobject *ptp_802_3cx_kobj;
 	u64 reset_time;
 	u32 tx_hwtstamp_skipped;
 	u32 tx_hwtstamp_timeouts;

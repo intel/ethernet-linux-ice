@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_DEVLINK_H_
 #define _ICE_DEVLINK_H_
@@ -62,14 +62,6 @@ static inline void ice_devlink_destroy_regions(struct ice_pf *pf) { }
 
 int ice_devlink_tc_params_register(struct ice_vsi *vsi);
 void ice_devlink_tc_params_unregister(struct ice_vsi *vsi);
-
-#ifdef HAVE_DEVLINK_HEALTH
-void ice_devlink_init_mdd_reporter(struct ice_pf *pf);
-void ice_devlink_destroy_mdd_reporter(struct ice_pf *pf);
-void ice_devlink_report_mdd_event(struct ice_pf *pf, enum ice_mdd_src src,
-				  u8 pf_num, u16 vf_num, u8 event, u16 queue);
-void ice_devlink_clear_after_reset(struct ice_pf *pf);
-#endif /* HAVE_DEVLINK_HEALTH */
 
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 int ice_devlink_rate_init_tx_topology(struct devlink *devlink, struct ice_vsi *vsi);

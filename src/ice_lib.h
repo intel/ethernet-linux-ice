@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_LIB_H_
 #define _ICE_LIB_H_
@@ -11,46 +11,9 @@
 #define ICE_VSI_FLAG_INIT	BIT(0)
 #define ICE_VSI_FLAG_RELOAD	BIT(1) /* devlink reload action */
 
-/**
- * struct ice_vsi_cfg_params - VSI configuration parameters
- * @pi: pointer to the port_info instance for the VSI
- * @ch: pointer to the channel structure for the VSI, may be NULL
- * @tc: traffic class number
- * @vf: pointer to the VF associated with this VSI, may be NULL
- * @type: the type of VSI to configure
- * @flags: VSI flags used for rebuild and configuration
- *
- * Parameter structure used when configuring a new VSI.
- */
-struct ice_vsi_cfg_params {
-	struct ice_port_info *pi;
-	struct ice_vf *vf;
-	u32 flags;
-	enum ice_vsi_type type;
-	struct ice_channel *ch;
-	u8 tc;
-};
-
-/**
- * ice_vsi_to_params - Get parameters for an existing VSI
- * @vsi: the VSI to get parameters for
- *
- * Fill a parameter structure for reconfiguring a VSI with its current
- * parameters, such as during a rebuild operation.
- */
-static inline struct ice_vsi_cfg_params ice_vsi_to_params(struct ice_vsi *vsi)
-{
-	struct ice_vsi_cfg_params params;
-
-	params.pi = vsi->port_info;
-	params.ch = vsi->ch;
-	params.tc = 0;
-	params.vf = vsi->vf;
-	params.type = vsi->type;
-	params.flags = 0;
-
-	return params;
-}
+#define ICE_MAX_LARGE_RSS_QS	256
+#define ICE_MAX_MEDIUM_RSS_QS	64
+#define ICE_MAX_SMALL_RSS_QS	16
 
 const char *ice_vsi_type_str(enum ice_vsi_type vsi_type);
 
@@ -102,8 +65,8 @@ int ice_vsi_cfg_rss_lut_key(struct ice_vsi *vsi);
 int ice_get_valid_rss_size(struct ice_hw *hw, int new_size);
 int ice_vsi_set_dflt_rss_lut(struct ice_vsi *vsi, int req_rss_size);
 
-struct ice_vsi *
-ice_vsi_setup(struct ice_pf *pf, struct ice_vsi_cfg_params *params);
+struct ice_vsi * ice_vsi_setup(struct ice_pf *pf, 
+			       const struct ice_vsi_cfg_params *params);
 
 void ice_napi_del(struct ice_vsi *vsi);
 
@@ -111,7 +74,7 @@ int ice_vsi_release(struct ice_vsi *vsi);
 
 void ice_vsi_close(struct ice_vsi *vsi);
 
-int ice_vsi_cfg(struct ice_vsi *vsi, struct ice_vsi_cfg_params *params);
+int ice_vsi_cfg(struct ice_vsi *vsi);
 
 int ice_ena_vsi(struct ice_vsi *vsi, bool locked);
 
@@ -203,4 +166,5 @@ int ice_vsi_alloc_rss_global_lut(struct ice_vsi *vsi);
 ssize_t
 ice_vsi_alloc_rss_lut(struct ice_hw *hw, struct device *dev,
 		      struct ice_vsi *vsi, const char *buf, size_t count);
+u16 ice_lut_type_to_qs_num(u16 lut_type);
 #endif /* !_ICE_LIB_H_ */

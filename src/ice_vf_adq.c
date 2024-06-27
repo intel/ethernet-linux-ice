@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -126,7 +126,6 @@ static void ice_vf_adq_cfg_cleanup(struct ice_vf *vf, u8 tc)
  */
 void ice_del_all_adv_switch_fltr(struct ice_vf *vf)
 {
-	struct ice_rule_query_data rule;
 	struct ice_tc_flower_fltr *f;
 	struct ice_pf *pf = vf->pf;
 	struct hlist_node *node;
@@ -140,10 +139,7 @@ void ice_del_all_adv_switch_fltr(struct ice_vf *vf)
 			continue;
 
 		/* Deleting TC filter */
-		rule.rid = f->rid;
-		rule.rule_id = f->rule_id;
-		rule.vsi_handle = f->dest_vsi_handle;
-		err = ice_rem_adv_rule_by_id(&pf->hw, &rule);
+		err = ice_rem_adv_rule_by_fltr(&pf->hw, f);
 		if (err) {
 			if (err == -ENOENT)
 				dev_dbg(dev, "VF %d: filter (rule_id %u) for dest VSI %u DOES NOT EXIST in hw table\n",
@@ -230,7 +226,7 @@ static struct ice_vsi *ice_vf_adq_vsi_setup(struct ice_vf *vf, u8 tc)
 	struct ice_vsi *vsi;
 
 	params.type = ICE_VSI_VF;
-	params.pi = ice_vf_get_port_info(vf);
+	params.port_info = ice_vf_get_port_info(vf);
 	params.vf = vf;
 	params.tc = tc;
 	params.flags = ICE_VSI_FLAG_INIT;
@@ -399,10 +395,15 @@ void ice_vf_rebuild_adq_host_cfg(struct ice_vf *vf)
  */
 int ice_vf_recreate_adq_vsi(struct ice_vf *vf)
 {
+	struct ice_vsi *vsi;
 	u8 tc;
 
 	if (!ice_is_vf_adq_ena(vf))
 		return 0;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -EINVAL;
 
 	for (tc = ICE_VF_CHNL_START_TC; tc < vf->num_tc; tc++) {
 		if (ice_vf_adq_vsi_valid(vf, tc)) {
@@ -419,8 +420,8 @@ int ice_vf_recreate_adq_vsi(struct ice_vf *vf)
 	}
 
 	/* must to store away TC0's info because it is used later */
-	vf->ch[0].vsi_idx = vf->lan_vsi_idx;
-	vf->ch[0].vsi_num = vf->lan_vsi_num;
+	vf->ch[0].vsi_idx = vsi->idx;
+	vf->ch[0].vsi_num = vsi->vsi_num;
 
 	return 0;
 
@@ -452,11 +453,16 @@ adq_cfg_failed:
 int ice_vf_rebuild_adq_vsi(struct ice_vf *vf)
 {
 	struct ice_pf *pf = vf->pf;
+	struct ice_vsi *vsi;
 	int tc;
 
 	/* no ADQ configured, nothing to do */
 	if (!ice_is_vf_adq_ena(vf))
 		return 0;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -EINVAL;
 
 	for (tc = ICE_VF_CHNL_START_TC; tc < vf->num_tc; tc++) {
 		struct ice_vsi *vsi;
@@ -481,8 +487,8 @@ int ice_vf_rebuild_adq_vsi(struct ice_vf *vf)
 	}
 
 	/* must to store away TC0's info because it is use later */
-	vf->ch[0].vsi_idx = vf->lan_vsi_idx;
-	vf->ch[0].vsi_num = vf->lan_vsi_num;
+	vf->ch[0].vsi_idx = vsi->idx;
+	vf->ch[0].vsi_num = vsi->vsi_num;
 
 	return 0;
 }
@@ -508,7 +514,6 @@ u16 ice_vf_get_tc_based_qid(u16 qid, u16 offset)
  * @t_tc: traffic class for indexing the VSIs
  * @vqs: the VFs virtual queue selection
  * @vsi_p: pointer to VSI pointer, which changes based on TC for ADQ
- * @vsi_id: VSI ID specific to desired queue ID
  * @q_id: queue ID of the VSI
  *
  * provides ADQ queue enablement support by mapping the VF queue ID and TC to
@@ -517,8 +522,7 @@ u16 ice_vf_get_tc_based_qid(u16 qid, u16 offset)
  */
 void ice_vf_q_id_get_vsi_q_id(struct ice_vf *vf, u16 vf_q_id, u16 *t_tc,
 			      struct virtchnl_queue_select *vqs,
-			      struct ice_vsi **vsi_p, u16 *vsi_id,
-			      u16 *q_id)
+			      struct ice_vsi **vsi_p, u16 *q_id)
 {
 	struct ice_vsi *vsi = *vsi_p;
 	u32 max_chnl_tc;
@@ -533,16 +537,13 @@ void ice_vf_q_id_get_vsi_q_id(struct ice_vf *vf, u16 vf_q_id, u16 *t_tc,
 		tc++;
 	}
 
-	/* Update vsi_id and queue_id based on TC if TC is VF ADQ TC, then
+	/* Update queue_id based on TC if TC is VF ADQ TC, then
 	 * use VF ADQ VSI otherwise main VF VSI
 	 */
-	if (tc >= ICE_VF_CHNL_START_TC && ice_is_vf_adq_ena(vf)) {
-		*vsi_id = vsi->vsi_num;
+	if (tc >= ICE_VF_CHNL_START_TC && ice_is_vf_adq_ena(vf))
 		*q_id = ice_vf_get_tc_based_qid(vf_q_id, vf->ch[tc].offset);
-	} else {
-		*vsi_id = vqs->vsi_id;
+	else
 		*q_id = vf_q_id;
-	}
 
 	*vsi_p = vsi;
 	*t_tc = tc;
@@ -954,7 +955,6 @@ int ice_vc_del_switch_filter(struct ice_vf *vf, u8 *msg)
 {
 	struct virtchnl_filter *vcf = (struct virtchnl_filter *)msg;
 	struct virtchnl_l4_spec *mask = &vcf->mask.tcp_spec;
-	struct ice_rule_query_data rule;
 	enum virtchnl_status_code v_ret;
 	struct ice_tc_flower_fltr fltr;
 	struct ice_tc_flower_fltr *f;
@@ -993,10 +993,7 @@ int ice_vc_del_switch_filter(struct ice_vf *vf, u8 *msg)
 	}
 
 	/* Deleting TC filter */
-	rule.rid = f->rid;
-	rule.rule_id = f->rule_id;
-	rule.vsi_handle = f->dest_vsi_handle;
-	err = ice_rem_adv_rule_by_id(&pf->hw, &rule);
+	err = ice_rem_adv_rule_by_fltr(&pf->hw, f);
 	if (err) {
 		dev_err(dev, "VF %d: Failed to delete switch filter for tc %u, err %d\n",
 			vf->vf_id, vcf->action_meta, err);
@@ -1014,7 +1011,7 @@ int ice_vc_del_switch_filter(struct ice_vf *vf, u8 *msg)
 	v_ret = VIRTCHNL_STATUS_SUCCESS;
 err:
 	/* send the response back to the VF */
-	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DEL_CLOUD_FILTER, v_ret,
+	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_CLOUD_FILTER, v_ret,
 				     NULL, 0);
 }
 
@@ -1104,7 +1101,7 @@ int ice_vc_add_switch_filter(struct ice_vf *vf, u8 *msg)
 
 err:
 	/* send the response back to the VF */
-	return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_CLOUD_FILTER, v_ret,
+	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_CLOUD_FILTER, v_ret,
 				     NULL, 0);
 }
 
@@ -1341,10 +1338,10 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 	/* send the response to the VF */
 err:
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2)
-		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
+		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
 					     v_ret, (u8 *)tci, sizeof(*tci));
 	else
-		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
+		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
 					     v_ret, NULL, 0);
 }
 
@@ -1458,11 +1455,11 @@ int ice_vc_del_qch_msg(struct ice_vf *vf, u8 *msg)
 	/* send the response to the VF */
 err:
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2)
-		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
+		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
 					     v_ret, msg,
 					     sizeof(struct virtchnl_tc_info));
 	else
-		return ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
+		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
 					     v_ret, NULL, 0);
 }
 

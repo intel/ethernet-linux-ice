@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/crash_dump.h>
 #include "ice.h"
+
+#include <linux/crash_dump.h>
 #include "ice_base.h"
 #include "ice_hwmon.h"
 #include "ice_lib.h"
@@ -24,15 +25,14 @@
 #undef CREATE_TRACE_POINTS
 #include "ice_tc_lib.h"
 #include "ice_vsi_vlan_ops.h"
-#include "ice_fwlog.h"
 #include "ice_irq.h"
 #include "ice_aux_support.h"
 
 #define DRV_VERSION_MAJOR 1
-#define DRV_VERSION_MINOR 13
-#define DRV_VERSION_BUILD 7
+#define DRV_VERSION_MINOR 14
+#define DRV_VERSION_BUILD 11
 
-#define DRV_VERSION	"1.13.7"
+#define DRV_VERSION	"1.14.11"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -42,7 +42,7 @@
 
 const char ice_drv_ver[] = DRV_VERSION DRV_VERSION_EXTRA;
 static const char ice_driver_string[] = DRV_SUMMARY;
-static const char ice_copyright[] = "Copyright (C) 2018-2023 Intel Corporation";
+static const char ice_copyright[] = "Copyright (C) 2018-2024 Intel Corporation";
 
 /* DDP Package file located in firmware search paths (e.g. /lib/firmware/) */
 #if UTS_UBUNTU_RELEASE_ABI
@@ -65,47 +65,6 @@ MODULE_PARM_DESC(debug, "netif level (0=none,...,16=all), hw debug_mask (0x8XXXX
 #else
 MODULE_PARM_DESC(debug, "netif level (0=none,...,16=all)");
 #endif /* !CONFIG_DYNAMIC_DEBUG */
-
-static ushort fwlog_level = ICE_FWLOG_LEVEL_NONE;
-module_param(fwlog_level, ushort, 0644);
-MODULE_PARM_DESC(fwlog_level, "FW event level to log. All levels <= to the specified value are enabled. Values: 0=none, 1=error, 2=warning, 3=normal, 4=verbose. Invalid values: >=5\n");
-/* Apply a bitmask to control which categories of FW logging is recorded
- * 00000001 - General/Minor
- * 00000002 - Control (Resets/Autoload)
- * 00000004 - Link Management
- * 00000008 - Link Topology Detection
- * 00000010 - Dreadnought Lake
- * 00000020 - I2C
- * 00000040 - SDP
- * 00000080 - MDIO
- * 00000100 - Admin Queue
- * 00000200 - HDMA
- * 00000400 - LLDP
- * 00000800 - DCBx
- * 00001000 - DCB
- * 00002000 - XLR
- * 00004000 - NVM
- * 00008000 - Authentication
- * 00010000 - VPD
- * 00020000 - IOSF
- * 00040000 - Parser
- * 00080000 - Switch
- * 00100000 - Scheduler
- * 00200000 - TX Queue Management
- * 00400000 - ACL
- * 00800000 - Post
- * 01000000 - Watchdog
- * 02000000 - Task Dispatcher
- * 04000000 - Manageability
- * 08000000 - Synce
- * 10000000 - Health
- * 20000000 - TimeSync
- * 40000000 - PF Registration
- * 80000000 - Module Version
- */
-static unsigned long fwlog_events; /* no enabled events by default */
-module_param(fwlog_events, ulong, 0644);
-MODULE_PARM_DESC(fwlog_events, "FW events to log (32-bit mask)\n");
 
 /**
  * ice_hw_to_dev - Get device pointer from the hardware structure
@@ -234,7 +193,7 @@ static void ice_chnl_subtask_handle_interrupt(struct ice_pf *pf)
  * This function flushes all FD entries specific to VSI from
  * HW FD table
  */
-static inline void ice_flush_vsi_fd_fltrs(struct ice_vsi *vsi)
+static void ice_flush_vsi_fd_fltrs(struct ice_vsi *vsi)
 {
 	struct device *dev = ice_pf_to_dev(vsi->back);
 	int status;
@@ -920,8 +879,8 @@ static void ice_remove_tc_fltrs(struct ice_pf *pf, bool remove_from_list)
 				  tc_flower_node) {
 		struct ice_adv_fltr_mgmt_list_entry *entry, *tmp;
 		struct list_head *list_head;
-		struct mutex *rule_lock;
 		struct ice_switch_info *sw;
+		struct mutex *rule_lock; /* lock for rule */
 
 		sw = pf->hw.switch_info;
 		if (!sw->recp_list[fltr->rid].recp_created)
@@ -1249,10 +1208,11 @@ static void ice_unregister_netdev(struct ice_vsi *vsi)
 
 /**
  * ice_set_ops - set netdev and ethtools ops for the given netdev
- * @netdev: netdev instance
+ * @vsi: the VSI associated with the new netdev
  */
-static void ice_set_ops(struct net_device *netdev)
+static void ice_set_ops(struct ice_vsi *vsi)
 {
+	struct net_device *netdev = vsi->netdev;
 	struct ice_pf *pf = ice_netdev_to_pf(netdev);
 
 	if (ice_is_safe_mode(pf)) {
@@ -1265,6 +1225,17 @@ static void ice_set_ops(struct net_device *netdev)
 	netdev->udp_tunnel_nic_info = &pf->udp_tunnel_nic;
 #endif
 	ice_set_ethtool_ops(netdev);
+
+#ifdef HAVE_XDP_SUPPORT
+	if (vsi->type != ICE_VSI_PF)
+		return;
+
+	xdp_set_features_flag(netdev, NETDEV_XDP_ACT_BASIC		|
+#ifdef HAVE_AF_XDP_ZC_SUPPORT
+				      NETDEV_XDP_ACT_XSK_ZEROCOPY	|
+#endif /* HAVE_AF_XDP_ZC_SUPPORT */
+				      NETDEV_XDP_ACT_REDIRECT);
+#endif /* HAVE_XDP_SUPPORT */
 }
 
 /**
@@ -1379,6 +1350,21 @@ static void ice_set_netdev_features(struct net_device *netdev)
 	netdev->hw_features |= NETIF_F_RXFCS;
 }
 
+#ifdef CONFIG_DEBUG_FS
+/**
+ * ice_pf_fwlog_update_module - update 1 module
+ * @pf: pointer to the PF struct
+ * @log_level: log_level to use for the @module
+ * @module: module to update
+ */
+void ice_pf_fwlog_update_module(struct ice_pf *pf, int log_level, int module)
+{
+	struct ice_hw *hw = &pf->hw;
+
+	hw->fwlog_cfg.module_entries[module].log_level = log_level;
+}
+#endif /* CONFIG_DEBUG_FS */
+
 /**
  * ice_register_netdev - register netdev and devlink port
  * @pf: pointer to the PF struct
@@ -1451,7 +1437,7 @@ static int ice_cfg_netdev(struct ice_vsi *vsi)
 
 	ice_set_netdev_features(netdev);
 
-	ice_set_ops(netdev);
+	ice_set_ops(vsi);
 
 	if (vsi->type == ICE_VSI_PF) {
 		SET_NETDEV_DEV(netdev, ice_pf_to_dev(vsi->back));
@@ -1541,7 +1527,9 @@ static void ice_remove_recovery_mode(struct ice_pf *pf)
 
 	ice_reset(&pf->hw, ICE_RESET_PFR);
 	ice_unmap_all_hw_addr(pf);
+#ifdef HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING
 	pci_disable_pcie_error_reporting(pf->pdev);
+#endif /* HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING */
 }
 
 /**
@@ -1949,7 +1937,7 @@ static void ice_set_dflt_mib(struct ice_pf *pf)
 	u8 mib_type, *buf, *lldpmib = NULL;
 	struct ice_lldp_org_tlv *tlv;
 	struct ice_hw *hw = &pf->hw;
-	u16 len, typelen, offset;
+	u16 len, typelen, offset = 0;
 	u32 ouisubtype;
 
 	mib_type = SET_LOCAL_MIB_TYPE_LOCAL_MIB;
@@ -1970,15 +1958,15 @@ static void ice_set_dflt_mib(struct ice_pf *pf)
 	tlv->ouisubtype = htonl(ouisubtype);
 
 	buf = tlv->tlvinfo;
-	buf[0] = 0;
+	buf[0] = ICE_IEEE_ETS_IS_WILLING;
 
 	/* ETS CFG all UPs map to TC 0. Next 4 (1 - 4) Octets = 0.
 	 * Octets 5 - 12 are BW values, set octet 5 to 100% BW.
 	 * Octets 13 - 20 are TSA values - leave as zeros
 	 */
 	buf[5] = 0x64;
-	len = (typelen & ICE_LLDP_TLV_LEN_M) >> ICE_LLDP_TLV_LEN_S;
-	offset = len + 2;
+	len = FIELD_GET(ICE_LLDP_TLV_LEN_M, typelen);
+	offset += len + 2;
 	tlv = (struct ice_lldp_org_tlv *)
 		((char *)tlv + sizeof(tlv->typelen) + len);
 
@@ -2011,7 +1999,7 @@ static void ice_set_dflt_mib(struct ice_pf *pf)
 
 	/* Octet 1 left as all zeros - PFC disabled */
 	buf[0] = 0x08;
-	len = (typelen & ICE_LLDP_TLV_LEN_M) >> ICE_LLDP_TLV_LEN_S;
+	len = FIELD_GET(ICE_LLDP_TLV_LEN_M, typelen);
 	offset += len + 2;
 
 	if (ice_aq_set_lldp_mib(hw, mib_type, (void *)lldpmib, offset, NULL))
@@ -2264,6 +2252,34 @@ ice_handle_link_event(struct ice_pf *pf, struct ice_rq_event_info *event)
 	return status;
 }
 
+#ifdef CONFIG_DEBUG_FS
+/**
+ * ice_get_fwlog_data - copy the FW log data from ARQ event
+ * @pf: PF that the FW log event is associated with
+ * @event: event structure containing FW log data
+ */
+static void
+ice_get_fwlog_data(struct ice_pf *pf, struct ice_rq_event_info *event)
+{
+	struct ice_fwlog_data *fwlog;
+	struct ice_hw *hw = &pf->hw;
+
+	fwlog = &hw->fwlog_ring.rings[hw->fwlog_ring.tail];
+
+	memset(fwlog->data, 0, PAGE_SIZE);
+	fwlog->data_size = le16_to_cpu(event->desc.datalen);
+
+	memcpy(fwlog->data, event->msg_buf, fwlog->data_size);
+	ice_fwlog_ring_increment(&hw->fwlog_ring.tail, hw->fwlog_ring.size);
+
+	if (ice_fwlog_ring_full(&hw->fwlog_ring)) {
+		/* the rings are full so bump the head to create room */
+		ice_fwlog_ring_increment(&hw->fwlog_ring.head,
+					 hw->fwlog_ring.size);
+	}
+}
+#endif /* CONFIG_DEBUG_FS */
+
 /**
  * ice_print_health_status_string - Print message for given FW health event
  * @pf: pointer to the PF structure
@@ -2395,7 +2411,7 @@ ice_print_health_status_string(struct ice_pf *pf,
 		netdev_info(netdev, "Port Number: %d.\n", internal_data1);
 		break;
 	case ICE_AQC_HEALTH_STATUS_ERR_PARALLEL_FAULT:
-		netdev_err(netdev, "A parallel fault was detected.\n");
+		netdev_err(netdev, "All configured link modes were attempted but failed to establish link. The device will restart the process to establish link.\n");
 		netdev_err(netdev, "Possible Solution: Check link partner connection and configuration.\n");
 		netdev_err(netdev, "Port Number: %d.\n", internal_data1);
 		break;
@@ -2769,9 +2785,11 @@ static int __ice_clean_ctrlq(struct ice_pf *pf, enum ice_ctl_q q_type)
 
 			ice_vc_process_vf_msg(pf, &event, &data);
 			break;
+#ifdef CONFIG_DEBUG_FS
 		case ice_aqc_opc_fw_logs_event:
-			ice_fwlog_event_dump(hw, &event.desc, event.msg_buf);
+			ice_get_fwlog_data(pf, &event);
 			break;
+#endif /* CONFIG_DEBUG_FS */
 		case ice_aqc_opc_lldp_set_mib_change:
 			ice_dcb_process_lldp_set_mib_change(pf, &event);
 			break;
@@ -2992,64 +3010,46 @@ static void ice_handle_mdd_event(struct ice_pf *pf)
 	/* find what triggered an MDD event */
 	reg = rd32(hw, GL_MDET_TX_PQM);
 	if (reg & GL_MDET_TX_PQM_VALID_M) {
-		u8 pf_num = (reg & GL_MDET_TX_PQM_PF_NUM_M) >>
-				GL_MDET_TX_PQM_PF_NUM_S;
-		u16 vf_num = (reg & GL_MDET_TX_PQM_VF_NUM_M) >>
-				GL_MDET_TX_PQM_VF_NUM_S;
-		u8 event = (reg & GL_MDET_TX_PQM_MAL_TYPE_M) >>
-				GL_MDET_TX_PQM_MAL_TYPE_S;
-		u16 queue = ((reg & GL_MDET_TX_PQM_QNUM_M) >>
-				GL_MDET_TX_PQM_QNUM_S);
+		u8 pf_num = FIELD_GET(GL_MDET_TX_PQM_PF_NUM_M, reg);
+		u16 vf_num = FIELD_GET(GL_MDET_TX_PQM_VF_NUM_M, reg);
+		u8 event = FIELD_GET(GL_MDET_TX_PQM_MAL_TYPE_M, reg);
+		u16 queue = FIELD_GET(GL_MDET_TX_PQM_QNUM_M, reg);
 
 		if (netif_msg_tx_err(pf))
 			dev_info(dev, "Malicious Driver Detection event %d on TX queue %d PF# %d VF# %d\n",
 				 event, queue, pf_num, vf_num);
-#ifdef HAVE_DEVLINK_HEALTH
 		ice_devlink_report_mdd_event(pf, ICE_MDD_SRC_TX_PQM, pf_num,
 					     vf_num, event, queue);
-#endif /* HAVE_DEVLINK_HEALTH */
 		wr32(hw, GL_MDET_TX_PQM, 0xffffffff);
 	}
 
 	reg = rd32(hw, GL_MDET_TX_TCLAN);
 	if (reg & GL_MDET_TX_TCLAN_VALID_M) {
-		u8 pf_num = (reg & GL_MDET_TX_TCLAN_PF_NUM_M) >>
-				GL_MDET_TX_TCLAN_PF_NUM_S;
-		u16 vf_num = (reg & GL_MDET_TX_TCLAN_VF_NUM_M) >>
-				GL_MDET_TX_TCLAN_VF_NUM_S;
-		u8 event = (reg & GL_MDET_TX_TCLAN_MAL_TYPE_M) >>
-				GL_MDET_TX_TCLAN_MAL_TYPE_S;
-		u16 queue = ((reg & GL_MDET_TX_TCLAN_QNUM_M) >>
-				GL_MDET_TX_TCLAN_QNUM_S);
+		u8 pf_num = FIELD_GET(GL_MDET_TX_TCLAN_PF_NUM_M, reg);
+		u16 vf_num = FIELD_GET(GL_MDET_TX_TCLAN_VF_NUM_M, reg);
+		u8 event = FIELD_GET(GL_MDET_TX_TCLAN_MAL_TYPE_M, reg);
+		u16 queue = FIELD_GET(GL_MDET_TX_TCLAN_QNUM_M, reg);
 
 		if (netif_msg_tx_err(pf))
 			dev_info(dev, "Malicious Driver Detection event %d on TX queue %d PF# %d VF# %d\n",
 				 event, queue, pf_num, vf_num);
-#ifdef HAVE_DEVLINK_HEALTH
 		ice_devlink_report_mdd_event(pf, ICE_MDD_SRC_TX_TCLAN, pf_num,
 					     vf_num, event, queue);
-#endif /* HAVE_DEVLINK_HEALTH */
 		wr32(hw, GL_MDET_TX_TCLAN, 0xffffffff);
 	}
 
 	reg = rd32(hw, GL_MDET_RX);
 	if (reg & GL_MDET_RX_VALID_M) {
-		u8 pf_num = (reg & GL_MDET_RX_PF_NUM_M) >>
-				GL_MDET_RX_PF_NUM_S;
-		u16 vf_num = (reg & GL_MDET_RX_VF_NUM_M) >>
-				GL_MDET_RX_VF_NUM_S;
-		u8 event = (reg & GL_MDET_RX_MAL_TYPE_M) >>
-				GL_MDET_RX_MAL_TYPE_S;
-		u16 queue = ((reg & GL_MDET_RX_QNUM_M) >>
-				GL_MDET_RX_QNUM_S);
+		u8 pf_num = FIELD_GET(GL_MDET_RX_PF_NUM_M, reg);
+		u16 vf_num = FIELD_GET(GL_MDET_RX_VF_NUM_M, reg);
+		u8 event = FIELD_GET(GL_MDET_RX_MAL_TYPE_M, reg);
+		u16 queue = FIELD_GET(GL_MDET_RX_QNUM_M, reg);
 
 		if (netif_msg_rx_err(pf))
 			dev_info(dev, "Malicious Driver Detection event %d on RX queue %d PF# %d VF# %d\n",
 				 event, queue, pf_num, vf_num);
-#ifdef HAVE_DEVLINK_HEALTH
 		ice_devlink_report_mdd_event(pf, ICE_MDD_SRC_RX, pf_num,
 					     vf_num, event, queue);
-#endif /* HAVE_DEVLINK_HEALTH */
 		wr32(hw, GL_MDET_RX, 0xffffffff);
 	}
 
@@ -3333,7 +3333,7 @@ static int ice_phy_cfg(struct ice_vsi *vsi, bool link_en)
 
 	/* Ensure we have media as we cannot configure a medialess port */
 	if (!(phy->link_info.link_info & ICE_AQ_MEDIA_AVAILABLE))
-		return -EPERM;
+		return -ENOMEDIUM;
 
 	ice_print_topo_conflict(vsi);
 
@@ -4357,6 +4357,7 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 #ifdef ICE_ADD_PROBES
 		ice_clear_xdp_stats(vsi);
 #endif /* ICE_ADD_PROBES */
+		xdp_features_set_redirect_target(vsi->netdev, false);
 #ifdef HAVE_XSK_BATCHED_RX_ALLOC
 		/* reallocate RX queues that are used for zero-copy */
 		xdp_ring_err = ice_realloc_zc_buf(vsi, true);
@@ -4364,6 +4365,7 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 			NL_SET_ERR_MSG_MOD(extack, "Setting up XDP Rx resources failed");
 #endif /* HAVE_XSK_BATCHED_RX_ALLOC */
 	} else if (ice_is_xdp_ena_vsi(vsi) && !prog) {
+		xdp_features_clear_redirect_target(vsi->netdev);
 		xdp_ring_err = ice_destroy_xdp_rings(vsi);
 		if (xdp_ring_err)
 			NL_SET_ERR_MSG_MOD(extack, "Freeing XDP Tx resources failed");
@@ -4596,8 +4598,8 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 
 		/* we have a reset warning */
 		ena_mask &= ~PFINT_OICR_GRST_M;
-		reset = (rd32(hw, GLGEN_RSTAT) & GLGEN_RSTAT_RESET_TYPE_M) >>
-			GLGEN_RSTAT_RESET_TYPE_S;
+		reset = FIELD_GET(GLGEN_RSTAT_RESET_TYPE_M,
+				  rd32(hw, GLGEN_RSTAT));
 
 		if (reset == ICE_RESET_CORER)
 			pf->corer_count++;
@@ -4985,7 +4987,7 @@ ice_pf_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 	struct ice_vsi_cfg_params params = {};
 
 	params.type = ICE_VSI_PF;
-	params.pi = pi;
+	params.port_info = pi;
 	params.flags = ICE_VSI_FLAG_INIT;
 
 	return ice_vsi_setup(pf, &params);
@@ -4999,7 +5001,7 @@ ice_chnl_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi,
 	struct ice_vsi_cfg_params params = {};
 
 	params.type = ICE_VSI_CHNL;
-	params.pi = pi;
+	params.port_info = pi;
 	params.ch = ch;
 	params.flags = ICE_VSI_FLAG_INIT;
 
@@ -5022,7 +5024,7 @@ ice_macvlan_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 	struct ice_vsi_cfg_params params = {};
 
 	params.type = ICE_VSI_OFFLOAD_MACVLAN;
-	params.pi = pi;
+	params.port_info = pi;
 	params.flags = ICE_VSI_FLAG_INIT;
 
 	return ice_vsi_setup(pf, &params);
@@ -5043,7 +5045,7 @@ ice_ctrl_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 	struct ice_vsi_cfg_params params = {};
 
 	params.type = ICE_VSI_CTRL;
-	params.pi = pi;
+	params.port_info = pi;
 	params.flags = ICE_VSI_FLAG_INIT;
 
 	return ice_vsi_setup(pf, &params);
@@ -5063,7 +5065,7 @@ ice_lb_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi)
 	struct ice_vsi_cfg_params params = {};
 
 	params.type = ICE_VSI_LB;
-	params.pi = pi;
+	params.port_info = pi;
 	params.flags = ICE_VSI_FLAG_INIT;
 
 	return ice_vsi_setup(pf, &params);
@@ -6066,125 +6068,6 @@ ice_config_health_events(struct ice_pf *pf, bool enable)
 }
 
 /**
- * ice_pf_fwlog_is_input_valid - validate user input level/events
- * @pf: pointer to the PF struct
- * @user_input: input parameters to validate
- */
-static bool
-ice_pf_fwlog_is_input_valid(struct ice_pf *pf,
-			    struct ice_fwlog_user_input *user_input)
-{
-	unsigned long events = user_input->events;
-	u8 log_level = user_input->log_level;
-
-	if (log_level >= ICE_FWLOG_LEVEL_INVALID) {
-		dev_err(ice_pf_to_dev(pf), "Invalid FW log level %u, all level(s) >= %u are invalid\n",
-			log_level, ICE_FWLOG_LEVEL_INVALID);
-		return false;
-	}
-
-	if (events >= BIT(ICE_AQC_FW_LOG_ID_MAX)) {
-		dev_err(ice_pf_to_dev(pf), "Invalid FW log events 0x%lx, all FW log event bits >= 0x%lx are invalid\n",
-			events, BIT(ICE_AQC_FW_LOG_ID_MAX));
-		return false;
-	}
-
-	return true;
-}
-
-/**
- * ice_pf_fwlog_populate_cfg - populate FW log configuration
- * @cfg: configuration to populate
- * @user_input: input parameters to validate
- *
- * For each set event, set the @cfg's log_level to the @log_level. For all
- * cleared events set ICE_FWLOG_LEVEL_NONE.
- */
-static void
-ice_pf_fwlog_populate_cfg(struct ice_fwlog_cfg *cfg,
-			  struct ice_fwlog_user_input *user_input)
-{
-	u16 module_id;
-
-#define ICE_FWLOG_DFLT_LOG_RESOLUTION	10
-	cfg->log_resolution = ICE_FWLOG_DFLT_LOG_RESOLUTION;
-	cfg->options = ICE_FWLOG_OPTION_ARQ_ENA;
-
-	for (module_id = 0; module_id < ICE_AQC_FW_LOG_ID_MAX; module_id++) {
-		struct ice_fwlog_module_entry *entry =
-			&cfg->module_entries[module_id];
-
-		entry->module_id = module_id;
-		if (BIT(module_id) & user_input->events)
-			entry->log_level = user_input->log_level;
-		else
-			entry->log_level = ICE_FWLOG_LEVEL_NONE;
-	}
-}
-
-/**
- * ice_pf_fwlog_set - set FW logging configuration
- * @pf: pointer to the PF struct
- * @user_input: input parameters to validate
- *
- * After calling this function the @events at the specified @log_level will be
- * enabled. However, the PF must still register for FW logging events if it has
- * not yet done so. Otherwise no events will be received.
- */
-static int
-ice_pf_fwlog_set(struct ice_pf *pf, struct ice_fwlog_user_input *user_input)
-{
-	struct ice_fwlog_cfg cfg = {};
-	int status;
-
-	if (!ice_pf_fwlog_is_input_valid(pf, user_input))
-		return -EINVAL;
-
-	ice_pf_fwlog_populate_cfg(&cfg, user_input);
-
-	status = ice_fwlog_set(&pf->hw, &cfg);
-	if (status) {
-		dev_err(ice_pf_to_dev(pf), "Failed to set FW log configuration. fwlog_events: 0x%lx fwlog_level: %u\n",
-			user_input->events, user_input->log_level);
-		return status;
-	}
-
-	return 0;
-}
-
-/**
- * ice_pf_fwlog_init - initialize FW logging configuration on device init
- * @pf: pointer to the PF struct
- * @user_input: input parameters to validate
- *
- * This should always be called before ice_hw_init() as this will enable FW
- * logging @events at the specified @log_level to be enabled/registered as soon
- * as the driver can communicate with FW.
- */
-static int
-ice_pf_fwlog_init(struct ice_pf *pf, struct ice_fwlog_user_input *user_input)
-{
-	struct ice_fwlog_cfg cfg = {};
-	int status;
-
-	if (!ice_pf_fwlog_is_input_valid(pf, user_input))
-		return -EINVAL;
-
-	ice_pf_fwlog_populate_cfg(&cfg, user_input);
-	if (user_input->events)
-		cfg.options |= ICE_FWLOG_OPTION_REGISTER_ON_INIT;
-
-	status = ice_fwlog_init(&pf->hw, &cfg);
-	if (status) {
-		dev_err(ice_pf_to_dev(pf), "Failed to init FW log configuration. fwlog_events: 0x%lx fwlog_level: %u\n",
-			user_input->events, user_input->log_level);
-		return status;
-	}
-
-	return 0;
-}
-
-/**
  * ice_init_tx_topology - performs Tx topology initialization
  * @hw: pointer to the hardware structure
  * @firmware: pointer to firmware structure
@@ -6317,13 +6200,22 @@ fail:
 	return sysfs_emit(buf, "%u\n", vsi->rss_table_size);
 }
 
-static ssize_t
-rss_lut_pf_attr_store(struct device *dev, struct device_attribute *attr,
-		      const char *buf, size_t count)
+static ssize_t rss_lut_pf_attr_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
 {
 	struct ice_pf *pf = (struct ice_pf *)dev_get_drvdata(dev);
 	struct ice_vsi *vsi = ice_get_main_vsi(pf);
 	struct ice_hw *hw = &pf->hw;
+	u16 lut_size;
+	int err;
+
+	/* parse value passed by user */
+	err = kstrtou16(buf, 10, &lut_size);
+
+	/* PF cannot have VSI LUT assigned */
+	if (!err && lut_size == ICE_LUT_VSI_SIZE)
+		return -EINVAL;
 
 	return ice_vsi_alloc_rss_lut(hw, dev, vsi, buf, count);
 }
@@ -6393,38 +6285,6 @@ static int ice_init_rx_lldp_sysfs(struct ice_pf *pf)
 static void ice_deinit_rx_lldp_sysfs(struct ice_pf *pf)
 {
 	device_remove_file(ice_pf_to_dev(pf), &dev_attr_rx_lldp);
-}
-
-/**
- * ice_get_peer_pdev - gets the peer PCI device
- * @ice_pdev: pointer to the current PCI device structure
- */
-static struct pci_dev *
-ice_get_peer_pdev(struct pci_dev *ice_pdev)
-{
-	struct pci_dev *curr_pdev = NULL;
-
-	do {
-		curr_pdev = pci_get_device(ice_pdev->vendor, ice_pdev->device,
-					   curr_pdev);
-		if (curr_pdev &&
-		    curr_pdev->bus->number != ice_pdev->bus->number)
-			return curr_pdev;
-	} while (curr_pdev);
-
-	return NULL;
-}
-
-struct ice_pf *
-ice_get_peer_pf(struct ice_pf *pf)
-{
-	if (WARN_ON(!pf))
-		return NULL;
-
-	if (!ice_is_nac_dual(&pf->hw))
-		return NULL;
-
-	return pci_get_drvdata(pf->peer_pdev);
 }
 
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
@@ -6590,6 +6450,14 @@ static int ice_init_dev(struct ice_pf *pf)
 		dev_err(dev, "ice_init_hw failed: %d\n", err);
 		return -EIO;
 	}
+	dev_info(dev, "fw %u.%u.%u api %u.%u.%u nvm %x.%x 0x%08x %u.%u.%u [%04x:%04x] [%04x:%04x]\n",
+		 hw->fw_maj_ver, hw->fw_min_ver, hw->fw_patch, hw->api_maj_ver,
+		 hw->api_min_ver, hw->api_patch, hw->flash.nvm.major,
+		 hw->flash.nvm.minor, hw->flash.nvm.eetrack,
+		 hw->flash.orom.major, hw->flash.orom.build,
+		 hw->flash.orom.patch,
+		 hw->vendor_id, hw->device_id,
+		 hw->subsystem_vendor_id, hw->subsystem_device_id);
 
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 	/* Some cards require longer initialization times
@@ -6688,6 +6556,8 @@ static int ice_init_features(struct ice_pf *pf)
 	if (ice_is_safe_mode(pf))
 		return 0;
 
+	/* Note: any feature init failure is non-fatal to load */
+
 	/* initialize DDP driven features */
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_init(pf);
@@ -6697,10 +6567,6 @@ static int ice_init_features(struct ice_pf *pf)
 		dev_err(dev, "could not init rx_lldp sysfs entry, err: %d",
 			err);
 	}
-	/* Note: RSS LUT sysfs entries are needed to make it possible changing
-	 * the LUT type of specified VSI.
-	 * It's not a critical feature, so error here could be ignored.
-	 */
 	err = ice_init_rss_lut_sysfs(pf);
 	if (err)
 		dev_err(dev, "could not init RSS LUT sysfs entries, err: %d",
@@ -6708,14 +6574,18 @@ static int ice_init_features(struct ice_pf *pf)
 	if (ice_is_feature_supported(pf, ICE_F_GNSS))
 		ice_gnss_init(pf);
 
-	/* Note: Flow director init failure is non-fatal to load */
+#if IS_ENABLED(CONFIG_DPLL)
+	if ((ice_is_feature_supported(pf, ICE_F_CGU) ||
+	     ice_is_feature_supported(pf, ICE_F_PHY_RCLK)) &&
+	     !ice_is_e825c(&pf->hw))
+		ice_dpll_init(pf);
+#endif /* IS_ENABLED(CONFIG_DPLL) */
 	if (ice_init_fdir(pf))
 		dev_err(dev, "could not initialize flow director\n");
 
 	/* set DCF ACL enable flag as false by default */
 	pf->hw.dcf_caps &= ~DCF_ACL_CAP;
 	if (test_bit(ICE_FLAG_FD_ENA, pf->flags)) {
-		/* Note: ACL init failure is non-fatal to load */
 		err = ice_init_acl(pf);
 		if (err)
 			ice_dev_err_errno(&pf->pdev->dev, err,
@@ -6724,7 +6594,6 @@ static int ice_init_features(struct ice_pf *pf)
 
 	/* set DCF UDP tunnel enable flag as false by default */
 	pf->hw.dcf_caps &= ~DCF_UDP_TUNNEL_CAP;
-	/* Note: DCB init failure is non-fatal to load */
 	if (ice_init_pf_dcb(pf, false)) {
 		clear_bit(ICE_FLAG_DCB_CAPABLE, pf->flags);
 		clear_bit(ICE_FLAG_DCB_ENA, pf->flags);
@@ -6772,6 +6641,10 @@ static void ice_deinit_features(struct ice_pf *pf)
 
 	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
 		ice_ptp_release(pf);
+#if IS_ENABLED(CONFIG_DPLL)
+	if (test_bit(ICE_FLAG_DPLL, pf->flags))
+		ice_dpll_deinit(pf);
+#endif /* IS_ENABLED(CONFIG_DPLL) */
 
 	ice_remove_arfs(pf);
 }
@@ -6858,7 +6731,7 @@ static int ice_init_link(struct ice_pf *pf)
 		set_bit(ICE_FLAG_NO_MEDIA, pf->flags);
 	}
 
-	return err;
+	return 0;
 }
 
 static int __ice_init_pf_sw(struct ice_pf *pf)
@@ -7001,9 +6874,7 @@ static int ice_init_devlink(struct ice_pf *pf)
 		return err;
 
 	ice_devlink_init_regions(pf);
-#ifdef HAVE_DEVLINK_HEALTH
-	ice_devlink_init_mdd_reporter(pf);
-#endif /* HAVE_DEVLINK_HEALTH */
+	ice_health_init(pf);
 #ifndef HAVE_DEVLINK_PARAMS_PUBLISH
 	if (need_register)
 		ice_devlink_register(pf);
@@ -7014,9 +6885,7 @@ static int ice_init_devlink(struct ice_pf *pf)
 static void ice_deinit_devlink(struct ice_pf *pf)
 {
 	ice_devlink_unregister(pf);
-#ifdef HAVE_DEVLINK_HEALTH
-	ice_devlink_destroy_mdd_reporter(pf);
-#endif /* HAVE_DEVLINK_HEALTH */
+	ice_health_deinit(pf);
 	ice_devlink_destroy_regions(pf);
 	ice_devlink_unregister_resources(pf);
 	ice_devlink_unregister_params(pf);
@@ -7024,17 +6893,8 @@ static void ice_deinit_devlink(struct ice_pf *pf)
 
 static int ice_init(struct ice_pf *pf)
 {
-	struct ice_fwlog_user_input user_input = { 0 };
 	struct device *dev = ice_pf_to_dev(pf);
 	int err;
-
-	user_input.log_level = fwlog_level;
-	user_input.events = fwlog_events;
-	err = ice_pf_fwlog_init(pf, &user_input);
-	if (err) {
-		ice_dev_err_errno(dev, err, "failed to initialize FW logging");
-		return -EIO;
-	}
 
 	err = ice_init_dev(pf);
 	if (err)
@@ -7097,15 +6957,12 @@ static void ice_deinit(struct ice_pf *pf)
 	set_bit(ICE_SERVICE_DIS, pf->state);
 	set_bit(ICE_DOWN, pf->state);
 
+	ice_debugfs_pf_exit(pf);
 	ice_vsi_release_all(pf);
 
 	ice_deinit_pf_sw(pf);
 	ice_dealloc_vsis(pf);
-	if (ice_fwlog_unregister(&pf->hw))
-		dev_dbg(ice_pf_to_dev(pf),
-			"failed to unregister from FW logging\n");
 	ice_deinit_dev(pf);
-	ice_debugfs_pf_exit(pf);
 }
 
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
@@ -7115,7 +6972,6 @@ static void ice_deinit(struct ice_pf *pf)
  */
 int ice_load(struct ice_pf *pf)
 {
-	struct ice_vsi_cfg_params params = {};
 	struct ice_vsi *vsi;
 	int err;
 
@@ -7125,10 +6981,9 @@ int ice_load(struct ice_pf *pf)
 
 	vsi = ice_get_main_vsi(pf);
 
-	params = ice_vsi_to_params(vsi);
-	params.flags = ICE_VSI_FLAG_INIT | ICE_VSI_FLAG_RELOAD;
+	vsi->flags |= ICE_VSI_FLAG_INIT;
 
-	err = ice_vsi_cfg(vsi, &params);
+	err = ice_vsi_cfg(vsi);
 	if (err)
 		goto err_vsi_cfg;
 
@@ -7228,7 +7083,9 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 		goto err_dma;
 	}
 
+#ifdef HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING
 	pci_enable_pcie_error_reporting(pdev);
+#endif /* HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING */
 	pci_set_master(pdev);
 
 	pf->pdev = pdev;
@@ -7255,8 +7112,6 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	hw->bus.device = PCI_SLOT(pdev->devfn);
 	hw->bus.func = PCI_FUNC(pdev->devfn);
 
-	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
-		pf->peer_pdev = ice_get_peer_pdev(pdev);
 	ice_set_ctrlq_len(hw);
 
 	pf->msg_enable = netif_msg_init(debug, ICE_DFLT_NETIF_M);
@@ -7306,7 +7161,9 @@ err_init_devlink:
 	ice_deinit(pf);
 err_init:
 	ice_unmap_all_hw_addr(pf);
+#ifdef HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING
 	pci_disable_pcie_error_reporting(pdev);
+#endif /* HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING */
 	pci_disable_device(pdev);
 err_dma:
 	return err;
@@ -7417,7 +7274,6 @@ static void ice_remove(struct pci_dev *pdev)
 	ice_deinit_aux(pf);
 	ice_service_task_stop(pf);
 
-
 	ice_aq_cancel_waiting_tasks(pf);
 	set_bit(ICE_DOWN, pf->state);
 
@@ -7429,7 +7285,9 @@ static void ice_remove(struct pci_dev *pdev)
 
 	ice_set_wake(pf);
 	ice_unmap_all_hw_addr(pf);
+#ifdef HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING
 	pci_disable_pcie_error_reporting(pdev);
+#endif /* HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING */
 	pci_disable_device(pdev);
 
 }
@@ -7934,14 +7792,18 @@ static int __init ice_module_init(void)
 
 #endif /* HAVE_RHEL7_PCI_DRIVER_RH */
 
+#ifdef CONFIG_DEBUG_FS
 	ice_debugfs_init();
+#endif /* CONFIG_DEBUG_FS */
 
 	status = pci_register_driver(&ice_driver);
 	if (status) {
 		pr_err("failed to register PCI driver, err %d\n", status);
 		destroy_workqueue(ice_wq);
 		destroy_workqueue(ice_lag_wq);
+#ifdef CONFIG_DEBUG_FS
 		ice_debugfs_exit();
+#endif /* CONFIG_DEBUG_FS */
 	}
 
 	return status;
@@ -7959,7 +7821,9 @@ static void __exit ice_module_exit(void)
 	pci_unregister_driver(&ice_driver);
 	destroy_workqueue(ice_wq);
 	destroy_workqueue(ice_lag_wq);
+#ifdef CONFIG_DEBUG_FS
 	ice_debugfs_exit();
+#endif /* CONFIG_DEBUG_FS */
 	pr_info("module unloaded\n");
 }
 module_exit(ice_module_exit);
@@ -9254,12 +9118,30 @@ ice_update_vsi_tx_ring_stats(struct ice_vsi *vsi,
 }
 
 /**
+ * ice_update_vsi_netstats - Update VSI netstats counters
+ * @vsi: the VSI to be updated
+ */
+static void ice_update_vsi_netstats(struct ice_vsi *vsi)
+{
+	struct rtnl_link_stats64 *net_stats;
+	struct ice_eth_stats *cur_es;
+
+	cur_es = &vsi->eth_stats;
+	net_stats = &vsi->net_stats;
+	net_stats->tx_packets = cur_es->tx_unicast + cur_es->tx_multicast +
+				cur_es->tx_broadcast;
+	net_stats->tx_bytes = cur_es->tx_bytes;
+	net_stats->rx_packets = cur_es->rx_unicast + cur_es->rx_multicast +
+				cur_es->rx_broadcast;
+	net_stats->rx_bytes = cur_es->rx_bytes;
+}
+
+/**
  * ice_update_vsi_ring_stats - Update VSI stats counters
  * @vsi: the VSI to be updated
  */
 static void ice_update_vsi_ring_stats(struct ice_vsi *vsi)
 {
-	struct rtnl_link_stats64 *net_stats, *stats_prev;
 	struct rtnl_link_stats64 *vsi_stats;
 	u64 pkts, bytes;
 	int i;
@@ -9311,29 +9193,6 @@ static void ice_update_vsi_ring_stats(struct ice_vsi *vsi)
 #endif /* HAVE_XDP_SUPPORT */
 	rcu_read_unlock();
 
-	net_stats = &vsi->net_stats;
-	stats_prev = &vsi->net_stats_prev;
-
-	/* clear prev counters after reset */
-	if (vsi_stats->tx_packets < stats_prev->tx_packets ||
-	    vsi_stats->rx_packets < stats_prev->rx_packets) {
-		stats_prev->tx_packets = 0;
-		stats_prev->tx_bytes = 0;
-		stats_prev->rx_packets = 0;
-		stats_prev->rx_bytes = 0;
-	}
-
-	/* update netdev counters */
-	net_stats->tx_packets += vsi_stats->tx_packets - stats_prev->tx_packets;
-	net_stats->tx_bytes += vsi_stats->tx_bytes - stats_prev->tx_bytes;
-	net_stats->rx_packets += vsi_stats->rx_packets - stats_prev->rx_packets;
-	net_stats->rx_bytes += vsi_stats->rx_bytes - stats_prev->rx_bytes;
-
-	stats_prev->tx_packets = vsi_stats->tx_packets;
-	stats_prev->tx_bytes = vsi_stats->tx_bytes;
-	stats_prev->rx_packets = vsi_stats->rx_packets;
-	stats_prev->rx_bytes = vsi_stats->rx_bytes;
-
 	kfree(vsi_stats);
 }
 
@@ -9356,6 +9215,7 @@ void ice_update_vsi_stats(struct ice_vsi *vsi)
 
 	/* get VSI stats as recorded by the hardware */
 	ice_update_eth_stats(vsi);
+	ice_update_vsi_netstats(vsi);
 
 	cur_ns->tx_errors = cur_es->tx_errors;
 	cur_ns->rx_dropped = cur_es->rx_discards;
@@ -9367,13 +9227,17 @@ void ice_update_vsi_stats(struct ice_vsi *vsi)
 		cur_ns->rx_crc_errors = pf->stats.crc_errors;
 		cur_ns->rx_errors = pf->stats.crc_errors +
 				    pf->stats.illegal_bytes +
+#ifdef ICE_ADD_PROBES
 				    pf->stats.rx_len_errors +
+#endif /* ICE_ADD_PROBES */
 				    pf->stats.rx_undersize +
 				    pf->hw_csum_rx_error +
 				    pf->stats.rx_jabber +
 				    pf->stats.rx_fragments +
 				    pf->stats.rx_oversize;
+#ifdef ICE_ADD_PROBES
 		cur_ns->rx_length_errors = pf->stats.rx_len_errors;
+#endif /* ICE_ADD_PROBES */
 		/* record drops from the port level */
 		cur_ns->rx_missed_errors = pf->stats.eth.rx_discards;
 	}
@@ -9537,8 +9401,10 @@ void ice_update_pf_stats(struct ice_pf *pf)
 			  &prev_ps->mac_remote_faults,
 			  &cur_ps->mac_remote_faults);
 
+#ifdef ICE_ADD_PROBES
 	ice_stat_update32(hw, GLPRT_RLEC(port), pf->stat_prev_loaded,
 			  &prev_ps->rx_len_errors, &cur_ps->rx_len_errors);
+#endif /* ICE_ADD_PROBES */
 
 	ice_stat_update32(hw, GLPRT_RUC(port), pf->stat_prev_loaded,
 			  &prev_ps->rx_undersize, &cur_ps->rx_undersize);
@@ -10053,7 +9919,6 @@ static void ice_update_pf_netdev_link(struct ice_pf *pf)
  */
 static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 {
-	struct ice_fwlog_user_input user_input = { 0 };
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
 	struct ice_vsi *vsi;
@@ -10082,19 +9947,6 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 		goto err_init_ctrlq;
 	}
 
-	user_input.log_level = fwlog_level;
-	user_input.events = fwlog_events;
-	if (!ice_pf_fwlog_set(pf, &user_input)) {
-		if (user_input.events) {
-			if (ice_fwlog_register(hw))
-				dev_dbg(dev, "Failed to register for FW logging events\n");
-		} else {
-			if (ice_fwlog_unregister(hw))
-				dev_dbg(dev, "Failed to unregister for FW logging events\n");
-		}
-	} else {
-		dev_dbg(dev, "Failed to re-enable FW logging\n");
-	}
 	/* if DDP was previously loaded successfully */
 	if (!ice_is_safe_mode(pf)) {
 		/* reload the SW DB of filter tables */
@@ -10285,9 +10137,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	ice_replay_post(hw);
 	/* if we get here, reset flow is successful */
 	clear_bit(ICE_RESET_FAILED, pf->state);
-#ifdef HAVE_DEVLINK_HEALTH
-	ice_devlink_clear_after_reset(pf);
-#endif /* HAVE_DEVLINK_HEALTH */
+	ice_health_clear(pf);
 	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
 	/* Restore timestamp mode settings after VSI rebuild */
 	ice_ptp_restore_timestamp_mode(pf);
@@ -10791,7 +10641,7 @@ static void ice_tx_timeout(struct net_device *netdev)
 #ifndef HAVE_TX_TIMEOUT_TXQUEUE
 	unsigned int txqueue = 0;
 #endif /* !HAVE_TX_TIMEOUT_TXQUEUE */
-	unsigned int i;
+	u32 i;
 
 	pf->tx_timeout_count++;
 
@@ -10828,7 +10678,7 @@ static void ice_tx_timeout(struct net_device *netdev)
 	}
 
 	/* now that we have an index, find the tx_ring struct */
-	for (i = 0; i < vsi->num_txq; i++)
+	ice_for_each_txq(vsi, i)
 		if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc)
 			if (txqueue == vsi->tx_rings[i]->q_index) {
 				tx_ring = vsi->tx_rings[i];
@@ -10846,17 +10696,17 @@ static void ice_tx_timeout(struct net_device *netdev)
 
 	if (tx_ring) {
 		struct ice_hw *hw = &pf->hw;
-		u32 head, val = 0;
+		u32 head, intr = 0;
 
-		head = (rd32(hw, QTX_COMM_HEAD(vsi->txq_map[txqueue])) &
-			QTX_COMM_HEAD_HEAD_M) >> QTX_COMM_HEAD_HEAD_S;
+		head = FIELD_GET(QTX_COMM_HEAD_HEAD_M,
+				 rd32(hw, QTX_COMM_HEAD(vsi->txq_map[txqueue])));
 		/* Read interrupt register */
-		val = rd32(hw, GLINT_DYN_CTL(tx_ring->q_vector->reg_idx));
+		intr = rd32(hw, GLINT_DYN_CTL(tx_ring->q_vector->reg_idx));
 
 		netdev_info(netdev, "tx_timeout: VSI_num: %d, Q %u, NTC: 0x%x, HW_HEAD: 0x%x, NTU: 0x%x, INT: 0x%x\n",
-			    vsi->vsi_num, tx_ring->q_index,
-			    tx_ring->next_to_clean, head, tx_ring->next_to_use,
-			    val);
+			    vsi->vsi_num, txqueue, tx_ring->next_to_clean,
+			    head, tx_ring->next_to_use, intr);
+		ice_report_tx_hang(pf, tx_ring, vsi->vsi_num, head, intr);
 	}
 
 	pf->tx_timeout_last_recovery = jiffies;
@@ -11737,21 +11587,17 @@ static void ice_rem_all_chnl_fltrs(struct ice_pf *pf)
 	hlist_for_each_entry_safe(fltr, node2,
 				  &pf->tc_flower_fltr_list,
 				  tc_flower_node) {
-		struct ice_rule_query_data rule;
 		int status;
 
 		/* for now process only channel specific filters */
 		if (!ice_is_chnl_fltr(fltr))
 			continue;
 
-		rule.rid = fltr->rid;
-		rule.rule_id = fltr->rule_id;
-		rule.vsi_handle = fltr->dest_vsi_handle;
-		status = ice_rem_adv_rule_by_id(&pf->hw, &rule);
+		status = ice_rem_adv_rule_by_fltr(&pf->hw, fltr);
 		if (status) {
 			if (status == -ENOENT)
 				dev_dbg(ice_pf_to_dev(pf), "TC flower filter (rule_id %u) does not exist\n",
-					rule.rule_id);
+					fltr->rule_id);
 			else
 				dev_err(ice_pf_to_dev(pf), "failed to delete TC flower filter, status %d\n",
 					status);
@@ -12721,8 +12567,13 @@ int ice_stop(struct net_device *netdev)
 
 		link_err = ice_phy_cfg(vsi, false);
 		if (link_err) {
-			netdev_err(vsi->netdev, "Failed to set physical link down, VSI %d error %d\n",
-				   vsi->vsi_num, link_err);
+			if (link_err == -ENOMEDIUM)
+				netdev_info(vsi->netdev, "Skipping link reconfig - no media attached, VSI %d\n",
+					    vsi->vsi_num);
+			else
+				netdev_err(vsi->netdev, "Failed to set physical link down, VSI %d error %d\n",
+					   vsi->vsi_num, link_err);
+
 			ice_vsi_close(vsi);
 			return -EIO;
 		}

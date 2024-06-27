@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* flow director ethtool support for ice */
 
@@ -8,30 +8,18 @@
 #include "ice_fdir.h"
 #include "ice_flow.h"
 
-#ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
-static struct in6_addr full_ipv6_addr_mask = {
-	.in6_u = {
-		.u6_addr8 = {
-			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		}
-	}
-};
-
-static struct in6_addr zero_ipv6_addr_mask = {
-	.in6_u = {
-		.u6_addr8 = {
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		}
-	}
-};
-#endif
-
 /* calls to ice_flow_add_prof require the number of segments in the array
  * for segs_cnt. In this code that is one more than the index.
  */
 #define TNL_SEG_CNT(_TNL_) ((_TNL_) + 1)
+
+#ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
+static inline bool ice_ipv6_mask_full(const __be32 *a)
+{
+	return (a[0] & a[1] & a[2] & a[3]) == cpu_to_be32(0xffffffff);
+}
+
+#endif
 
 /**
  * ice_fltr_to_ethtool_flow - convert filter type values to ethtool
@@ -554,8 +542,7 @@ ice_parse_rx_flow_user_data(struct ethtool_rx_flow_spec *fsp,
 		return -EINVAL;
 
 	data->flex_word = value & ICE_USERDEF_FLEX_WORD_M;
-	data->flex_offset = (value & ICE_USERDEF_FLEX_OFFS_M) >>
-			     ICE_USERDEF_FLEX_OFFS_S;
+	data->flex_offset = FIELD_GET(ICE_USERDEF_FLEX_OFFS_M, value);
 	if (data->flex_offset > ICE_USERDEF_FLEX_MAX_OFFS_VAL)
 		return -EINVAL;
 
@@ -588,15 +575,14 @@ static int ice_fdir_num_avail_fltr(struct ice_hw *hw, struct ice_vsi *vsi)
 	num_guar = vsi->num_gfltr;
 
 	/* minus the guaranteed filters programed by this VSI */
-	num_guar -= (rd32(hw, VSIQF_FD_CNT(vsi_num)) &
-		     VSIQF_FD_CNT_FD_GCNT_M) >> VSIQF_FD_CNT_FD_GCNT_S;
+	num_guar -= FIELD_GET(VSIQF_FD_CNT_FD_GCNT_M,
+			      rd32(hw, VSIQF_FD_CNT(vsi_num)));
 
 	/* total global best effort filters */
 	num_be = hw->func_caps.fd_fltr_best_effort;
 
 	/* minus the global best effort filters programmed */
-	num_be -= (rd32(hw, GLQF_FD_CNT) & GLQF_FD_CNT_FD_BCNT_M) >>
-		   GLQF_FD_CNT_FD_BCNT_S;
+	num_be -= FIELD_GET(GLQF_FD_CNT_FD_BCNT_M, rd32(hw, GLQF_FD_CNT));
 
 	return num_guar + num_be;
 }
@@ -713,7 +699,7 @@ ice_fdir_set_hw_fltr_rule(struct ice_pf *pf, struct ice_flow_seg_info *seg,
 		 * then return error.
 		 */
 		if (hw->fdir_fltr_cnt[flow]) {
-			dev_err(dev, "Failed to add filter.  Flow director filters on each port must have the same input set.\n");
+			dev_err(dev, "Failed to add filter. Flow director filters on each port must have the same input set.\n");
 			return -EINVAL;
 		}
 		if (ice_is_arfs_using_perfect_flow(hw, flow)) {
@@ -821,11 +807,11 @@ err_prof:
 	ice_flow_rem_prof(hw, ICE_BLK_FD, prof_id);
 #ifdef NETIF_F_HW_TC
 	if (ice_is_adq_active(pf))
-		dev_err(dev, "Failed to add filter.  Flow director filters must have the same input set as ADQ filters.\n");
+		dev_err(dev, "Failed to add filter. Flow director filters must have the same input set as ADQ filters.\n");
 	else
-		dev_err(dev, "Failed to add filter.  Flow director filters on each port must have the same input set.\n");
+		dev_err(dev, "Failed to add filter. Flow director filters on each port must have the same input set.\n");
 #else /* !NETIF_F_HW_TC */
-	dev_err(dev, "Failed to add filter.  Flow director filters on each port must have the same input set.\n");
+	dev_err(dev, "Failed to add filter. Flow director filters on each port must have the same input set.\n");
 #endif /* !NETIF_F_HW_TC */
 
 	return err;
@@ -1162,10 +1148,8 @@ ice_set_fdir_ip4_usr_seg(struct ice_flow_seg_info *seg,
 static int ice_ntuple_check_ip6_seg(struct ethtool_tcpip6_spec *tcp_ip6_spec)
 {
 	/* make sure we don't have any empty rule */
-	if (!memcmp(tcp_ip6_spec->ip6src, &zero_ipv6_addr_mask,
-		    sizeof(struct in6_addr)) &&
-	    !memcmp(tcp_ip6_spec->ip6dst, &zero_ipv6_addr_mask,
-		    sizeof(struct in6_addr)) &&
+	if (ipv6_addr_any((struct in6_addr *)tcp_ip6_spec->ip6src) &&
+	    ipv6_addr_any((struct in6_addr *)tcp_ip6_spec->ip6dst) &&
 	    !tcp_ip6_spec->psrc && !tcp_ip6_spec->pdst)
 		return -EINVAL;
 
@@ -1206,24 +1190,20 @@ ice_set_fdir_ip6_seg(struct ice_flow_seg_info *seg,
 	*perfect_fltr = true;
 	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_IPV6 | l4_proto);
 
-	if (!memcmp(tcp_ip6_spec->ip6src, &full_ipv6_addr_mask,
-		    sizeof(struct in6_addr)))
+	if (ice_ipv6_mask_full(tcp_ip6_spec->ip6src))
 		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_IPV6_SA,
 				 ICE_FLOW_FLD_OFF_INVAL, ICE_FLOW_FLD_OFF_INVAL,
 				 ICE_FLOW_FLD_OFF_INVAL, false);
-	else if (!memcmp(tcp_ip6_spec->ip6src, &zero_ipv6_addr_mask,
-			 sizeof(struct in6_addr)))
+	else if (ipv6_addr_any((struct in6_addr *)tcp_ip6_spec->ip6src))
 		*perfect_fltr = false;
 	else
 		return -EOPNOTSUPP;
 
-	if (!memcmp(tcp_ip6_spec->ip6dst, &full_ipv6_addr_mask,
-		    sizeof(struct in6_addr)))
+	if (ice_ipv6_mask_full(tcp_ip6_spec->ip6dst))
 		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_IPV6_DA,
 				 ICE_FLOW_FLD_OFF_INVAL, ICE_FLOW_FLD_OFF_INVAL,
 				 ICE_FLOW_FLD_OFF_INVAL, false);
-	else if (!memcmp(tcp_ip6_spec->ip6dst, &zero_ipv6_addr_mask,
-			 sizeof(struct in6_addr)))
+	else if (ipv6_addr_any((struct in6_addr *)tcp_ip6_spec->ip6dst))
 		*perfect_fltr = false;
 	else
 		return -EOPNOTSUPP;
@@ -1268,10 +1248,8 @@ ice_ntuple_check_ip6_usr_seg(struct ethtool_usrip6_spec *usr_ip6_spec)
 	if (usr_ip6_spec->l4_proto)
 		return -EOPNOTSUPP;
 	/* empty rules are not valid */
-	if (!memcmp(usr_ip6_spec->ip6src, &zero_ipv6_addr_mask,
-		    sizeof(struct in6_addr)) &&
-	    !memcmp(usr_ip6_spec->ip6dst, &zero_ipv6_addr_mask,
-		    sizeof(struct in6_addr)))
+	if (ipv6_addr_any((struct in6_addr *)usr_ip6_spec->ip6src) &&
+	    ipv6_addr_any((struct in6_addr *)usr_ip6_spec->ip6dst))
 		return -EINVAL;
 
 	return 0;
@@ -1301,24 +1279,20 @@ ice_set_fdir_ip6_usr_seg(struct ice_flow_seg_info *seg,
 	*perfect_fltr = true;
 	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_IPV6);
 
-	if (!memcmp(usr_ip6_spec->ip6src, &full_ipv6_addr_mask,
-		    sizeof(struct in6_addr)))
+	if (ice_ipv6_mask_full(usr_ip6_spec->ip6src))
 		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_IPV6_SA,
 				 ICE_FLOW_FLD_OFF_INVAL, ICE_FLOW_FLD_OFF_INVAL,
 				 ICE_FLOW_FLD_OFF_INVAL, false);
-	else if (!memcmp(usr_ip6_spec->ip6src, &zero_ipv6_addr_mask,
-			 sizeof(struct in6_addr)))
+	else if (ipv6_addr_any((struct in6_addr *)usr_ip6_spec->ip6src))
 		*perfect_fltr = false;
 	else
 		return -EOPNOTSUPP;
 
-	if (!memcmp(usr_ip6_spec->ip6dst, &full_ipv6_addr_mask,
-		    sizeof(struct in6_addr)))
+	if (ice_ipv6_mask_full(usr_ip6_spec->ip6dst))
 		ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_IPV6_DA,
 				 ICE_FLOW_FLD_OFF_INVAL, ICE_FLOW_FLD_OFF_INVAL,
 				 ICE_FLOW_FLD_OFF_INVAL, false);
-	else if (!memcmp(usr_ip6_spec->ip6dst, &zero_ipv6_addr_mask,
-			 sizeof(struct in6_addr)))
+	else if (ipv6_addr_any((struct in6_addr *)usr_ip6_spec->ip6dst))
 		*perfect_fltr = false;
 	else
 		return -EOPNOTSUPP;
@@ -1333,18 +1307,16 @@ ice_set_fdir_ip6_usr_seg(struct ice_flow_seg_info *seg,
  *
  * Returns true if vlan data is valid.
  */
-static bool
-ice_fdir_vlan_valid(struct ethtool_rx_flow_spec *fsp)
+static bool ice_fdir_vlan_valid(struct ethtool_rx_flow_spec *fsp)
 {
-	if (fsp->m_ext.vlan_etype &&
-	    ntohs(fsp->h_ext.vlan_etype) & ~(ETH_P_8021Q | ETH_P_8021AD))
+	if (fsp->m_ext.vlan_etype && !eth_type_vlan(fsp->h_ext.vlan_etype))
 		return false;
 
 	if (fsp->m_ext.vlan_tci &&
 	    ntohs(fsp->h_ext.vlan_tci) >= VLAN_N_VID)
 		return false;
 
-	return true;
+	return fsp->m_ext.vlan_etype || fsp->m_ext.vlan_tci;
 }
 
 /**
@@ -1365,16 +1337,19 @@ static int ice_ntuple_check_ether_input(struct ethhdr *eth_spec)
  * ice_set_ether_flow_seg
  * @seg: flow segment for programming
  * @eth_spec: mask data from ethtool
+ * @fd_seg: true if segment is for flow director
  */
 int ice_set_ether_flow_seg(struct ice_flow_seg_info *seg,
-			   struct ethhdr *eth_spec)
+			   struct ethhdr *eth_spec, bool fd_seg)
 {
 	u16 val_loc, mask_loc;
 	int ret;
 
-	ret = ice_ntuple_check_ether_input(eth_spec);
-	if (ret)
-		return ret;
+	if (fd_seg) {
+		ret = ice_ntuple_check_ether_input(eth_spec);
+		if (ret)
+			return ret;
+	}
 
 	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_ETH);
 
@@ -1536,7 +1511,7 @@ ice_cfg_fdir_xtrct_seq(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp,
 		break;
 #endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
 	case ETHER_FLOW:
-		ret = ice_set_ether_flow_seg(seg, &fsp->m_u.ether_spec);
+		ret = ice_set_ether_flow_seg(seg, &fsp->m_u.ether_spec, true);
 		if (fsp->m_ext.vlan_etype || fsp->m_ext.vlan_tci) {
 			if (!ice_fdir_vlan_valid(fsp)) {
 				ret = -EINVAL;
@@ -2053,6 +2028,12 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 		    tcp_ip4_spec->ip4dst != htonl(0xFFFFFFFF))
 			return true;
 
+		/* Use ACL for match all filter */
+		if (!tcp_ip4_spec->ip4src && !tcp_ip4_spec->ip4dst &&
+		    !tcp_ip4_spec->psrc && !tcp_ip4_spec->pdst &&
+		    !tcp_ip4_spec->tos)
+			return true;
+
 		/* Layer 4 source port */
 		if (tcp_ip4_spec->psrc && tcp_ip4_spec->psrc != htons(0xFFFF))
 			return true;
@@ -2075,6 +2056,10 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 		    usr_ip4_spec->ip4dst != htonl(0xFFFFFFFF))
 			return true;
 
+		/* Use ACL for match all filter */
+		if (!usr_ip4_spec->ip4src && !usr_ip4_spec->ip4dst)
+			return true;
+
 		break;
 	case ETHER_FLOW:
 		eth_spec = &fsp->m_u.ether_spec;
@@ -2087,6 +2072,12 @@ static bool ice_is_acl_filter(struct ethtool_rx_flow_spec *fsp)
 		/* Source MAC address*/
 		if (!is_broadcast_ether_addr(eth_spec->h_source) &&
 		    !is_zero_ether_addr(eth_spec->h_source))
+			return true;
+
+		/* Use ACL in case user wants to match all traffic */
+		if (is_zero_ether_addr(eth_spec->h_source) &&
+		    is_zero_ether_addr(eth_spec->h_dest) &&
+		    !ice_fdir_vlan_valid(fsp))
 			return true;
 
 		/* Ethertype */
@@ -2134,6 +2125,12 @@ ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 	dest_vsi = vsi->idx;
 	if (fsp->ring_cookie == RX_CLS_FLOW_DISC) {
 		dest_ctl = ICE_FLTR_PRGM_DESC_DEST_DROP_PKT;
+	} else if (~(ETHTOOL_RX_FLOW_SPEC_RING | ETHTOOL_RX_FLOW_SPEC_RING_VF) &
+		   fsp->ring_cookie) {
+		dev_err(ice_pf_to_dev(pf),
+			"Failed to add filter. Unsupported action %lld.\n",
+			fsp->ring_cookie);
+		return -EOPNOTSUPP;
 	} else {
 		u32 ring = ethtool_get_flow_spec_ring(fsp->ring_cookie);
 		u8 vf = ethtool_get_flow_spec_ring_vf(fsp->ring_cookie);
@@ -2285,6 +2282,7 @@ int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	struct ice_pf *pf;
 	struct ice_hw *hw;
 	int fltrs_needed;
+	u32 max_location;
 	u16 tunnel_port;
 	int ret;
 
@@ -2311,9 +2309,10 @@ int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 
 	if (fsp->flow_type & FLOW_MAC_EXT)
 		return -EINVAL;
-
-	if (fsp->location >= ice_ntuple_get_max_fltr_cnt(hw)) {
-		dev_err(dev, "Failed to add filter.  The maximum number of ntuple filters has been reached.\n");
+	max_location = ice_ntuple_get_max_fltr_cnt(hw);
+	if (fsp->location >= max_location) {
+		dev_err(dev, "Failed to add filter. The number of ntuple filters or provided location exceed max %d.\n",
+			max_location);
 		return -ENOSPC;
 	}
 
@@ -2330,7 +2329,7 @@ int ice_add_ntuple_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 		2 : 1;
 	if (!ice_fdir_find_fltr_by_idx(hw, fsp->location) &&
 	    ice_fdir_num_avail_fltr(hw, pf->vsi[vsi->idx]) < fltrs_needed) {
-		dev_err(dev, "Failed to add filter.  The maximum number of flow director filters has been reached.\n");
+		dev_err(dev, "Failed to add filter. The maximum number of flow director filters has been reached.\n");
 		return -ENOSPC;
 	}
 

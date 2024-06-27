@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 1.13.7
+Version: 1.14.11
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
@@ -108,7 +108,7 @@ done
 rm -rf %{buildroot}
 
 %files -f file.list
-/lib/firmware/updates/intel/ice/ddp/ice-1.3.35.0.pkg
+/lib/firmware/updates/intel/ice/ddp/ice-1.3.36.0.pkg
 /lib/firmware/updates/intel/ice/ddp/ice.pkg
 /lib/firmware/updates/intel/ice/ddp/LICENSE
 
@@ -399,7 +399,7 @@ fi
 uname -r | grep BOOT || /sbin/depmod -a > /dev/null 2>&1 || true
 
 if [ -x "/usr/sbin/weak-modules" ]; then
-    modules=( $(cat %{_docdir}/%{name}/file.list | grep '\.ko$' | xargs realpath) )
+    modules=( $(cat $LD/file.list | grep '\.ko$' | xargs realpath) )
     printf '%s\n' "${modules[@]}" | /usr/sbin/weak-modules --no-initramfs --add-modules
 fi
 
@@ -428,8 +428,13 @@ else
 fi
 
 %preun
+LD="%{_docdir}/%{name}";
+if [ -d %{_docdir}/%{name}-%{version} ]; then
+	LD="%{_docdir}/%{name}-%{version}";
+fi
+
 # save tmp list of installed kernel modules for weak-modules
-cat %{_docdir}/%{name}/file.list | grep '\.ko$' | xargs realpath > /var/run/rpm-%{name}-modules.list
+cat $LD/file.list | grep '\.ko$' | xargs realpath > /var/run/rpm-%{name}-modules.list
 
 rm -rf /usr/local/share/%{name}
 

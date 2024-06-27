@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_COMMON_H_
 #define _ICE_COMMON_H_
@@ -9,6 +9,7 @@
 #endif /* HAVE_INCLUDE_BITFIELD */
 
 #include "ice_type.h"
+#include "ice_adminq_cmd.h"
 #include "ice_nvm.h"
 #include "ice_flex_pipe.h"
 #include "ice_parser.h"
@@ -18,6 +19,27 @@
 
 #define ICE_SQ_SEND_DELAY_TIME_MS	10
 #define ICE_SQ_SEND_MAX_EXECUTE		3
+
+#define RS_FEC_REG_SHIFT 2
+#define RS_FEC_RECV_ID_SHIFT 4
+#define RS_FEC_CORR_LOW_REG_PORT0 (0x02 << RS_FEC_REG_SHIFT)
+#define RS_FEC_CORR_HIGH_REG_PORT0 (0x03 << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_LOW_REG_PORT0 (0x04 << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_HIGH_REG_PORT0 (0x05 << RS_FEC_REG_SHIFT)
+#define RS_FEC_CORR_LOW_REG_PORT1 (0x42 << RS_FEC_REG_SHIFT)
+#define RS_FEC_CORR_HIGH_REG_PORT1 (0x43 << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_LOW_REG_PORT1 (0x44 << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_HIGH_REG_PORT1 (0x45 << RS_FEC_REG_SHIFT)
+#define RS_FEC_CORR_LOW_REG_PORT2 (0x4A << RS_FEC_REG_SHIFT)
+#define RS_FEC_CORR_HIGH_REG_PORT2 (0x4B << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_LOW_REG_PORT2 (0x4C << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_HIGH_REG_PORT2 (0x4D << RS_FEC_REG_SHIFT)
+#define RS_FEC_CORR_LOW_REG_PORT3 (0x52 << RS_FEC_REG_SHIFT)
+#define RS_FEC_CORR_HIGH_REG_PORT3 (0x53 << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_LOW_REG_PORT3 (0x54 << RS_FEC_REG_SHIFT)
+#define RS_FEC_UNCORR_HIGH_REG_PORT3 (0x55 << RS_FEC_REG_SHIFT)
+#define RS_FEC_RECEIVER_ID_PCS0 (0x33 << RS_FEC_RECV_ID_SHIFT)
+#define RS_FEC_RECEIVER_ID_PCS1 (0x34 << RS_FEC_RECV_ID_SHIFT)
 
 enum ice_fw_modes {
 	ICE_FW_MODE_NORMAL,
@@ -155,8 +177,7 @@ bool ice_is_gps_in_netlist(struct ice_hw *hw);
 int
 ice_aq_list_caps(struct ice_hw *hw, void *buf, u16 buf_size, u32 *cap_count,
 		 enum ice_adminq_opc opc, struct ice_sq_cd *cd);
-int
-ice_discover_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_caps);
+int ice_discover_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_caps);
 void
 ice_update_phy_type(u64 *phy_type_low, u64 *phy_type_high,
 		    u16 link_speeds_bitmap);
@@ -174,6 +195,11 @@ int
 ice_get_link_default_override(struct ice_link_default_override_tlv *ldo,
 			      struct ice_port_info *pi);
 bool ice_is_phy_caps_an_enabled(struct ice_aqc_get_phy_caps_data *caps);
+int ice_aq_get_phy_equalisation(struct ice_hw *hw, u16 data_in, u16 op_code,
+				u8 serdes_num, int *output);
+int
+ice_aq_get_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
+		     enum ice_rs_fec_stats_types rs_fec_type, u32 *output);
 enum ice_fc_mode ice_caps_to_fc_mode(u8 caps);
 enum ice_fec_mode ice_caps_to_fec_mode(u8 caps, u8 fec_options);
 int
@@ -194,7 +220,7 @@ ice_cfg_phy_fec(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
 		enum ice_fec_mode fec);
 int
 ice_aq_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
-			   struct ice_sq_cd *cd);
+			   struct ice_sq_cd *cd, u8 refclk);
 int
 ice_aq_set_mac_cfg(struct ice_hw *hw, u16 max_frame_size, bool auto_drop,
 		   struct ice_sq_cd *cd);
@@ -271,7 +297,7 @@ struct ice_q_ctx *
 ice_get_lan_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 q_handle);
 void ice_sbq_lock(struct ice_hw *hw);
 void ice_sbq_unlock(struct ice_hw *hw);
-int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in);
+int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flag);
 int
 ice_aq_cfg_cgu_err(struct ice_hw *hw, bool ena_event_report, bool ena_err_report,
 		   struct ice_sq_cd *cd);
@@ -282,9 +308,8 @@ int
 ice_aq_set_input_pin_cfg(struct ice_hw *hw, u8 input_idx, u8 flags1, u8 flags2,
 			 u32 freq, s32 phase_delay);
 int
-ice_aq_get_input_pin_cfg(struct ice_hw *hw,
-			 struct ice_aqc_get_cgu_input_config *cfg,
-			 u8 input_idx);
+ice_aq_get_input_pin_cfg(struct ice_hw *hw, u8 input_idx, u8 *status, u8 *type,
+			 u8 *flags1, u8 *flags2, u32 *freq, s32 *phase_delay);
 int
 ice_aq_set_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 flags,
 			  u8 src_sel, u32 freq, s32 phase_delay);
@@ -293,7 +318,8 @@ ice_aq_get_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 *flags,
 			  u8 *src_sel, u32 *freq, u32 *src_freq);
 int
 ice_aq_get_cgu_dpll_status(struct ice_hw *hw, u8 dpll_num, u8 *ref_state,
-			   u16 *dpll_state, s64 *phase_offset, u8 *eec_mode);
+			   u8 *dpll_state, u8 *config, s64 *phase_offset,
+			   u8 *eec_mode);
 int
 ice_aq_set_cgu_dpll_config(struct ice_hw *hw, u8 dpll_num, u8 ref_state,
 			   u8 config, u8 eec_mode);
@@ -315,7 +341,7 @@ ice_aq_set_phy_rec_clk_out(struct ice_hw *hw, u8 phy_output, bool enable,
 			   u32 *freq);
 int
 ice_aq_get_phy_rec_clk_out(struct ice_hw *hw, u8 phy_output, u8 *port_num,
-			   u8 *flags, u32 *freq);
+			   u8 *flags, u16 *node_handle);
 int
 ice_aq_get_sensor_reading(struct ice_hw *hw, u8 sensor, u8 format,
 			  struct ice_aqc_get_sensor_reading_resp *data,
@@ -329,6 +355,7 @@ ice_stat_update32(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw);
 void ice_print_rollback_msg(struct ice_hw *hw);
 bool ice_is_generic_mac(struct ice_hw *hw);
+bool ice_is_e822(struct ice_hw *hw);
 bool ice_is_e810(struct ice_hw *hw);
 bool ice_is_e810t(struct ice_hw *hw);
 bool ice_is_e825c(struct ice_hw *hw);
@@ -349,6 +376,8 @@ int
 ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
 		bool *value, struct ice_sq_cd *cd);
 bool ice_is_100m_speed_supported(struct ice_hw *hw);
+u16
+ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high);
 int
 ice_aq_set_lldp_mib(struct ice_hw *hw, u8 mib_type, void *buf, u16 buf_size,
 		    struct ice_sq_cd *cd);

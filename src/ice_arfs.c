@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
+#ifdef HAVE_NET_RPS_H
+#include <net/rps.h>
+#endif /* HAVE_NET_RPS_H */
 #include "ice_irq.h"
 
 /**

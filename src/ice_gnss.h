@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_GNSS_H_
 #define _ICE_GNSS_H_
@@ -22,7 +22,6 @@
 #define ICE_GNSS_UBX_WRITE_BYTES	(ICE_MAX_I2C_WRITE_BYTES + 1)
 #define ICE_MAX_UBX_READ_TRIES		255
 #define ICE_MAX_UBX_ACK_READ_TRIES	4095
-
 
 /**
  * struct gnss_serial - data used to initialize GNSS TTY port

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_VIRTCHNL_H_
 #define _ICE_VIRTCHNL_H_
@@ -105,6 +105,8 @@ struct ice_virtchnl_ops {
 	int (*dis_vlan_stripping_v2_msg)(struct ice_vf *vf, u8 *msg);
 	int (*ena_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
 	int (*dis_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*get_ptp_cap)(struct ice_vf *vf, u8 *msg);
+	int (*get_phc_time)(struct ice_vf *vf);
 };
 
 /**
@@ -131,12 +133,8 @@ void ice_vc_notify_vf_link_state(struct ice_vf *vf);
 void ice_vc_notify_link_state(struct ice_pf *pf);
 void ice_vc_notify_reset(struct ice_pf *pf);
 int
-ice_vc_respond_to_vf(struct ice_vf *vf, u32 v_opcode,
-		     enum virtchnl_status_code v_retval, u8 *msg, u16 msglen);
-int
-ice_vc_send_response_to_vf(struct ice_vf *vf, u32 v_opcode,
-			   enum virtchnl_status_code v_retval, u8 *msg,
-			   u16 msglen);
+ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
+		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen);
 bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id);
 int ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event,
 			  struct ice_mbx_data *mbxdata);
@@ -154,23 +152,15 @@ static inline void ice_vc_notify_link_state(struct ice_pf *pf) { }
 static inline void ice_vc_notify_reset(struct ice_pf *pf) { }
 
 static inline int
-ice_vc_respond_to_vf(struct ice_vf *vf, u32 v_opcode,
-		     enum virtchnl_status_code v_retval, u8 *msg, u16 msglen)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline int
-ice_vc_send_response_to_vf(struct ice_vf *vf, u32 v_opcode,
-			   enum virtchnl_status_code v_retval, u8 *msg,
-			   u16 msglen)
+ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
+		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen)
 {
 	return -EOPNOTSUPP;
 }
 
 static inline bool ice_vc_isvalid_vsi_id(struct ice_vf *vf, u16 vsi_id)
 {
-	return 0;
+	return false;
 }
 
 static inline int

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_sched.h"
@@ -185,6 +185,30 @@ bool ice_is_generic_mac(struct ice_hw *hw)
 	return (hw->mac_type == ICE_MAC_GENERIC ||
 		hw->mac_type == ICE_MAC_GENERIC_3K ||
 		hw->mac_type == ICE_MAC_GENERIC_3K_E825);
+}
+
+/**
+ * ice_is_e822
+ * @hw: pointer to the hardware structure
+ *
+ * returns true if the device is E822 based, false if not.
+ */
+bool ice_is_e822(struct ice_hw *hw)
+{
+	switch (hw->device_id) {
+	case ICE_DEV_ID_E822C_BACKPLANE:
+	case ICE_DEV_ID_E822C_QSFP:
+	case ICE_DEV_ID_E822C_SFP:
+	case ICE_DEV_ID_E822C_10G_BASE_T:
+	case ICE_DEV_ID_E822C_SGMII:
+	case ICE_DEV_ID_E822L_BACKPLANE:
+	case ICE_DEV_ID_E822L_SFP:
+	case ICE_DEV_ID_E822L_10G_BASE_T:
+	case ICE_DEV_ID_E822L_SGMII:
+		return true;
+	default:
+		return false;
+	}
 }
 
 /**
@@ -529,6 +553,101 @@ ice_aq_get_phy_caps(struct ice_port_info *pi, bool qual_mods, u8 report_mode,
 	return status;
 }
 
+/**
+ * ice_aq_get_phy_equalisation - function to read serdes equaliser
+ * value from firmware using admin queue command.
+ * @hw: pointer to the HW struct
+ * @data_in: represents the serdes equalisation parameter requested
+ * @op_code: represents the serdes number and flag to represent tx or rx
+ * @serdes_num: represents the serdes number
+ * @output: pointer to the caller-supplied buffer to return serdes equaliser
+ *
+ * Returns non-zero status on error and 0 on success.
+ */
+int ice_aq_get_phy_equalisation(struct ice_hw *hw, u16 data_in, u16 op_code,
+				u8 serdes_num, int *output)
+{
+	struct ice_aqc_dnl_call_command *cmd;
+	struct ice_aqc_dnl_call buf = {};
+	struct ice_aq_desc desc;
+	int err = 0;
+
+	if (!hw || !output)
+		return -EINVAL;
+
+	buf.sto.txrx_equa_reqs.data_in = cpu_to_le16(data_in);
+	buf.sto.txrx_equa_reqs.op_code_serdes_sel =
+		cpu_to_le16(op_code | (serdes_num & 0xF));
+	cmd = &desc.params.dnl_call;
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_dnl_call);
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_BUF |
+				  ICE_AQ_FLAG_RD |
+				  ICE_AQ_FLAG_SI);
+	desc.datalen = cpu_to_le16(sizeof(struct ice_aqc_dnl_call));
+	cmd->activity_id = cpu_to_le16(ICE_AQC_ACT_ID_DNL);
+
+	err = ice_aq_send_cmd(hw, &desc, &buf, sizeof(struct ice_aqc_dnl_call),
+			      NULL);
+
+	if (!err)
+		*output = buf.sto.txrx_equa_resp.val;
+
+	return err;
+}
+
+#define RS_FEC_REG_PORT(port) {	\
+	RS_FEC_CORR_LOW_REG_PORT##port,		\
+	RS_FEC_CORR_HIGH_REG_PORT##port,	\
+	RS_FEC_UNCORR_LOW_REG_PORT##port,	\
+	RS_FEC_UNCORR_HIGH_REG_PORT##port,	\
+}
+
+static const u32 rs_fec_reg[][ICE_RS_FEC_MAX] = {
+	RS_FEC_REG_PORT(0),
+	RS_FEC_REG_PORT(1),
+	RS_FEC_REG_PORT(2),
+	RS_FEC_REG_PORT(3)
+};
+
+/**
+ * ice_aq_get_fec_stats - reads fec stats from phy
+ * @hw: pointer to the HW struct
+ * @pcs_quad: represents pcsquad of user input serdes
+ * @pcs_port: represents the pcs port number part of above pcs quad
+ * @rs_fec_type: represents RS FEC stats type
+ * @output: pointer to the caller-supplied buffer to return requested fec stats
+ * Returns non-zero status on error and 0 on success.
+ */
+int ice_aq_get_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
+			 enum ice_rs_fec_stats_types rs_fec_type, u32 *output)
+{
+	u16 flag = (ICE_AQ_FLAG_RD | ICE_AQ_FLAG_BUF | ICE_AQ_FLAG_SI);
+	struct ice_sbq_msg_input msg = {};
+	u32 receiver_id, reg_offset;
+	int err = 0;
+
+	if (pcs_port > 3)
+		return -EINVAL;
+	reg_offset = rs_fec_reg[pcs_port][rs_fec_type];
+	if (pcs_quad == 0)
+		receiver_id = RS_FEC_RECEIVER_ID_PCS0;
+	else if (pcs_quad == 1)
+		receiver_id = RS_FEC_RECEIVER_ID_PCS1;
+	else
+		return -EINVAL;
+
+	msg.msg_addr_low = lower_16_bits(reg_offset);
+	msg.msg_addr_high = lower_32_bits(receiver_id);
+	msg.opcode = ice_sbq_msg_rd;
+	msg.dest_dev = rmn_0;
+	err = ice_sbq_rw_reg(hw, &msg, flag);
+	if (err)
+		return err;
+
+	*output = msg.data;
+	return 0;
+}
+
 #define ice_get_link_status_datalen(hw)	ICE_GET_LINK_STATUS_DATALEN_V1
 
 /**
@@ -807,9 +926,8 @@ static void ice_cleanup_fltr_mgmt_struct(struct ice_hw *hw)
  */
 static void ice_get_itr_intrl_gran(struct ice_hw *hw)
 {
-	u8 max_agg_bw = (rd32(hw, GL_PWR_MODE_CTL) &
-			 GL_PWR_MODE_CTL_CAR_MAX_BW_M) >>
-			GL_PWR_MODE_CTL_CAR_MAX_BW_S;
+	u8 max_agg_bw = FIELD_GET(GL_PWR_MODE_CTL_CAR_MAX_BW_M,
+				  rd32(hw, GL_PWR_MODE_CTL));
 
 	switch (max_agg_bw) {
 	case ICE_MAX_AGG_BW_200G:
@@ -873,9 +991,7 @@ int ice_init_hw(struct ice_hw *hw)
 	if (status)
 		return status;
 
-	hw->pf_id = (u8)(rd32(hw, PF_FUNC_RID) &
-			 PF_FUNC_RID_FUNC_NUM_M) >>
-		PF_FUNC_RID_FUNC_NUM_S;
+	hw->pf_id = FIELD_GET(PF_FUNC_RID_FUNC_NUM_M, rd32(hw, PF_FUNC_RID));
 
 	status = ice_reset(hw, ICE_RESET_PFR);
 	if (status)
@@ -886,25 +1002,6 @@ int ice_init_hw(struct ice_hw *hw)
 	status = ice_create_all_ctrlq(hw);
 	if (status)
 		goto err_unroll_cqinit;
-
-	ice_fwlog_set_support_ena(hw);
-	status = ice_fwlog_set(hw, &hw->fwlog_cfg);
-	if (status) {
-		ice_debug(hw, ICE_DBG_INIT, "Failed to enable FW logging, status %d.\n",
-			  status);
-	} else {
-		if (hw->fwlog_cfg.options & ICE_FWLOG_OPTION_REGISTER_ON_INIT) {
-			status = ice_fwlog_register(hw);
-			if (status)
-				ice_debug(hw, ICE_DBG_INIT, "Failed to register for FW logging events, status %d.\n",
-					  status);
-		} else {
-			status = ice_fwlog_unregister(hw);
-			if (status)
-				ice_debug(hw, ICE_DBG_INIT, "Failed to unregister for FW logging events, status %d.\n",
-					  status);
-		}
-	}
 
 	status = ice_init_nvm(hw);
 	if (status)
@@ -935,7 +1032,8 @@ int ice_init_hw(struct ice_hw *hw)
 		status = -ENOMEM;
 		goto err_unroll_cqinit;
 	}
-
+	hw->port_info->loopback_mode =
+		ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_NORMAL;
 	/* set the back pointer to HW */
 	hw->port_info->hw = hw;
 
@@ -1084,8 +1182,8 @@ int ice_check_reset(struct ice_hw *hw)
 	 * or EMPR has occurred. The grst delay value is in 100ms units.
 	 * Add 1sec for outstanding AQ commands that can take a long time.
 	 */
-	grst_timeout = ((rd32(hw, GLGEN_RSTCTL) & GLGEN_RSTCTL_GRSTDEL_M) >>
-			GLGEN_RSTCTL_GRSTDEL_S) + 10;
+	grst_timeout = FIELD_GET(GLGEN_RSTCTL_GRSTDEL_M,
+				 rd32(hw, GLGEN_RSTCTL)) + 10;
 
 	for (cnt = 0; cnt < grst_timeout; cnt++) {
 		msleep(100);
@@ -1517,12 +1615,11 @@ ice_read_txq_ctx(struct ice_hw *hw, struct ice_tlan_ctx *tlan_ctx,
 
 	/* Get TXQ base within card space */
 	txq_base = rd32(hw, PFLAN_TX_QALLOC + 0x4 * hw->pf_id);
-	txq_base = (txq_base & PFLAN_TX_QALLOC_FIRSTQ_M) >>
-		   PFLAN_TX_QALLOC_FIRSTQ_S;
+	txq_base = FIELD_GET(PFLAN_TX_QALLOC_FIRSTQ_M, txq_base);
 
 	reg = GLCOMM_QTX_CNTX_CTL_CMD_EXEC_M |
-	      (((txq_base + txq_index) << GLCOMM_QTX_CNTX_CTL_QUEUE_ID_S) &
-	       GLCOMM_QTX_CNTX_CTL_QUEUE_ID_M);
+	      FIELD_PREP(GLCOMM_QTX_CNTX_CTL_QUEUE_ID_M,
+			 (txq_base + txq_index));
 
 	mutex_lock(&ice_global_txq_ctx_lock);
 
@@ -1756,11 +1853,12 @@ ice_sbq_send_cmd(struct ice_hw *hw, struct ice_sbq_cmd_desc *desc,
  * ice_sbq_rw_reg - Fill Sideband Queue command
  * @hw: pointer to the HW struct
  * @in: message info to be filled in descriptor
+ * @flag: flag to fill desc structure
  */
-int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in)
+int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flag)
 {
-	struct ice_sbq_cmd_desc desc = {0};
-	struct ice_sbq_msg_req msg = {0};
+	struct ice_sbq_cmd_desc desc = {};
+	struct ice_sbq_msg_req msg = {};
 	u16 msg_len;
 	int status;
 
@@ -1781,7 +1879,7 @@ int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in)
 		 */
 		msg_len -= sizeof(msg.data);
 
-	desc.flags = cpu_to_le16(ICE_AQ_FLAG_RD);
+	desc.flags = cpu_to_le16(flag);
 	desc.opcode = cpu_to_le16(ice_sbq_opc_neigh_dev_req);
 	desc.param0.cmd_len = cpu_to_le16(msg_len);
 	status = ice_sbq_send_cmd(hw, &desc, &msg, msg_len, NULL);
@@ -1815,7 +1913,7 @@ void ice_sbq_unlock(struct ice_hw *hw)
  * in firmware is acquired by the software to prevent most (but not all) types
  * of AQ commands from being sent to FW
  */
-DEFINE_MUTEX(ice_global_cfg_lock_sw);
+DEFINE_MUTEX(ice_global_cfg_lock_sw); /* global config lock */
 
 /**
  * ice_should_retry_sq_send_cmd
@@ -1829,7 +1927,6 @@ static bool ice_should_retry_sq_send_cmd(u16 opcode)
 	switch (opcode) {
 	case ice_aqc_opc_dnl_get_status:
 	case ice_aqc_opc_dnl_run:
-	case ice_aqc_opc_dnl_call:
 	case ice_aqc_opc_dnl_read_sto:
 	case ice_aqc_opc_dnl_write_sto:
 	case ice_aqc_opc_dnl_set_breakpoints:
@@ -1839,6 +1936,8 @@ static bool ice_should_retry_sq_send_cmd(u16 opcode)
 	case ice_aqc_opc_lldp_start:
 	case ice_aqc_opc_lldp_filter_ctrl:
 		return true;
+	case ice_aqc_opc_dnl_call:
+		return false;
 	}
 
 	return false;
@@ -2710,8 +2809,7 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		caps->ext_topo_dev_img_ver_high[index] = number;
 		caps->ext_topo_dev_img_ver_low[index] = logical_id;
 		caps->ext_topo_dev_img_part_num[index] =
-			(phys_id & ICE_EXT_TOPO_DEV_IMG_PART_NUM_M) >>
-			ICE_EXT_TOPO_DEV_IMG_PART_NUM_S;
+			FIELD_GET(ICE_EXT_TOPO_DEV_IMG_PART_NUM_M, phys_id);
 		caps->ext_topo_dev_img_load_en[index] =
 			(phys_id & ICE_EXT_TOPO_DEV_IMG_LOAD_EN) != 0;
 		caps->ext_topo_dev_img_prog_en[index] =
@@ -2756,6 +2854,11 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		caps->orom_recovery_update = (number == 1);
 		ice_debug(hw, ICE_DBG_INIT, "%s: orom_recovery_update = %d\n",
 			  prefix, caps->orom_recovery_update);
+		break;
+	case ICE_AQC_CAPS_NEXT_CLUSTER_ID:
+		caps->next_cluster_id_support = (number == 1);
+		ice_debug(hw, ICE_DBG_INIT, "%s: next_cluster_id_support = %d\n",
+			  prefix, caps->next_cluster_id_support);
 		break;
 	default:
 		/* Not one of the recognized common capabilities */
@@ -2870,7 +2973,11 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 	info->gpio_1pps = ((number & ICE_TS_GPIO_1PPS_ASSOC) != 0);
 
 	info->clk_src = ((number & ICE_TS_CLK_SRC_M) != 0);
-	clk_freq = (number & ICE_TS_CLK_FREQ_M) >> ICE_TS_CLK_FREQ_S;
+	clk_freq = FIELD_GET(ICE_TS_CLK_FREQ_M, number);
+	if (ice_is_e825c(hw)) {
+		info->clk_src = ICE_CLK_SRC_TCX0;
+		clk_freq = ICE_TIME_REF_FREQ_156_250;
+	}
 	if (clk_freq < NUM_ICE_TIME_REF_FREQ) {
 		info->time_ref = (enum ice_time_ref_freq)clk_freq;
 	} else {
@@ -2912,12 +3019,10 @@ ice_parse_fdir_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p)
 	u32 reg_val, val;
 
 	reg_val = rd32(hw, GLQF_FD_SIZE);
-	val = (reg_val & GLQF_FD_SIZE_FD_GSIZE_M) >>
-		GLQF_FD_SIZE_FD_GSIZE_S;
+	val = FIELD_GET(GLQF_FD_SIZE_FD_GSIZE_M, reg_val);
 	func_p->fd_fltr_guar =
 		ice_get_num_per_func(hw, val);
-	val = (reg_val & GLQF_FD_SIZE_FD_BSIZE_M) >>
-		GLQF_FD_SIZE_FD_BSIZE_S;
+	val = FIELD_GET(GLQF_FD_SIZE_FD_BSIZE_M, reg_val);
 	func_p->fd_fltr_best_effort = val;
 
 	ice_debug(hw, ICE_DBG_INIT, "func caps: fd_fltr_guar = %d\n",
@@ -3085,7 +3190,7 @@ ice_parse_1588_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_p,
 	info->tmr0_owned = ((number & ICE_TS_TMR0_OWND_M) != 0);
 	info->tmr0_ena = ((number & ICE_TS_TMR0_ENA_M) != 0);
 
-	info->tmr1_owner = (number & ICE_TS_TMR1_OWNR_M) >> ICE_TS_TMR1_OWNR_S;
+	info->tmr1_owner = FIELD_GET(ICE_TS_TMR1_OWNR_M, number);
 	info->tmr1_owned = ((number & ICE_TS_TMR1_OWND_M) != 0);
 	info->tmr1_ena = ((number & ICE_TS_TMR1_ENA_M) != 0);
 
@@ -3322,11 +3427,6 @@ int ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx)
 	if (hw->mac_type != ICE_MAC_E810)
 		return -ENODEV;
 
-	if (hw->device_id != ICE_DEV_ID_E810C_QSFP) {
-		*idx = C827_0;
-		return 0;
-	}
-
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctx = ICE_AQC_LINK_TOPO_NODE_TYPE_PHY << ICE_AQC_LINK_TOPO_NODE_TYPE_S;
@@ -3338,6 +3438,11 @@ int ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx)
 				      &node_handle);
 	if (err || node_part_number != ICE_AQC_GET_LINK_TOPO_NODE_NR_C827)
 		return -ENOENT;
+
+	if (hw->device_id != ICE_DEV_ID_E810C_QSFP) {
+		*idx = C827_0;
+		return 0;
+	}
 
 	if (node_handle == E810C_QSFP_C827_0_HANDLE)
 		*idx = C827_0;
@@ -3730,6 +3835,10 @@ ice_aq_set_port_params(struct ice_port_info *pi, u16 bad_frame_vsi,
 	cmd = &desc.params.set_port_params;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_port_params);
+
+	cmd->loopback_mode = pi->loopback_mode |
+				ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_VALID;
+
 	cmd->bad_frame_vsi = cpu_to_le16(bad_frame_vsi);
 	if (save_bad_pac)
 		cmd_flags |= ICE_AQC_SET_P_PARAMS_SAVE_BAD_PACKETS;
@@ -3775,8 +3884,7 @@ bool ice_is_100m_speed_supported(struct ice_hw *hw)
  * If no bit gets set, ICE_AQ_LINK_SPEED_UNKNOWN will be returned
  * If more than one bit gets set, ICE_AQ_LINK_SPEED_UNKNOWN will be returned
  */
-static u16
-ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high)
+u16 ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high)
 {
 	u16 speed_phy_type_high = ICE_AQ_LINK_SPEED_UNKNOWN;
 	u16 speed_phy_type_low = ICE_AQ_LINK_SPEED_UNKNOWN;
@@ -3806,7 +3914,7 @@ ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high)
 	case ICE_PHY_TYPE_LOW_10G_SFI_DA:
 	case ICE_PHY_TYPE_LOW_10GBASE_SR:
 	case ICE_PHY_TYPE_LOW_10GBASE_LR:
-	case ICE_PHY_TYPE_LOW_10GBASE_KR_CR1:
+	case ICE_PHY_TYPE_LOW_10GBASE_KR:
 	case ICE_PHY_TYPE_LOW_10G_SFI_AOC_ACC:
 	case ICE_PHY_TYPE_LOW_10G_SFI_C2C:
 		speed_phy_type_low = ICE_AQ_LINK_SPEED_10GB;
@@ -3840,7 +3948,7 @@ ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high)
 	case ICE_PHY_TYPE_LOW_50G_LAUI2:
 	case ICE_PHY_TYPE_LOW_50G_AUI2_AOC_ACC:
 	case ICE_PHY_TYPE_LOW_50G_AUI2:
-	case ICE_PHY_TYPE_LOW_50GBASE_CR:
+	case ICE_PHY_TYPE_LOW_50GBASE_CR_PAM4:
 	case ICE_PHY_TYPE_LOW_50GBASE_SR:
 	case ICE_PHY_TYPE_LOW_50GBASE_FR:
 	case ICE_PHY_TYPE_LOW_50GBASE_LR:
@@ -3858,8 +3966,8 @@ ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high)
 	case ICE_PHY_TYPE_LOW_100G_AUI4_AOC_ACC:
 	case ICE_PHY_TYPE_LOW_100G_AUI4:
 	case ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4:
-	case ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4:
-	case ICE_PHY_TYPE_LOW_100GBASE_CR2:
+	case ICE_PHY_TYPE_LOW_100GBASE_KR4_PAM4:
+	case ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4:
 	case ICE_PHY_TYPE_LOW_100GBASE_SR2:
 	case ICE_PHY_TYPE_LOW_100GBASE_DR:
 		speed_phy_type_low = ICE_AQ_LINK_SPEED_100GB;
@@ -4437,12 +4545,13 @@ int ice_get_link_status(struct ice_port_info *pi, bool *link_up)
  * @pi: pointer to the port information structure
  * @ena_link: if true: enable link, if false: disable link
  * @cd: pointer to command details structure or NULL
+ * @refclk: the new TX reference clock, 0 if no change
  *
  * Sets up the link and restarts the Auto-Negotiation over the link.
  */
 int
 ice_aq_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
-			   struct ice_sq_cd *cd)
+			   struct ice_sq_cd *cd, u8 refclk)
 {
 	int status = -EIO;
 	struct ice_aqc_restart_an *cmd;
@@ -4458,6 +4567,8 @@ ice_aq_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
 		cmd->cmd_flags |= ICE_AQC_RESTART_AN_LINK_ENABLE;
 	else
 		cmd->cmd_flags &= ~ICE_AQC_RESTART_AN_LINK_ENABLE;
+
+	cmd->cmd_flags |= FIELD_PREP(ICE_AQC_RESTART_AN_REFCLK_M, refclk);
 
 	status = ice_aq_send_cmd(pi->hw, &desc, NULL, 0, cd);
 	if (status)
@@ -4570,6 +4681,7 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 {
 	struct ice_aqc_sff_eeprom *cmd;
 	struct ice_aq_desc desc;
+	u16 i2c_bus_addr;
 	int status;
 
 	if (!data || (mem_addr & 0xff00))
@@ -4580,15 +4692,13 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 	desc.flags = cpu_to_le16(ICE_AQ_FLAG_RD);
 	cmd->lport_num = (u8)(lport & 0xff);
 	cmd->lport_num_valid = (u8)((lport >> 8) & 0x01);
-	cmd->i2c_bus_addr = cpu_to_le16(((bus_addr >> 1) &
-					 ICE_AQC_SFF_I2CBUS_7BIT_M) |
-					((set_page <<
-					  ICE_AQC_SFF_SET_EEPROM_PAGE_S) &
-					 ICE_AQC_SFF_SET_EEPROM_PAGE_M));
-	cmd->i2c_mem_addr = cpu_to_le16(mem_addr & 0xff);
-	cmd->eeprom_page = cpu_to_le16((u16)page << ICE_AQC_SFF_EEPROM_PAGE_S);
+	i2c_bus_addr = FIELD_PREP(ICE_AQC_SFF_I2CBUS_7BIT_M, bus_addr >> 1) |
+		       FIELD_PREP(ICE_AQC_SFF_SET_EEPROM_PAGE_M, set_page);
 	if (write)
-		cmd->i2c_bus_addr |= cpu_to_le16(ICE_AQC_SFF_IS_WRITE);
+		i2c_bus_addr |= ICE_AQC_SFF_IS_WRITE;
+	cmd->i2c_bus_addr = cpu_to_le16(i2c_bus_addr);
+	cmd->i2c_mem_addr = cpu_to_le16(mem_addr & 0xff);
+	cmd->eeprom_page = le16_encode_bits(page, ICE_AQC_SFF_EEPROM_PAGE_S);
 
 	status = ice_aq_send_cmd(hw, &desc, data, length, cd);
 	return status;
@@ -4753,16 +4863,13 @@ __ice_aq_get_set_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_rss_lut);
 	}
 
-	cmd_resp->vsi_id = cpu_to_le16(((vsi_id <<
-					 ICE_AQC_GSET_RSS_LUT_VSI_ID_S) &
-					ICE_AQC_GSET_RSS_LUT_VSI_ID_M) |
+	cmd_resp->vsi_id = cpu_to_le16(FIELD_PREP(ICE_AQC_GSET_RSS_LUT_VSI_ID_M,
+						  vsi_id) |
 				       ICE_AQC_GSET_RSS_LUT_VSI_VALID);
 
 	flags = ice_lut_size_to_flag(lut_size) |
-		 ((lut_type << ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_S) &
-		  ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_M) |
-		 ((glob_lut_idx << ICE_AQC_GSET_RSS_LUT_GLOBAL_IDX_S) &
-		  ICE_AQC_GSET_RSS_LUT_GLOBAL_IDX_M);
+		 FIELD_PREP(ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_M, lut_type) |
+		 FIELD_PREP(ICE_AQC_GSET_RSS_LUT_GLOBAL_IDX_M, glob_lut_idx);
 
 	cmd_resp->flags = cpu_to_le16(flags);
 	status = ice_aq_send_cmd(hw, &desc, lut, lut_size, NULL);
@@ -4822,9 +4929,8 @@ static int __ice_aq_get_set_rss_key(struct ice_hw *hw, u16 vsi_id,
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_rss_key);
 	}
 
-	cmd_resp->vsi_id = cpu_to_le16(((vsi_id <<
-					 ICE_AQC_GSET_RSS_KEY_VSI_ID_S) &
-					ICE_AQC_GSET_RSS_KEY_VSI_ID_M) |
+	cmd_resp->vsi_id = cpu_to_le16(FIELD_PREP(ICE_AQC_GSET_RSS_KEY_VSI_ID_M,
+						  vsi_id) |
 				       ICE_AQC_GSET_RSS_KEY_VSI_VALID);
 
 	return ice_aq_send_cmd(hw, &desc, key, key_size, NULL);
@@ -4946,8 +5052,9 @@ ice_aq_dis_lan_txq(struct ice_hw *hw, u8 num_qgrps,
 	struct ice_aqc_dis_txq_item *item;
 	struct ice_aqc_dis_txqs *cmd;
 	struct ice_aq_desc desc;
-	int status;
+	u16 vmvf_and_timeout;
 	u16 i, sz = 0;
+	int status;
 
 	cmd = &desc.params.dis_txqs;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_dis_txqs);
@@ -4961,26 +5068,25 @@ ice_aq_dis_lan_txq(struct ice_hw *hw, u8 num_qgrps,
 
 	cmd->num_entries = num_qgrps;
 
-	cmd->vmvf_and_timeout = cpu_to_le16((5 << ICE_AQC_Q_DIS_TIMEOUT_S) &
-					    ICE_AQC_Q_DIS_TIMEOUT_M);
+	vmvf_and_timeout = FIELD_PREP(ICE_AQC_Q_DIS_TIMEOUT_M, 5);
 
 	switch (rst_src) {
 	case ICE_VM_RESET:
 		cmd->cmd_type = ICE_AQC_Q_DIS_CMD_VM_RESET;
-		cmd->vmvf_and_timeout |=
-			cpu_to_le16(vmvf_num & ICE_AQC_Q_DIS_VMVF_NUM_M);
+		vmvf_and_timeout |= vmvf_num & ICE_AQC_Q_DIS_VMVF_NUM_M;
 		break;
 	case ICE_VF_RESET:
 		cmd->cmd_type = ICE_AQC_Q_DIS_CMD_VF_RESET;
 		/* In this case, FW expects vmvf_num to be absolute VF ID */
-		cmd->vmvf_and_timeout |=
-			cpu_to_le16((vmvf_num + hw->func_caps.vf_base_id) &
-				    ICE_AQC_Q_DIS_VMVF_NUM_M);
+		vmvf_and_timeout |= (vmvf_num + hw->func_caps.vf_base_id) &
+				    ICE_AQC_Q_DIS_VMVF_NUM_M;
 		break;
 	case ICE_NO_RESET:
 	default:
 		break;
 	}
+
+	cmd->vmvf_and_timeout = cpu_to_le16(vmvf_and_timeout);
 
 	/* flush pipe on time out */
 	cmd->cmd_type |= ICE_AQC_Q_DIS_CMD_FLUSH_PIPE;
@@ -5078,8 +5184,7 @@ ice_aq_move_recfg_lan_txq(struct ice_hw *hw, u8 num_qs, bool is_move,
 		cmd->cmd_type |= ICE_AQC_Q_CMD_FLUSH_PIPE;
 
 	cmd->num_qs = num_qs;
-	cmd->timeout = ((timeout << ICE_AQC_Q_CMD_TIMEOUT_S) &
-			ICE_AQC_Q_CMD_TIMEOUT_M);
+	cmd->timeout = FIELD_PREP(ICE_AQC_Q_CMD_TIMEOUT_M, timeout);
 
 	status = ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
 
@@ -5510,10 +5615,10 @@ ice_print_sched_elem(struct ice_hw *hw, int elem,
 	dev_info(ice_hw_to_dev(hw), "\t\t\t\tscheduling mode %s\n", str);
 
 	dev_info(ice_hw_to_dev(hw), "\t\t\t\tpriority %d\n",
-		 ((d->generic & ICE_AQC_ELEM_GENERIC_PRIO_M) >> ICE_AQC_ELEM_GENERIC_PRIO_S));
+		 FIELD_GET(ICE_AQC_ELEM_GENERIC_PRIO_M, d->generic));
 
 	dev_info(ice_hw_to_dev(hw), "\t\t\t\tadjustment value %d\n",
-		 (d->generic & ICE_AQC_ELEM_GENERIC_ADJUST_VAL_M) >> ICE_AQC_ELEM_GENERIC_ADJUST_VAL_S);
+		 FIELD_GET(ICE_AQC_ELEM_GENERIC_ADJUST_VAL_M, d->generic));
 }
 
 /**
@@ -6477,11 +6582,12 @@ ice_aq_cfg_cgu_err(struct ice_hw *hw, bool ena_event_report,
 }
 
 /**
- * ice_aq_get_cgu_abilities
+ * ice_aq_get_cgu_abilities - get cgu abilities
  * @hw: pointer to the HW struct
  * @abilities: CGU abilities
  *
  * Get CGU abilities (0x0C61)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_get_cgu_abilities(struct ice_hw *hw,
@@ -6494,7 +6600,7 @@ ice_aq_get_cgu_abilities(struct ice_hw *hw,
 }
 
 /**
- * ice_aq_set_input_pin_cfg
+ * ice_aq_set_input_pin_cfg - set input pin config
  * @hw: pointer to the HW struct
  * @input_idx: Input index
  * @flags1: Input flags
@@ -6503,6 +6609,7 @@ ice_aq_get_cgu_abilities(struct ice_hw *hw,
  * @phase_delay: Delay in ps
  *
  * Set CGU input config (0x0C62)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_set_input_pin_cfg(struct ice_hw *hw, u8 input_idx, u8 flags1, u8 flags2,
@@ -6523,34 +6630,52 @@ ice_aq_set_input_pin_cfg(struct ice_hw *hw, u8 input_idx, u8 flags1, u8 flags2,
 }
 
 /**
- * ice_aq_get_input_pin_cfg
+ * ice_aq_get_input_pin_cfg - get input pin config
  * @hw: pointer to the HW struct
- * @cfg: DPLL config
  * @input_idx: Input index
+ * @status: Pin status
+ * @type: Pin type
+ * @flags1: Input flags
+ * @flags2: Input flags
+ * @freq: Frequency in Hz
+ * @phase_delay: Delay in ps
  *
  * Get CGU input config (0x0C63)
+ * Return: 0 on success or negative value on failure.
  */
 int
-ice_aq_get_input_pin_cfg(struct ice_hw *hw,
-			 struct ice_aqc_get_cgu_input_config *cfg, u8 input_idx)
+ice_aq_get_input_pin_cfg(struct ice_hw *hw, u8 input_idx, u8 *status, u8 *type,
+			 u8 *flags1, u8 *flags2, u32 *freq, s32 *phase_delay)
 {
 	struct ice_aqc_get_cgu_input_config *cmd;
 	struct ice_aq_desc desc;
-	int status;
+	int ret;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_cgu_input_config);
 	cmd = &desc.params.get_cgu_input_config;
 	cmd->input_idx = input_idx;
 
-	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
-	if (!status)
-		*cfg = *cmd;
+	ret = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+	if (!ret) {
+		if (status)
+			*status = cmd->status;
+		if (type)
+			*type = cmd->type;
+		if (flags1)
+			*flags1 = cmd->flags1;
+		if (flags2)
+			*flags2 = cmd->flags2;
+		if (freq)
+			*freq = le32_to_cpu(cmd->freq);
+		if (phase_delay)
+			*phase_delay = le32_to_cpu(cmd->phase_delay);
+	}
 
-	return status;
+	return ret;
 }
 
 /**
- * ice_aq_set_output_pin_cfg
+ * ice_aq_set_output_pin_cfg - set output pin config
  * @hw: pointer to the HW struct
  * @output_idx: Output index
  * @flags: Output flags
@@ -6559,6 +6684,7 @@ ice_aq_get_input_pin_cfg(struct ice_hw *hw,
  * @phase_delay: Output phase compensation
  *
  * Set CGU output config (0x0C64)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_set_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 flags,
@@ -6579,7 +6705,7 @@ ice_aq_set_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 flags,
 }
 
 /**
- * ice_aq_get_output_pin_cfg
+ * ice_aq_get_output_pin_cfg - get output pin config
  * @hw: pointer to the HW struct
  * @output_idx: Output index
  * @flags: Output flags
@@ -6588,6 +6714,7 @@ ice_aq_set_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 flags,
  * @src_freq: Source frequency
  *
  * Get CGU output config (0x0C65)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_get_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 *flags,
@@ -6595,23 +6722,28 @@ ice_aq_get_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 *flags,
 {
 	struct ice_aqc_get_cgu_output_config *cmd;
 	struct ice_aq_desc desc;
-	int status;
+	int ret;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_cgu_output_config);
 	cmd = &desc.params.get_cgu_output_config;
 	cmd->output_idx = output_idx;
 
-	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
-	if (!status) {
-		*flags = cmd->flags;
-		*src_sel = cmd->src_sel;
-		*freq = le32_to_cpu(cmd->freq);
-		*src_freq = le32_to_cpu(cmd->src_freq);
+	ret = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
+	if (!ret) {
+		if (flags)
+			*flags = cmd->flags;
+		if (src_sel)
+			*src_sel = cmd->src_sel;
+		if (freq)
+			*freq = le32_to_cpu(cmd->freq);
+		if (src_freq)
+			*src_freq = le32_to_cpu(cmd->src_freq);
 	}
 
-	return status;
+	return ret;
 }
 
+#if !defined(CONFIG_DPLL)
 /**
  * convert_s48_to_s64 - convert 48 bit value to 64 bit value
  * @signed_48: signed 64 bit variable storing signed 48 bit value
@@ -6620,8 +6752,7 @@ ice_aq_get_output_pin_cfg(struct ice_hw *hw, u8 output_idx, u8 *flags,
  *
  * Return: signed 64 bit representation of signed 48 bit value.
  */
-static inline
-s64 convert_s48_to_s64(s64 signed_48)
+static s64 convert_s48_to_s64(s64 signed_48)
 {
 	const s64 MASK_SIGN_BITS = GENMASK_ULL(63, 48);
 	const s64 SIGN_BIT_47 = BIT_ULL(47);
@@ -6630,12 +6761,14 @@ s64 convert_s48_to_s64(s64 signed_48)
 		: signed_48);
 }
 
+#endif /* CONFIG_DPLL */
 /**
  * ice_aq_get_cgu_dpll_status
  * @hw: pointer to the HW struct
  * @dpll_num: DPLL index
  * @ref_state: Reference clock state
- * @dpll_state: DPLL state
+ * @config: current DPLL config
+ * @dpll_state: current DPLL state
  * @phase_offset: Phase offset in ns
  * @eec_mode: EEC_mode
  *
@@ -6643,10 +6776,10 @@ s64 convert_s48_to_s64(s64 signed_48)
  */
 int
 ice_aq_get_cgu_dpll_status(struct ice_hw *hw, u8 dpll_num, u8 *ref_state,
-			   u16 *dpll_state, s64 *phase_offset, u8 *eec_mode)
+			   u8 *dpll_state, u8 *config, s64 *phase_offset,
+			   u8 *eec_mode)
 {
 	struct ice_aqc_get_cgu_dpll_status *cmd;
-	const s64 HUNDREDTH_PSEC = 100LL;
 	struct ice_aq_desc desc;
 	int status;
 
@@ -6657,14 +6790,16 @@ ice_aq_get_cgu_dpll_status(struct ice_hw *hw, u8 dpll_num, u8 *ref_state,
 	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 	if (!status) {
 		*ref_state = cmd->ref_state;
-		*dpll_state = le16_to_cpu(cmd->dpll_state);
+		*dpll_state = cmd->dpll_state;
+		*config = cmd->config;
 		*phase_offset = le32_to_cpu(cmd->phase_offset_h);
 		*phase_offset <<= 32;
 		*phase_offset += le32_to_cpu(cmd->phase_offset_l);
+#if defined(CONFIG_DPLL)
+		*phase_offset = sign_extend64(*phase_offset, 47);
+#else
 		*phase_offset = convert_s48_to_s64(*phase_offset);
-
-		/* offset is in 0.01ps, convert to ps */
-		*phase_offset /= HUNDREDTH_PSEC;
+#endif /* NOT_FOR_UPSTREAM */
 		*eec_mode = cmd->eec_mode;
 	}
 
@@ -6672,7 +6807,7 @@ ice_aq_get_cgu_dpll_status(struct ice_hw *hw, u8 dpll_num, u8 *ref_state,
 }
 
 /**
- * ice_aq_set_cgu_dpll_config
+ * ice_aq_set_cgu_dpll_config - set dpll config
  * @hw: pointer to the HW struct
  * @dpll_num: DPLL index
  * @ref_state: Reference clock state
@@ -6680,6 +6815,7 @@ ice_aq_get_cgu_dpll_status(struct ice_hw *hw, u8 dpll_num, u8 *ref_state,
  * @eec_mode: EEC mode
  *
  * Set CGU DPLL config (0x0C67)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_set_cgu_dpll_config(struct ice_hw *hw, u8 dpll_num, u8 ref_state,
@@ -6699,13 +6835,14 @@ ice_aq_set_cgu_dpll_config(struct ice_hw *hw, u8 dpll_num, u8 ref_state,
 }
 
 /**
- * ice_aq_set_cgu_ref_prio
+ * ice_aq_set_cgu_ref_prio - - set input reference priority
  * @hw: pointer to the HW struct
  * @dpll_num: DPLL index
  * @ref_idx: Reference pin index
  * @ref_priority: Reference input priority
  *
  * Set CGU reference priority (0x0C68)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_set_cgu_ref_prio(struct ice_hw *hw, u8 dpll_num, u8 ref_idx,
@@ -6724,13 +6861,14 @@ ice_aq_set_cgu_ref_prio(struct ice_hw *hw, u8 dpll_num, u8 ref_idx,
 }
 
 /**
- * ice_aq_get_cgu_ref_prio
+ * ice_aq_get_cgu_ref_prio - get input reference priority
  * @hw: pointer to the HW struct
  * @dpll_num: DPLL index
  * @ref_idx: Reference pin index
  * @ref_prio: Reference input priority
  *
  * Get CGU reference priority (0x0C69)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_get_cgu_ref_prio(struct ice_hw *hw, u8 dpll_num, u8 ref_idx,
@@ -6753,13 +6891,14 @@ ice_aq_get_cgu_ref_prio(struct ice_hw *hw, u8 dpll_num, u8 ref_idx,
 }
 
 /**
- * ice_aq_get_cgu_info
+ * ice_aq_get_cgu_info - get cgu info
  * @hw: pointer to the HW struct
  * @cgu_id: CGU ID
  * @cgu_cfg_ver: CGU config version
  * @cgu_fw_ver: CGU firmware version
  *
  * Get CGU info (0x0C6A)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_get_cgu_info(struct ice_hw *hw, u32 *cgu_id, u32 *cgu_cfg_ver,
@@ -6859,7 +6998,7 @@ ice_aq_write_cgu_reg(struct ice_hw *hw, u16 offset, u8 data_len, u8 *data)
  * @enable: GPIO state to be applied
  * @freq: PHY output frequency
  *
- * Set CGU reference priority (0x0630)
+ * Set phy recovered clock as reference (0x0630)
  * Return 0 on success or negative value on failure.
  */
 int
@@ -6885,18 +7024,19 @@ ice_aq_set_phy_rec_clk_out(struct ice_hw *hw, u8 phy_output, bool enable,
 }
 
 /**
- * ice_aq_get_phy_rec_clk_out
+ * ice_aq_get_phy_rec_clk_out - get phy recovered signal info
  * @hw: pointer to the HW struct
  * @phy_output: PHY reference clock output pin
  * @port_num: Port number
  * @flags: PHY flags
- * @freq: PHY output frequency
+ * @node_handle: PHY output node handle
  *
  * Get PHY recovered clock output (0x0631)
+ * Return: 0 on success or negative value on failure.
  */
 int
 ice_aq_get_phy_rec_clk_out(struct ice_hw *hw, u8 phy_output, u8 *port_num,
-			   u8 *flags, u32 *freq)
+			   u8 *flags, u16 *node_handle)
 {
 	struct ice_aqc_get_phy_rec_clk_out *cmd;
 	struct ice_aq_desc desc;
@@ -6905,13 +7045,15 @@ ice_aq_get_phy_rec_clk_out(struct ice_hw *hw, u8 phy_output, u8 *port_num,
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_phy_rec_clk_out);
 	cmd = &desc.params.get_phy_rec_clk_out;
 	cmd->phy_output = phy_output;
-	cmd->port_num = *port_num;
 
 	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
 	if (!status) {
-		*port_num = cmd->port_num;
-		*flags = cmd->flags;
-		*freq = le32_to_cpu(cmd->freq);
+		if (port_num)
+			*port_num = cmd->port_num;
+		if (flags)
+			*flags = cmd->flags;
+		if (node_handle)
+			*node_handle = le16_to_cpu(cmd->node_handle);
 	}
 
 	return status;
@@ -7199,7 +7341,7 @@ ice_aq_read_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
 	if (!data)
 		return -EINVAL;
 
-	data_size = (params & ICE_AQC_I2C_DATA_SIZE_M) >> ICE_AQC_I2C_DATA_SIZE_S;
+	data_size = FIELD_GET(ICE_AQC_I2C_DATA_SIZE_M, params);
 
 	cmd->i2c_bus_addr = cpu_to_le16(bus_addr);
 	cmd->topo_addr = topo_addr;
@@ -7245,7 +7387,7 @@ ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_write_i2c);
 	cmd = &desc.params.read_write_i2c;
 
-	data_size = (params & ICE_AQC_I2C_DATA_SIZE_M) >> ICE_AQC_I2C_DATA_SIZE_S;
+	data_size = FIELD_GET(ICE_AQC_I2C_DATA_SIZE_M, params);
 
 	/* data_size limited to 4 */
 	if (data_size > 4)
@@ -7492,7 +7634,7 @@ ice_get_link_default_override(struct ice_link_default_override_tlv *ldo,
 		ice_debug(hw, ICE_DBG_INIT, "Failed to read override link options.\n");
 		return status;
 	}
-	ldo->options = buf & ICE_LINK_OVERRIDE_OPT_M;
+	ldo->options = FIELD_GET(ICE_LINK_OVERRIDE_OPT_M, buf);
 	ldo->phy_config = (buf & ICE_LINK_OVERRIDE_PHY_CFG_M) >>
 		ICE_LINK_OVERRIDE_PHY_CFG_S;
 

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _VIRTCHNL_H_
 #define _VIRTCHNL_H_
@@ -173,10 +173,17 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2 = 57,
 	VIRTCHNL_OP_ENABLE_VLAN_FILTERING_V2 = 58,
 	VIRTCHNL_OP_DISABLE_VLAN_FILTERING_V2 = 59,
-	/* opcodes 60 through 65 are reserved */
+	VIRTCHNL_OP_1588_PTP_GET_CAPS = 60,
+	VIRTCHNL_OP_1588_PTP_GET_TIME = 61,
+	VIRTCHNL_OP_1588_PTP_SET_TIME = 62,
+	VIRTCHNL_OP_1588_PTP_ADJ_TIME = 63,
+	VIRTCHNL_OP_1588_PTP_ADJ_FREQ = 64,
+	VIRTCHNL_OP_1588_PTP_TX_TIMESTAMP = 65,
 	VIRTCHNL_OP_GET_QOS_CAPS = 66,
 	VIRTCHNL_OP_CONFIG_QUEUE_TC_MAP = 67,
-	/* opcode 68 through 70 are reserved */
+	VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS = 68,
+	VIRTCHNL_OP_1588_PTP_SET_PIN_CFG = 69,
+	VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP = 70,
 	VIRTCHNL_OP_ENABLE_QUEUES_V2 = 107,
 	VIRTCHNL_OP_DISABLE_QUEUES_V2 = 108,
 	VIRTCHNL_OP_MAP_QUEUE_VECTOR = 111,
@@ -184,7 +191,21 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_CONFIG_QUANTA = 113,
 	VIRTCHNL_OP_FLOW_SUBSCRIBE = 114,
 	VIRTCHNL_OP_FLOW_UNSUBSCRIBE = 115,
-	/* opcode 116 through 130 are reserved */
+	VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT = 116,
+	VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT = 117,
+	VIRTCHNL_OP_SYNCE_GET_CGU_REF_PRIO = 118,
+	VIRTCHNL_OP_SYNCE_SET_CGU_REF_PRIO = 119,
+	VIRTCHNL_OP_SYNCE_GET_INPUT_PIN_CFG = 120,
+	VIRTCHNL_OP_SYNCE_SET_INPUT_PIN_CFG = 121,
+	VIRTCHNL_OP_SYNCE_GET_OUTPUT_PIN_CFG = 122,
+	VIRTCHNL_OP_SYNCE_SET_OUTPUT_PIN_CFG = 123,
+	VIRTCHNL_OP_SYNCE_GET_CGU_ABILITIES = 124,
+	VIRTCHNL_OP_SYNCE_GET_CGU_DPLL_STATUS = 125,
+	VIRTCHNL_OP_SYNCE_SET_CGU_DPLL_CONFIG = 126,
+	VIRTCHNL_OP_SYNCE_GET_CGU_INFO = 127,
+	VIRTCHNL_OP_SYNCE_GET_HW_INFO = 128,
+	VIRTCHNL_OP_GNSS_READ_I2C = 129,
+	VIRTCHNL_OP_GNSS_WRITE_I2C = 130,
 	VIRTCHNL_OP_HQOS_TREE_READ = 131,
 	VIRTCHNL_OP_HQOS_ELEMS_ADD = 132,
 	VIRTCHNL_OP_HQOS_ELEMS_DEL = 133,
@@ -298,6 +319,54 @@ static inline const char *virtchnl_op_str(enum virtchnl_ops v_opcode)
 		return "VIRTCHNL_OP_ENABLE_VLAN_FILTERING_V2";
 	case VIRTCHNL_OP_DISABLE_VLAN_FILTERING_V2:
 		return "VIRTCHNL_OP_DISABLE_VLAN_FILTERING_V2";
+	case VIRTCHNL_OP_1588_PTP_GET_CAPS:
+		return "VIRTCHNL_OP_1588_PTP_GET_CAPS";
+	case VIRTCHNL_OP_1588_PTP_GET_TIME:
+		return "VIRTCHNL_OP_1588_PTP_GET_TIME";
+	case VIRTCHNL_OP_1588_PTP_SET_TIME:
+		return "VIRTCHNL_OP_1588_PTP_SET_TIME";
+	case VIRTCHNL_OP_1588_PTP_ADJ_TIME:
+		return "VIRTCHNL_OP_1588_PTP_ADJ_TIME";
+	case VIRTCHNL_OP_1588_PTP_ADJ_FREQ:
+		return "VIRTCHNL_OP_1588_PTP_ADJ_FREQ";
+	case VIRTCHNL_OP_1588_PTP_TX_TIMESTAMP:
+		return "VIRTCHNL_OP_1588_PTP_TX_TIMESTAMP";
+	case VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS:
+		return "VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS";
+	case VIRTCHNL_OP_1588_PTP_SET_PIN_CFG:
+		return "VIRTCHNL_OP_1588_PTP_SET_PIN_CFG";
+	case VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP:
+		return "VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP";
+	case VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT:
+		return "VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT";
+	case VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT:
+		return "VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT";
+	case VIRTCHNL_OP_SYNCE_GET_CGU_REF_PRIO:
+		return "VIRTCHNL_OP_SYNCE_GET_CGU_REF_PRIO";
+	case VIRTCHNL_OP_SYNCE_SET_CGU_REF_PRIO:
+		return "VIRTCHNL_OP_SYNCE_SET_CGU_REF_PRIO";
+	case VIRTCHNL_OP_SYNCE_GET_INPUT_PIN_CFG:
+		return "VIRTCHNL_OP_SYNCE_GET_INPUT_PIN_CFG";
+	case VIRTCHNL_OP_SYNCE_SET_INPUT_PIN_CFG:
+		return "VIRTCHNL_OP_SYNCE_SET_INPUT_PIN_CFG";
+	case VIRTCHNL_OP_SYNCE_GET_OUTPUT_PIN_CFG:
+		return "VIRTCHNL_OP_SYNCE_GET_OUTPUT_PIN_CFG";
+	case VIRTCHNL_OP_SYNCE_SET_OUTPUT_PIN_CFG:
+		return "VIRTCHNL_OP_SYNCE_SET_OUTPUT_PIN_CFG";
+	case VIRTCHNL_OP_SYNCE_GET_CGU_ABILITIES:
+		return "VIRTCHNL_OP_SYNCE_GET_CGU_ABILITIES";
+	case VIRTCHNL_OP_SYNCE_GET_CGU_DPLL_STATUS:
+		return "VIRTCHNL_OP_SYNCE_GET_CGU_DPLL_STATUS";
+	case VIRTCHNL_OP_SYNCE_SET_CGU_DPLL_CONFIG:
+		return "VIRTCHNL_OP_SYNCE_SET_CGU_DPLL_CONFIG";
+	case VIRTCHNL_OP_SYNCE_GET_CGU_INFO:
+		return "VIRTCHNL_OP_SYNCE_GET_CGU_INFO";
+	case VIRTCHNL_OP_SYNCE_GET_HW_INFO:
+		return "VIRTCHNL_OP_SYNCE_GET_HW_INFO";
+	case VIRTCHNL_OP_GNSS_READ_I2C:
+		return "VIRTCHNL_OP_GNSS_READ_I2C";
+	case VIRTCHNL_OP_GNSS_WRITE_I2C:
+		return "VIRTCHNL_OP_GNSS_WRITE_I2C";
 	case VIRTCHNL_OP_ENABLE_QUEUES_V2:
 		return "VIRTCHNL_OP_ENABLE_QUEUES_V2";
 	case VIRTCHNL_OP_DISABLE_QUEUES_V2:
@@ -428,6 +497,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 #define VIRTCHNL_VF_OFFLOAD_L2			BIT(0)
 #define VIRTCHNL_VF_OFFLOAD_IWARP		BIT(1)
 #define VIRTCHNL_VF_CAP_RDMA			VIRTCHNL_VF_OFFLOAD_IWARP
+	/* BIT(2) is reserved to extend caps */
 #define VIRTCHNL_VF_OFFLOAD_RSS_AQ		BIT(3)
 #define VIRTCHNL_VF_OFFLOAD_RSS_REG		BIT(4)
 #define VIRTCHNL_VF_OFFLOAD_WB_ON_ITR		BIT(5)
@@ -437,6 +507,8 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 	/* BIT(8) is reserved */
 #define VIRTCHNL_VF_LARGE_NUM_QPAIRS		BIT(9)
 #define VIRTCHNL_VF_OFFLOAD_CRC			BIT(10)
+#define VIRTCHNL_VF_OFFLOAD_QGRPS		BIT(12)
+#define VIRTCHNL_VF_OFFLOAD_FLOW_STEER_TO_QGRP	BIT(13)
 #define VIRTCHNL_VF_OFFLOAD_FSUB_PF		BIT(14)
 #define VIRTCHNL_VF_OFFLOAD_VLAN_V2		BIT(15)
 #define VIRTCHNL_VF_OFFLOAD_VLAN		BIT(16)
@@ -454,7 +526,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 #define VIRTCHNL_VF_OFFLOAD_FDIR_PF		BIT(28)
 #define VIRTCHNL_VF_OFFLOAD_QOS			BIT(29)
 #define VIRTCHNL_VF_CAP_DCF			BIT(30)
-	/* BIT(31) is reserved */
+#define VIRTCHNL_VF_CAP_PTP			BIT(31)
 
 #define VF_BASE_MODE_OFFLOADS (VIRTCHNL_VF_OFFLOAD_L2 | \
 			       VIRTCHNL_VF_OFFLOAD_VLAN | \
@@ -470,10 +542,11 @@ struct virtchnl_vf_resource {
 	u32 rss_key_size;
 	u32 rss_lut_size;
 
-	struct virtchnl_vsi_resource vsi_res[1];
+	struct virtchnl_vsi_resource vsi_res[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(36, virtchnl_vf_resource);
+VIRTCHNL_CHECK_STRUCT_LEN(20, virtchnl_vf_resource);
+#define virtchnl_vf_resource_LEGACY_SIZEOF	36
 
 /* VIRTCHNL_OP_CONFIG_TX_QUEUE
  * VF sends this message to set up parameters for one TX queue.
@@ -533,6 +606,18 @@ enum virtchnl_rx_desc_id_bitmasks {
 	/* 22 through 63 are reserved */
 };
 
+/* virtchnl_rxq_info_flags
+ *
+ * Definition of bits in the flags field of the virtchnl_rxq_info structure.
+ */
+enum virtchnl_rxq_info_flags {
+	/* If the VIRTCHNL_PTP_RX_TSTAMP bit of the flag field is set, this is
+	 * a request to enable Rx timestamp. Other flag bits are currently
+	 * reserved and they may be extended in the future.
+	 */
+	VIRTCHNL_PTP_RX_TSTAMP = BIT(0),
+};
+
 /* VIRTCHNL_OP_CONFIG_RX_QUEUE
  * VF sends this message to set up parameters for one RX queue.
  * External data buffer contains one instance of virtchnl_rxq_info.
@@ -561,7 +646,8 @@ struct virtchnl_rxq_info {
 	 * with VIRTCHNL_RXDID_1_32B_BASE.
 	 */
 	u8 rxdid;
-	u8 pad1[2];
+	u8 flags; /* see virtchnl_rxq_info_flags */
+	u8 pad1;
 	u64 dma_ring_addr;
 
 	/* see enum virtchnl_rx_hsplit; deprecated with AVF 1.0 */
@@ -593,10 +679,11 @@ struct virtchnl_vsi_queue_config_info {
 	u16 vsi_id;
 	u16 num_queue_pairs;
 	u32 pad;
-	struct virtchnl_queue_pair_info qpair[1];
+	struct virtchnl_queue_pair_info qpair[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(72, virtchnl_vsi_queue_config_info);
+VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_vsi_queue_config_info);
+#define virtchnl_vsi_queue_config_info_LEGACY_SIZEOF	72
 
 /* VIRTCHNL_OP_REQUEST_QUEUES
  * VF sends this message to request the PF to allocate additional queues to
@@ -638,10 +725,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_vector_map);
 
 struct virtchnl_irq_map_info {
 	u16 num_vectors;
-	struct virtchnl_vector_map vecmap[1];
+	struct virtchnl_vector_map vecmap[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(14, virtchnl_irq_map_info);
+VIRTCHNL_CHECK_STRUCT_LEN(2, virtchnl_irq_map_info);
+#define virtchnl_irq_map_info_LEGACY_SIZEOF	14
 
 /* VIRTCHNL_OP_ENABLE_QUEUES
  * VIRTCHNL_OP_DISABLE_QUEUES
@@ -741,10 +829,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_ether_addr);
 struct virtchnl_ether_addr_list {
 	u16 vsi_id;
 	u16 num_elements;
-	struct virtchnl_ether_addr list[1];
+	struct virtchnl_ether_addr list[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_ether_addr_list);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_ether_addr_list);
+#define virtchnl_ether_addr_list_LEGACY_SIZEOF	12
 
 /* VIRTCHNL_OP_ADD_VLAN
  * VF sends this message to add one or more VLAN tag filters for receives.
@@ -763,10 +852,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_ether_addr_list);
 struct virtchnl_vlan_filter_list {
 	u16 vsi_id;
 	u16 num_elements;
-	u16 vlan_id[1];
+	u16 vlan_id[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_vlan_filter_list);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_vlan_filter_list);
+#define virtchnl_vlan_filter_list_LEGACY_SIZEOF	6
 
 /* This enum is used for all of the VIRTCHNL_VF_OFFLOAD_VLAN_V2_CAPS related
  * structures and opcodes.
@@ -1200,18 +1290,20 @@ struct virtchnl_eth_stats {
 struct virtchnl_rss_key {
 	u16 vsi_id;
 	u16 key_len;
-	u8 key[1];         /* RSS hash key, packed bytes */
+	u8 key[];          /* RSS hash key, packed bytes */
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_rss_key);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_rss_key);
+#define virtchnl_rss_key_LEGACY_SIZEOF	6
 
 struct virtchnl_rss_lut {
 	u16 vsi_id;
 	u16 lut_entries;
-	u8 lut[1];        /* RSS lookup table */
+	u8 lut[];         /* RSS lookup table */
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_rss_lut);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_rss_lut);
+#define virtchnl_rss_lut_LEGACY_SIZEOF	6
 
 /* enum virthcnl_hash_filter
  *
@@ -1281,6 +1373,8 @@ enum virtchnl_rss_algorithm {
  */
 #define VIRTCHNL_MAX_ADQ_CHANNELS 4
 #define VIRTCHNL_MAX_ADQ_V2_CHANNELS 16
+/* This is used by PF driver to enforce max supported channels */
+#define VIRTCHNL_MAX_QGRPS 16
 
 /* VIRTCHNL_OP_ENABLE_CHANNELS
  * VIRTCHNL_OP_DISABLE_CHANNELS
@@ -1962,6 +2056,36 @@ struct virtchnl_fdir_del {
 
 VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_fdir_del);
 
+#define __vss_full(p, member, count, old)				      \
+	(struct_size(p, member, count) + (old - struct_size(p, member, 0)))
+
+#define virtchnl_ss_vf_resource(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_vf_resource_LEGACY_SIZEOF)
+
+#define virtchnl_ss_vsi_queue_config_info(p, m, c)		      \
+	__vss_full(p, m, c, virtchnl_vsi_queue_config_info_LEGACY_SIZEOF)
+
+#define virtchnl_ss_irq_map_info(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_irq_map_info_LEGACY_SIZEOF)
+
+#define virtchnl_ss_ether_addr_list(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_ether_addr_list_LEGACY_SIZEOF)
+
+#define virtchnl_ss_vlan_filter_list(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_vlan_filter_list_LEGACY_SIZEOF)
+
+#define __vss_byone(p, member, count, old)				      \
+	(struct_size(p, member, count) + (old - 1 - struct_size(p, member, 0)))
+
+#define virtchnl_ss_byone(p, m, c, type)				      \
+	__vss_byone(p, m, c, type##_LEGACY_SIZEOF)
+
+#define virtchnl_ss_rss_key(p, m, c)				      \
+	virtchnl_ss_byone(p, m, c, virtchnl_rss_key)
+
+#define virtchnl_ss_rss_lut(p, m, c)				      \
+	virtchnl_ss_byone(p, m, c, virtchnl_rss_lut)
+
 /* Status returned to VF after VF requests FSUB commands
  * VIRTCHNL_FSUB_SUCCESS
  * VF FLOW related request is successfully done by PF
@@ -2188,6 +2312,1182 @@ struct virtchnl_quanta_cfg {
 
 VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_quanta_cfg);
 
+/* VIRTCHNL_VF_CAP_PTP
+ *   VIRTCHNL_OP_1588_PTP_GET_CAPS
+ *   VIRTCHNL_OP_1588_PTP_GET_TIME
+ *   VIRTCHNL_OP_1588_PTP_SET_TIME
+ *   VIRTCHNL_OP_1588_PTP_ADJ_TIME
+ *   VIRTCHNL_OP_1588_PTP_ADJ_FREQ
+ *   VIRTCHNL_OP_1588_PTP_TX_TIMESTAMP
+ *   VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS
+ *   VIRTCHNL_OP_1588_PTP_SET_PIN_CFG
+ *   VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP
+ *   VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT
+ *   VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT
+ *   VIRTCHNL_OP_SYNCE_GET_CGU_REF_PRIO
+ *   VIRTCHNL_OP_SYNCE_SET_CGU_REF_PRIO
+ *   VIRTCHNL_OP_SYNCE_GET_INPUT_PIN_CFG
+ *   VIRTCHNL_OP_SYNCE_SET_INPUT_PIN_CFG
+ *   VIRTCHNL_OP_SYNCE_GET_OUTPUT_PIN_CFG
+ *   VIRTCHNL_OP_SYNCE_SET_OUTPUT_PIN_CFG
+ *   VIRTCHNL_OP_SYNCE_GET_CGU_ABILITIES
+ *   VIRTCHNL_OP_SYNCE_GET_CGU_DPLL_STATUS
+ *   VIRTCHNL_OP_SYNCE_SET_CGU_DPLL_CONFIG
+ *   VIRTCHNL_OP_SYNCE_GET_CGU_INFO
+ *   VIRTCHNL_OP_SYNCE_GET_HW_INFO
+ *   VIRTCHNL_OP_GNSS_READ_I2C
+ *   VIRTCHNL_OP_GNSS_WRITE_I2C
+ *
+ * Support for offloading control of the device PTP hardware clock (PHC) is enabled
+ * by VIRTCHNL_VF_CAP_PTP. This capability allows a VF to request that PF
+ * enable Tx and Rx timestamps, and request access to read and/or write the
+ * PHC on the device, as well as query if the VF has direct access to the PHC
+ * time registers.
+ *
+ * The VF must set VIRTCHNL_VF_CAP_PTP in its capabilities when requesting
+ * resources. If the capability is set in reply, the VF must then send
+ * a VIRTCHNL_OP_1588_PTP_GET_CAPS request during initialization. The VF indicates
+ * what extended capabilities it wants by setting the appropriate flags in the
+ * caps field. The PF reply will indicate what features are enabled for
+ * that VF.
+ */
+#define VIRTCHNL_1588_PTP_CAP_TX_TSTAMP		BIT(0)
+#define VIRTCHNL_1588_PTP_CAP_RX_TSTAMP		BIT(1)
+#define VIRTCHNL_1588_PTP_CAP_READ_PHC		BIT(2)
+#define VIRTCHNL_1588_PTP_CAP_WRITE_PHC		BIT(3)
+#define VIRTCHNL_1588_PTP_CAP_PHC_REGS		BIT(4)
+#define VIRTCHNL_1588_PTP_CAP_PIN_CFG		BIT(5)
+#define VIRTCHNL_1588_PTP_CAP_SYNCE		BIT(6)
+#define VIRTCHNL_1588_PTP_CAP_GNSS		BIT(7)
+#define VIRTCHNL_1588_PTP_CAP_HARDWARE_CLOCK_ID	BIT(8)
+
+/**
+ * struct virtchnl_phc_regs
+ *
+ * Structure defines how the VF should access PHC related registers. The VF
+ * must request VIRTCHNL_1588_PTP_CAP_PHC_REGS. If the VF has access to PHC
+ * registers, the PF will reply with the capability flag set, and with this
+ * structure detailing what PCIe region and what offsets to use. If direct
+ * access is not available, this entire structure is reserved and the fields
+ * will be zero.
+ *
+ * If necessary in a future extension, a separate capability mutually
+ * exclusive with VIRTCHNL_1588_PTP_CAP_PHC_REGS might be used to change the
+ * entire format of this structure within virtchnl_ptp_caps.
+ *
+ * @clock_hi: Register offset of the high 32 bits of clock time
+ * @clock_lo: Register offset of the low 32 bits of clock time
+ * @pcie_region: The PCIe region the registers are located in.
+ * @rsvd: Reserved bits for future extension
+ */
+struct virtchnl_phc_regs {
+	u32 clock_hi;
+	u32 clock_lo;
+	u8 pcie_region;
+	u8 rsvd[15];
+};
+VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_phc_regs);
+
+/* timestamp format enumeration
+ *
+ * VIRTCHNL_1588_PTP_TSTAMP_40BIT
+ *
+ *   This format indicates a timestamp that uses the 40bit format from the
+ *   flexible Rx descriptors. It is also the default Tx timestamp format used
+ *   today.
+ *
+ *   Such a timestamp has the following 40bit format:
+ *
+ *   *--------------------------------*-------------------------------*-----------*
+ *   | 32 bits of time in nanoseconds | 7 bits of sub-nanosecond time | valid bit |
+ *   *--------------------------------*-------------------------------*-----------*
+ *
+ *   The timestamp is passed in a u64, with the upper 24bits of the field
+ *   reserved as zero.
+ *
+ *   With this format, in order to report a full 64bit timestamp to userspace
+ *   applications, the VF is responsible for performing timestamp extension by
+ *   carefully comparing the timestamp with the PHC time. This can correctly
+ *   be achieved with a recent cached copy of the PHC time by doing delta
+ *   comparison between the 32bits of nanoseconds in the timestamp with the
+ *   lower 32 bits of the clock time. For this to work, the cached PHC time
+ *   must be from within 2^31 nanoseconds (~2.1 seconds) of when the timestamp
+ *   was captured.
+ *
+ * VIRTCHNL_1588_PTP_TSTAMP_64BIT_NS
+ *
+ *   This format indicates a timestamp that is 64 bits of nanoseconds.
+ */
+enum virtchnl_ptp_tstamp_format {
+	VIRTCHNL_1588_PTP_TSTAMP_40BIT = 0,
+	VIRTCHNL_1588_PTP_TSTAMP_64BIT_NS = 1,
+};
+
+/**
+ * struct virtchnl_ptp_caps
+ *
+ * Structure that defines the PTP capabilities available to the VF. The VF
+ * sends VIRTCHNL_OP_1588_PTP_GET_CAPS, and must fill in the ptp_caps field
+ * indicating what capabilities it is requesting. The PF will respond with the
+ * same message with the virtchnl_ptp_caps structure indicating what is
+ * enabled for the VF.
+ *
+ * @phc_regs: If VIRTCHNL_1588_PTP_CAP_PHC_REGS is set, contains information
+ *            on the PHC related registers available to the VF.
+ * @caps: On send, VF sets what capabilities it requests. On reply, PF
+ *        indicates what has been enabled for this VF. The PF shall not set
+ *        bits which were not requested by the VF.
+ * @max_adj: The maximum adjustment capable of being requested by
+ *           VIRTCHNL_OP_1588_PTP_ADJ_FREQ, in parts per billion. Note that 1 ppb
+ *           is approximately 65.5 scaled_ppm. The PF shall clamp any
+ *           frequency adjustment in VIRTCHNL_op_1588_ADJ_FREQ to +/- max_adj.
+ *           Use of ppb in this field allows fitting the value into 4 bytes
+ *           instead of potentially requiring 8 if scaled_ppm units were used.
+ * @tx_tstamp_idx: The Tx timestamp index to set in the transmit descriptor
+ *                 when requesting a timestamp for an outgoing packet.
+ *                 Reserved if VIRTCHNL_1588_PTP_CAP_TX_TSTAMP is not enabled.
+ * @n_ext_ts: Number of external timestamp functions available. Reserved
+ *            if VIRTCHNL_1588_PTP_CAP_PIN_CFG is not enabled.
+ * @n_per_out: Number of periodic output functions available. Reserved if
+ *             VIRTCHNL_1588_PTP_CAP_PIN_CFG is not enabled.
+ * @n_pins: Number of physical programmable pins able to be controlled.
+ *          Reserved if VIRTCHNL_1588_PTP_CAP_PIN_CFG is not enabled.
+ * @tx_tstamp_format: Format of the Tx timestamps. Valid formats are defined
+ *                    by the virtchnl_ptp_tstamp enumeration. Note that Rx
+ *                    timestamps are tied to the descriptor format, and do not
+ *                    have a separate format field.
+ * @hardware_clock_id: An unique identifier of PTP Hardware Clock. Must be the
+ *                     same for all VFs on adapter that use the same PHC.
+ *                     Reserved if VIRTCHNL_1588_PTP_CAP_HARDWARE_CLOCK_ID is
+ *                     not enabled.
+ * @rsvd: Reserved bits for future extension.
+ *
+ * PTP capabilities
+ *
+ * VIRTCHNL_1588_PTP_CAP_TX_TSTAMP indicates that the VF can request transmit
+ * timestamps for packets in its transmit descriptors. If this is unset,
+ * transmit timestamp requests are ignored. Note that only one outstanding Tx
+ * timestamp request will be honored at a time. The PF shall handle receipt of
+ * the timestamp from the hardware, and will forward this to the VF by sending
+ * a VIRTCHNL_OP_1588_TX_TIMESTAMP message.
+ *
+ * VIRTCHNL_1588_PTP_CAP_RX_TSTAMP indicates that the VF receive queues have
+ * receive timestamps enabled in the flexible descriptors. Note that this
+ * requires a VF to also negotiate to enable advanced flexible descriptors in
+ * the receive path instead of the default legacy descriptor format.
+ *
+ * For a detailed description of the current Tx and Rx timestamp format, see
+ * the section on virtchnl_phc_tx_tstamp. Future extensions may indicate
+ * timestamp format in the capability structure.
+ *
+ * VIRTCHNL_1588_PTP_CAP_READ_PHC indicates that the VF may read the PHC time
+ * via the VIRTCHNL_OP_1588_PTP_GET_TIME command, or by directly reading PHC
+ * registers if VIRTCHNL_1588_PTP_CAP_PHC_REGS is also set.
+ *
+ * VIRTCHNL_1588_PTP_CAP_WRITE_PHC indicates that the VF may request updates
+ * to the PHC time via VIRTCHNL_OP_1588_PTP_SET_TIME,
+ * VIRTCHNL_OP_1588_PTP_ADJ_TIME, and VIRTCHNL_OP_1588_PTP_ADJ_FREQ.
+ *
+ * VIRTCHNL_1588_PTP_CAP_PHC_REGS indicates that the VF has direct access to
+ * certain PHC related registers, primarily for lower latency access to the
+ * PHC time. If this is set, the VF shall read the virtchnl_phc_regs section
+ * of the capabilities to determine the location of the clock registers. If
+ * this capability is not set, the entire 24 bytes of virtchnl_phc_regs is
+ * reserved as zero. Future extensions define alternative formats for this
+ * data, in which case they will be mutually exclusive with this capability.
+ *
+ * VIRTCHNL_1588_PTP_CAP_PIN_CFG indicates that the VF has the capability to
+ * control software defined pins. These pins can be assigned either as an
+ * input to timestamp external events, or as an output to cause a periodic
+ * signal output.
+ *
+ * VIRTCHNL_1588_PTP_CAP_SYNCE indicates that the VF has access to SyncE related
+ * capabilities. The first command the VF should issue is the
+ * VIRTCHNL_OP_SYNCE_GET_HW_INFO. It returns to VF all required HW details
+ * needed for further processing.
+ *
+ * VIRTCHNL_1588_PTP_CAP_GNSS indicates that the VF has access to GNSS related
+ * capabilities, i.e. Access onboard GNSS Module (if present) through I2C GNSS
+ * console for GNSS Configuration, Status, and NMEA Messages.
+ *
+ * VIRTCHNL_1588_PTP_CAP_HARDWARE_CLOCK_ID  indicates that PF is generating an
+ * unique hardware clock ID and sends it in @hardware_clock_id. It is needed by
+ * VFs to make sure there is only one PTP clock registered in kernel for each
+ * physical adapter.
+ *
+ * Note that in the future, additional capability flags may be added which
+ * indicate additional extended support. All fields marked as reserved by this
+ * header will be set to zero. VF implementations should verify this to ensure
+ * that future extensions do not break compatibility.
+ */
+struct virtchnl_ptp_caps {
+	struct virtchnl_phc_regs phc_regs;
+	u32 caps;
+	s32 max_adj;
+	u8 tx_tstamp_idx;
+	u8 n_ext_ts;
+	u8 n_per_out;
+	u8 n_pins;
+	/* see enum virtchnl_ptp_tstamp_format */
+	u8 tx_tstamp_format;
+	u8 hardware_clock_id;
+	u8 rsvd[10];
+};
+VIRTCHNL_CHECK_STRUCT_LEN(48, virtchnl_ptp_caps);
+
+/**
+ * struct virtchnl_phc_time
+ * @time: PHC time in nanoseconds
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_1588_PTP_SET_TIME and received with
+ * VIRTCHNL_OP_1588_PTP_GET_TIME. Contains the 64bits of PHC clock time in
+ * nanoseconds.
+ *
+ * VIRTCHNL_OP_1588_PTP_SET_TIME may be sent by the VF if
+ * VIRTCHNL_1588_PTP_CAP_WRITE_PHC is set. This will request that the PHC time
+ * be set to the requested value. This operation is non-atomic and thus does
+ * not adjust for the delay between request and completion. It is recommended
+ * that the VF use VIRTCHNL_OP_1588_PTP_ADJ_TIME and
+ * VIRTCHNL_OP_1588_PTP_ADJ_FREQ when possible to steer the PHC clock.
+ *
+ * VIRTCHNL_OP_1588_PTP_GET_TIME may be sent to request the current time of
+ * the PHC. This op is available in case direct access via the PHC registers
+ * is not available.
+ */
+struct virtchnl_phc_time {
+	u64 time;
+	u8 rsvd[8];
+};
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_phc_time);
+
+/**
+ * struct virtchnl_phc_adj_time
+ * @delta: offset requested to adjust clock by
+ * @rsvd: reserved for future extension
+ *
+ * Sent with VIRTCHNL_OP_1588_PTP_ADJ_TIME. Used to request an adjustment of
+ * the clock time by the provided delta, with negative values representing
+ * subtraction. VIRTCHNL_OP_1588_PTP_ADJ_TIME may not be sent unless
+ * VIRTCHNL_1588_PTP_CAP_WRITE_PHC is set.
+ *
+ * The atomicity of this operation is not guaranteed. The PF should perform an
+ * atomic update using appropriate mechanisms if possible. However, this is
+ * not guaranteed.
+ */
+struct virtchnl_phc_adj_time {
+	s64 delta;
+	u8 rsvd[8];
+};
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_phc_adj_time);
+
+/**
+ * struct virtchnl_phc_adj_freq
+ * @scaled_ppm: frequency adjustment represented in scaled parts per million
+ * @rsvd: Reserved for future extension
+ *
+ * Sent with the VIRTCHNL_OP_1588_PTP_ADJ_FREQ to request an adjustment to the
+ * clock frequency. The adjustment is in scaled_ppm, which is parts per
+ * million with a 16bit binary fractional portion. 1 part per billion is
+ * approximately 65.5 scaled_ppm.
+ *
+ *  ppm = scaled_ppm / 2^16
+ *
+ *  ppb = scaled_ppm * 1000 / 2^16 or
+ *
+ *  ppb = scaled_ppm * 125 / 2^13
+ *
+ * The PF shall clamp any adjustment request to plus or minus the specified
+ * max_adj in the PTP capabilities.
+ *
+ * Requests for adjustment are always based off of nominal clock frequency and
+ * not compounding. To reset clock frequency, send a request with a scaled_ppm
+ * of 0.
+ */
+struct virtchnl_phc_adj_freq {
+	s64 scaled_ppm;
+	u8 rsvd[8];
+};
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_phc_adj_freq);
+
+/**
+ * struct virtchnl_phc_tx_stamp
+ * @tstamp: timestamp value
+ * @rsvd: Reserved for future extension
+ *
+ * Sent along with VIRTCHNL_OP_1588_PTP_TX_TIMESTAMP from the PF when a Tx
+ * timestamp for the index associated with this VF in the tx_tstamp_idx field
+ * is captured by hardware.
+ *
+ * If VIRTCHNL_1588_PTP_CAP_TX_TSTAMP is set, the VF may request a timestamp
+ * for a packet in its transmit context descriptor by setting the appropriate
+ * flag and setting the timestamp index provided by the PF. On transmission,
+ * the timestamp will be captured and sent to the PF. The PF will forward this
+ * timestamp to the VF via the VIRTCHNL_1588_PTP_CAP_TX_TSTAMP op.
+ *
+ * The timestamp format is defined by the tx_tstamp_format field of the
+ * virtchnl_ptp_caps structure.
+ */
+struct virtchnl_phc_tx_tstamp {
+	u64 tstamp;
+	u8 rsvd[8];
+};
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_phc_tx_tstamp);
+
+enum virtchnl_phc_pin_func {
+	VIRTCHNL_PHC_PIN_FUNC_NONE = 0, /* Not assigned to any function */
+	VIRTCHNL_PHC_PIN_FUNC_EXT_TS = 1, /* Assigned to external timestamp */
+	VIRTCHNL_PHC_PIN_FUNC_PER_OUT = 2, /* Assigned to periodic output */
+};
+
+/* Length of the pin configuration data. All pin configurations belong within
+ * the same union and *must* have this length in bytes.
+ */
+#define VIRTCHNL_PIN_CFG_LEN 64
+
+/* virtchnl_phc_ext_ts_mode
+ *
+ * Mode of the external timestamp, indicating which edges of the input signal
+ * to timestamp.
+ */
+enum virtchnl_phc_ext_ts_mode {
+	VIRTCHNL_PHC_EXT_TS_NONE = 0,
+	VIRTCHNL_PHC_EXT_TS_RISING_EDGE = 1,
+	VIRTCHNL_PHC_EXT_TS_FALLING_EDGE = 2,
+	VIRTCHNL_PHC_EXT_TS_BOTH_EDGES = 3,
+};
+
+/**
+ * struct virtchnl_phc_ext_ts
+ * @mode: mode of external timestamp request
+ * @rsvd: reserved for future extension
+ *
+ * External timestamp configuration. Defines the configuration for this
+ * external timestamp function.
+ *
+ * If mode is VIRTCHNL_PHC_EXT_TS_NONE, the function is essentially disabled,
+ * timestamping nothing.
+ *
+ * If mode is VIRTCHNL_PHC_EXT_TS_RISING_EDGE, the function shall timestamp
+ * the rising edge of the input when it transitions from low to high signal.
+ *
+ * If mode is VIRTCHNL_PHC_EXT_TS_FALLING_EDGE, the function shall timestamp
+ * the falling edge of the input when it transitions from high to low signal.
+ *
+ * If mode is VIRTCHNL_PHC_EXT_TS_BOTH_EDGES, the function shall timestamp
+ * both the rising and falling edge of the signal whenever it changes.
+ *
+ * The PF shall return an error if the requested mode cannot be implemented on
+ * the function.
+ */
+struct virtchnl_phc_ext_ts {
+	u8 mode; /* see virtchnl_phc_ext_ts_mode */
+	u8 rsvd[63];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(VIRTCHNL_PIN_CFG_LEN, virtchnl_phc_ext_ts);
+
+/* virtchnl_phc_per_out_flags
+ *
+ * Flags defining periodic output functionality.
+ */
+enum virtchnl_phc_per_out_flags {
+	VIRTCHNL_PHC_PER_OUT_PHASE_START = BIT(0),
+};
+
+/**
+ * struct virtchnl_phc_per_out
+ * @start: absolute start time (if VIRTCHNL_PHC_PER_OUT_PHASE_START unset)
+ * @phase: phase offset to start (if VIRTCHNL_PHC_PER_OUT_PHASE_START set)
+ * @period: time to complete a full clock cycle (low - > high -> low)
+ * @on: length of time the signal should stay high
+ * @flags: flags defining the periodic output operation.
+ * @rsvd: reserved for future extension
+ *
+ * Configuration for a periodic output signal. Used to define the signal that
+ * should be generated on a given function.
+ *
+ * The period field determines the full length of the clock cycle, including
+ * both duration hold high transition and duration to hold low transition in
+ * nanoseconds.
+ *
+ * The on field determines how long the signal should remain high. For
+ * a traditional square wave clock that is on for some duration and off for
+ * the same duration, use an on length of precisely half the period. The duty
+ * cycle of the clock is period/on.
+ *
+ * If VIRTCHNL_PHC_PER_OUT_PHASE_START is unset, then the request is to start
+ * a clock an absolute time. This means that the clock should start precisely
+ * at the specified time in the start field. If the start time is in the past,
+ * then the periodic output should start at the next valid multiple of the
+ * period plus the start time:
+ *
+ *   new_start = (n * period) + start
+ *     (choose n such that new start is in the future)
+ *
+ * Note that the PF should not reject a start time in the past because it is
+ * possible that such a start time was valid when the request was made, but
+ * became invalid due to delay in programming the pin.
+ *
+ * If VIRTCHNL_PHC_PER_OUT_PHASE_START is set, then the request is to start
+ * the next multiple of the period plus the phase offset. The phase must be
+ * less than the period. In this case, the clock should start as soon possible
+ * at the next available multiple of the period. To calculate a start time
+ * when programming this mode, use:
+ *
+ *   start = (n * period) + phase
+ *     (choose n such that start is in the future)
+ *
+ * A period of zero should be treated as a request to disable the clock
+ * output.
+ */
+struct virtchnl_phc_per_out {
+	union {
+		u64 start;
+		u64 phase;
+	};
+	u64 period;
+	u64 on;
+	u32 flags;
+	u8 rsvd[36];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(VIRTCHNL_PIN_CFG_LEN, virtchnl_phc_per_out);
+
+/* virtchnl_phc_pin_cfg_flags
+ *
+ * Definition of bits in the flags field of the virtchnl_phc_pin_cfg
+ * structure.
+ */
+enum virtchnl_phc_pin_cfg_flags {
+	/* Valid for VIRTCHNL_OP_1588_PTP_SET_PIN_CFG. If set, indicates this
+	 * is a request to verify if the function can be assigned to the
+	 * provided pin. In this case, the ext_ts and per_out fields are
+	 * ignored, and the PF response must be an error if the pin cannot be
+	 * assigned to that function index.
+	 */
+	VIRTCHNL_PHC_PIN_CFG_VERIFY = BIT(0),
+};
+
+/**
+ * struct virtchnl_phc_set_pin
+ * @flags: flags defining the bits to cfg pin
+ * @pin_index: The pin to get or set
+ * @func: the function type the pin is assigned to
+ * @func_index: the index of the function the pin is assigned to
+ * @ext_ts: external timestamp configuration
+ * @per_out: periodic output configuration
+ * @rsvd1: Reserved for future extension
+ * @rsvd2: Reserved for future extension
+ *
+ * Sent along with the VIRTCHNL_OP_1588_PTP_SET_PIN_CFG op.
+ *
+ * The VF issues a VIRTCHNL_OP_1588_PTP_SET_PIN_CFG to assign the pin to one
+ * of the functions. It must set the pin_index field, the func field, and
+ * the func_index field. The pin_index must be less than n_pins, and the
+ * func_index must be less than the n_ext_ts or n_per_out depending on which
+ * function type is selected. If func is for an external timestamp, the
+ * ext_ts field must be filled in with the desired configuration. Similarly,
+ * if the function is for a periodic output, the per_out field must be
+ * configured.
+ *
+ * If the VIRTCHNL_PHC_PIN_CFG_VERIFY bit of the flag field is set, this is
+ * a request only to verify the configuration, not to set it. In this case,
+ * the PF should simply report an error if the requested pin cannot be
+ * assigned to the requested function. This allows VF to determine whether or
+ * not a given function can be assigned to a specific pin. Other flag bits are
+ * currently reserved and must be verified as zero on both sides. They may be
+ * extended in the future.
+ */
+struct virtchnl_phc_set_pin {
+	u32 flags; /* see virtchnl_phc_pin_cfg_flags */
+	u8 pin_index;
+	u8 func; /* see virtchnl_phc_pin_func */
+	u8 func_index;
+	u8 rsvd1;
+	union {
+		struct virtchnl_phc_ext_ts ext_ts;
+		struct virtchnl_phc_per_out per_out;
+	};
+	u8 rsvd2[8];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(80, virtchnl_phc_set_pin);
+
+/**
+ * struct virtchnl_phc_pin
+ * @pin_index: The pin to get or set
+ * @func: the function type the pin is assigned to
+ * @func_index: the index of the function the pin is assigned to
+ * @rsvd: Reserved for future extension
+ * @name: human readable pin name, supplied by PF on GET_PIN_CFGS
+ *
+ * Sent by the PF as part of the VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS response.
+ *
+ * The VF issues a VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS request to the PF in
+ * order to obtain the current pin configuration for all of the pins that were
+ * assigned to this VF.
+ *
+ * This structure details the pin configuration state, including a pin name
+ * and which function is assigned to the pin currently.
+ */
+struct virtchnl_phc_pin {
+	u8 pin_index;
+	u8 func; /* see virtchnl_phc_pin_func */
+	u8 func_index;
+	u8 rsvd[5];
+	char name[64];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(72, virtchnl_phc_pin);
+
+/**
+ * struct virtchnl_phc_get_pins
+ * @len: length of the variable pin config array
+ * @pins: variable length pin configuration array
+ * @rsvd: reserved for future extension
+ *
+ * Variable structure sent by the PF in reply to
+ * VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS. The VF does not send this structure with
+ * its request of the operation.
+ *
+ * It is possible that the PF may need to send more pin configuration data
+ * than can be sent in one virtchnl message. To handle this, the PF should
+ * issue multiple VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS responses. Each response
+ * will indicate the number of pins it covers. The VF should be ready to wait
+ * for multiple responses until it has received a total length equal to the
+ * number of n_pins negotiated during extended PTP capabilities exchange.
+ */
+struct virtchnl_phc_get_pins {
+	u8 len;
+	u8 rsvd[7];
+	struct virtchnl_phc_pin pins[1];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(80, virtchnl_phc_get_pins);
+
+/**
+ * struct virtchnl_phc_ext_stamp
+ * @tstamp: timestamp value
+ * @tstamp_rsvd: Reserved for future extension of the timestamp value.
+ * @tstamp_format: format of the timstamp
+ * @func_index: external timestamp function this timestamp is for
+ * @rsvd2: Reserved for future extension
+ *
+ * Sent along with the VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP from the PF when an
+ * external timestamp function is triggered.
+ *
+ * This will be sent only if one of the external timestamp functions is
+ * configured by the VF, and is only valid if VIRTCHNL_1588_PTP_CAP_PIN_CFG is
+ * negotiated with the PF.
+ *
+ * The timestamp format is defined by the tstamp_format field using the
+ * virtchnl_ptp_tstamp_format enumeration. The tstamp_rsvd field is
+ * exclusively reserved for possible future variants of the timestamp format,
+ * and its access will be controlled by the tstamp_format field.
+ */
+struct virtchnl_phc_ext_tstamp {
+	u64 tstamp;
+	u8 tstamp_rsvd[8];
+	u8 tstamp_format;
+	u8 func_index;
+	u8 rsvd2[6];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_phc_ext_tstamp);
+
+/**
+ * virtchnl_synce_get_phy_rec_clk_out
+ * @phy_output: PHY reference clock output pin
+ * @port_num: Port number
+ * @flags: PHY flags
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT. This command reads
+ * the mapping of the Ethernet lanes to the recovered clocks. The request is
+ * acceptable only when VF negotiated VIRTCHNL_1588_PTP_CAP_SYNCE capability
+ * with PF.
+ *
+ * The VF driver sets phy_output to choose CGU pin. In response the PF driver
+ * sends the same structure with the same opcode.
+ *
+ * The VF driver can also set port_num to 0xFF to check if the PHY output is
+ * driven by the PF that sends that command.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_get_phy_rec_clk_out {
+	u8 phy_output;
+	u8 port_num;
+#define VIRTCHNL_GET_PHY_REC_CLK_OUT_CURR_PORT	0xFF
+	u8 flags;
+#define VIRTCHNL_GET_PHY_REC_CLK_OUT_OUT_EN	BIT(0)
+	u8 rsvd[13];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_get_phy_rec_clk_out);
+
+/**
+ * virtchnl_synce_set_phy_rec_clk_out
+ * @phy_output: PHY reference clock output pin
+ * @enable: GPIO state to be applied
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT. The command maps
+ * any of the four Ethernet lanes (PHY Port number) onto the two recovered
+ * clocks (Phy output). The request is acceptable only when VF negotiated
+ * VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * The VF driver specifies either SCL or SDA pin in phy_output and whether to
+ * enable(1) or disable(0) the given pin in enable variable.
+ * In response the PF driver sends back the same structure with the same opcode.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_set_phy_rec_clk_out {
+	u8 phy_output;
+	u8 enable;
+	u8 rsvd[14];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_set_phy_rec_clk_out);
+
+/**
+ * virtchnl_synce_get_cgu_ref_prio
+ * @dpll_num: DPLL index
+ * @ref_idx: Reference pin index
+ * @ref_priority: Reference input priority
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_GET_CGU_REF_PRIO. The command reads
+ * the currently configured priority of the selected reference clock for a given
+ * DPLL block within a given Clock Controller (DPLL) node. The request is
+ * acceptable only when VF negotiated VIRTCHNL_1588_PTP_CAP_SYNCE capability
+ * with PF.
+ *
+ * The VF driver should set dpll_num and ref_idx to choose the pin for which
+ * the ref_priority will be returned. In response the PF driver sends the same
+ * structure with the same opcode with ref_priority filled.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_get_cgu_ref_prio {
+	u8 dpll_num;
+	u8 ref_idx;
+	u8 ref_priority;
+	u8 rsvd[13];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_get_cgu_ref_prio);
+
+/**
+ * virtchnl_synce_set_cgu_ref_prio
+ * @dpll_num: DPLL index
+ * @ref_idx: Reference pin index
+ * @ref_priority: Reference input priority
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_SET_CGU_REF_PRIO. The command
+ * configures the priority of the selected Input Index within a given DPLL block
+ * of CCU node. The request is acceptable only when VF negotiated
+ * VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * The VF driver should set dpll_num and ref_idx to choose the pin and
+ * ref_priority to be applied to given pin. In response the PF driver sends the
+ * same structure with the same opcode.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_set_cgu_ref_prio {
+	u8 dpll_num;
+	u8 ref_idx;
+	u8 ref_priority;
+	u8 rsvd[13];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_set_cgu_ref_prio);
+
+/**
+ * virtchnl_synce_get_input_pin_cfg
+ * @freq: Frequency of the reference clock input
+ * @phase_delay: Phase compensation for the reference clock input
+ * @input_idx: CGU pin index
+ * @status: Status flags
+ * @type: Input type flags
+ * @flags1: First set of flags
+ * @flags2: Second set of flags
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_GET_INPUT_PIN_CFG. The command reads
+ * the current configuration of the specified reference clock input of a given
+ * Clock Controller (DPLL) node. The request is acceptable only when VF
+ * negotiated VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * The VF driver should set input_idx to choose CGU pin for which the
+ * configuration will be returned. In response the PF driver sends the same
+ * structure with the same opcode with the remaining fields filled.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_get_input_pin_cfg {
+	u32 freq;
+	u32 phase_delay;
+	u8 input_idx;
+	u8 status;
+#define VIRTCHNL_GET_CGU_IN_CFG_STATUS_LOS		BIT(0)
+#define VIRTCHNL_GET_CGU_IN_CFG_STATUS_SCM_FAIL		BIT(1)
+#define VIRTCHNL_GET_CGU_IN_CFG_STATUS_CFM_FAIL		BIT(2)
+#define VIRTCHNL_GET_CGU_IN_CFG_STATUS_GST_FAIL		BIT(3)
+#define VIRTCHNL_GET_CGU_IN_CFG_STATUS_PFM_FAIL		BIT(4)
+#define VIRTCHNL_GET_CGU_IN_CFG_STATUS_ESYNC_FAIL	BIT(6)
+#define VIRTCHNL_GET_CGU_IN_CFG_STATUS_ESYNC_CAP	BIT(7)
+	u8 type;
+#define VIRTCHNL_GET_CGU_IN_CFG_TYPE_READ_ONLY		BIT(0)
+#define VIRTCHNL_GET_CGU_IN_CFG_TYPE_GPS		BIT(4)
+#define VIRTCHNL_GET_CGU_IN_CFG_TYPE_EXTERNAL		BIT(5)
+#define VIRTCHNL_GET_CGU_IN_CFG_TYPE_PHY		BIT(6)
+	u8 flags1;
+#define VIRTCHNL_GET_CGU_IN_CFG_FLG1_PHASE_DELAY_SUPP	BIT(0)
+#define VIRTCHNL_GET_CGU_IN_CFG_FLG1_1PPS_SUPP		BIT(2)
+#define VIRTCHNL_GET_CGU_IN_CFG_FLG1_10MHZ_SUPP		BIT(3)
+#define VIRTCHNL_GET_CGU_IN_CFG_FLG1_ANYFREQ		BIT(7)
+	u8 flags2;
+#define VIRTCHNL_GET_CGU_IN_CFG_FLG2_INPUT_EN		BIT(5)
+#define VIRTCHNL_GET_CGU_IN_CFG_FLG2_ESYNC_EN		BIT(6)
+#define VIRTCHNL_GET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN_SHIFT	6
+#define VIRTHCNL_GET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN \
+	ICE_M(0x3, VIRTCHNL_GET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN_SHIFT)
+#define VIRTCHNL_GET_CGU_IN_CFG_ESYNC_DIS			0
+#define VIRTCHNL_GET_CGU_IN_CFG_ESYNC_EN			1
+#define VIRTCHNL_GET_CGU_IN_CFG_REFSYNC_EN			2
+	u8 rsvd[3];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_get_input_pin_cfg);
+
+/**
+ * virtchnl_synce_set_input_pin_cfg
+ * @freq: Frequency of the reference clock input
+ * @phase_delay: Phase compensation for the reference clock input
+ * @input_idx: CGU pin index
+ * @flags1: First set of flags
+ * @flags2: Second set of flags
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_SET_INPUT_PIN_CFG. The command
+ * configures the specified reference clock input of a given Clock Controller
+ * (DPLL) node. The request is acceptable only when VF negotiated
+ * VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * The VF driver should set input_idx to choose CGU pin and the rest of fields
+ * according to the required configuration. In response the PF driver sends the
+ * same structure with the same opcode.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_set_input_pin_cfg {
+	u32 freq;
+	u32 phase_delay;
+	u8 input_idx;
+	u8 flags1;
+#define VIRTCHNL_SET_CGU_IN_CFG_FLG1_UPDATE_FREQ	BIT(6)
+#define VIRTCHNL_SET_CGU_IN_CFG_FLG1_UPDATE_DELAY	BIT(7)
+	u8 flags2;
+#define VIRTCHNL_SET_CGU_IN_CFG_FLG2_INPUT_EN		BIT(5)
+#define VIRTCHNL_SET_CGU_IN_CFG_FLG2_ESYNC_EN		BIT(6)
+#define VIRTCHNL_SET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN_SHIFT	6
+#define VIRTCHNL_SET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN \
+	ICE_M(0x3, ICE_AQC_SET_CGU_IN_CFG_FLG2_ESYNC_REFSYNC_EN_SHIFT)
+#define VIRTCHNL_SET_CGU_IN_CFG_ESYNC_DIS			0
+#define VIRTCHNL_SET_CGU_IN_CFG_ESYNC_EN			1
+#define VIRTCHNL_SET_CGU_IN_CFG_REFSYNC_EN			2
+	u8 rsvd[5];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_set_input_pin_cfg);
+
+/**
+ * virtchnl_synce_get_output_pin_cfg
+ * @freq: Output frequency
+ * @src_freq: Source frequency
+ * @output_idx: Output pin index
+ * @flags: Output flags
+ * @src_sel: Internal DPLL source
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_GET_OUTPUT_PIN_CFG. The command reads
+ * the current frequency, phase compensation and embedded sync configuration
+ * of the specified clock output of a given Clock Controller (DPLL) node.
+ * The request is acceptable only when VF negotiated
+ * VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * The VF driver should set output_idx to choose CGU pin and the rest of fields
+ * according to the required configuration. In response the PF driver sends the
+ * same structure with the same opcode.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_get_output_pin_cfg {
+	u32 freq;
+	u32 src_freq;
+	u8 output_idx;
+	u8 flags;
+#define VIRTCHNL_GET_CGU_OUT_CFG_OUT_EN		BIT(0)
+#define VIRTCHNL_GET_CGU_OUT_CFG_ESYNC_EN	BIT(1)
+#define VIRTCHNL_GET_CGU_OUT_CFG_ESYNC_ABILITY	BIT(2)
+	u8 src_sel;
+#define VIRTCHNL_GET_CGU_OUT_CFG_DPLL_SRC_SEL_SHIFT	0
+#define VIRTCHNL_GET_CGU_OUT_CFG_DPLL_SRC_SEL \
+	(0x1F << VIRTCHNL_GET_CGU_OUT_CFG_DPLL_SRC_SEL_SHIFT)
+#define VIRTCHNL_GET_CGU_OUT_CFG_DPLL_MODE_SHIFT	5
+#define VIRTCHNL_GET_CGU_OUT_CFG_DPLL_MODE \
+	(0x7 << VIRTCHNL_GET_CGU_OUT_CFG_DPLL_MODE_SHIFT)
+	u8 rsvd[5];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_get_output_pin_cfg);
+
+/**
+ * virtchnl_synce_set_output_pin_cfg
+ * @freq: Output frequency
+ * @phase_delay: Output phase compensation
+ * @output_idx: Output pin index
+ * @flags: Output flags
+ * @src_sel: Internal DPLL source
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_SET_OUTPUT_PIN_CFG. The command
+ * configures the specified reference clock input of a given Clock Controller
+ * (DPLL) node. The request is acceptable only when VF negotiated
+ * VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * The VF driver should set output_idx to choose CGU pin and the rest of fields
+ * according to the required configuration. In response the PF driver sends the
+ * same structure with the same opcode.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_set_output_pin_cfg {
+	u32 freq;
+	u32 phase_delay;
+	u8 output_idx;
+	u8 flags;
+#define VIRTCHNL_SET_CGU_OUT_CFG_OUT_EN		BIT(0)
+#define VIRTCHNL_SET_CGU_OUT_CFG_ESYNC_EN	BIT(1)
+#define VIRTCHNL_SET_CGU_OUT_CFG_UPDATE_FREQ	BIT(2)
+#define VIRTCHNL_SET_CGU_OUT_CFG_UPDATE_PHASE	BIT(3)
+#define VIRTCHNL_SET_CGU_OUT_CFG_UPDATE_SRC_SEL	BIT(4)
+	u8 src_sel;
+#define VIRTCHNL_SET_CGU_OUT_CFG_DPLL_SRC_SEL	0x1F
+	u8 rsvd[5];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_set_output_pin_cfg);
+
+/**
+ * virtchnl_synce_get_cgu_abilities
+ * @num_inputs: Number of Clock Controller inputs
+ * @num_outputs: Number of Clock Controller outputs
+ * @pps_dpll_idx: The index of a PPS DPLL block in the CCU
+ * @synce_dpll_idx: The index of a SyncE DPLL block in the CCU
+ * @max_in_freq: Maximum Input Frequency
+ * @max_in_phase_adj: Maximum Input Phase Adjustment
+ * @max_out_freq: Maximum Output Frequency
+ * @max_out_phase_adj: Maximum Output Phase Adjustment
+ * @cgu_part_num: Clock Controller Part Number
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_GET_CGU_ABILITIES. The command reads
+ * the capabilities of the CC. If the value is not defined or cannot be
+ * evaluated, then it shall be 0xFF for 8-bit fields and 0xFFFFFFFF for 32-bit
+ * fields. The request is acceptable only when VF negotiated
+ * VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * The VF driver sends an empty message to the PF driver. In response the PF
+ * driver sends the virtchnl_synce_get_cgu_abilities structure.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_get_cgu_abilities {
+	u8 num_inputs;
+	u8 num_outputs;
+	u8 pps_dpll_idx;
+	u8 synce_dpll_idx;
+	u32 max_in_freq;
+	u32 max_in_phase_adj;
+	u32 max_out_freq;
+	u32 max_out_phase_adj;
+	u8 cgu_part_num;
+	u8 rsvd[3];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_synce_get_cgu_abilities);
+
+/**
+ * virtchnl_synce_get_cgu_dpll_status
+ * @phase_offset: Phase offset in ns
+ * @dpll_state: DPLL state
+ * @dpll_num: DPLL index
+ * @ref_state: Reference clock state
+ * @eec_mode: EEC Mode - The configured clock quality level
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_GET_CGU_DPLL_STATUS. The command reads
+ * the selected DPLL block status within the selected CCU node. The request is
+ * acceptable only when VF negotiated VIRTCHNL_1588_PTP_CAP_SYNCE capability
+ * with PF.
+ *
+ * The VF driver chooses in dpll_num which DPLL block it wants to read.
+ * In response the PF driver fills the remaining fields in structure and sends
+ * to VF with the same opcode.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_get_cgu_dpll_status {
+	s64 phase_offset;
+	u16 dpll_state;
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_LOCK			BIT(0)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_HO			BIT(1)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_HO_READY		BIT(2)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_FLHIT		BIT(5)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_PSLHIT		BIT(7)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SHIFT	8
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SEL	\
+	(0x1F << VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SHIFT)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_MODE_SHIFT		13
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_MODE \
+	(0x7 << VIRTCHNL_GET_CGU_DPLL_STATUS_STATE_MODE_SHIFT)
+	u8 dpll_num;
+	u8 ref_state;
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_REF_SW_LOS			BIT(0)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_REF_SW_SCM			BIT(1)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_REF_SW_CFM			BIT(2)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_REF_SW_GST			BIT(3)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_REF_SW_PFM			BIT(4)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_FAST_LOCK_EN		BIT(5)
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_REF_SW_ESYNC		BIT(6)
+	u8 eec_mode;
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_EEC_MODE_1			0xA
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_EEC_MODE_2			0xB
+#define VIRTCHNL_GET_CGU_DPLL_STATUS_EEC_MODE_UNKNOWN		0xF
+	u8 rsvd[11];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_synce_get_cgu_dpll_status);
+
+/**
+ * virtchnl_synce_set_cgu_dpll_config
+ * @dpll_num: DPLL index
+ * @ref_state: Reference clock state
+ * @config: DPLL config
+ * @eec_mode: EEC Mode - The configured clock quality level
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_SET_CGU_DPLL_CONFIG. The command
+ * configures the selected DPLL block within the selected CCU node. The request
+ * is acceptable only when VF negotiated VIRTCHNL_1588_PTP_CAP_SYNCE
+ * capability with PF.
+ *
+ * The VF driver chooses in dpll_num which DPLL block it wants to configure.
+ * The PF driver applies the given configuration and returns unchanged structure
+ * to the VF.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_set_cgu_dpll_config {
+	u8 dpll_num;
+	u8 ref_state;
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_REF_SW_LOS		BIT(0)
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_REF_SW_SCM		BIT(1)
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_REF_SW_CFM		BIT(2)
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_REF_SW_GST		BIT(3)
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_REF_SW_PFM		BIT(4)
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_REF_FLOCK_EN	BIT(5)
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_REF_SW_ESYNC	BIT(6)
+	u8 config;
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_CLK_REF_SEL	0x1F
+#define VIRTCHNL_SET_CGU_DPLL_CONFIG_MODE		(0x7 << 5)
+	u8 eec_mode;
+	u8 rsvd[12];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_set_cgu_dpll_config);
+
+/**
+ * virtchnl_synce_get_cgu_info
+ * @cgu_id: CGU ID
+ * @cgu_cfg_ver: CGU config version
+ * @cgu_fw_ver: CGU firmware version
+ * @rsvd: Reserved for future extension
+ *
+ * Structure sent with VIRTCHNL_OP_SYNCE_GET_CGU_INFO. The command retrieves
+ * information about CCU. If parameter is unsupported, then it should contain
+ * 0xFFFFFFFF for 32-bit values or 0xFF for 8-bit values. The request is
+ * acceptable only when VF negotiated VIRTCHNL_1588_PTP_CAP_SYNCE capability
+ * with PF.
+ *
+ * The VF driver sends an empty message to the PF driver. In response the PF
+ * driver sends the virtchnl_synce_get_cgu_info structure.
+ *
+ * If the Admin Queue command returns an error the PF will return
+ * VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR with unchanged structure to VF.
+ */
+struct virtchnl_synce_get_cgu_info {
+	u32 cgu_id;
+	u32 cgu_cfg_ver;
+	u32 cgu_fw_ver;
+	u8 rsvd[4];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_synce_get_cgu_info);
+
+/**
+ * virtchnl_cgu_pin
+ * @pin_index: Pin index to use in all functions
+ * @name: Human readable pin name
+ *
+ * Structure used as a part of VIRTCHNL_OP_SYNCE_GET_HW_INFO request.
+ * The VF issues a VIRTCHNL_OP_SYNCE_GET_HW_INFO request to the PF in
+ * order to obtain the list of available CGU pins.
+ */
+struct virtchnl_cgu_pin {
+	u8 pin_index;
+	char name[63];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(64, virtchnl_cgu_pin);
+
+/**
+ * virtchnl_synce_get_hw_info
+ * @cgu_present: True if CGU is present
+ * @rclk_present: True is PHY recovered clock is present
+ * @c827_idx: C827 index for the current port
+ * @len: Length of the variable CGU pins array
+ * @rsvd: Reserved for future extension
+ * @pins: Variable length CGU pins array
+ *
+ * Variable structure sent by the PF in reply to VIRTCHNL_OP_SYNCE_GET_HW_INFO.
+ * The VF does not send this structure with its request of the operation.
+ * The request is acceptable only when VF negotiated
+ * VIRTCHNL_1588_PTP_CAP_SYNCE capability with PF.
+ *
+ * If this opcode returns error status the VF should assume it does not have
+ * access to any other SyncE commands.
+ */
+struct virtchnl_synce_get_hw_info {
+	u8 cgu_present;
+	u8 rclk_present;
+	u8 c827_idx;
+	u8 len;
+	u8 rsvd[4];
+	struct virtchnl_cgu_pin pins[1];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(72, virtchnl_synce_get_hw_info);
+
+/**
+ * virtchnl_link_topo_params
+ * @lport_num: link port number
+ * @lport_num_valid: link port number validity
+ * @node_type_ctx: node type & context
+ * @index: node index
+ *
+ * Structure used as part of virtchnl_link_topo_addr with gnss I2C read or write
+ * request. VF sets this structure field for GNSS I2C console Node, PF passes it
+ * on to AdminQ.
+ */
+struct virtchnl_link_topo_params {
+	u8 lport_num;
+	u8 lport_num_valid;
+	u8 node_type_ctx;
+#define VIRTCHNL_LINK_TOPO_NODE_TYPE_GPS	11
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_S		4
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_M		\
+				(0xF << VIRTCHNL_LINK_TOPO_NODE_CTX_S)
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_GLOBAL	0
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_BOARD	1
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_PORT	2
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_NODE	3
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_PROVIDED	4
+#define VIRTCHNL_LINK_TOPO_NODE_CTX_OVERRIDE	5
+	u8 index;
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_link_topo_params);
+
+/**
+ * virtchnl_link_topo_addr
+ * @topo_params: link topo parameters
+ * @handle: link topo handle (board type, mezzaine / lom Type)
+ *
+ * Structure used as part of virtchnl_gnss_i2c read or write request. VF sets
+ * this structure field for GNSS I2C console Node, PF passes it on to AdminQ.
+ */
+struct virtchnl_link_topo_addr {
+	struct virtchnl_link_topo_params topo_params;
+	u16  handle;
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_link_topo_addr);
+
+/**
+ * virtchnl_gnss_i2c
+ * @topo_addr: link topo address
+ * @i2c_addr: gnss console I2C Address
+ * @i2c_params: gnss console I2C Parameters
+ * @i2c_bus_addr: gnss console I2C Bus Address
+ * @i2c_data: Data to be written to gnss module
+ *
+ * Structure sent with VIRTCHNL_OP_GNSS_READ_I2C for GNSS Console I2C Read,
+ * or VIRTCHNL_OP_GNSS_WRITE_I2C for GNSS Console I2C Write. The request is
+ * acceptable only when VF negotiated VIRTCHNL_1588_PTP_CAP_GNSS capability
+ * with PF.
+ */
+struct virtchnl_gnss_i2c {
+	struct virtchnl_link_topo_addr topo_addr;
+	u16 i2c_addr;
+	u8 i2c_params;
+#define VIRTCHNL_I2C_DATA_SIZE_S	0
+#define VIRTCHNL_I2C_DATA_SIZE_M	(0xF << VIRTCHNL_I2C_DATA_SIZE_S)
+#define VIRTCHNL_I2C_ADDR_TYPE_M	BIT(4)
+#define VIRTCHNL_I2C_ADDR_TYPE_7BIT	0
+#define VIRTCHNL_I2C_ADDR_TYPE_10BIT	VIRTCHNL_I2C_ADDR_TYPE_M
+#define VIRTCHNL_I2C_DATA_OFFSET_S	5
+#define VIRTCHNL_I2C_DATA_OFFSET_M	(0x3 << VIRTCHNL_I2C_DATA_OFFSET_S)
+#define VIRTCHNL_I2C_USE_REPEATED_START	BIT(7)
+	u8 rsvd;
+	u16 i2c_bus_addr;
+#define VIRTCHNL_I2C_ADDR_7BIT_MASK	0x7F
+#define VIRTCHNL_I2C_ADDR_10BIT_MASK	0x3FF
+	u8 i2c_data[4]; /* Used only by write command, reserved in read. */
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_gnss_i2c);
+
+/**
+ * virtchnl_gnss_read_i2c_resp
+ * @i2c_data: Data returned from gnss console I2C read
+ *
+ * Structure returned by PF in response to VIRTCHNL_OP_GNSS_READ_I2C for
+ * GNSS Console I2C Read.
+ */
+struct virtchnl_gnss_read_i2c_resp {
+	u8 i2c_data[16];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_gnss_read_i2c_resp);
+
 /*
  * VIRTCHNL_OP_HQOS_READ_TREE
  * VIRTCHNL_OP_HQOS_ELEM_ADD
@@ -2295,7 +3595,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		valid_len = sizeof(struct virtchnl_rxq_info);
 		break;
 	case VIRTCHNL_OP_CONFIG_VSI_QUEUES:
-		valid_len = sizeof(struct virtchnl_vsi_queue_config_info);
+		valid_len = virtchnl_vsi_queue_config_info_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_vsi_queue_config_info *vqc =
 			    (struct virtchnl_vsi_queue_config_info *)msg;
@@ -2306,13 +3606,12 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += (vqc->num_queue_pairs *
-				      sizeof(struct
-					     virtchnl_queue_pair_info));
+			valid_len = virtchnl_ss_vsi_queue_config_info(vqc, qpair,
+								      vqc->num_queue_pairs);
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_IRQ_MAP:
-		valid_len = sizeof(struct virtchnl_irq_map_info);
+		valid_len = virtchnl_irq_map_info_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_irq_map_info *vimi =
 			    (struct virtchnl_irq_map_info *)msg;
@@ -2323,8 +3622,8 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += (vimi->num_vectors *
-				      sizeof(struct virtchnl_vector_map));
+			valid_len = virtchnl_ss_irq_map_info(vimi, vecmap,
+							     vimi->num_vectors);
 		}
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES:
@@ -2335,7 +3634,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		break;
 	case VIRTCHNL_OP_ADD_ETH_ADDR:
 	case VIRTCHNL_OP_DEL_ETH_ADDR:
-		valid_len = sizeof(struct virtchnl_ether_addr_list);
+		valid_len = virtchnl_ether_addr_list_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_ether_addr_list *veal =
 			    (struct virtchnl_ether_addr_list *)msg;
@@ -2346,13 +3645,13 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += veal->num_elements *
-			    sizeof(struct virtchnl_ether_addr);
+			valid_len = virtchnl_ss_ether_addr_list(veal, list,
+								veal->num_elements);
 		}
 		break;
 	case VIRTCHNL_OP_ADD_VLAN:
 	case VIRTCHNL_OP_DEL_VLAN:
-		valid_len = sizeof(struct virtchnl_vlan_filter_list);
+		valid_len = virtchnl_vlan_filter_list_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_vlan_filter_list *vfl =
 			    (struct virtchnl_vlan_filter_list *)msg;
@@ -2363,7 +3662,8 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += vfl->num_elements * sizeof(u16);
+			valid_len = virtchnl_ss_vlan_filter_list(vfl, vlan_id,
+								 vfl->num_elements);
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE:
@@ -2401,7 +3701,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_KEY:
-		valid_len = sizeof(struct virtchnl_rss_key);
+		valid_len = virtchnl_rss_key_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_rss_key *vrk =
 				(struct virtchnl_rss_key *)msg;
@@ -2411,11 +3711,12 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += vrk->key_len - 1;
+			valid_len = virtchnl_ss_rss_key(vrk, key,
+							vrk->key_len);
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_LUT:
-		valid_len = sizeof(struct virtchnl_rss_lut);
+		valid_len = virtchnl_rss_lut_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_rss_lut *vrl =
 				(struct virtchnl_rss_lut *)msg;
@@ -2425,7 +3726,8 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += vrl->lut_entries - 1;
+			valid_len = virtchnl_ss_rss_lut(vrl, lut,
+							vrl->lut_entries);
 		}
 		break;
 	case VIRTCHNL_OP_GET_RSS_HENA_CAPS:
@@ -2572,6 +3874,72 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 	case VIRTCHNL_OP_ENABLE_VLAN_FILTERING_V2:
 	case VIRTCHNL_OP_DISABLE_VLAN_FILTERING_V2:
 		valid_len = sizeof(struct virtchnl_vlan_setting);
+		break;
+	case VIRTCHNL_OP_1588_PTP_GET_CAPS:
+		valid_len = sizeof(struct virtchnl_ptp_caps);
+		break;
+	case VIRTCHNL_OP_1588_PTP_GET_TIME:
+	case VIRTCHNL_OP_1588_PTP_SET_TIME:
+		valid_len = sizeof(struct virtchnl_phc_time);
+		break;
+	case VIRTCHNL_OP_1588_PTP_ADJ_TIME:
+		valid_len = sizeof(struct virtchnl_phc_adj_time);
+		break;
+	case VIRTCHNL_OP_1588_PTP_ADJ_FREQ:
+		valid_len = sizeof(struct virtchnl_phc_adj_freq);
+		break;
+	case VIRTCHNL_OP_1588_PTP_TX_TIMESTAMP:
+		valid_len = sizeof(struct virtchnl_phc_tx_tstamp);
+		break;
+	case VIRTCHNL_OP_1588_PTP_SET_PIN_CFG:
+		valid_len = sizeof(struct virtchnl_phc_set_pin);
+		break;
+	case VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS:
+		break;
+	case VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP:
+		valid_len = sizeof(struct virtchnl_phc_ext_tstamp);
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT:
+		valid_len = sizeof(struct virtchnl_synce_get_phy_rec_clk_out);
+		break;
+	case VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT:
+		valid_len = sizeof(struct virtchnl_synce_set_phy_rec_clk_out);
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_CGU_REF_PRIO:
+		valid_len = sizeof(struct virtchnl_synce_get_cgu_ref_prio);
+		break;
+	case VIRTCHNL_OP_SYNCE_SET_CGU_REF_PRIO:
+		valid_len = sizeof(struct virtchnl_synce_set_cgu_ref_prio);
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_INPUT_PIN_CFG:
+		valid_len = sizeof(struct virtchnl_synce_get_input_pin_cfg);
+		break;
+	case VIRTCHNL_OP_SYNCE_SET_INPUT_PIN_CFG:
+		valid_len = sizeof(struct virtchnl_synce_set_input_pin_cfg);
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_OUTPUT_PIN_CFG:
+		valid_len = sizeof(struct virtchnl_synce_get_output_pin_cfg);
+		break;
+	case VIRTCHNL_OP_SYNCE_SET_OUTPUT_PIN_CFG:
+		valid_len = sizeof(struct virtchnl_synce_set_output_pin_cfg);
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_CGU_ABILITIES:
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_CGU_DPLL_STATUS:
+		valid_len = sizeof(struct virtchnl_synce_get_cgu_dpll_status);
+		break;
+	case VIRTCHNL_OP_SYNCE_SET_CGU_DPLL_CONFIG:
+		valid_len = sizeof(struct virtchnl_synce_set_cgu_dpll_config);
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_CGU_INFO:
+		break;
+	case VIRTCHNL_OP_SYNCE_GET_HW_INFO:
+		break;
+	case VIRTCHNL_OP_GNSS_READ_I2C:
+		valid_len = sizeof(struct virtchnl_gnss_i2c);
+		break;
+	case VIRTCHNL_OP_GNSS_WRITE_I2C:
+		valid_len = sizeof(struct virtchnl_gnss_i2c);
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES_V2:
 	case VIRTCHNL_OP_DISABLE_QUEUES_V2:

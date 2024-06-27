@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_VF_LIB_H_
 #define _ICE_VF_LIB_H_
@@ -218,11 +218,6 @@ struct ice_vf {
 	u8 link_forced:1;
 	u8 link_up:1;			/* only valid if VF link is forced */
 #endif
-	/* VSI indices - actual VSI pointers are maintained in the PF structure
-	 * When assigned, these will be non-zero, because VSI 0 is always
-	 * the main LAN VSI for the PF.
-	 */
-	u16 lan_vsi_num;		/* ID as used by firmware */
 	unsigned int min_tx_rate;	/* Minimum Tx bandwidth limit in Mbps */
 	unsigned int max_tx_rate;	/* Maximum Tx bandwidth limit in Mbps */
 	DECLARE_BITMAP(vf_states, ICE_VF_STATES_NBITS);	/* VF runtime states */
@@ -248,6 +243,7 @@ struct ice_vf {
 	struct ice_repr *repr;
 	const struct ice_virtchnl_ops *virtchnl_ops;
 	const struct ice_vf_ops *vf_ops;
+	struct virtchnl_ptp_caps ptp_caps;
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 	/* devlink port data */
