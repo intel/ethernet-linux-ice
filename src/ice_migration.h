@@ -1,12 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_MIGRATION_H_
 #define _ICE_MIGRATION_H_
 
-#include <linux/kvm_host.h>
-
 #include "kcompat.h"
+#include <linux/kvm_host.h>
 
 #define IAVF_QRX_TAIL_MAX 256
 #if IS_ENABLED(CONFIG_VFIO_PCI_CORE) && defined(HAVE_LMV1_SUPPORT)

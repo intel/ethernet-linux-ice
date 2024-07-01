@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_base.h"
@@ -20,7 +20,7 @@
  */
 #define ICE_FLOW_PROF_FD(vsi, flow, tun_offs) \
 	(u64)(((((flow) + (tun_offs)) & ICE_FLOW_PROF_TYPE_M)) | \
-	      (((u64)(vsi) << ICE_FLOW_PROF_VSI_S) & ICE_FLOW_PROF_VSI_M))
+	      FIELD_PREP(ICE_FLOW_PROF_VSI_M, vsi))
 
 #define GTPU_TEID_OFFSET 4
 #define GTPU_EH_QFI_OFFSET 1
@@ -194,9 +194,6 @@ ice_vc_fdir_param_check(struct ice_vf *vf, u16 vsi_id)
 		return -EINVAL;
 
 	if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_FDIR_PF))
-		return -EINVAL;
-
-	if (vsi_id != vf->lan_vsi_num)
 		return -EINVAL;
 
 	if (!ice_vc_isvalid_vsi_id(vf, vsi_id))
@@ -2507,8 +2504,7 @@ ice_vc_fdir_parse_pattern(struct ice_vf *vf,
 		case VIRTCHNL_PROTO_HDR_IPV6_EH_FRAG:
 			ip6h_ef = (struct frag_hdr *)hdr->buffer;
 			frag_offset = be16_to_cpu(ip6h_ef->frag_off);
-			if (frag_offset << ICE_FDIR_IPV6_PKT_FLAG_MF_SHIFT &
-			    ICE_FDIR_IPV6_PKT_FLAG_MF) {
+			if (FIELD_PREP(ICE_FDIR_IPV6_PKT_FLAG_MF, frag_offset)) {
 				input->flow_type = ICE_FLTR_PTYPE_FRAG_IPV6;
 			} else {
 				dev_err(dev, "Invalid fragment fdir for VF %d\n",
@@ -3452,10 +3448,10 @@ static void ice_vf_fdir_dump_info(struct ice_vf *vf)
 	fd_cnt = rd32(hw, VSIQF_FD_CNT(vsi_num));
 	dev_dbg(dev, "VF %d: space allocated: guar:0x%lx, be:0x%lx, space consumed: guar:0x%lx, be:0x%lx\n",
 		vf->vf_id,
-		(fd_size & VSIQF_FD_CNT_FD_GCNT_M) >> VSIQF_FD_CNT_FD_GCNT_S,
-		(fd_size & VSIQF_FD_CNT_FD_BCNT_M) >> VSIQF_FD_CNT_FD_BCNT_S,
-		(fd_cnt & VSIQF_FD_CNT_FD_GCNT_M) >> VSIQF_FD_CNT_FD_GCNT_S,
-		(fd_cnt & VSIQF_FD_CNT_FD_BCNT_M) >> VSIQF_FD_CNT_FD_BCNT_S);
+		FIELD_GET(VSIQF_FD_CNT_FD_GCNT_M, fd_size),
+		FIELD_GET(VSIQF_FD_CNT_FD_BCNT_M, fd_size),
+		FIELD_GET(VSIQF_FD_CNT_FD_GCNT_M, fd_cnt),
+		FIELD_GET(VSIQF_FD_CNT_FD_BCNT_M, fd_cnt));
 }
 
 /**
@@ -3476,16 +3472,15 @@ ice_vf_verify_rx_desc(struct ice_vf *vf,
 	int ret;
 
 	stat_err = le16_to_cpu(ctx->rx_desc.wb.status_error0);
-	if (((stat_err & ICE_FXD_FLTR_WB_QW1_DD_M) >>
-	    ICE_FXD_FLTR_WB_QW1_DD_S) != ICE_FXD_FLTR_WB_QW1_DD_YES) {
+	if (FIELD_GET(ICE_FXD_FLTR_WB_QW1_DD_M, stat_err) !=
+	    ICE_FXD_FLTR_WB_QW1_DD_YES) {
 		*status = VIRTCHNL_FDIR_FAILURE_RULE_NORESOURCE;
 		dev_err(dev, "VF %d: Desc Done not set\n", vf->vf_id);
 		ret = -EINVAL;
 		goto err_exit;
 	}
 
-	prog_id = (stat_err & ICE_FXD_FLTR_WB_QW1_PROG_ID_M) >>
-		ICE_FXD_FLTR_WB_QW1_PROG_ID_S;
+	prog_id = FIELD_GET(ICE_FXD_FLTR_WB_QW1_PROG_ID_M, stat_err);
 	if (prog_id == ICE_FXD_FLTR_WB_QW1_PROG_ADD &&
 	    ctx->v_opcode != VIRTCHNL_OP_ADD_FDIR_FILTER) {
 		dev_err(dev, "VF %d: Desc show add, but ctx not",
@@ -3504,8 +3499,7 @@ ice_vf_verify_rx_desc(struct ice_vf *vf,
 		goto err_exit;
 	}
 
-	error = (stat_err & ICE_FXD_FLTR_WB_QW1_FAIL_M) >>
-		ICE_FXD_FLTR_WB_QW1_FAIL_S;
+	error = FIELD_GET(ICE_FXD_FLTR_WB_QW1_FAIL_M, stat_err);
 	if (error == ICE_FXD_FLTR_WB_QW1_FAIL_YES) {
 		if (prog_id == ICE_FXD_FLTR_WB_QW1_PROG_ADD) {
 			dev_err(dev, "VF %d, Failed to add FDIR rule due to no space in the table",
@@ -3520,8 +3514,7 @@ ice_vf_verify_rx_desc(struct ice_vf *vf,
 		goto err_exit;
 	}
 
-	error = (stat_err & ICE_FXD_FLTR_WB_QW1_FAIL_PROF_M) >>
-		ICE_FXD_FLTR_WB_QW1_FAIL_PROF_S;
+	error = FIELD_GET(ICE_FXD_FLTR_WB_QW1_FAIL_PROF_M, stat_err);
 	if (error == ICE_FXD_FLTR_WB_QW1_FAIL_PROF_YES) {
 		dev_err(dev, "VF %d: Profile matching error", vf->vf_id);
 		*status = VIRTCHNL_FDIR_FAILURE_RULE_NORESOURCE;
@@ -3591,8 +3584,8 @@ ice_vc_add_fdir_fltr_post(struct ice_vf *vf,
 	resp->flow_id = conf->flow_id;
 	vf->fdir.fdir_fltr_cnt[conf->input.flow_type][is_tun]++;
 
-	ret = ice_vc_respond_to_vf(vf, ctx->v_opcode, v_ret,
-				   (u8 *)resp, len);
+	ret = ice_vc_send_msg_to_vf(vf, ctx->v_opcode, v_ret,
+				    (u8 *)resp, len);
 	kfree(resp);
 
 	dev_dbg(dev, "VF %d: flow_id:0x%X, FDIR %s success!\n",
@@ -3607,8 +3600,8 @@ err_exit:
 	ice_vc_fdir_remove_entry(vf, conf, conf->flow_id);
 	kfree(conf);
 
-	ret = ice_vc_respond_to_vf(vf, ctx->v_opcode, v_ret,
-				   (u8 *)resp, len);
+	ret = ice_vc_send_msg_to_vf(vf, ctx->v_opcode, v_ret,
+				    (u8 *)resp, len);
 	kfree(resp);
 	return ret;
 }
@@ -3656,8 +3649,8 @@ ice_vc_del_fdir_fltr_post(struct ice_vf *vf,
 	ice_vc_fdir_remove_entry(vf, conf, conf->flow_id);
 	vf->fdir.fdir_fltr_cnt[conf->input.flow_type][is_tun]--;
 
-	ret = ice_vc_respond_to_vf(vf, ctx->v_opcode, v_ret,
-				   (u8 *)resp, len);
+	ret = ice_vc_send_msg_to_vf(vf, ctx->v_opcode, v_ret,
+				    (u8 *)resp, len);
 	kfree(resp);
 
 	dev_dbg(dev, "VF %d: flow_id:0x%X, FDIR %s success!\n",
@@ -3673,8 +3666,8 @@ err_exit:
 	if (success)
 		kfree(conf);
 
-	ret = ice_vc_respond_to_vf(vf, ctx->v_opcode, v_ret,
-				   (u8 *)resp, len);
+	ret = ice_vc_send_msg_to_vf(vf, ctx->v_opcode, v_ret,
+				    (u8 *)resp, len);
 	kfree(resp);
 	return ret;
 }
@@ -3965,8 +3958,8 @@ err_free_conf:
 	kfree(conf->pkt_buf);
 	kfree(conf);
 err_exit:
-	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER, v_ret,
-				   (u8 *)stat, len);
+	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER, v_ret,
+				    (u8 *)stat, len);
 	kfree(stat);
 	return ret;
 }
@@ -4034,8 +4027,8 @@ int ice_vc_add_fdir_fltr(struct ice_vf *vf, u8 *msg)
 		v_ret = VIRTCHNL_STATUS_SUCCESS;
 		stat->status = VIRTCHNL_FDIR_SUCCESS;
 		kfree(conf);
-		ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER,
-					   v_ret, (u8 *)stat, len);
+		ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER,
+					    v_ret, (u8 *)stat, len);
 		goto exit;
 	}
 
@@ -4099,8 +4092,8 @@ err_rem_entry:
 err_free_conf:
 	kfree(conf);
 err_exit:
-	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER, v_ret,
-				   (u8 *)stat, len);
+	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER, v_ret,
+				    (u8 *)stat, len);
 	kfree(stat);
 	return ret;
 }
@@ -4186,8 +4179,8 @@ ice_vc_del_fdir_raw(struct ice_vf *vf,
 err_del_tmr:
 	ice_vc_fdir_clear_irq_ctx(vf);
 err_exit:
-	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DEL_FDIR_FILTER, v_ret,
-				   (u8 *)stat, len);
+	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_FDIR_FILTER, v_ret,
+				    (u8 *)stat, len);
 	kfree(stat);
 	return ret;
 }
@@ -4284,8 +4277,8 @@ int ice_vc_del_fdir_fltr(struct ice_vf *vf, u8 *msg)
 err_del_tmr:
 	ice_vc_fdir_clear_irq_ctx(vf);
 err_exit:
-	ret = ice_vc_respond_to_vf(vf, VIRTCHNL_OP_DEL_FDIR_FILTER, v_ret,
-				   (u8 *)stat, len);
+	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_FDIR_FILTER, v_ret,
+				    (u8 *)stat, len);
 	kfree(stat);
 	return ret;
 }

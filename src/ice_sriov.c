@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_vf_lib_private.h"
@@ -109,10 +109,8 @@ static void ice_dis_vf_mappings(struct ice_vf *vf)
 	for (v = first; v <= last; v++) {
 		u32 reg;
 
-		reg = (((1 << GLINT_VECT2FUNC_IS_PF_S) &
-			GLINT_VECT2FUNC_IS_PF_M) |
-		       ((hw->pf_id << GLINT_VECT2FUNC_PF_NUM_S) &
-			GLINT_VECT2FUNC_PF_NUM_M));
+		reg = FIELD_PREP(GLINT_VECT2FUNC_IS_PF_M, 1) |
+		      FIELD_PREP(GLINT_VECT2FUNC_PF_NUM_M, hw->pf_id);
 		wr32(hw, GLINT_VECT2FUNC(v), reg);
 	}
 
@@ -255,7 +253,7 @@ static struct ice_vsi *ice_vf_vsi_setup(struct ice_vf *vf)
 	struct ice_vsi *vsi;
 
 	params.type = ICE_VSI_VF;
-	params.pi = ice_vf_get_port_info(vf);
+	params.port_info = ice_vf_get_port_info(vf);
 	params.vf = vf;
 	params.flags = ICE_VSI_FLAG_INIT;
 
@@ -268,7 +266,6 @@ static struct ice_vsi *ice_vf_vsi_setup(struct ice_vf *vf)
 	}
 
 	vf->lan_vsi_idx = vsi->idx;
-	vf->lan_vsi_num = vsi->vsi_num;
 
 	return vsi;
 }
@@ -300,24 +297,20 @@ static void ice_ena_vf_msix_mappings(struct ice_vf *vf)
 		(device_based_first_msix + vf->num_msix) - 1;
 	device_based_vf_id = vf->vf_id + hw->func_caps.vf_base_id;
 
-	reg = (((device_based_first_msix << VPINT_ALLOC_FIRST_S) &
-		VPINT_ALLOC_FIRST_M) |
-	       ((device_based_last_msix << VPINT_ALLOC_LAST_S) &
-		VPINT_ALLOC_LAST_M) | VPINT_ALLOC_VALID_M);
+	reg = FIELD_PREP(VPINT_ALLOC_FIRST_M, device_based_first_msix) |
+	      FIELD_PREP(VPINT_ALLOC_LAST_M, device_based_last_msix) |
+	      VPINT_ALLOC_VALID_M;
 	wr32(hw, VPINT_ALLOC(vf->vf_id), reg);
 
-	reg = (((device_based_first_msix << VPINT_ALLOC_PCI_FIRST_S)
-		 & VPINT_ALLOC_PCI_FIRST_M) |
-	       ((device_based_last_msix << VPINT_ALLOC_PCI_LAST_S) &
-		VPINT_ALLOC_PCI_LAST_M) | VPINT_ALLOC_PCI_VALID_M);
+	reg = FIELD_PREP(VPINT_ALLOC_PCI_FIRST_M, device_based_first_msix) |
+	      FIELD_PREP(VPINT_ALLOC_PCI_LAST_M, device_based_last_msix) |
+	      VPINT_ALLOC_PCI_VALID_M;
 	wr32(hw, VPINT_ALLOC_PCI(vf->vf_id), reg);
 
 	/* map the interrupts to its functions */
 	for (v = pf_based_first_msix; v <= pf_based_last_msix; v++) {
-		reg = (((device_based_vf_id << GLINT_VECT2FUNC_VF_NUM_S) &
-			GLINT_VECT2FUNC_VF_NUM_M) |
-		       ((hw->pf_id << GLINT_VECT2FUNC_PF_NUM_S) &
-			GLINT_VECT2FUNC_PF_NUM_M));
+		reg = FIELD_PREP(GLINT_VECT2FUNC_VF_NUM_M, device_based_vf_id) |
+		      FIELD_PREP(GLINT_VECT2FUNC_PF_NUM_M, hw->pf_id);
 		wr32(hw, GLINT_VECT2FUNC(v), reg);
 	}
 
@@ -350,10 +343,8 @@ static void ice_ena_vf_q_mappings(struct ice_vf *vf, u16 max_txq, u16 max_rxq)
 		 * VFNUMQ value should be set to (number of queues - 1). A value
 		 * of 0 means 1 queue and a value of 255 means 256 queues
 		 */
-		reg = (((vsi->txq_map[0] << VPLAN_TX_QBASE_VFFIRSTQ_S) &
-			VPLAN_TX_QBASE_VFFIRSTQ_M) |
-		       (((max_txq - 1) << VPLAN_TX_QBASE_VFNUMQ_S) &
-			VPLAN_TX_QBASE_VFNUMQ_M));
+		reg = FIELD_PREP(VPLAN_TX_QBASE_VFFIRSTQ_M, vsi->txq_map[0]) |
+		      FIELD_PREP(VPLAN_TX_QBASE_VFNUMQ_M, max_txq - 1);
 		wr32(hw, VPLAN_TX_QBASE(vf->vf_id), reg);
 	} else {
 		dev_err(dev, "Scattered mode for VF Tx queues is not yet implemented\n");
@@ -368,10 +359,8 @@ static void ice_ena_vf_q_mappings(struct ice_vf *vf, u16 max_txq, u16 max_rxq)
 		 * VFNUMQ value should be set to (number of queues - 1). A value
 		 * of 0 means 1 queue and a value of 255 means 256 queues
 		 */
-		reg = (((vsi->rxq_map[0] << VPLAN_RX_QBASE_VFFIRSTQ_S) &
-			VPLAN_RX_QBASE_VFFIRSTQ_M) |
-		       (((max_rxq - 1) << VPLAN_RX_QBASE_VFNUMQ_S) &
-			VPLAN_RX_QBASE_VFNUMQ_M));
+		reg = FIELD_PREP(VPLAN_RX_QBASE_VFFIRSTQ_M, vsi->rxq_map[0]) |
+		      FIELD_PREP(VPLAN_RX_QBASE_VFNUMQ_M, max_rxq - 1);
 		wr32(hw, VPLAN_RX_QBASE(vf->vf_id), reg);
 	} else {
 		dev_err(dev, "Scattered mode for VF Rx queues is not yet implemented\n");
@@ -920,8 +909,7 @@ ice_sriov_cfg_rdma_ceq_irq_map(struct ice_vf *vf,
 							   qv_info->ceq_idx);
 
 	u32 regval = (qv_info->v_idx & GLINT_CEQCTL_MSIX_INDX_M) |
-		     ((qv_info->itr_idx << GLINT_CEQCTL_ITR_INDX_S) &
-		      GLINT_CEQCTL_ITR_INDX_M) | GLINT_CEQCTL_CAUSE_ENA_M;
+		     FIELD_PREP(GLINT_CEQCTL_ITR_INDX_M, qv_info->itr_idx) | GLINT_CEQCTL_CAUSE_ENA_M;
 
 	wr32(&vf->pf->hw, GLINT_CEQCTL(glint_ceqctl_idx), regval);
 }
@@ -939,8 +927,7 @@ ice_sriov_cfg_rdma_aeq_irq_map(struct ice_vf *vf,
 			       struct virtchnl_rdma_qv_info *qv_info)
 {
 	u32 regval = (qv_info->v_idx & PFINT_AEQCTL_MSIX_INDX_M) |
-		     ((qv_info->itr_idx << VPINT_AEQCTL_ITR_INDX_S) &
-		      VPINT_AEQCTL_ITR_INDX_M) | VPINT_AEQCTL_CAUSE_ENA_M;
+		     FIELD_PREP(VPINT_AEQCTL_ITR_INDX_M, qv_info->itr_idx) | VPINT_AEQCTL_CAUSE_ENA_M;
 
 	wr32(&vf->pf->hw, VPINT_AEQCTL(vf->vf_id), regval);
 }
@@ -1296,10 +1283,11 @@ static void ice_remap_vf_msix(struct ice_pf *pf, int configured_id)
  */
 int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
 {
+	u16 prev_msix, avail_msix, prev_queues, queues;
 	struct pci_dev *pdev = pci_physfn(vf_dev);
 	struct ice_pf *pf = pci_get_drvdata(pdev);
-	u16 prev_msix, prev_queues, queues;
 	bool needs_rebuild = false;
+	struct ice_vsi *vsi;
 	struct ice_vf *vf;
 	int id;
 
@@ -1313,10 +1301,6 @@ int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
 	/* add 1 MSI-X for OICR */
 	msix_vec_count += 1;
 
-	if (msix_vec_count < ICE_MIN_INTR_PER_VF ||
-	    msix_vec_count > ice_get_free_res_count(pf->vf_irq_tracker))
-		return -ENOSPC;
-
 	id = ice_get_function_id_by_dev(pdev, vf_dev);
 	if (id == pci_num_vf(pdev))
 		return -ENOENT;
@@ -1326,8 +1310,20 @@ int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
 	if (!vf)
 		return -ENOENT;
 
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -ENOENT;
+
 	prev_msix = vf->num_msix;
 	prev_queues = vf->num_vf_qs;
+
+	/* available MSI-X value is the sum of currently available plus
+	 * previously assigned for VF
+	 */
+	avail_msix = ice_get_free_res_count(pf->vf_irq_tracker) + prev_msix;
+
+	if (msix_vec_count < ICE_MIN_INTR_PER_VF || msix_vec_count > avail_msix)
+		return -ENOSPC;
 
 	ice_dis_vf_mappings(vf);
 	ice_sriov_free_irqs(pf, vf);
@@ -1338,7 +1334,7 @@ int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
 	if (vf->first_vector_idx < 0)
 		goto unroll;
 
-	if (ice_vf_reconfig_vsi(vf)) {
+	if (ice_vf_reconfig_vsi(vf) || ice_vf_init_host_cfg(vf, vsi)) {
 		/* Try to rebuild with previous values */
 		needs_rebuild = true;
 		goto unroll;
@@ -1362,8 +1358,10 @@ unroll:
 	vf->num_msix = prev_msix;
 	vf->num_vf_qs = prev_queues;
 	vf->first_vector_idx = ice_sriov_get_irqs(pf, vf->num_msix, vf->vf_id);
-	if (needs_rebuild)
+	if (needs_rebuild) {
 		ice_vf_reconfig_vsi(vf);
+		ice_vf_init_host_cfg(vf, vsi);
+	}
 
 	ice_ena_vf_mappings(vf);
 	ice_put_vf(vf);
@@ -1513,8 +1511,7 @@ ice_vf_lan_overflow_event(struct ice_pf *pf, struct ice_rq_event_info *event)
 	dev_dbg(ice_pf_to_dev(pf), "GLDCB_RTCTQ: 0x%08x\n", gldcb_rtctq);
 
 	/* event returns device global Rx queue number */
-	queue = (gldcb_rtctq & GLDCB_RTCTQ_RXQNUM_M) >>
-		GLDCB_RTCTQ_RXQNUM_S;
+	queue = FIELD_GET(GLDCB_RTCTQ_RXQNUM_M, gldcb_rtctq);
 
 	vf = ice_get_vf_from_pfq(pf, ice_globalq_to_pfq(pf, queue));
 	if (!vf)
@@ -2145,9 +2142,6 @@ ice_set_vf_port_vlan(struct net_device *netdev, int vf_id, u16 vlan_id, u8 qos)
 		goto out_put_vf;
 	}
 
-	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
-		goto out_put_vf;
-
 	mutex_lock(&vf->cfg_lock);
 
 	vf->port_vlan_info =
@@ -2357,7 +2351,6 @@ static void ice_dump_vf(struct ice_vf *vf)
 	dev_info(dev, "\tvsi = %p, vsi->idx = %d, vsi->vsi_num = %d\n",
 		 vsi, vsi->idx, vsi->vsi_num);
 	dev_info(dev, "\tlan_vsi_idx = %d\n", vf->lan_vsi_idx);
-	dev_info(dev, "\tlan_vsi_num = %d\n", vf->lan_vsi_num);
 	ice_dump_vf_vsi_qctx(vsi);
 	dev_info(dev, "\tnum_mac = %d\n", vf->num_mac);
 	dev_info(dev, "\tdev_lan_addr = %pM\n", &vf->dev_lan_addr.addr[0]);
@@ -2412,6 +2405,7 @@ void ice_dump_all_vfs(struct ice_pf *pf)
 int ice_get_vf_port_info(struct ice_pf *pf, u16 vf_id,
 			 struct iidc_vf_port_info *vf_port_info)
 {
+	struct ice_vsi *vsi;
 	struct ice_vf *vf;
 
 	vf = ice_get_vf_by_id(pf, vf_id);
@@ -2426,8 +2420,12 @@ int ice_get_vf_port_info(struct ice_pf *pf, u16 vf_id,
 		return -EAGAIN;
 	}
 
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -EAGAIN;
+
 	vf_port_info->vf_id = vf->vf_id;
-	vf_port_info->vport_id = vf->lan_vsi_num;
+	vf_port_info->vport_id = vsi->vsi_num;
 	if (ice_vf_is_port_vlan_ena(vf)) {
 		vf_port_info->port_vlan_id = ice_vf_get_port_vlan_id(vf);
 		vf_port_info->port_vlan_tpid = ice_vf_get_port_vlan_tpid(vf);

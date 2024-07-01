@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_dcb_lib.h"
 #include "ice_dcb_nl.h"
@@ -949,8 +949,8 @@ ice_tx_prepare_vlan_flags_dcb(struct ice_tx_ring *tx_ring,
 	    skb->priority != TC_PRIO_CONTROL) {
 		first->tx_flags &= ~ICE_TX_FLAGS_VLAN_PR_M;
 		/* Mask the lower 3 bits to set the 802.1p priority */
-		first->tx_flags |= (skb->priority & 0x7) <<
-				   ICE_TX_FLAGS_VLAN_PR_S;
+		first->tx_flags |= FIELD_PREP(ICE_TX_FLAGS_VLAN_PR_M,
+					      skb->priority & 0x7);
 		/* if this is not already set it means a VLAN 0 + priority needs
 		 * to be offloaded
 		 */

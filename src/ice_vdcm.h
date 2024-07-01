@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_VDCM_H_
 #define _ICE_VDCM_H_
@@ -14,6 +14,9 @@
 #if IS_ENABLED(CONFIG_IRQ_BYPASS_MANAGER)
 #include <linux/irqbypass.h>
 #endif /* CONFIG_IRQ_BYPASS_MANAGER */
+#if IS_ENABLED(CONFIG_VFIO_MDEV) && defined(HAVE_PASID_SUPPORT) && defined(HAVE_IOMMU_DEV_FEAT_AUX)
+#include <linux/sched/mm.h>
+#endif
 
 #define ICE_VDCM_CFG_SIZE 256
 #define ICE_VDCM_BAR0_SIZE SZ_64M

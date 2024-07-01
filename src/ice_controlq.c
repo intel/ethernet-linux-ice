@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_common.h"
 
@@ -500,28 +500,31 @@ shutdown_sq_out:
  */
 static bool ice_aq_ver_check(struct ice_hw *hw)
 {
-	if (hw->api_maj_ver > EXP_FW_API_VER_MAJOR) {
+	u8 exp_fw_api_ver_major = EXP_FW_API_VER_MAJOR_BY_MAC(hw);
+	u8 exp_fw_api_ver_minor = EXP_FW_API_VER_MINOR_BY_MAC(hw);
+
+	if (hw->api_maj_ver > exp_fw_api_ver_major) {
 		/* Major API version is newer than expected, don't load */
 		dev_warn(ice_hw_to_dev(hw),
 			 "The driver for the device stopped because the NVM image is newer than expected. You must install the most recent version of the network driver.\n");
 		return false;
-	} else if (hw->api_maj_ver == EXP_FW_API_VER_MAJOR) {
-		if (hw->api_min_ver > (EXP_FW_API_VER_MINOR + 2))
+	} else if (hw->api_maj_ver == exp_fw_api_ver_major) {
+		if (hw->api_min_ver > (exp_fw_api_ver_minor + 2))
 			dev_info(ice_hw_to_dev(hw),
 				 "The driver for the device detected a newer version (%u.%u) of the NVM image than expected (%u.%u). Please install the most recent version of the network driver.\n",
 				 hw->api_maj_ver, hw->api_min_ver,
-				 EXP_FW_API_VER_MAJOR, EXP_FW_API_VER_MINOR);
-		else if ((hw->api_min_ver + 2) < EXP_FW_API_VER_MINOR)
+				 exp_fw_api_ver_major, exp_fw_api_ver_minor);
+		else if ((hw->api_min_ver + 2) < exp_fw_api_ver_minor)
 			dev_info(ice_hw_to_dev(hw),
 				 "The driver for the device detected an older version (%u.%u) of the NVM image than expected (%u.%u). Please update the NVM image.\n",
 				 hw->api_maj_ver, hw->api_min_ver,
-				 EXP_FW_API_VER_MAJOR, EXP_FW_API_VER_MINOR);
+				 exp_fw_api_ver_major, exp_fw_api_ver_minor);
 	} else {
 		/* Major API version is older than expected, log a warning */
 		dev_info(ice_hw_to_dev(hw),
 			 "The driver for the device detected an older version (%u.%u) of the NVM image than expected (%u.%u). Please update the NVM image.\n",
 			 hw->api_maj_ver, hw->api_min_ver,
-			 EXP_FW_API_VER_MAJOR, EXP_FW_API_VER_MINOR);
+			 exp_fw_api_ver_major, exp_fw_api_ver_minor);
 	}
 	return true;
 }
@@ -917,28 +920,29 @@ ice_debug_cq(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	datalen = le16_to_cpu(cq_desc->datalen);
 	flags = le16_to_cpu(cq_desc->flags);
 
-	ice_debug(hw, ICE_DBG_AQ_DESC, "%s %s: opcode 0x%04X, flags 0x%04X, datalen 0x%04X, retval 0x%04X\n",
+	ice_debug(hw, ICE_DBG_AQ_DESC, "%s %s: opcode 0x%04X, flags 0x%04X, datalen 0x%04X, retval 0x%04X\n\tcookie (h,l) 0x%08X 0x%08X\n\tparam (0,1)  0x%08X 0x%08X\n\taddr (h,l)   0x%08X 0x%08X\n",
 		  ice_ctl_q_str(cq->qtype), response ? "Response" : "Command",
 		  le16_to_cpu(cq_desc->opcode), flags, datalen,
-		  le16_to_cpu(cq_desc->retval));
-	ice_debug(hw, ICE_DBG_AQ_DESC, "\tcookie (h,l) 0x%08X 0x%08X\n",
+		  le16_to_cpu(cq_desc->retval),
 		  le32_to_cpu(cq_desc->cookie_high),
-		  le32_to_cpu(cq_desc->cookie_low));
-	ice_debug(hw, ICE_DBG_AQ_DESC, "\tparam (0,1)  0x%08X 0x%08X\n",
+		  le32_to_cpu(cq_desc->cookie_low),
 		  le32_to_cpu(cq_desc->params.generic.param0),
-		  le32_to_cpu(cq_desc->params.generic.param1));
-	ice_debug(hw, ICE_DBG_AQ_DESC, "\taddr (h,l)   0x%08X 0x%08X\n",
+		  le32_to_cpu(cq_desc->params.generic.param1),
 		  le32_to_cpu(cq_desc->params.generic.addr_high),
 		  le32_to_cpu(cq_desc->params.generic.addr_low));
 	/* Dump buffer iff 1) one exists and 2) is either a response indicated
 	 * by the DD and/or CMP flag set or a command with the RD flag set.
 	 */
-	if (buf && cq_desc->datalen != 0 &&
-	    (flags & (ICE_AQ_FLAG_DD | ICE_AQ_FLAG_CMP) ||
-	     flags & ICE_AQ_FLAG_RD)) {
-		ice_debug(hw, ICE_DBG_AQ_DESC_BUF, "Buffer:\n");
-		ice_debug_array(hw, ICE_DBG_AQ_DESC_BUF, 16, 1, buf,
-				min_t(u16, buf_len, datalen));
+	if (buf && cq_desc->datalen &&
+	    (flags & (ICE_AQ_FLAG_DD | ICE_AQ_FLAG_CMP | ICE_AQ_FLAG_RD))) {
+		char prefix[] = KBUILD_MODNAME " 0x12341234 0x12341234 ";
+
+		sprintf(prefix, KBUILD_MODNAME " 0x%08X 0x%08X ",
+			le32_to_cpu(cq_desc->params.generic.addr_high),
+			le32_to_cpu(cq_desc->params.generic.addr_low));
+		ice_debug_array_w_prefix(hw, ICE_DBG_AQ_DESC_BUF, prefix,
+					 buf,
+					 min_t(u16, buf_len, datalen));
 	}
 }
 

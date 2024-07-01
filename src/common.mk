@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2018-2023 Intel Corporation
+# Copyright (C) 2018-2024 Intel Corporation
 
 #
 # common Makefile rules useful for out-of-tree Linux driver builds
@@ -50,10 +50,8 @@ endif
 KSP :=  /lib/modules/${BUILD_KERNEL}/source \
         /lib/modules/${BUILD_KERNEL}/build \
         /usr/src/linux-${BUILD_KERNEL} \
-        /usr/src/linux-$(${BUILD_KERNEL} | sed 's/-.*//') \
         /usr/src/kernel-headers-${BUILD_KERNEL} \
         /usr/src/kernel-source-${BUILD_KERNEL} \
-        /usr/src/linux-$(${BUILD_KERNEL} | sed 's/\([0-9]*\.[0-9]*\)\..*/\1/') \
         /usr/src/linux \
         /usr/src/kernels/${BUILD_KERNEL} \
         /usr/src/kernels
@@ -318,43 +316,12 @@ minimum_kver_check = $(eval $(call _minimum_kver_check,${1},${2},${3}))
 # that can be checked to determine whether a given kcompat feature flag will
 # be defined for this kernel.
 #
-# KCOMPAT_DEFINITIONS holds the set of all macros which are defined. Note
-# this does include a large number of standard/builtin definitions.
-#
-# Use is_kcompat_defined as a $(call) function to check whether a given flag
-# is defined or undefined. For example:
-#
-#   ifeq ($(call is_kcompat_defined,HAVE_FEATURE_FLAG),1)
-#
-#   ifneq ($(call is_kcompat_defined,HAVE_FEATURE_FLAG),1)
-#
-# The is_kcompat_defined function returns 1 if the macro name is defined,
-# and the empty string otherwise.
-#
-# There is no mechanism to extract the value of the kcompat definition.
-# Supporting this would be non-trivial as Make does not have a map variable
-# type.
-#
-# Note that only the new layout is supported. Legacy definitions in
-# kcompat.h are not supported. If you need to check one of these, please
-# refactor it into the new layout.
 
 # call script that populates defines automatically
-#
-# since is_kcompat_defined() is a macro, it's "computed" before any target
-# recipe, kcompat_generated_defs.h is needed prior to that, so needs to be
-# generated also via $(shell) call, which makes error handling ugly
 $(if $(shell \
     $(if $(findstring 1,${V}),,QUIET_COMPAT=1) \
-    KSRC=${KSRC} OUT=${src}/kcompat_generated_defs.h CONFFILE=${CONFIG_FILE} \
+    KSRC=${KSRC} OUT=${src}/kcompat_generated_defs.h CONFIG_FILE=${CONFIG_FILE} \
     bash ${src}/kcompat-generator.sh && echo ok), , $(error kcompat-generator.sh failed))
-
-KCOMPAT_DEFINITIONS := $(shell ${CC} ${EXTRA_CFLAGS} -E -dM \
-                                     -I${KOBJ}/include \
-                                     -I${KOBJ}/include/generated/uapi \
-                                     ${src}/kcompat_defs.h | awk '{ print $$2 }')
-
-is_kcompat_defined = $(if $(filter ${1},${KCOMPAT_DEFINITIONS}),1,)
 
 ################
 # Manual Pages #
@@ -481,7 +448,7 @@ endif
 # W -- if set, enables the W= kernel warnings options
 # C -- if set, enables the C= kernel sparse build options
 #
-kernelbuild = $(call warn_signed_modules) \
+kernelbuild = ${Q}$(call warn_signed_modules) \
               ${MAKE} $(if ${GCC_I_SYS},CC="${GCC_I_SYS}") \
                       ${CCFLAGS_VAR}="${EXTRA_CFLAGS}" \
                       -C "${KSRC}" \

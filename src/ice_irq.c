@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -104,7 +104,7 @@ static int ice_adq_max_qps(struct ice_pf *pf)
 	if (pf->hw.func_caps.common_cap.num_msix_vectors >= 1024)
 		return ICE_ADQ_MAX_QPS;
 
-	return num_online_cpus();
+	return min_t(int, ICE_ADQ_MAX_QPS, num_online_cpus());
 }
 
 /**
@@ -156,7 +156,6 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	struct device *dev = ice_pf_to_dev(pf);
 	int num_local_cpus = ice_get_num_local_cpus(dev);
 	int default_rdma_ceq = ice_normalize_cpu_count(num_local_cpus);
-	int req_rdma_ceq = num_online_cpus();
 	int rdma_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		ICE_MIN_RDMA_MSIX,
 		default_rdma_ceq / 4 > ICE_MIN_RDMA_MSIX ?
@@ -174,11 +173,11 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
 			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
-		req_rdma_ceq > ICE_MIN_RDMA_MSIX ?
-			req_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
-		req_rdma_ceq > ICE_MIN_RDMA_MSIX ?
-			req_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
+		default_rdma_ceq > ICE_MIN_RDMA_MSIX ?
+			default_rdma_ceq + ICE_RDMA_NUM_AEQ_MSIX :
 			ICE_MIN_RDMA_MSIX,
 	};
 	int default_lan_qp = ice_normalize_cpu_count(num_local_cpus);

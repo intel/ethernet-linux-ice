@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_base.h"
@@ -48,11 +48,6 @@ ice_vc_fsub_param_check(struct ice_vf *vf, u16 vsi_id)
 		dev_dbg(dev, "Invalid VF capability flag for VF: %d\n",
 			vf->vf_id);
 		return -EACCES;
-	}
-
-	if (vsi_id != vf->lan_vsi_num) {
-		dev_dbg(dev, "Incorrect vsi_id for VF: %d\n", vf->vf_id);
-		return -EEXIST;
 	}
 
 	if (!ice_vc_isvalid_vsi_id(vf, vsi_id)) {
@@ -211,7 +206,8 @@ ice_vc_parse_fsub_pattern(struct ice_vf *vf,
 			h = &list[idx].h_u.eth_hdr;
 			m = &list[idx].m_u.eth_hdr;
 			if (!is_zero_ether_addr(eth_mask->h_dest)) {
-				if (!ether_addr_equal(eth_spec->h_dest, vsi->netdev->dev_addr))
+				if (!ether_addr_equal(eth_spec->h_dest,
+						      vsi->netdev->dev_addr))
 					return -EINVAL;
 
 				ether_addr_copy(h->dst_addr,
@@ -725,8 +721,8 @@ int ice_vc_flow_sub_fltr(struct ice_vf *vf, u8 *msg)
 
 	fltr->flow_id = conf->flow_id;
 
-	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)fltr,
-				   sizeof(*fltr));
+	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, (u8 *)fltr,
+				    sizeof(*fltr));
 
 	return ret;
 
@@ -740,13 +736,13 @@ err_exit:
 	if (!stat) {
 		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
 		dev_dbg(dev, "Alloc stat for VF %d failed\n", vf->vf_id);
-		ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, NULL, 0);
+		ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, NULL, 0);
 		return ret;
 	}
 
 	stat->status = status;
-	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)stat,
-				   sizeof(*stat));
+	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, (u8 *)stat,
+				    sizeof(*stat));
 
 	kfree(stat);
 	return ret;
@@ -802,8 +798,8 @@ int ice_vc_flow_unsub_fltr(struct ice_vf *vf, u8 *msg)
 
 	ice_vc_fsub_remove_entry(vf, conf, fltr->flow_id);
 
-	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)fltr,
-				  sizeof(*fltr));
+	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, (u8 *)fltr,
+				    sizeof(*fltr));
 
 	kfree(conf->fsub_fltr.list);
 	kfree(conf);
@@ -814,13 +810,13 @@ err_exit:
 	if (!stat) {
 		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
 		dev_dbg(dev, "Alloc stat for VF %d failed\n", vf->vf_id);
-		ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, NULL, 0);
+		ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, NULL, 0);
 		return ret;
 	}
 
 	stat->status = status;
-	ret = ice_vc_respond_to_vf(vf, v_opcode, v_ret, (u8 *)stat,
-				   sizeof(*stat));
+	ret = ice_vc_send_msg_to_vf(vf, v_opcode, v_ret, (u8 *)stat,
+				    sizeof(*stat));
 
 	kfree(stat);
 	return ret;
@@ -833,7 +829,6 @@ err_exit:
 void ice_vf_fsub_exit(struct ice_vf *vf)
 {
 	struct ice_flow_sub_fltr *desc, *temp;
-	struct ice_rule_query_data rule;
 	struct ice_pf *pf = vf->pf;
 	struct device *dev;
 
@@ -842,16 +837,15 @@ void ice_vf_fsub_exit(struct ice_vf *vf)
 	list_for_each_entry_safe(desc, temp, &vf->fsub.fsub_rule_list,
 				 fltr_node) {
 		struct ice_flow_sub_conf *conf = to_sub_conf_from_desc(desc);
+		struct ice_rule_query_data *rule;
 		int ret = 0;
 
-		rule.rid = conf->fsub_fltr.rule_data.rid;
-		rule.rule_id = conf->fsub_fltr.rule_data.rule_id;
-		rule.vsi_handle = conf->fsub_fltr.rule_data.vsi_handle;
-		ret = ice_rem_adv_rule_by_id(&pf->hw, &rule);
+		rule = &conf->fsub_fltr.rule_data;
+		ret = ice_rem_adv_rule_by_id(&pf->hw, rule);
 		if (ret) {
 			dev_dbg(dev,
 				"VF %d: Failed to unsub flow filter, rule_id = %d\n",
-				vf->vf_id, rule.rule_id);
+				vf->vf_id, rule->rule_id);
 		}
 
 		list_del(&desc->fltr_node);

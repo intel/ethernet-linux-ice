@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 /* The driver transmit and receive code */
 
@@ -468,14 +468,9 @@ void ice_clean_rx_ring(struct ice_rx_ring *rx_ring)
 					      rx_ring->rx_buf_len,
 					      DMA_FROM_DEVICE);
 
-#ifndef HAVE_STRUCT_DMA_ATTRS
 		/* free resources associated with mapping */
 		dma_unmap_page_attrs(dev, rx_buf->dma, ice_rx_pg_size(rx_ring),
 				     DMA_FROM_DEVICE, ICE_RX_DMA_ATTR);
-#else
-		dma_unmap_page(dev, rx_buf->dma, ice_rx_pg_size(rx_ring),
-			       DMA_FROM_DEVICE);
-#endif
 		__page_frag_cache_drain(rx_buf->page, rx_buf->pagecnt_bias);
 
 		rx_buf->page = NULL;
@@ -795,14 +790,19 @@ int ice_xdp_xmit(struct net_device *dev, struct xdp_buff *xdp)
 #endif /* HAVE_XDP_FRAME_STRUCT */
 {
 	struct ice_netdev_priv *np = netdev_priv(dev);
-	unsigned int queue_index = smp_processor_id();
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_tx_ring *xdp_ring;
+	unsigned int queue_index;
 #ifdef HAVE_XDP_FRAME_STRUCT
 	int drops = 0, i;
 #else
 	int err;
 #endif /* HAVE_XDP_FRAME_STRUCT */
+
+	/* smp_processor_id() can only be called from non-preemptible code */
+	preempt_disable();
+	queue_index = smp_processor_id();
+	preempt_enable();
 
 	if (test_bit(ICE_VSI_DOWN, vsi->state))
 		return -ENETDOWN;
@@ -848,8 +848,13 @@ int ice_xdp_xmit(struct net_device *dev, struct xdp_buff *xdp)
 void ice_xdp_flush(struct net_device *dev)
 {
 	struct ice_netdev_priv *np = netdev_priv(dev);
-	unsigned int queue_index = smp_processor_id();
 	struct ice_vsi *vsi = np->vsi;
+	unsigned int queue_index;
+
+	/* smp_processor_id() can only be called from non-preemptible code */
+	preempt_disable();
+	queue_index = smp_processor_id();
+	preempt_enable();
 
 	if (test_bit(ICE_VSI_DOWN, vsi->state))
 		return;
@@ -892,13 +897,8 @@ ice_alloc_mapped_page(struct ice_rx_ring *rx_ring, struct ice_rx_buf *bi)
 	}
 
 	/* map page for use */
-#ifndef HAVE_STRUCT_DMA_ATTRS
 	dma = dma_map_page_attrs(rx_ring->dev, page, 0, ice_rx_pg_size(rx_ring),
 				 DMA_FROM_DEVICE, ICE_RX_DMA_ATTR);
-#else
-	dma = dma_map_page(rx_ring->dev, page, 0, ice_rx_pg_size(rx_ring),
-			   DMA_FROM_DEVICE);
-#endif
 
 	/* if mapping failed free memory back to system since
 	 * there isn't much point in holding memory we can't use
@@ -1393,14 +1393,9 @@ ice_put_rx_buf(struct ice_rx_ring *rx_ring, struct ice_rx_buf *rx_buf,
 #endif /* ICE_ADD_PROBES */
 	} else {
 		/* we are not reusing the buffer so unmap it */
-#ifndef HAVE_STRUCT_DMA_ATTRS
 		dma_unmap_page_attrs(rx_ring->dev, rx_buf->dma,
 				     ice_rx_pg_size(rx_ring), DMA_FROM_DEVICE,
 				     ICE_RX_DMA_ATTR);
-#else
-		dma_unmap_page(rx_ring->dev, rx_buf->dma,
-			       ice_rx_pg_size(rx_ring), DMA_FROM_DEVICE);
-#endif
 		__page_frag_cache_drain(rx_buf->page, rx_buf->pagecnt_bias);
 	}
 
@@ -2380,9 +2375,9 @@ static void ice_set_wb_on_itr(struct ice_q_vector *q_vector)
 	 * be static in non-adaptive mode (user configured)
 	 */
 	wr32(&vsi->back->hw, GLINT_DYN_CTL(q_vector->reg_idx),
-	     ((ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) &
-	      GLINT_DYN_CTL_ITR_INDX_M) | GLINT_DYN_CTL_INTENA_MSK_M |
-	     GLINT_DYN_CTL_WB_ON_ITR_M);
+	     FIELD_PREP(GLINT_DYN_CTL_ITR_INDX_M, ICE_ITR_NONE) |
+	     FIELD_PREP(GLINT_DYN_CTL_INTENA_MSK_M, 1) |
+	     FIELD_PREP(GLINT_DYN_CTL_WB_ON_ITR_M, 1));
 
 	q_vector->wb_on_itr = true;
 }
@@ -2731,8 +2726,7 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 
 	if (first->tx_flags & ICE_TX_FLAGS_HW_VLAN) {
 		td_cmd |= (u64)ICE_TX_DESC_CMD_IL2TAG1;
-		td_tag = (first->tx_flags & ICE_TX_FLAGS_VLAN_M) >>
-			  ICE_TX_FLAGS_VLAN_S;
+		td_tag = FIELD_GET(ICE_TX_FLAGS_VLAN_M, first->tx_flags);
 	}
 
 	dma = dma_map_single(tx_ring->dev, skb->data, size, DMA_TO_DEVICE);
@@ -3752,8 +3746,8 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring)
 		offload.cd_qw1 |= (u64)(ICE_TX_DESC_DTYPE_CTX |
 					(ICE_TX_CTX_DESC_IL2TAG2 <<
 					ICE_TXD_CTX_QW1_CMD_S));
-		offload.cd_l2tag2 = (first->tx_flags & ICE_TX_FLAGS_VLAN_M) >>
-			ICE_TX_FLAGS_VLAN_S;
+		offload.cd_l2tag2 = FIELD_GET(ICE_TX_FLAGS_VLAN_M,
+					      first->tx_flags);
 	}
 
 	/* set up TSO offload */

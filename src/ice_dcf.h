@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_DCF_H_
 #define _ICE_DCF_H_
@@ -82,7 +82,7 @@ enum ice_dcf_state ice_dcf_get_state(struct ice_pf *pf);
 void ice_dcf_set_state(struct ice_pf *pf, enum ice_dcf_state state);
 void ice_dcf_init_sw_rule_mgmt(struct ice_pf *pf);
 void ice_rm_all_dcf_sw_rules(struct ice_pf *pf);
-void ice_rm_dcf_sw_vsi_rule(struct ice_pf *pf, u16 hw_vsi_id);
+void ice_rm_dcf_sw_vsi_rule(struct ice_pf *pf, struct ice_vf *vf);
 bool
 ice_dcf_pre_aq_send_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 			u8 *aq_buf, u16 aq_buf_size);

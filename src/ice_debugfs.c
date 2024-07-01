@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include <linux/fs.h>
 #include <linux/debugfs.h>
@@ -7,8 +7,6 @@
 #include "ice.h"
 #include "ice_lib.h"
 #include "ice_fltr.h"
-
-static struct dentry *ice_debugfs_root;
 
 #define ICE_FW_DUMP_BLK_MAX	0xFFFF
 #define ICE_FW_DUMP_DATA_SIZE	4096
@@ -19,6 +17,74 @@ static struct dentry *ice_debugfs_root;
 #define ICE_FW_DUMP_LAST_IDX	0xFFFFFFFF
 #define ICE_FW_DUMP_LAST_ID	0xFF
 #define ICE_FW_DUMP_LAST_ID2	0xFFFF
+
+static struct dentry *ice_debugfs_root;
+
+/* create a define that has an extra module that doesn't really exist. this
+ * is so we can add a module 'all' to easily enable/disable all the modules
+ */
+#define ICE_NR_FW_LOG_MODULES (ICE_AQC_FW_LOG_ID_MAX + 1)
+
+/* the ordering in this array is important. it matches the ordering of the
+ * values in the FW so the index is the same value as in ice_aqc_fw_logging_mod
+ */
+static const char * const ice_fwlog_module_string[] = {
+	"general",
+	"ctrl",
+	"link",
+	"link_topo",
+	"dnl",
+	"i2c",
+	"sdp",
+	"mdio",
+	"adminq",
+	"hdma",
+	"lldp",
+	"dcbx",
+	"dcb",
+	"xlr",
+	"nvm",
+	"auth",
+	"vpd",
+	"iosf",
+	"parser",
+	"sw",
+	"scheduler",
+	"txq",
+	"rsvd",
+	"post",
+	"watchdog",
+	"task_dispatch",
+	"mng",
+	"synce",
+	"health",
+	"tsdrv",
+	"pfreg",
+	"mdlver",
+	"all",
+};
+
+/* the ordering in this array is important. it matches the ordering of the
+ * values in the FW so the index is the same value as in ice_fwlog_level
+ */
+static const char * const ice_fwlog_level_string[] = {
+	"none",
+	"error",
+	"warning",
+	"normal",
+	"verbose",
+};
+
+/* the order in this array is important. it matches the ordering of the
+ * values in the FW so the index is the same value as in ice_fwlog_level
+ */
+static const char * const ice_fwlog_log_size[] = {
+	"128K",
+	"256K",
+	"512K",
+	"1M",
+	"2M",
+};
 
 /* The ice_cluster_header structure needs to be added to each table dump
  * the header is contains 6 words each of 4byte(32 bits) in size
@@ -41,37 +107,45 @@ struct ice_cluster_header {
 };
 
 /**
+ * ice_get_last_table_id - get a value that should be used as End of Table
+ * @pf: pointer to pf struct
+ *
+ * Different versions of FW may indicate End Of Table by different value. Read
+ * FW capabilities and decide what value to use as End of Table.
+ */
+static u16 ice_get_last_table_id(struct ice_pf *pf)
+{
+	if (pf->hw.func_caps.common_cap.next_cluster_id_support ||
+	    pf->hw.dev_caps.common_cap.next_cluster_id_support)
+		return ICE_FW_DUMP_LAST_ID2;
+	else
+		return ICE_FW_DUMP_LAST_ID;
+}
+
+/**
  * ice_debugfs_fw_dump - send request to FW to dump cluster and save to file
  * @pf: pointer to pf struct
  * @cluster_id: number or FW cluster to be dumped
+ * @desc_blob: pointer to already allocated debugfs_blob_wrapper
  * @read_all_clusters: if true dump all clusters
  *
  * Create FW configuration binary snapshot. Repeatedly send AQ requests to dump
- * FW cluster, FW responds in 4KB blocks and sets new values for table_id
- * and table_idx. Repeat until all tables in given cluster were read.
+ * FW cluster, FW responds in 4KB blocks and sets new values for tbl_id
+ * and blk_idx. Repeat until all tables in given cluster were read.
  */
-static int
-ice_debugfs_fw_dump(struct ice_pf *pf, u16 cluster_id, bool read_all_clusters)
+static void
+ice_debugfs_fw_dump(struct ice_pf *pf, u16 cluster_id,
+		    struct debugfs_blob_wrapper *desc_blob,
+		    bool read_all_clusters)
 {
-	u32 next_table_idx, table_idx = 0, ntw = 0, ctw = 0, offset = 0;
-	u16 buf_len, next_table_id, next_cluster_id, table_id = 0;
-	struct debugfs_blob_wrapper *desc_blob;
+	u16 buf_len, next_tbl_id, next_cluster_id, last_tbl_id, tbl_id = 0;
+	u32 next_blk_idx, blk_idx = 0, ntw = 0, ctw = 0, offset = 0;
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_cluster_header header = {};
-	struct dentry *pfile;
-	u8 *vblk;
+	u8 *vblk = desc_blob->data;
 	int i;
 
-	desc_blob = devm_kzalloc(dev, sizeof(*desc_blob), GFP_KERNEL);
-	if (!desc_blob)
-		return -ENOMEM;
-
-	vfree(pf->ice_cluster_blk);
-	pf->ice_cluster_blk = NULL;
-
-	vblk = vmalloc(ICE_FW_DUMP_BLK_MAX * ICE_FW_DUMP_BLK_SIZE);
-	if (!vblk)
-		return -ENOMEM;
+	last_tbl_id = ice_get_last_table_id(pf);
 
 	for (i = 0; i < ICE_FW_DUMP_BLK_MAX; i++) {
 		int res;
@@ -80,22 +154,21 @@ ice_debugfs_fw_dump(struct ice_pf *pf, u16 cluster_id, bool read_all_clusters)
 		ntw += sizeof(struct ice_cluster_header);
 
 		res = ice_aq_get_internal_data(&pf->hw, cluster_id,
-					       table_id, table_idx, vblk + ntw,
+					       tbl_id, blk_idx, vblk + ntw,
 					       ICE_FW_DUMP_DATA_SIZE,
 					       &buf_len, &next_cluster_id,
-					       &next_table_id, &next_table_idx,
+					       &next_tbl_id, &next_blk_idx,
 					       NULL);
 		if (res) {
 			dev_err(dev, "Internal FW error %d while dumping cluster %d\n",
 				res, cluster_id);
-			devm_kfree(dev, desc_blob);
-			vfree(vblk);
-			return -EINVAL;
+			ntw = 0;
+			break;
 		}
 		ntw += buf_len;
 
 		header.cluster_id = cluster_id;
-		header.table_id = table_id;
+		header.table_id = tbl_id;
 		header.table_len = buf_len;
 		header.table_offset = offset;
 
@@ -105,26 +178,22 @@ ice_debugfs_fw_dump(struct ice_pf *pf, u16 cluster_id, bool read_all_clusters)
 
 		offset += buf_len;
 
-		if (table_idx == next_table_idx)
-			table_idx = ICE_FW_DUMP_LAST_IDX;
+		if (blk_idx == next_blk_idx)
+			blk_idx = ICE_FW_DUMP_LAST_IDX;
 		else
-			table_idx = next_table_idx;
+			blk_idx = next_blk_idx;
 
-		if (table_idx != ICE_FW_DUMP_LAST_IDX)
+		if (blk_idx != ICE_FW_DUMP_LAST_IDX)
 			continue;
 
-		table_idx = 0;
+		blk_idx = 0;
 		offset = 0;
 
 		if (next_cluster_id == ICE_FW_DUMP_LAST_ID2)
 			break;
 
-		/* Some clusters return end of table as 0xFF
-		 * and some are 0xFFFF
-		 */
-		if (!(next_table_id == ICE_FW_DUMP_LAST_ID ||
-		      next_table_id == ICE_FW_DUMP_LAST_ID2))
-			table_id = next_table_id;
+		if (next_tbl_id != last_tbl_id)
+			tbl_id = next_tbl_id;
 
 		/* End of cluster */
 		if (cluster_id != next_cluster_id) {
@@ -132,22 +201,13 @@ ice_debugfs_fw_dump(struct ice_pf *pf, u16 cluster_id, bool read_all_clusters)
 				dev_info(dev, "All FW clusters dump - cluster %d appended",
 					 cluster_id);
 				cluster_id = next_cluster_id;
-				table_id = 0;
+				tbl_id = 0;
 			} else {
 				break;
 			}
 		}
 	}
-
 	desc_blob->size = (unsigned long)ntw;
-	desc_blob->data = vblk;
-
-	pfile = debugfs_create_blob(ICE_FW_DUMP_FILENAME, 0400,
-				    pf->ice_debugfs_fw, desc_blob);
-	if (!pfile)
-		return -ENODEV;
-
-	pf->ice_cluster_blk = vblk;
 
 	if (read_all_clusters)
 		dev_info(dev, "Created FW dump of all available clusters in file %s\n",
@@ -155,8 +215,6 @@ ice_debugfs_fw_dump(struct ice_pf *pf, u16 cluster_id, bool read_all_clusters)
 	else
 		dev_info(dev, "Created FW dump of cluster %d in file %s\n",
 			 cluster_id, ICE_FW_DUMP_FILENAME);
-
-	return 0;
 }
 
 /**
@@ -189,8 +247,10 @@ static ssize_t dump_cluster_id_read(struct file *file, char __user *buf,
 static ssize_t dump_cluster_id_write(struct file *file, const char __user *buf,
 				     size_t len, loff_t *offset)
 {
+	static struct debugfs_blob_wrapper *desc_blob;
 	struct ice_pf *pf = file->private_data;
 	bool read_all_clusters = false;
+	const struct dentry *pfile;
 	char kbuf[11] = { 0 };
 	int bytes_read, err;
 	u16 cluster_id;
@@ -209,14 +269,29 @@ static ssize_t dump_cluster_id_write(struct file *file, const char __user *buf,
 			return err;
 	}
 
-	debugfs_lookup_and_remove(ICE_FW_DUMP_FILENAME, pf->ice_debugfs_fw);
-	err = ice_debugfs_fw_dump(pf, cluster_id, read_all_clusters);
-	if (err)
-		return err;
+	if (!pf->ice_fw_dump_blob) {
+		desc_blob = kzalloc(sizeof(*desc_blob), GFP_KERNEL);
+		if (!desc_blob)
+			return -ENOMEM;
 
-	/* Not all cluster IDs are supported in every FW version, save
-	 * the value only when FW returned success
-	 */
+		desc_blob->data = vmalloc(ICE_FW_DUMP_BLK_MAX *
+					  ICE_FW_DUMP_BLK_SIZE);
+		if (!desc_blob->data) {
+			kfree(desc_blob);
+			return -ENOMEM;
+		}
+
+		pf->ice_fw_dump_blob = desc_blob;
+	}
+
+	ice_debugfs_fw_dump(pf, cluster_id, desc_blob, read_all_clusters);
+
+	debugfs_lookup_and_remove(ICE_FW_DUMP_FILENAME, pf->ice_debugfs_fw);
+	pfile = debugfs_create_blob(ICE_FW_DUMP_FILENAME, 0400,
+				    pf->ice_debugfs_fw, desc_blob);
+	if (!pfile)
+		return -ENODEV;
+
 	pf->fw_dump_cluster_id = cluster_id;
 
 	return bytes_read;
@@ -361,19 +436,17 @@ static void ice_dump_rclk_status(struct ice_pf *pf)
 	int phy_pins;
 
 	if (ice_is_e810(&pf->hw))
-		phy_pins = ICE_C827_RCLK_PINS_NUM;
+		phy_pins = ICE_E810_RCLK_PINS_NUM;
 	else
 		/* E822-based devices have only one RCLK pin */
-		phy_pins = E822_CGU_RCLK_PHY_PINS_NUM;
+		phy_pins = E82X_CGU_RCLK_PHY_PINS_NUM;
 
 	for (phy_pin = 0; phy_pin < phy_pins; phy_pin++) {
 		const char *pin_name, *pin_state;
-		u8 port_num, flags;
-		u32 freq;
+		u8 flags;
 
-		port_num = ICE_AQC_SET_PHY_REC_CLK_OUT_CURR_PORT;
-		if (ice_aq_get_phy_rec_clk_out(&pf->hw, phy_pin, &port_num,
-					       &flags, &freq))
+		if (ice_aq_get_phy_rec_clk_out(&pf->hw, phy_pin, NULL,
+					       &flags, NULL))
 			return;
 
 		if (ice_is_e810(&pf->hw)) {
@@ -387,13 +460,13 @@ static void ice_dump_rclk_status(struct ice_pf *pf)
 			}
 
 			pin = E810T_CGU_INPUT_C827(phy, phy_pin);
-			pin_name = ice_zl_pin_idx_to_name_e810t(pin);
+			pin_name = ice_cgu_get_pin_name(&pf->hw, pin, true);
 		} else {
 			/* e822-based devices for now have only one phy
 			 * available (from Rimmon) and only one DPLL RCLK input
 			 * pin
 			 */
-			pin_name = E822_CGU_RCLK_PIN_NAME;
+			pin_name = E82X_CGU_RCLK_PIN_NAME;
 		}
 		pin_state =
 			flags & ICE_AQC_SET_PHY_REC_CLK_OUT_OUT_EN ?
@@ -455,17 +528,14 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 	dev_info(dev, "| Category: Inner VLAN Handling |\n");
 	dev_info(dev, "=================================\n");
 	dev_info(dev, "\tPort Based Inner VLAN Insertion: PVLAN ID: %d PRIO: %d\n",
-		 le16_to_cpu(info->port_based_inner_vlan) & VLAN_VID_MASK,
-		 (le16_to_cpu(info->port_based_inner_vlan) & VLAN_PRIO_MASK) >>
-		 VLAN_PRIO_SHIFT);
+		 le16_get_bits(info->port_based_inner_vlan, VLAN_VID_MASK),
+		 le16_get_bits(info->port_based_inner_vlan, VLAN_PRIO_MASK));
 	dev_info(dev, "\tInner VLAN TX Mode: 0x%02x\n",
-		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_TX_MODE_M) >>
-		 ICE_AQ_VSI_INNER_VLAN_TX_MODE_S);
+		 FIELD_GET(ICE_AQ_VSI_INNER_VLAN_TX_MODE_M, info->inner_vlan_flags));
 	dev_info(dev, "\tInsert PVID: %s\n", (info->inner_vlan_flags &
 		 ICE_AQ_VSI_INNER_VLAN_INSERT_PVID) ? "enabled" : "disabled");
 	dev_info(dev, "\tInner VLAN and UP expose mode (RX): 0x%02x\n",
-		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_EMODE_M) >>
-		 ICE_AQ_VSI_INNER_VLAN_EMODE_S);
+		 FIELD_GET(ICE_AQ_VSI_INNER_VLAN_EMODE_M, info->inner_vlan_flags));
 	dev_info(dev, "\tBlock Inner VLAN from TX Descriptor: %s\n",
 		 (info->inner_vlan_flags & ICE_AQ_VSI_INNER_VLAN_BLOCK_TX_DESC) ?
 		 "enabled" : "disabled");
@@ -474,22 +544,18 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 	dev_info(dev, "| Category: Outer VLAN Handling |\n");
 	dev_info(dev, "=================================\n");
 	dev_info(dev, "\tPort Based Outer VLAN Insertion: PVID: %d PRIO: %d\n",
-		 le16_to_cpu(info->port_based_outer_vlan) & VLAN_VID_MASK,
-		 (le16_to_cpu(info->port_based_outer_vlan) & VLAN_PRIO_MASK) >>
-		 VLAN_PRIO_SHIFT);
+		 le16_get_bits(info->port_based_outer_vlan, VLAN_VID_MASK),
+		 le16_get_bits(info->port_based_outer_vlan, VLAN_PRIO_MASK));
 	dev_info(dev, "\tOuter VLAN and UP expose mode (RX): 0x%02x\n",
-		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_EMODE_M) >>
-		 ICE_AQ_VSI_OUTER_VLAN_EMODE_S);
+		 FIELD_GET(ICE_AQ_VSI_OUTER_VLAN_EMODE_M, info->outer_vlan_flags));
 	dev_info(dev, "\tOuter Tag type (Tx and Rx): 0x%02x\n",
-		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_TAG_TYPE_M) >>
-		 ICE_AQ_VSI_OUTER_TAG_TYPE_S);
+		 FIELD_GET(ICE_AQ_VSI_OUTER_TAG_TYPE_M, info->outer_vlan_flags));
 	dev_info(dev, "\tPort Based Outer VLAN Insert Enable: %s\n",
 		 (info->outer_vlan_flags &
 		 ICE_AQ_VSI_OUTER_VLAN_PORT_BASED_INSERT) ?
 		 "enabled" : "disabled");
 	dev_info(dev, "\tOuter VLAN TX Mode: 0x%02x\n",
-		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M) >>
-		 ICE_AQ_VSI_OUTER_VLAN_TX_MODE_S);
+		 FIELD_GET(ICE_AQ_VSI_OUTER_VLAN_TX_MODE_M, info->outer_vlan_flags));
 	dev_info(dev, "\tBlock Outer VLAN from TX Descriptor: %s\n",
 		 (info->outer_vlan_flags & ICE_AQ_VSI_OUTER_VLAN_BLOCK_TX_DESC) ?
 		 "enabled" : "disabled");
@@ -531,7 +597,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 	int cnt = 0;
 	int status;
 
-	if (!ice_is_cgu_present(hw)) {
+	if (!ice_is_cgu_in_netlist(hw)) {
 		dev_err(dev, "CGU not present\n");
 		return -ENODEV;
 	}
@@ -544,7 +610,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 			status, hw->adminq.sq_last_status);
 		abilities.num_inputs = 7;
 		abilities.pps_dpll_idx = 1;
-		abilities.synce_dpll_idx = 0;
+		abilities.eec_dpll_idx = 0;
 	}
 
 	status = ice_aq_get_cgu_info(hw, &cgu_id, &cgu_cfg_ver, &cgu_fw_ver);
@@ -556,12 +622,10 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		cnt = snprintf(buff, bytes_left, "Found ZL80032 CGU\n");
 
 		/* Read DPLL config version from AQ */
-		ver_major = (cgu_cfg_ver & ZL_VER_MAJOR_MASK)
-			     >> ZL_VER_MAJOR_SHIFT;
-		ver_minor = (cgu_cfg_ver & ZL_VER_MINOR_MASK)
-			     >> ZL_VER_MINOR_SHIFT;
-		rev = (cgu_cfg_ver & ZL_VER_REV_MASK) >> ZL_VER_REV_SHIFT;
-		bugfix = (cgu_cfg_ver & ZL_VER_BF_MASK) >> ZL_VER_BF_SHIFT;
+		ver_major = FIELD_GET(ZL_VER_MAJOR_MASK, cgu_cfg_ver);
+		ver_minor = FIELD_GET(ZL_VER_MINOR_MASK, cgu_cfg_ver);
+		rev = FIELD_GET(ZL_VER_REV_MASK, cgu_cfg_ver);
+		bugfix = FIELD_GET(ZL_VER_BF_MASK, cgu_cfg_ver);
 
 		cnt += snprintf(&buff[cnt], bytes_left - cnt,
 				"DPLL Config ver: %d.%d.%d.%d\n", ver_major,
@@ -577,7 +641,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 	cnt += snprintf(&buff[cnt], bytes_left - cnt,
 			"                   |            |      priority     |            |\n"
 			"      input (idx)  |    state   | EEC (%d) | PPS (%d) | ESync fail |\n",
-			abilities.synce_dpll_idx, abilities.pps_dpll_idx);
+			abilities.eec_dpll_idx, abilities.pps_dpll_idx);
 	cnt += snprintf(&buff[cnt], bytes_left - cnt,
 			"  ----------------------------------------------------------------\n");
 
@@ -587,7 +651,9 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		char *pin_state;
 		u8 data;
 
-		status = ice_aq_get_input_pin_cfg(hw, &cfg, pin);
+		status = ice_aq_get_input_pin_cfg(hw, pin, &cfg.status, NULL,
+						  NULL, &cfg.flags2, NULL,
+						  NULL);
 		if (status)
 			data = ICE_CGU_IN_PIN_FAIL_FLAGS;
 		else
@@ -597,7 +663,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 		ice_dpll_pin_idx_to_name(pf, pin, pin_name);
 
 		/* get pin priorities */
-		if (ice_aq_get_cgu_ref_prio(hw, abilities.synce_dpll_idx, pin,
+		if (ice_aq_get_cgu_ref_prio(hw, abilities.eec_dpll_idx, pin,
 					    &synce_prio))
 			synce_prio = ICE_E810T_NEVER_USE_PIN;
 		if (ice_aq_get_cgu_ref_prio(hw, abilities.pps_dpll_idx, pin,
@@ -650,7 +716,7 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 				"\tStatus:\t\t\t%s\n",
 				ice_cgu_state_to_name(pf->ptp_dpll_state));
 
-		if (pf->ptp_dpll_state != ICE_CGU_STATE_INVALID)
+		if (pf->ptp_dpll_state != 0)
 			cnt += snprintf(&buff[cnt], bytes_left - cnt,
 					"\tPhase offset [ps]:\t\t\t%lld\n",
 					pf->ptp_dpll_phase_offset);
@@ -662,17 +728,17 @@ ice_get_dpll_status(struct ice_pf *pf, char *buff, size_t *buff_size)
 
 /**
  * ice_debugfs_cgu_read - debugfs interface for reading DPLL status
- * @filp: the opened file
+ * @file: the opened file
  * @user_buf: where to find the user's data
  * @count: the length of the user's data
  * @ppos: file position offset
  *
  * Return: number of bytes read
  */
-static ssize_t ice_debugfs_cgu_read(struct file *filp, char __user *user_buf,
+static ssize_t ice_debugfs_cgu_read(struct file *file, char __user *user_buf,
 				    size_t count, loff_t *ppos)
 {
-	struct ice_pf *pf = filp->private_data;
+	struct ice_pf *pf = file->private_data;
 	size_t buffer_size = PAGE_SIZE;
 	char *kbuff;
 	int err;
@@ -706,154 +772,601 @@ static const struct file_operations ice_debugfs_cgu_fops = {
 	.read  = ice_debugfs_cgu_read,
 };
 
-static const char *module_id_to_name(u16 module_id)
-{
-	switch (module_id) {
-	case ICE_AQC_FW_LOG_ID_GENERAL:
-		return "General";
-	case ICE_AQC_FW_LOG_ID_CTRL:
-		return "Control (Resets + Autoload)";
-	case ICE_AQC_FW_LOG_ID_LINK:
-		return "Link Management";
-	case ICE_AQC_FW_LOG_ID_LINK_TOPO:
-		return "Link Topology Detection";
-	case ICE_AQC_FW_LOG_ID_DNL:
-		return "DNL";
-	case ICE_AQC_FW_LOG_ID_I2C:
-		return "I2C";
-	case ICE_AQC_FW_LOG_ID_SDP:
-		return "SDP";
-	case ICE_AQC_FW_LOG_ID_MDIO:
-		return "MDIO";
-	case ICE_AQC_FW_LOG_ID_ADMINQ:
-		return "Admin Queue";
-	case ICE_AQC_FW_LOG_ID_HDMA:
-		return "HDMA";
-	case ICE_AQC_FW_LOG_ID_LLDP:
-		return "LLDP";
-	case ICE_AQC_FW_LOG_ID_DCBX:
-		return "DCBX";
-	case ICE_AQC_FW_LOG_ID_DCB:
-		return "DCB";
-	case ICE_AQC_FW_LOG_ID_XLR:
-		return "XLR";
-	case ICE_AQC_FW_LOG_ID_NVM:
-		return "NVM";
-	case ICE_AQC_FW_LOG_ID_AUTH:
-		return "Authentication";
-	case ICE_AQC_FW_LOG_ID_VPD:
-		return "VPD";
-	case ICE_AQC_FW_LOG_ID_IOSF:
-		return "IOSF";
-	case ICE_AQC_FW_LOG_ID_PARSER:
-		return "Parser";
-	case ICE_AQC_FW_LOG_ID_SW:
-		return "Switch";
-	case ICE_AQC_FW_LOG_ID_SCHEDULER:
-		return "Scheduler";
-	case ICE_AQC_FW_LOG_ID_TXQ:
-		return "Tx Queue Management";
-	case ICE_AQC_FW_LOG_ID_ACL:
-		return "ACL";
-	case ICE_AQC_FW_LOG_ID_POST:
-		return "Post";
-	case ICE_AQC_FW_LOG_ID_WATCHDOG:
-		return "Watchdog";
-	case ICE_AQC_FW_LOG_ID_TASK_DISPATCH:
-		return "Task Dispatcher";
-	case ICE_AQC_FW_LOG_ID_MNG:
-		return "Manageability";
-	case ICE_AQC_FW_LOG_ID_SYNCE:
-		return "Synce";
-	case ICE_AQC_FW_LOG_ID_HEALTH:
-		return "Health";
-	case ICE_AQC_FW_LOG_ID_TSDRV:
-		return "Time Sync";
-	case ICE_AQC_FW_LOG_ID_PFREG:
-		return "PF Registration";
-	case ICE_AQC_FW_LOG_ID_MDLVER:
-		return "Module Version";
-	default:
-		return "Unsupported";
-	}
-}
-
-static const char *log_level_to_name(u8 log_level)
-{
-	switch (log_level) {
-	case ICE_FWLOG_LEVEL_NONE:
-		return "None";
-	case ICE_FWLOG_LEVEL_ERROR:
-		return "Error";
-	case ICE_FWLOG_LEVEL_WARNING:
-		return "Warning";
-	case ICE_FWLOG_LEVEL_NORMAL:
-		return "Normal";
-	case ICE_FWLOG_LEVEL_VERBOSE:
-		return "Verbose";
-	default:
-		return "Unsupported";
-	}
-}
-
 /**
- * ice_fwlog_dump_cfg - Dump current FW logging configuration
+ * ice_fwlog_print_module_cfg - print current FW logging module configuration
  * @hw: pointer to the HW structure
+ * @module: module to print
+ * @s: the seq file to put data into
  */
-static void ice_fwlog_dump_cfg(struct ice_hw *hw)
+static void
+ice_fwlog_print_module_cfg(const struct ice_hw *hw, int module,
+			   struct seq_file *s)
 {
-	struct device *dev = ice_pf_to_dev((struct ice_pf *)(hw->back));
-	struct ice_fwlog_cfg *cfg;
-	int status;
-	u16 i;
+	const struct ice_fwlog_cfg *cfg = &hw->fwlog_cfg;
+	const struct ice_fwlog_module_entry *entry;
 
-	cfg = kzalloc(sizeof(*cfg), GFP_KERNEL);
-	if (!cfg)
-		return;
+	if (module != ICE_AQC_FW_LOG_ID_MAX) {
+		entry =	&cfg->module_entries[module];
 
-	status = ice_fwlog_get(hw, cfg);
-	if (status) {
-		kfree(cfg);
-		return;
+		seq_printf(s, "\tModule: %s, Log Level: %s\n",
+			   ice_fwlog_module_string[entry->module_id],
+			   ice_fwlog_level_string[entry->log_level]);
+	} else {
+		int i;
+
+		for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
+			entry =	&cfg->module_entries[i];
+
+			seq_printf(s, "\tModule: %s, Log Level: %s\n",
+				   ice_fwlog_module_string[entry->module_id],
+				   ice_fwlog_level_string[entry->log_level]);
+		}
+	}
+}
+
+static int
+ice_find_module_by_dentry(const struct ice_pf *pf, const struct dentry *d)
+{
+	int i, module;
+
+	module = -1;
+	/* find the module based on the dentry */
+	for (i = 0; i < ICE_NR_FW_LOG_MODULES; i++) {
+		if (d == pf->ice_debugfs_pf_fwlog_modules[i]) {
+			module = i;
+			break;
+		}
 	}
 
-	dev_info(dev, "FWLOG Configuration:\n");
-	dev_info(dev, "Options: 0x%04x\n", cfg->options);
-	dev_info(dev, "\tarq_ena: %s\n",
-		 (cfg->options &
-		  ICE_FWLOG_OPTION_ARQ_ENA) ? "true" : "false");
-	dev_info(dev, "\tuart_ena: %s\n",
-		 (cfg->options &
-		  ICE_FWLOG_OPTION_UART_ENA) ? "true" : "false");
-	dev_info(dev, "\tPF registered: %s\n",
-		 (cfg->options &
-		  ICE_FWLOG_OPTION_IS_REGISTERED) ? "true" : "false");
-
-	dev_info(dev, "Module Entries:\n");
-	for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++) {
-		struct ice_fwlog_module_entry *entry =
-			&cfg->module_entries[i];
-
-		dev_info(dev, "\tModule ID %d (%s) Log Level %d (%s)\n",
-			 entry->module_id, module_id_to_name(entry->module_id),
-			 entry->log_level, log_level_to_name(entry->log_level));
-	}
-
-	kfree(cfg);
+	return module;
 }
 
 /**
- * ice_debugfs_command_write - write into command datum
- * @filp: the opened file
+ * ice_debugfs_module_show - read from 'module' file
+ * @s: the opened file
+ * @v: pointer to the offset
+ */
+static int ice_debugfs_module_show(struct seq_file *s, void *v)
+{
+#ifdef HAVE_FILE_IN_SEQ_FILE
+	const struct file *file = s->file;
+	const struct dentry *dentry;
+	const struct ice_pf *pf;
+	int module;
+
+	dentry = file_dentry(file);
+	pf = s->private;
+
+	module = ice_find_module_by_dentry(pf, dentry);
+	if (module < 0) {
+		dev_info(ice_pf_to_dev(pf), "unknown module\n");
+		return -EINVAL;
+	}
+#else
+	/* print all modules instead of requested one */
+	const struct ice_pf *pf = s->private;
+	int module = ICE_AQC_FW_LOG_ID_MAX;
+#endif /* HAVE_FILE_IN_SEQ_FILE */
+
+	ice_fwlog_print_module_cfg(&pf->hw, module, s);
+
+	return 0;
+}
+
+static int ice_debugfs_module_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ice_debugfs_module_show, inode->i_private);
+}
+
+/**
+ * ice_debugfs_module_write - write into 'module' file
+ * @file: the opened file
  * @buf: where to find the user's data
  * @count: the length of the user's data
  * @ppos: file position offset
  */
 static ssize_t
-ice_debugfs_command_write(struct file *filp, const char __user *buf,
+ice_debugfs_module_write(struct file *file, const char __user *buf,
+			 size_t count, loff_t *ppos)
+{
+	struct ice_pf *pf = file_inode(file)->i_private;
+	const struct dentry *dentry = file_dentry(file);
+	struct device *dev = ice_pf_to_dev(pf);
+	char user_val[16], *cmd_buf;
+	int module, log_level, cnt;
+
+	/* don't allow partial writes or invalid input */
+	if (*ppos != 0 || count > 8)
+		return -EINVAL;
+
+	cmd_buf = memdup_user(buf, count);
+	if (IS_ERR(cmd_buf))
+		return PTR_ERR(cmd_buf);
+
+	module = ice_find_module_by_dentry(pf, dentry);
+	if (module < 0) {
+		dev_info(dev, "unknown module\n");
+		return -EINVAL;
+	}
+
+	cnt = sscanf(cmd_buf, "%8s", user_val);
+	if (cnt != 1)
+		return -EINVAL;
+
+	log_level = sysfs_match_string(ice_fwlog_level_string, user_val);
+	if (log_level < 0) {
+		dev_info(dev, "unknown log level '%s'\n", user_val);
+		return -EINVAL;
+	}
+
+	if (module != ICE_AQC_FW_LOG_ID_MAX) {
+		ice_pf_fwlog_update_module(pf, log_level, module);
+	} else {
+		/* the module 'all' is a shortcut so that we can set
+		 * all of the modules to the same level quickly
+		 */
+		int i;
+
+		for (i = 0; i < ICE_AQC_FW_LOG_ID_MAX; i++)
+			ice_pf_fwlog_update_module(pf, log_level, i);
+	}
+
+	return count;
+}
+
+static const struct file_operations ice_debugfs_module_fops = {
+	.owner = THIS_MODULE,
+	.open  = ice_debugfs_module_open,
+	.read = seq_read,
+	.release = single_release,
+	.write = ice_debugfs_module_write,
+};
+
+/**
+ * ice_debugfs_nr_messages_read - read from 'nr_messages' file
+ * @file: the opened file
+ * @buffer: where to write the data for the user to read
+ * @count: the size of the user's buffer
+ * @ppos: file position offset
+ */
+static ssize_t ice_debugfs_nr_messages_read(struct file *file,
+					    char __user *buffer, size_t count,
+					    loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct ice_hw *hw = &pf->hw;
+	char buff[32] = {};
+	int status;
+
+	snprintf(buff, sizeof(buff), "%d\n",
+		 hw->fwlog_cfg.log_resolution);
+
+	status = simple_read_from_buffer(buffer, count, ppos, buff,
+					 strlen(buff));
+
+	return status;
+}
+
+/**
+ * ice_debugfs_nr_messages_write - write into 'nr_messages' file
+ * @file: the opened file
+ * @buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ */
+static ssize_t
+ice_debugfs_nr_messages_write(struct file *file, const char __user *buf,
+			      size_t count, loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	char user_val[8], *cmd_buf;
+	s16 nr_messages;
+	ssize_t ret;
+
+	/* don't allow partial writes or invalid input */
+	if (*ppos != 0 || count > 4)
+		return -EINVAL;
+
+	cmd_buf = memdup_user(buf, count);
+	if (IS_ERR(cmd_buf))
+		return PTR_ERR(cmd_buf);
+
+	ret = sscanf(cmd_buf, "%4s", user_val);
+	if (ret != 1)
+		return -EINVAL;
+
+	ret = kstrtos16(user_val, 0, &nr_messages);
+	if (ret)
+		return ret;
+
+	if (nr_messages < ICE_AQC_FW_LOG_MIN_RESOLUTION ||
+	    nr_messages > ICE_AQC_FW_LOG_MAX_RESOLUTION) {
+		dev_err(dev, "Invalid FW log number of messages %d, value must be between %d - %d\n",
+			nr_messages, ICE_AQC_FW_LOG_MIN_RESOLUTION,
+			ICE_AQC_FW_LOG_MAX_RESOLUTION);
+		return -EINVAL;
+	}
+
+	hw->fwlog_cfg.log_resolution = nr_messages;
+
+	return count;
+}
+
+static const struct file_operations ice_debugfs_nr_messages_fops = {
+	.owner = THIS_MODULE,
+	.open  = simple_open,
+	.read = ice_debugfs_nr_messages_read,
+	.write = ice_debugfs_nr_messages_write,
+};
+
+/**
+ * ice_debugfs_enable_read - read from 'enable' file
+ * @file: the opened file
+ * @buffer: where to write the data for the user to read
+ * @count: the size of the user's buffer
+ * @ppos: file position offset
+ */
+static ssize_t ice_debugfs_enable_read(struct file *file,
+				       char __user *buffer, size_t count,
+				       loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct ice_hw *hw = &pf->hw;
+	char buff[32] = {};
+
+	snprintf(buff, sizeof(buff), "%u\n",
+		 (u16)(hw->fwlog_cfg.options &
+		 ICE_FWLOG_OPTION_IS_REGISTERED) >> 3);
+
+	return simple_read_from_buffer(buffer, count, ppos, buff, strlen(buff));
+}
+
+/**
+ * ice_debugfs_enable_write - write into 'enable' file
+ * @file: the opened file
+ * @buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ */
+static ssize_t
+ice_debugfs_enable_write(struct file *file, const char __user *buf,
+			 size_t count, loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct ice_hw *hw = &pf->hw;
+	char user_val[8], *cmd_buf;
+	bool enable;
+	ssize_t ret;
+
+	/* don't allow partial writes or invalid input */
+	if (*ppos != 0 || count > 2)
+		return -EINVAL;
+
+	cmd_buf = memdup_user(buf, count);
+	if (IS_ERR(cmd_buf))
+		return PTR_ERR(cmd_buf);
+
+	ret = sscanf(cmd_buf, "%2s", user_val);
+	if (ret != 1)
+		return -EINVAL;
+
+	ret = kstrtobool(user_val, &enable);
+	if (ret)
+		goto enable_write_error;
+
+	if (enable)
+		hw->fwlog_cfg.options |= ICE_FWLOG_OPTION_ARQ_ENA;
+	else
+		hw->fwlog_cfg.options &= ~ICE_FWLOG_OPTION_ARQ_ENA;
+
+	ret = ice_fwlog_set(hw, &hw->fwlog_cfg);
+	if (ret)
+		goto enable_write_error;
+
+	if (enable)
+		ret = ice_fwlog_register(hw);
+	else
+		ret = ice_fwlog_unregister(hw);
+
+	if (ret)
+		goto enable_write_error;
+
+	dev_info(ice_pf_to_dev(pf), "Firmware logging %s\n",
+		 enable ? "enabled" : "disabled");
+
+	/* if we get here, nothing went wrong; return count since we didn't
+	 * really write anything
+	 */
+	ret = (ssize_t)count;
+
+enable_write_error:
+	/* This function always consumes all of the written input, or produces
+	 * an error. Check and enforce this. Otherwise, the write operation
+	 * won't complete properly.
+	 */
+	if (WARN_ON(ret != (ssize_t)count && ret >= 0))
+		ret = -EIO;
+
+	return ret;
+}
+
+static const struct file_operations ice_debugfs_enable_fops = {
+	.owner = THIS_MODULE,
+	.open  = simple_open,
+	.read = ice_debugfs_enable_read,
+	.write = ice_debugfs_enable_write,
+};
+
+/**
+ * ice_debugfs_log_size_read - read from 'log_size' file
+ * @file: the opened file
+ * @buffer: where to write the data for the user to read
+ * @count: the size of the user's buffer
+ * @ppos: file position offset
+ */
+static ssize_t ice_debugfs_log_size_read(struct file *file,
+					 char __user *buffer, size_t count,
+					 loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct ice_hw *hw = &pf->hw;
+	char buff[32] = {};
+	int index;
+
+	index = hw->fwlog_ring.index;
+	snprintf(buff, sizeof(buff), "%s\n", ice_fwlog_log_size[index]);
+
+	return simple_read_from_buffer(buffer, count, ppos, buff, strlen(buff));
+}
+
+/**
+ * ice_debugfs_log_size_write - write into 'log_size' file
+ * @file: the opened file
+ * @buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ */
+static ssize_t
+ice_debugfs_log_size_write(struct file *file, const char __user *buf,
+			   size_t count, loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	char user_val[8], *cmd_buf;
+	ssize_t ret;
+	int index;
+
+	/* don't allow partial writes */
+	if (*ppos != 0)
+		return -EINVAL;
+
+	cmd_buf = memdup_user(buf, count);
+	if (IS_ERR(cmd_buf))
+		return PTR_ERR(cmd_buf);
+
+	ret = sscanf(cmd_buf, "%5s", user_val);
+	if (ret != 1)
+		return -EINVAL;
+
+	index = sysfs_match_string(ice_fwlog_log_size, user_val);
+	if (index < 0) {
+		dev_info(dev, "Invalid log size '%s'. The value must be one of 128K, 256K, 512K, 1M, 2M\n",
+			 user_val);
+		ret = -EINVAL;
+		goto log_size_write_error;
+	} else if (hw->fwlog_cfg.options & ICE_FWLOG_OPTION_IS_REGISTERED) {
+		dev_info(dev, "FW logging is currently running. Please disable FW logging to change log_size\n");
+		ret = -EINVAL;
+		goto log_size_write_error;
+	}
+
+	/* free all the buffers and the tracking info and resize */
+	ice_fwlog_realloc_rings(hw, index);
+
+	/* if we get here, nothing went wrong; return count since we didn't
+	 * really write anything
+	 */
+	ret = (ssize_t)count;
+
+log_size_write_error:
+	/* This function always consumes all of the written input, or produces
+	 * an error. Check and enforce this. Otherwise, the write operation
+	 * won't complete properly.
+	 */
+	if (WARN_ON(ret != (ssize_t)count && ret >= 0))
+		ret = -EIO;
+
+	return ret;
+}
+
+static const struct file_operations ice_debugfs_log_size_fops = {
+	.owner = THIS_MODULE,
+	.open  = simple_open,
+	.read = ice_debugfs_log_size_read,
+	.write = ice_debugfs_log_size_write,
+};
+
+/**
+ * ice_debugfs_data_read - read from 'data' file
+ * @file: the opened file
+ * @buffer: where to write the data for the user to read
+ * @count: the size of the user's buffer
+ * @ppos: file position offset
+ */
+static ssize_t ice_debugfs_data_read(struct file *file, char __user *buffer,
+				     size_t count, loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct ice_hw *hw = &pf->hw;
+	int data_copied = 0;
+	bool done = false;
+
+	if (ice_fwlog_ring_empty(&hw->fwlog_ring))
+		return 0;
+
+	while (!ice_fwlog_ring_empty(&hw->fwlog_ring) && !done) {
+		struct ice_fwlog_data *log;
+		u16 cur_buf_len;
+
+		log = &hw->fwlog_ring.rings[hw->fwlog_ring.head];
+		cur_buf_len = log->data_size;
+		if (cur_buf_len >= count) {
+			done = true;
+			continue;
+		}
+
+		if (copy_to_user(buffer, log->data, cur_buf_len)) {
+			/* if there is an error then bail and return whatever
+			 * the driver has copied so far
+			 */
+			done = true;
+			continue;
+		}
+
+		data_copied += cur_buf_len;
+		buffer += cur_buf_len;
+		count -= cur_buf_len;
+		*ppos += cur_buf_len;
+		ice_fwlog_ring_increment(&hw->fwlog_ring.head,
+					 hw->fwlog_ring.size);
+	}
+
+	return data_copied;
+}
+
+/**
+ * ice_debugfs_data_write - write into 'data' file
+ * @file: the opened file
+ * @buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ */
+static ssize_t
+ice_debugfs_data_write(struct file *file, const char __user *buf, size_t count,
+		       loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	ssize_t ret;
+
+	/* don't allow partial writes */
+	if (*ppos != 0)
+		return 0;
+
+	/* any value is allowed to clear the buffer so no need to even look at
+	 * what the value is
+	 */
+	if (!(hw->fwlog_cfg.options & ICE_FWLOG_OPTION_IS_REGISTERED)) {
+		hw->fwlog_ring.head = 0;
+		hw->fwlog_ring.tail = 0;
+	} else {
+		dev_info(dev, "Can't clear FW log data while FW log running\n");
+		ret = -EINVAL;
+		goto nr_buffs_write_error;
+	}
+
+	/* if we get here, nothing went wrong; return count since we didn't
+	 * really write anything
+	 */
+	ret = (ssize_t)count;
+
+nr_buffs_write_error:
+	/* This function always consumes all of the written input, or produces
+	 * an error. Check and enforce this. Otherwise, the write operation
+	 * won't complete properly.
+	 */
+	if (WARN_ON(ret != (ssize_t)count && ret >= 0))
+		ret = -EIO;
+
+	return ret;
+}
+
+static const struct file_operations ice_debugfs_data_fops = {
+	.owner = THIS_MODULE,
+	.open  = simple_open,
+	.read = ice_debugfs_data_read,
+	.write = ice_debugfs_data_write,
+};
+
+/**
+ * ice_debugfs_fwlog_init - setup the debugfs directory
+ * @pf: the ice that is starting up
+ */
+void ice_debugfs_fwlog_init(struct ice_pf *pf)
+{
+	struct dentry *fw_modules_dir;
+	struct dentry **fw_modules;
+	int i;
+
+	/* only support fw log commands on PF 0 */
+	if (pf->hw.bus.func)
+		return;
+
+	/* allocate space for this first because if it fails then we don't
+	 * need to unwind
+	 */
+	fw_modules = kcalloc(ICE_NR_FW_LOG_MODULES, sizeof(*fw_modules),
+			     GFP_KERNEL);
+	if (!fw_modules)
+		return;
+
+	pf->ice_debugfs_pf_fwlog = debugfs_create_dir("fwlog",
+						      pf->ice_debugfs_pf);
+	if (IS_ERR(pf->ice_debugfs_pf))
+		goto err_create_module_files;
+
+	fw_modules_dir = debugfs_create_dir("modules",
+					    pf->ice_debugfs_pf_fwlog);
+	if (IS_ERR(fw_modules_dir))
+		goto err_create_module_files;
+
+	for (i = 0; i < ICE_NR_FW_LOG_MODULES; i++) {
+		fw_modules[i] = debugfs_create_file(ice_fwlog_module_string[i],
+						    0600, fw_modules_dir, pf,
+						    &ice_debugfs_module_fops);
+
+		if (IS_ERR(fw_modules[i]))
+			goto err_create_module_files;
+	}
+
+	debugfs_create_file("nr_messages", 0600,
+			    pf->ice_debugfs_pf_fwlog, pf,
+			    &ice_debugfs_nr_messages_fops);
+
+	pf->ice_debugfs_pf_fwlog_modules = fw_modules;
+
+	debugfs_create_file("enable", 0600, pf->ice_debugfs_pf_fwlog,
+			    pf, &ice_debugfs_enable_fops);
+
+	debugfs_create_file("log_size", 0600, pf->ice_debugfs_pf_fwlog,
+			    pf, &ice_debugfs_log_size_fops);
+
+	debugfs_create_file("data", 0600, pf->ice_debugfs_pf_fwlog,
+			    pf, &ice_debugfs_data_fops);
+
+	return;
+
+err_create_module_files:
+	debugfs_remove_recursive(pf->ice_debugfs_pf_fwlog);
+	kfree(fw_modules);
+}
+
+/**
+ * ice_debugfs_command_write - write into command datum
+ * @file: the opened file
+ * @buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ */
+static ssize_t
+ice_debugfs_command_write(struct file *file, const char __user *buf,
 			  size_t count, loff_t *ppos)
 {
-	struct ice_pf *pf = filp->private_data;
+	struct ice_pf *pf = file->private_data;
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
 	char *cmd_buf, *cmd_buf_tmp;
@@ -919,9 +1432,6 @@ ice_debugfs_command_write(struct file *filp, const char __user *buf,
 	} else if (argc == 2 && !strncmp(argv[0], "dump", 4) &&
 		   !strncmp(argv[1], "capabilities", 11)) {
 		ice_dump_caps(hw);
-	} else if (argc == 2 && !strncmp(argv[0], "dump", 4) &&
-		   !strncmp(argv[1], "fwlog_cfg", 9)) {
-		ice_fwlog_dump_cfg(&pf->hw);
 	} else if (argc == 4 && !strncmp(argv[0], "dump", 4) &&
 		   !strncmp(argv[1], "ptp", 3) &&
 		   !strncmp(argv[2], "func", 4) &&
@@ -1047,7 +1557,6 @@ command_help:
 		dev_info(dev, "\t dump switch\n");
 		dev_info(dev, "\t dump ports\n");
 		dev_info(dev, "\t dump capabilities\n");
-		dev_info(dev, "\t dump fwlog_cfg\n");
 		dev_info(dev, "\t dump ptp func capabilities\n");
 		dev_info(dev, "\t dump ptp dev capabilities\n");
 		dev_info(dev, "\t dump mmcast\n");
@@ -1129,6 +1638,8 @@ void ice_debugfs_pf_init(struct ice_pf *pf)
 			goto create_failed;
 	}
 
+	ice_fwlog_init(&pf->hw);
+
 	return;
 
 create_failed:
@@ -1142,10 +1653,17 @@ create_failed:
  */
 void ice_debugfs_pf_exit(struct ice_pf *pf)
 {
+	struct debugfs_blob_wrapper *desc_blob = pf->ice_fw_dump_blob;
+
 	debugfs_remove_recursive(pf->ice_debugfs_pf);
 
-	vfree(pf->ice_cluster_blk);
-	pf->ice_cluster_blk = NULL;
+	ice_fwlog_deinit(&pf->hw);
+
+	if (desc_blob) {
+		vfree(desc_blob->data);
+		kfree(desc_blob);
+	}
+	pf->ice_fw_dump_blob = NULL;
 
 	pf->ice_debugfs_fw = NULL;
 	pf->ice_debugfs_pf = NULL;

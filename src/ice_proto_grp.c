@@ -1,9 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_parser_util.h"
-
 
 static void _proto_off_dump(struct ice_hw *hw, struct ice_proto_off *po,
 			    int idx)

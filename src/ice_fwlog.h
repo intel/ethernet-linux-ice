@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_FWLOG_H_
 #define _ICE_FWLOG_H_
@@ -30,6 +30,8 @@ struct ice_fwlog_module_entry {
 struct ice_fwlog_cfg {
 	/* list of modules for configuring log level */
 	struct ice_fwlog_module_entry module_entries[ICE_AQC_FW_LOG_ID_MAX];
+	/* options used to configure firmware logging */
+	u16 options;
 #define ICE_FWLOG_OPTION_ARQ_ENA		BIT(0)
 #define ICE_FWLOG_OPTION_UART_ENA		BIT(1)
 	/* set before calling ice_fwlog_init() so the PF registers for firmware
@@ -40,23 +42,38 @@ struct ice_fwlog_cfg {
 	 * logging events over ARQ
 	 */
 #define ICE_FWLOG_OPTION_IS_REGISTERED		BIT(3)
-	/* options used to configure firmware logging */
-	u16 options;
+
 	/* minimum number of log events sent per Admin Receive Queue event */
 	u16 log_resolution;
 };
 
-void ice_fwlog_set_support_ena(struct ice_hw *hw);
-bool ice_fwlog_supported(struct ice_hw *hw);
-int ice_fwlog_init(struct ice_hw *hw, struct ice_fwlog_cfg *cfg);
+struct ice_fwlog_data {
+	u16 data_size;
+	u8 *data;
+};
+
+struct ice_fwlog_ring {
+	struct ice_fwlog_data *rings;
+	u16 index;
+	u16 size;
+	u16 head;
+	u16 tail;
+};
+
+#define ICE_FWLOG_RING_SIZE_INDEX_DFLT 3
+#define ICE_FWLOG_RING_SIZE_DFLT 256
+#define ICE_FWLOG_RING_SIZE_MAX 512
+
+bool ice_fwlog_ring_full(const struct ice_fwlog_ring *rings);
+bool ice_fwlog_ring_empty(const struct ice_fwlog_ring *rings);
+void ice_fwlog_ring_increment(u16 *item, u16 size);
+void ice_fwlog_set_supported(struct ice_hw *hw);
+bool ice_fwlog_supported(const struct ice_hw *hw);
+int ice_fwlog_init(struct ice_hw *hw);
+void ice_fwlog_deinit(struct ice_hw *hw);
 int ice_fwlog_set(struct ice_hw *hw, struct ice_fwlog_cfg *cfg);
 int ice_fwlog_get(struct ice_hw *hw, struct ice_fwlog_cfg *cfg);
-int
-ice_fwlog_update_modules(struct ice_hw *hw,
-			 struct ice_fwlog_module_entry *entries,
-			 u16 num_entries);
 int ice_fwlog_register(struct ice_hw *hw);
 int ice_fwlog_unregister(struct ice_hw *hw);
-void
-ice_fwlog_event_dump(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf);
+void ice_fwlog_realloc_rings(struct ice_hw *hw, int index);
 #endif /* _ICE_FWLOG_H_ */

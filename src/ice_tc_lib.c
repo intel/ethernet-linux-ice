@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice.h"
 #include "ice_tc_lib.h"
@@ -346,13 +346,9 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 
 		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TOS) {
 			hdr_h->be_ver_tc_flow =
-				htonl((hdr->l3_key.tos <<
-				       ICE_IPV6_HDR_TC_OFFSET) &
-				      ICE_IPV6_HDR_TC_MASK);
+				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, hdr->l3_key.tos));
 			hdr_m->be_ver_tc_flow =
-				htonl((hdr->l3_mask.tos <<
-				       ICE_IPV6_HDR_TC_OFFSET) &
-				      ICE_IPV6_HDR_TC_MASK);
+				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, hdr->l3_mask.tos));
 		}
 
 		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TTL) {
@@ -599,13 +595,9 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 		if (flags & ICE_TC_FLWR_FIELD_IP_TOS) {
 			hdr_h->be_ver_tc_flow =
-				htonl((headers->l3_key.tos <<
-				       ICE_IPV6_HDR_TC_OFFSET) &
-				      ICE_IPV6_HDR_TC_MASK);
+				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, headers->l3_key.tos));
 			hdr_m->be_ver_tc_flow =
-				htonl((headers->l3_mask.tos <<
-				       ICE_IPV6_HDR_TC_OFFSET) &
-				      ICE_IPV6_HDR_TC_MASK);
+				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, headers->l3_mask.tos));
 		}
 
 		if (flags & ICE_TC_FLWR_FIELD_IP_TTL) {
@@ -779,11 +771,17 @@ ice_tc_is_dev_uplink(struct net_device *dev)
 }
 
 static int
-ice_tc_setup_redirect_action(struct net_device *filter_dev,
-			     struct ice_tc_flower_fltr *fltr,
-			     struct net_device *target_dev)
+ice_tc_setup_action(struct net_device *filter_dev,
+		    struct ice_tc_flower_fltr *fltr,
+		    struct net_device *target_dev,
+		    enum ice_sw_fwd_act_type action)
 {
-	fltr->action.fltr_act = ICE_FWD_TO_VSI;
+	if (action != ICE_FWD_TO_VSI && action != ICE_MIRROR_PACKET) {
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported action to setup provided");
+		return -EINVAL;
+	}
+
+	fltr->action.fltr_act = action;
 
 	if (ice_is_port_repr_netdev(filter_dev) &&
 	    ice_is_port_repr_netdev(target_dev)) {
@@ -858,10 +856,18 @@ ice_eswitch_tc_parse_action(struct net_device *filter_dev,
 		break;
 
 	case FLOW_ACTION_REDIRECT:
-		err = ice_tc_setup_redirect_action(filter_dev, fltr, act->dev);
+		err = ice_tc_setup_action(filter_dev, fltr,
+					  act->dev, ICE_FWD_TO_VSI);
 		if (err)
 			return err;
 
+		break;
+
+	case FLOW_ACTION_MIRRED:
+		err = ice_tc_setup_action(filter_dev, fltr,
+					  act->dev, ICE_MIRROR_PACKET);
+		if (err)
+			return err;
 		break;
 
 	default:
@@ -876,8 +882,9 @@ ice_eswitch_tc_parse_action(struct net_device *filter_dev,
 	if (is_tcf_gact_shot(tc_act)) {
 		fltr->action.fltr_act = ICE_DROP_PACKET;
 	} else if (is_tcf_mirred_egress_redirect(tc_act)) {
-		err = ice_tc_setup_redirect_action(filter_dev, fltr,
-						   tcf_mirred_dev(tc_act));
+		err = ice_tc_setup_action(filter_dev, fltr,
+					  tcf_mirred_dev(tc_act),
+					  ICE_FWD_TO_VSI);
 		if (err)
 			return err;
 	}
@@ -900,7 +907,7 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	int lkups_cnt;
 	int i, ret;
 
-	if (!flags || (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
+	if (flags & ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported encap field(s)");
 		return -EOPNOTSUPP;
 	}
@@ -2351,17 +2358,13 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	struct ice_pf *pf = vsi->back;
 	int err;
 
-	if (fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC ||
-	    fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_VLAN ||
-	    fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN) {
+	if ((fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC ||
+	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_VLAN ||
+	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN) &&
+	    !ice_is_eswitch_mode_switchdev(vsi->back)) {
 		err = ice_add_remove_tc_flower_dflt_fltr(vsi, fltr, false);
 	} else {
-		struct ice_rule_query_data rule_rem;
-
-		rule_rem.rid = fltr->rid;
-		rule_rem.rule_id = fltr->rule_id;
-		rule_rem.vsi_handle = fltr->dest_vsi_handle;
-		err = ice_rem_adv_rule_by_id(&pf->hw, &rule_rem);
+		err = ice_rem_adv_rule_by_fltr(&pf->hw, fltr);
 	}
 
 	if (err) {
@@ -2623,5 +2626,22 @@ void ice_replay_tc_fltrs(struct ice_pf *pf)
 		fltr->extack = NULL;
 		ice_add_switch_fltr(fltr->src_vsi, fltr);
 	}
+}
+
+/**
+ * ice_rem_adv_rule_by_fltr - wrapper for ice_rem_adv_rule_by_id
+ * @hw: pointer to the hardware structure
+ * @fltr: filter data struct holding recipe ID, rule ID, and VSI handle
+ */
+int ice_rem_adv_rule_by_fltr(struct ice_hw *hw,
+			     const struct ice_tc_flower_fltr *fltr)
+{
+	struct ice_rule_query_data rule_rem;
+
+	rule_rem.rid = fltr->rid;
+	rule_rem.rule_id = fltr->rule_id;
+	rule_rem.vsi_handle = fltr->dest_vsi_handle;
+
+	return ice_rem_adv_rule_by_id(hw, &rule_rem);
 }
 #endif /* HAVE_TC_SETUP_CLSFLOWER */

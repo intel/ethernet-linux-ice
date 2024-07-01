@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include <linux/device.h>
 #include <linux/module.h>
@@ -9,6 +9,8 @@
 #include "ice_migration.h"
 
 #define DRIVER_DESC     "ICE VFIO PCI - User Level meta-driver for Intel E800 device family"
+
+#if IS_ENABLED(CONFIG_VFIO_PCI_CORE) && defined(HAVE_LMV1_SUPPORT)
 
 #define VFIO_DEVICE_MIGRATION_OFFSET(x) \
 	(offsetof(struct vfio_device_migration_info, x))
@@ -793,7 +795,6 @@ static int __init ice_vfio_pci_init(void)
 
 	return 0;
 }
-module_init(ice_vfio_pci_init);
 
 /**
  * ice_vfio_pci_exit - Driver exit cleanup routine
@@ -805,6 +806,18 @@ static void __exit ice_vfio_pci_exit(void)
 {
 	pci_unregister_driver(&ice_vfio_pci_driver);
 }
+
+#else /* CONFIG_VFIO_PCI_CORE && HAVE_LMV1_SUPPORT */
+static int __init ice_vfio_pci_init(void)
+{
+	return -EOPNOTSUPP;
+}
+static void __exit ice_vfio_pci_exit(void)
+{
+}
+#endif /* CONFIG_VFIO_PCI_CORE && HAVE_LMV1_SUPPORT */
+
+module_init(ice_vfio_pci_init);
 module_exit(ice_vfio_pci_exit);
 
 MODULE_LICENSE("GPL");

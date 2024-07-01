@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_common.h"
 
@@ -527,7 +527,7 @@ ice_get_pfa_module_tlv(struct ice_hw *hw, u16 *module_tlv, u16 *module_tlv_len,
 		       u16 module_type)
 {
 	u16 pfa_len, pfa_ptr;
-	u16 next_tlv;
+	u32 next_tlv;
 	int status;
 
 	status = ice_read_sr_word(hw, ICE_SR_PFA_PTR, &pfa_ptr);
@@ -544,7 +544,7 @@ ice_get_pfa_module_tlv(struct ice_hw *hw, u16 *module_tlv, u16 *module_tlv_len,
 	 * of TLVs to find the requested one.
 	 */
 	next_tlv = pfa_ptr + 1;
-	while (next_tlv < pfa_ptr + pfa_len) {
+	while (next_tlv < ((u32)pfa_ptr + pfa_len)) {
 		u16 tlv_sub_module_type;
 		u16 tlv_len;
 
@@ -559,6 +559,10 @@ ice_get_pfa_module_tlv(struct ice_hw *hw, u16 *module_tlv, u16 *module_tlv_len,
 		if (status) {
 			ice_debug(hw, ICE_DBG_INIT, "Failed to read TLV length.\n");
 			break;
+		}
+		if (tlv_len > pfa_len) {
+			ice_debug(hw, ICE_DBG_INIT, "Invalid TLV length.\n");
+			return -EINVAL;
 		}
 		if (tlv_sub_module_type == module_type) {
 			if (tlv_len) {
@@ -683,8 +687,8 @@ ice_get_nvm_ver_info(struct ice_hw *hw, enum ice_bank_select bank, struct ice_nv
 		return status;
 	}
 
-	nvm->major = (ver & ICE_NVM_VER_HI_MASK) >> ICE_NVM_VER_HI_SHIFT;
-	nvm->minor = (ver & ICE_NVM_VER_LO_MASK) >> ICE_NVM_VER_LO_SHIFT;
+	nvm->major = FIELD_GET(ICE_NVM_VER_HI_MASK, ver);
+	nvm->minor = FIELD_GET(ICE_NVM_VER_LO_MASK, ver);
 
 	status = ice_read_nvm_sr_copy(hw, bank, ICE_SR_NVM_EETRACK_LO, &eetrack_lo);
 	if (status) {
@@ -867,9 +871,9 @@ ice_get_orom_ver_info(struct ice_hw *hw, enum ice_bank_select bank, struct ice_o
 
 	combo_ver = le32_to_cpu(civd.combo_ver);
 
-	orom->major = (u8)((combo_ver & ICE_OROM_VER_MASK) >> ICE_OROM_VER_SHIFT);
-	orom->patch = (u8)(combo_ver & ICE_OROM_VER_PATCH_MASK);
-	orom->build = (u16)((combo_ver & ICE_OROM_VER_BUILD_MASK) >> ICE_OROM_VER_BUILD_SHIFT);
+	orom->major = FIELD_GET(ICE_OROM_VER_MASK, combo_ver);
+	orom->patch = FIELD_GET(ICE_OROM_VER_PATCH_MASK, combo_ver);
+	orom->build = FIELD_GET(ICE_OROM_VER_BUILD_MASK, combo_ver);
 
 	status = ice_get_orom_srev(hw, bank, &orom->srev);
 	if (status) {
@@ -1118,7 +1122,8 @@ static int ice_determine_active_flash_banks(struct ice_hw *hw)
 	}
 
 	/* Check that the control word indicates validity */
-	if ((ctrl_word & ICE_SR_CTRL_WORD_1_M) >> ICE_SR_CTRL_WORD_1_S != ICE_SR_CTRL_WORD_VALID) {
+	if (FIELD_GET(ICE_SR_CTRL_WORD_1_M, ctrl_word) !=
+	    ICE_SR_CTRL_WORD_VALID) {
 		ice_debug(hw, ICE_DBG_NVM, "Shadow RAM control word is invalid\n");
 		return -EIO;
 	}
@@ -1195,7 +1200,7 @@ int ice_init_nvm(struct ice_hw *hw)
 	 * as the blank mode may be used in the factory line.
 	 */
 	gens_stat = rd32(hw, GLNVM_GENS);
-	sr_size = (gens_stat & GLNVM_GENS_SR_SIZE_M) >> GLNVM_GENS_SR_SIZE_S;
+	sr_size = FIELD_GET(GLNVM_GENS_SR_SIZE_M, gens_stat);
 
 	/* Switching to words (sr_size contains power of 2) */
 	flash->sr_words = BIT(sr_size) * ICE_SR_WORDS_IN_1KB;
@@ -1491,7 +1496,7 @@ ice_nvm_access_get_features(struct ice_nvm_access_cmd *cmd,
  */
 u32 ice_nvm_access_get_module(struct ice_nvm_access_cmd *cmd)
 {
-	return ((cmd->config & ICE_NVM_CFG_MODULE_M) >> ICE_NVM_CFG_MODULE_S);
+	return FIELD_GET(ICE_NVM_CFG_MODULE_M, cmd->config);
 }
 
 /**
@@ -1502,7 +1507,7 @@ u32 ice_nvm_access_get_module(struct ice_nvm_access_cmd *cmd)
  */
 u32 ice_nvm_access_get_flags(struct ice_nvm_access_cmd *cmd)
 {
-	return ((cmd->config & ICE_NVM_CFG_FLAGS_M) >> ICE_NVM_CFG_FLAGS_S);
+	return FIELD_GET(ICE_NVM_CFG_FLAGS_M, cmd->config);
 }
 
 /**
@@ -1513,8 +1518,7 @@ u32 ice_nvm_access_get_flags(struct ice_nvm_access_cmd *cmd)
  */
 u32 ice_nvm_access_get_adapter(struct ice_nvm_access_cmd *cmd)
 {
-	return ((cmd->config & ICE_NVM_CFG_ADAPTER_INFO_M) >>
-		ICE_NVM_CFG_ADAPTER_INFO_S);
+	return FIELD_GET(ICE_NVM_CFG_ADAPTER_INFO_M, cmd->config);
 }
 
 /**

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2018-2023 Intel Corporation
+# Copyright (C) 2018-2024 Intel Corporation
 
 # When the make command line has the goal 'all' or no goal specified (i.e.
 # when compiling the driver) a sub-make of the kernel's Makefile includes
@@ -16,6 +16,10 @@ endif
 # default shell. Looking at you, Ubuntu.
 SHELL=/bin/bash
 
+# Debian sets -stg=gnu89 and -Wnested externs leading to multiple warnings,
+# and some build errors, override those settings for all distributions.
+EXTRA_CFLAGS += -std=gnu11 -Wno-nested-externs
+
 COMMON_MK ?= $(wildcard $(src)/common.mk)
 ifeq (${COMMON_MK},)
   override src = .
@@ -25,21 +29,6 @@ ifeq (${COMMON_MK},)
   $(error Cannot find common.mk build rules)
 else
   include ${COMMON_MK}
-endif
-
-# SIOV support is only supported if the kernel has features for controlling
-# PASID support. Do not even try to build SIOV support if the kernel lacks
-# the necessary infrastructure.
-ifeq ($(call is_kcompat_defined,HAVE_PASID_SUPPORT),1)
-ifeq ($(call is_kcompat_defined,HAVE_IOMMU_DEV_FEAT_AUX),1)
-export ENABLE_SIOV_SUPPORT := 1
-endif
-endif
-
-# LM support is only enabled if the kernel has features for LM v1 protocol.
-# If the kernel lacks the necessary infrastructure, LM support will be disabled.
-ifeq ($(call is_kcompat_defined,HAVE_LMV1_SUPPORT),1)
-export ENABLE_LM_SUPPORT := 1
 endif
 
 ifneq ($(KERNELRELEASE),)
@@ -93,15 +82,15 @@ ice-y := ice_main.o	\
 	 ice_parser_rt.o	\
 	ice_aux_support.o	\
 	 ice_lag.o		\
-	 ice_fwlog.o		\
 	 ice_ieps.o		\
 	 ice_gnss.o		\
 	 ice_ethtool.o
-ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o ice_fw_update.o
+ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o devlink/ice_devlink_health.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
 ice-y += ice_aux_support.o
 ice-y += ice_idc.o
 ice-$(CONFIG_DEBUG_FS) += ice_debugfs.o
+ice-$(CONFIG_DEBUG_FS) += ice_fwlog.o
 
 ice-$(CONFIG_PCI_IOV) +=		\
 	ice_dcf.o			\
@@ -115,10 +104,14 @@ ice-$(CONFIG_PCI_IOV) +=		\
 	ice_virtchnl_fsub.o		\
 	ice_vf_lib.o
 
-ifneq (${ENABLE_SIOV_SUPPORT},)
 ice-$(CONFIG_VFIO_MDEV:m=y) += ice_vdcm.o ice_siov.o
-endif
+
+ifneq (${CONFIG_DPLL},)
+ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o ice_dpll.o
+else
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o
+endif
+ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_cpi.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
 ice-$(CONFIG_XDP_SOCKETS) += ice_xsk.o
@@ -142,7 +135,7 @@ ifeq (${CONFIG_SUSE_KERNEL}, y)
 ice-y += kcompat_gnss.o
 endif
 
-ifneq (${ENABLE_LM_SUPPORT},)
+ifneq ($(shell grep HAVE_LMV1_SUPPORT $(src)/kcompat_generated_defs.h),)
 obj-$(CONFIG_VFIO_PCI_CORE:y=m) += ice-vfio-pci.o
 
 ice-vfio-pci-y := ice_vfio_pci.o
@@ -159,7 +152,6 @@ else	# ifneq($(KERNELRELEASE),)
 # normal makefile
 
 DRIVER := ice
-EXTRA_CFLAGS += -std=gnu11
 
 # ice does not support building on kernels older than 3.10.0
 $(call minimum_kver_check,3,10,0)

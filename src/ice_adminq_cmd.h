@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #ifndef _ICE_ADMINQ_CMD_H_
 #define _ICE_ADMINQ_CMD_H_
@@ -166,6 +166,7 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_ROCEV2_LAG				0x0092
 #define ICE_AQC_BIT_ROCEV2_LAG				0x01
 #define ICE_AQC_BIT_SRIOV_LAG				0x02
+#define ICE_AQC_CAPS_NEXT_CLUSTER_ID			0x0096
 
 	u8 major_ver;
 	u8 minor_ver;
@@ -299,7 +300,12 @@ struct ice_aqc_set_port_params {
 				(0x3F << ICE_AQC_SET_P_PARAMS_LOGI_PORT_ID_S)
 #define ICE_AQC_SET_P_PARAMS_IS_LOGI_PORT	BIT(14)
 #define ICE_AQC_SET_P_PARAMS_SWID_VALID		BIT(15)
-	u8 reserved[10];
+	u8 loopback_mode;
+#define ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_VALID BIT(2)
+#define ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_NORMAL 0x00
+#define ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_NO 0x01
+#define ICE_AQC_SET_P_PARAMS_LOOPBACK_MODE_HIGH 0x02
+	u8 reserved[9];
 };
 
 /* These resource type defines are used for all switch resource
@@ -550,10 +556,10 @@ struct ice_aqc_vsi_props {
 #define ICE_AQ_VSI_INNER_VLAN_INSERT_PVID	BIT(2)
 #define ICE_AQ_VSI_INNER_VLAN_EMODE_S		3
 #define ICE_AQ_VSI_INNER_VLAN_EMODE_M		(0x3 << ICE_AQ_VSI_INNER_VLAN_EMODE_S)
-#define ICE_AQ_VSI_INNER_VLAN_EMODE_STR_BOTH	(0x0 << ICE_AQ_VSI_INNER_VLAN_EMODE_S)
-#define ICE_AQ_VSI_INNER_VLAN_EMODE_STR_UP	(0x1 << ICE_AQ_VSI_INNER_VLAN_EMODE_S)
-#define ICE_AQ_VSI_INNER_VLAN_EMODE_STR		(0x2 << ICE_AQ_VSI_INNER_VLAN_EMODE_S)
-#define ICE_AQ_VSI_INNER_VLAN_EMODE_NOTHING	(0x3 << ICE_AQ_VSI_INNER_VLAN_EMODE_S)
+#define ICE_AQ_VSI_INNER_VLAN_EMODE_STR_BOTH	0x0U
+#define ICE_AQ_VSI_INNER_VLAN_EMODE_STR_UP	0x1U
+#define ICE_AQ_VSI_INNER_VLAN_EMODE_STR		0x2U
+#define ICE_AQ_VSI_INNER_VLAN_EMODE_NOTHING	0x3U
 #define ICE_AQ_VSI_INNER_VLAN_BLOCK_TX_DESC	BIT(5)
 	u8 inner_vlan_reserved2[3];
 	/* ingress egress up sections */
@@ -609,7 +615,7 @@ struct ice_aqc_vsi_props {
 #define ICE_AQ_VSI_TC_Q_OFFSET_S		0
 #define ICE_AQ_VSI_TC_Q_OFFSET_M		(0x7FF << ICE_AQ_VSI_TC_Q_OFFSET_S)
 #define ICE_AQ_VSI_TC_Q_NUM_S			11
-#define ICE_AQ_VSI_TC_Q_NUM_M			(0xF << ICE_AQ_VSI_TC_Q_NUM_S)
+#define ICE_AQ_VSI_TC_Q_NUM_M			GENMASK(14, 11)
 	/* queueing option section */
 	u8 q_opt_rss;
 #define ICE_AQ_VSI_Q_OPT_RSS_LUT_S		0
@@ -620,7 +626,7 @@ struct ice_aqc_vsi_props {
 #define ICE_AQ_VSI_Q_OPT_RSS_GBL_LUT_S		2
 #define ICE_AQ_VSI_Q_OPT_RSS_GBL_LUT_M		(0xF << ICE_AQ_VSI_Q_OPT_RSS_GBL_LUT_S)
 #define ICE_AQ_VSI_Q_OPT_RSS_HASH_S		6
-#define ICE_AQ_VSI_Q_OPT_RSS_HASH_M		(0x3 << ICE_AQ_VSI_Q_OPT_RSS_HASH_S)
+#define ICE_AQ_VSI_Q_OPT_RSS_HASH_M		GENMASK(7, 6)
 #define ICE_AQ_VSI_Q_OPT_RSS_HASH_TPLZ		0x0U
 #define ICE_AQ_VSI_Q_OPT_RSS_HASH_SYM_TPLZ	0x1U
 #define ICE_AQ_VSI_Q_OPT_RSS_HASH_XOR		0x2U
@@ -1379,7 +1385,7 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_LOW_10G_SFI_DA		BIT_ULL(13)
 #define ICE_PHY_TYPE_LOW_10GBASE_SR		BIT_ULL(14)
 #define ICE_PHY_TYPE_LOW_10GBASE_LR		BIT_ULL(15)
-#define ICE_PHY_TYPE_LOW_10GBASE_KR_CR1		BIT_ULL(16)
+#define ICE_PHY_TYPE_LOW_10GBASE_KR		BIT_ULL(16)
 #define ICE_PHY_TYPE_LOW_10G_SFI_AOC_ACC	BIT_ULL(17)
 #define ICE_PHY_TYPE_LOW_10G_SFI_C2C		BIT_ULL(18)
 #define ICE_PHY_TYPE_LOW_25GBASE_T		BIT_ULL(19)
@@ -1407,7 +1413,7 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_LOW_50G_LAUI2		BIT_ULL(41)
 #define ICE_PHY_TYPE_LOW_50G_AUI2_AOC_ACC	BIT_ULL(42)
 #define ICE_PHY_TYPE_LOW_50G_AUI2		BIT_ULL(43)
-#define ICE_PHY_TYPE_LOW_50GBASE_CR		BIT_ULL(44)
+#define ICE_PHY_TYPE_LOW_50GBASE_CR_PAM4	BIT_ULL(44)
 #define ICE_PHY_TYPE_LOW_50GBASE_SR		BIT_ULL(45)
 #define ICE_PHY_TYPE_LOW_50GBASE_FR		BIT_ULL(46)
 #define ICE_PHY_TYPE_LOW_50GBASE_LR		BIT_ULL(47)
@@ -1423,8 +1429,8 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_LOW_100G_AUI4_AOC_ACC	BIT_ULL(57)
 #define ICE_PHY_TYPE_LOW_100G_AUI4		BIT_ULL(58)
 #define ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4	BIT_ULL(59)
-#define ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4	BIT_ULL(60)
-#define ICE_PHY_TYPE_LOW_100GBASE_CR2		BIT_ULL(61)
+#define ICE_PHY_TYPE_LOW_100GBASE_KR4_PAM4	BIT_ULL(60)
+#define ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4	BIT_ULL(61)
 #define ICE_PHY_TYPE_LOW_100GBASE_SR2		BIT_ULL(62)
 #define ICE_PHY_TYPE_LOW_100GBASE_DR		BIT_ULL(63)
 #define ICE_PHY_TYPE_LOW_MAX_INDEX		63
@@ -1565,6 +1571,8 @@ struct ice_aqc_restart_an {
 	u8 cmd_flags;
 #define ICE_AQC_RESTART_AN_LINK_RESTART	BIT(1)
 #define ICE_AQC_RESTART_AN_LINK_ENABLE	BIT(2)
+#define ICE_AQC_RESTART_AN_REFCLK_M	GENMASK(4, 3)
+#define ICE_AQC_RESTART_AN_REFCLK_NOCHANGE 0
 	u8 reserved2[13];
 };
 
@@ -1746,9 +1754,7 @@ struct ice_aqc_get_phy_rec_clk_out {
 #define ICE_AQC_GET_PHY_REC_CLK_OUT_CURR_PORT	0xFF
 	u8 flags;
 #define ICE_AQC_GET_PHY_REC_CLK_OUT_OUT_EN	BIT(0)
-	u8 rsvd;
-	__le32 freq;
-	u8 rsvd2[6];
+	u8 rsvd[11];
 	__le16 node_handle;
 };
 
@@ -1864,14 +1870,46 @@ struct ice_aqc_dnl_call_command {
 	u8 ctx; /* Used in command, reserved in response */
 	u8 reserved;
 	__le16 activity_id;
+#define ICE_AQC_ACT_ID_DNL 0x1129
 	__le32 reserved1;
 	__le32 addr_high;
 	__le32 addr_low;
 };
 
+struct ice_aqc_dnl_equa_param {
+	__le16 data_in;
+#define ICE_AQC_RX_EQU_SHIFT 8
+#define ICE_AQC_RX_EQU_PRE2 (0x10 << ICE_AQC_RX_EQU_SHIFT)
+#define ICE_AQC_RX_EQU_PRE1 (0x11 << ICE_AQC_RX_EQU_SHIFT)
+#define ICE_AQC_RX_EQU_POST1 (0x12 << ICE_AQC_RX_EQU_SHIFT)
+#define ICE_AQC_RX_EQU_BFLF (0x13 << ICE_AQC_RX_EQU_SHIFT)
+#define ICE_AQC_RX_EQU_BFHF (0x14 << ICE_AQC_RX_EQU_SHIFT)
+#define ICE_AQC_RX_EQU_DRATE (0x15 << ICE_AQC_RX_EQU_SHIFT)
+#define ICE_AQC_TX_EQU_PRE1 0x0
+#define ICE_AQC_TX_EQU_PRE3 0x3
+#define ICE_AQC_TX_EQU_ATTEN 0x4
+#define ICE_AQC_TX_EQU_POST1 0x8
+#define ICE_AQC_TX_EQU_PRE2 0xC
+	__le16 op_code_serdes_sel;
+#define ICE_AQC_OP_CODE_SHIFT 4
+#define ICE_AQC_OP_CODE_RX_EQU (0x9 << ICE_AQC_OP_CODE_SHIFT)
+#define ICE_AQC_OP_CODE_TX_EQU (0x10 << ICE_AQC_OP_CODE_SHIFT)
+	__le32 reserved[3];
+};
+
+struct ice_aqc_dnl_equa_respon {
+	/* Equalisation value can be -ve */
+	int val;
+	__le32 reserved[3];
+};
+
 /* DNL call command/response buffer (indirect 0x0682) */
 struct ice_aqc_dnl_call {
-	__le32 stores[4];
+	union {
+		struct ice_aqc_dnl_equa_param txrx_equa_reqs;
+		__le32 stores[4];
+		struct ice_aqc_dnl_equa_respon txrx_equa_resp;
+	} sto;
 };
 
 /* Used for both commands:
@@ -2332,6 +2370,29 @@ struct ice_aqc_nvm {
 #define ICE_AQC_NVM_LLDP_STATUS_M		ICE_M(0xF, 0)
 #define ICE_AQC_NVM_LLDP_STATUS_M_LEN		4 /* In Bits */
 #define ICE_AQC_NVM_LLDP_STATUS_RD_LEN		4 /* In Bytes */
+
+#define ICE_AQC_NVM_SDP_CFG_PTR_OFFSET		0xD8
+#define ICE_AQC_NVM_SDP_CFG_PTR_RD_LEN		2 /* In Bytes */
+#define ICE_AQC_NVM_SDP_CFG_PTR_M		ICE_M(0x7FFF, 0)
+#define ICE_AQC_NVM_SDP_CFG_PTR_TYPE_M		BIT(15)
+#define ICE_AQC_NVM_SDP_CFG_HEADER_LEN		2 /* In Bytes */
+#define ICE_AQC_NVM_SDP_CFG_SEC_LEN_LEN		2 /* In Bytes */
+#define ICE_AQC_NVM_SDP_CFG_DATA_LEN		14 /* In Bytes */
+#define ICE_AQC_NVM_SDP_CFG_MAX_SECTION_SIZE	7
+#define ICE_AQC_NVM_SDP_CFG_PIN_SIZE		10
+#define ICE_AQC_NVM_SDP_CFG_PIN_OFFSET		6
+#define ICE_AQC_NVM_SDP_CFG_PIN_MASK		ICE_M(0x3FF, \
+						ICE_AQC_NVM_SDP_CFG_PIN_OFFSET)
+#define ICE_AQC_NVM_SDP_CFG_CHAN_OFFSET		4
+#define ICE_AQC_NVM_SDP_CFG_CHAN_MASK		ICE_M(0x3, \
+						ICE_AQC_NVM_SDP_CFG_CHAN_OFFSET)
+#define ICE_AQC_NVM_SDP_CFG_DIR_OFFSET		3
+#define ICE_AQC_NVM_SDP_CFG_DIR_MASK		ICE_M(0x1, \
+						ICE_AQC_NVM_SDP_CFG_DIR_OFFSET)
+#define ICE_AQC_NVM_SDP_CFG_SDP_NUM_OFFSET		0
+#define ICE_AQC_NVM_SDP_CFG_SDP_NUM_MASK	ICE_M(0x7, \
+					     ICE_AQC_NVM_SDP_CFG_SDP_NUM_OFFSET)
+#define ICE_AQC_NVM_SDP_CFG_NA_PIN_MASK		ICE_M(0x1, 15)
 
 #define ICE_AQC_NVM_MINSREV_MOD_ID		0x130
 #define ICE_AQC_NVM_TX_TOPO_MOD_ID		0x14B
@@ -3404,7 +3465,7 @@ struct ice_aqc_get_cgu_abilities {
 	u8 num_inputs;
 	u8 num_outputs;
 	u8 pps_dpll_idx;
-	u8 synce_dpll_idx;
+	u8 eec_dpll_idx;
 	__le32 max_in_freq;
 	__le32 max_in_phase_adj;
 	__le32 max_out_freq;
@@ -3524,18 +3585,20 @@ struct ice_aqc_get_cgu_dpll_status {
 #define ICE_AQC_GET_CGU_DPLL_STATUS_REF_SW_PFM		BIT(4)
 #define ICE_AQC_GET_CGU_DPLL_STATUS_FAST_LOCK_EN	BIT(5)
 #define ICE_AQC_GET_CGU_DPLL_STATUS_REF_SW_ESYNC	BIT(6)
-	__le16 dpll_state;
+	u8 dpll_state;
 #define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_LOCK		BIT(0)
 #define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_HO		BIT(1)
 #define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_HO_READY	BIT(2)
 #define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_FLHIT		BIT(5)
 #define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_PSLHIT	BIT(7)
-#define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SHIFT	8
-#define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SEL	\
-	ICE_M(0x1F, ICE_AQC_GET_CGU_DPLL_STATUS_STATE_CLK_REF_SHIFT)
-#define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_MODE_SHIFT	13
-#define ICE_AQC_GET_CGU_DPLL_STATUS_STATE_MODE \
-	ICE_M(0x7, ICE_AQC_GET_CGU_DPLL_STATUS_STATE_MODE_SHIFT)
+	u8 config;
+#define ICE_AQC_GET_CGU_DPLL_CONFIG_CLK_REF_SEL		ICE_M(0x1F, 0)
+#define ICE_AQC_GET_CGU_DPLL_CONFIG_MODE_SHIFT		5
+#define ICE_AQC_GET_CGU_DPLL_CONFIG_MODE		\
+	ICE_M(0x7, ICE_AQC_GET_CGU_DPLL_CONFIG_MODE_SHIFT)
+#define ICE_AQC_GET_CGU_DPLL_CONFIG_MODE_FREERUN	0
+#define ICE_AQC_GET_CGU_DPLL_CONFIG_MODE_AUTOMATIC	\
+	ICE_M(0x3, ICE_AQC_GET_CGU_DPLL_CONFIG_MODE_SHIFT)
 	__le32 phase_offset_h;
 	__le32 phase_offset_l;
 	u8 eec_mode;
@@ -3560,7 +3623,12 @@ struct ice_aqc_set_cgu_dpll_config {
 	u8 rsvd;
 	u8 config;
 #define ICE_AQC_SET_CGU_DPLL_CONFIG_CLK_REF_SEL		ICE_M(0x1F, 0)
-#define ICE_AQC_SET_CGU_DPLL_CONFIG_MODE		ICE_M(0x7, 5)
+#define ICE_AQC_SET_CGU_DPLL_CONFIG_MODE_SHIFT		5
+#define ICE_AQC_SET_CGU_DPLL_CONFIG_MODE		\
+	ICE_M(0x7, ICE_AQC_SET_CGU_DPLL_CONFIG_MODE_SHIFT)
+#define ICE_AQC_SET_CGU_DPLL_CONFIG_MODE_FREERUN	0
+#define ICE_AQC_SET_CGU_DPLL_CONFIG_MODE_AUTOMATIC	\
+	ICE_M(0x3, ICE_AQC_SET_CGU_DPLL_CONFIG_MODE_SHIFT)
 	u8 rsvd2[8];
 	u8 eec_mode;
 	u8 rsvd3[1];

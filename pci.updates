@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2018-2023 Intel Corporation
+# Copyright (C) 2018-2024 Intel Corporation
 
 # updates for the system pci.ids file
 #
@@ -47,6 +47,7 @@
 		8086 0010  Ethernet 25G 4P E810-XXV-st Adapter
 		8086 4010  Ethernet Network Adapter E810-XXV-4
 		8086 4013  Ethernet Network Adapter E810-XXV-4 for OCP 3.0
+		8086 401c  Ethernet Network Adapter E810-XXV-4 for OCP 3.0
 	1599  Ethernet Controller E810-XXV for backplane
 		8086 0001  Ethernet 25G 2P E810-XXV-k Mezz
 	159a  Ethernet Controller E810-XXV for QSFP

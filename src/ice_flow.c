@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2023 Intel Corporation */
+/* Copyright (C) 2018-2024 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_flow.h"
@@ -2571,7 +2571,7 @@ ice_flow_set_hw_prof(struct ice_hw *hw, u16 dest_vsi_handle,
 			idx = i;
 		params->es[idx].prot_id = prof->fv[i].proto_id;
 		params->es[idx].off = prof->fv[i].offset;
-		params->mask[idx] = (((prof->fv[i].msk) << 8) & 0xff00) |
+		params->mask[idx] = FIELD_PREP(0xff00, (prof->fv[i].msk)) |
 				    (((prof->fv[i].msk) >> 8) & 0x00ff);
 	}
 
@@ -2853,13 +2853,13 @@ ice_flow_acl_frmt_entry_fld(u16 fld, struct ice_flow_fld_info *info, u8 *buf,
 
 	for (k = 0; k < info->entry.last; k++, dst++) {
 		/* Add overflow bits from previous byte */
-		buf[dst] = (tmp_s & 0xff00) >> 8;
+		buf[dst] = FIELD_GET(0xff00, tmp_s);
 
 		/* If mask is not valid, tmp_m is always zero, so just setting
 		 * dontcare to 0 (no masked bits). If mask is valid, pulls in
 		 * overflow bits of mask from prev byte
 		 */
-		dontcare[dst] = (tmp_m & 0xff00) >> 8;
+		dontcare[dst] = FIELD_GET(0xff00, tmp_m);
 
 		/* If there is displacement, last byte will only contain
 		 * displaced data, but there is no more data to read from user
@@ -3989,9 +3989,8 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
  */
 #define ICE_FLOW_GEN_PROFID(hash, hdr, encap)                                \
 	((u64)(((u64)(hash) & ICE_FLOW_PROF_HASH_M) |                        \
-	       (((u64)(hdr) << ICE_FLOW_PROF_HDR_S) & ICE_FLOW_PROF_HDR_M) | \
-	       (((u64)(encap) << ICE_FLOW_PROF_ENCAP_S) &                    \
-		ICE_FLOW_PROF_ENCAP_M)))
+	       FIELD_PREP(ICE_FLOW_PROF_HDR_M, hdr) | \
+	       FIELD_PREP(ICE_FLOW_PROF_ENCAP_M, (u64)(encap))))
 
 static void
 ice_rss_config_xor_word(struct ice_hw *hw, u8 prof_id, u8 src, u8 dst)
