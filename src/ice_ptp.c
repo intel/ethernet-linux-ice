@@ -3776,17 +3776,7 @@ void ice_ptp_extts_event(struct ice_pf *pf)
 			event.timestamp = (((u64)hi) << 32) | lo;
 			event.type = PTP_CLOCK_EXTTS;
 			event.index = chan;
-
 			pf->ptp.ext_ts_irq &= ~(1 << chan);
-
-			/* Fire event if not filtered by CGU state */
-			if (ice_is_feature_supported(pf, ICE_F_CGU) &&
-			    test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags) &&
-			    pf->ptp_dpll_state != DPLL_LOCK_STATUS_LOCKED &&
-			    pf->ptp_dpll_state !=
-			    DPLL_LOCK_STATUS_LOCKED_HO_ACQ)
-				continue;
-
 			ptp_clock_event(pf->ptp.clock, &event);
 		}
 	}

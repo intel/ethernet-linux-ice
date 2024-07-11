@@ -497,6 +497,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 #define VIRTCHNL_VF_OFFLOAD_L2			BIT(0)
 #define VIRTCHNL_VF_OFFLOAD_IWARP		BIT(1)
 #define VIRTCHNL_VF_CAP_RDMA			VIRTCHNL_VF_OFFLOAD_IWARP
+	/* BIT(2) is reserved to extend caps */
 #define VIRTCHNL_VF_OFFLOAD_RSS_AQ		BIT(3)
 #define VIRTCHNL_VF_OFFLOAD_RSS_REG		BIT(4)
 #define VIRTCHNL_VF_OFFLOAD_WB_ON_ITR		BIT(5)
@@ -506,6 +507,8 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 	/* BIT(8) is reserved */
 #define VIRTCHNL_VF_LARGE_NUM_QPAIRS		BIT(9)
 #define VIRTCHNL_VF_OFFLOAD_CRC			BIT(10)
+#define VIRTCHNL_VF_OFFLOAD_QGRPS		BIT(12)
+#define VIRTCHNL_VF_OFFLOAD_FLOW_STEER_TO_QGRP	BIT(13)
 #define VIRTCHNL_VF_OFFLOAD_FSUB_PF		BIT(14)
 #define VIRTCHNL_VF_OFFLOAD_VLAN_V2		BIT(15)
 #define VIRTCHNL_VF_OFFLOAD_VLAN		BIT(16)
@@ -539,10 +542,11 @@ struct virtchnl_vf_resource {
 	u32 rss_key_size;
 	u32 rss_lut_size;
 
-	struct virtchnl_vsi_resource vsi_res[1];
+	struct virtchnl_vsi_resource vsi_res[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(36, virtchnl_vf_resource);
+VIRTCHNL_CHECK_STRUCT_LEN(20, virtchnl_vf_resource);
+#define virtchnl_vf_resource_LEGACY_SIZEOF	36
 
 /* VIRTCHNL_OP_CONFIG_TX_QUEUE
  * VF sends this message to set up parameters for one TX queue.
@@ -675,10 +679,11 @@ struct virtchnl_vsi_queue_config_info {
 	u16 vsi_id;
 	u16 num_queue_pairs;
 	u32 pad;
-	struct virtchnl_queue_pair_info qpair[1];
+	struct virtchnl_queue_pair_info qpair[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(72, virtchnl_vsi_queue_config_info);
+VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_vsi_queue_config_info);
+#define virtchnl_vsi_queue_config_info_LEGACY_SIZEOF	72
 
 /* VIRTCHNL_OP_REQUEST_QUEUES
  * VF sends this message to request the PF to allocate additional queues to
@@ -720,10 +725,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_vector_map);
 
 struct virtchnl_irq_map_info {
 	u16 num_vectors;
-	struct virtchnl_vector_map vecmap[1];
+	struct virtchnl_vector_map vecmap[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(14, virtchnl_irq_map_info);
+VIRTCHNL_CHECK_STRUCT_LEN(2, virtchnl_irq_map_info);
+#define virtchnl_irq_map_info_LEGACY_SIZEOF	14
 
 /* VIRTCHNL_OP_ENABLE_QUEUES
  * VIRTCHNL_OP_DISABLE_QUEUES
@@ -823,10 +829,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_ether_addr);
 struct virtchnl_ether_addr_list {
 	u16 vsi_id;
 	u16 num_elements;
-	struct virtchnl_ether_addr list[1];
+	struct virtchnl_ether_addr list[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_ether_addr_list);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_ether_addr_list);
+#define virtchnl_ether_addr_list_LEGACY_SIZEOF	12
 
 /* VIRTCHNL_OP_ADD_VLAN
  * VF sends this message to add one or more VLAN tag filters for receives.
@@ -845,10 +852,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_ether_addr_list);
 struct virtchnl_vlan_filter_list {
 	u16 vsi_id;
 	u16 num_elements;
-	u16 vlan_id[1];
+	u16 vlan_id[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_vlan_filter_list);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_vlan_filter_list);
+#define virtchnl_vlan_filter_list_LEGACY_SIZEOF	6
 
 /* This enum is used for all of the VIRTCHNL_VF_OFFLOAD_VLAN_V2_CAPS related
  * structures and opcodes.
@@ -1282,18 +1290,20 @@ struct virtchnl_eth_stats {
 struct virtchnl_rss_key {
 	u16 vsi_id;
 	u16 key_len;
-	u8 key[1];         /* RSS hash key, packed bytes */
+	u8 key[];          /* RSS hash key, packed bytes */
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_rss_key);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_rss_key);
+#define virtchnl_rss_key_LEGACY_SIZEOF	6
 
 struct virtchnl_rss_lut {
 	u16 vsi_id;
 	u16 lut_entries;
-	u8 lut[1];        /* RSS lookup table */
+	u8 lut[];         /* RSS lookup table */
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_rss_lut);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_rss_lut);
+#define virtchnl_rss_lut_LEGACY_SIZEOF	6
 
 /* enum virthcnl_hash_filter
  *
@@ -1363,6 +1373,8 @@ enum virtchnl_rss_algorithm {
  */
 #define VIRTCHNL_MAX_ADQ_CHANNELS 4
 #define VIRTCHNL_MAX_ADQ_V2_CHANNELS 16
+/* This is used by PF driver to enforce max supported channels */
+#define VIRTCHNL_MAX_QGRPS 16
 
 /* VIRTCHNL_OP_ENABLE_CHANNELS
  * VIRTCHNL_OP_DISABLE_CHANNELS
@@ -2043,6 +2055,36 @@ struct virtchnl_fdir_del {
 };
 
 VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_fdir_del);
+
+#define __vss_full(p, member, count, old)				      \
+	(struct_size(p, member, count) + (old - struct_size(p, member, 0)))
+
+#define virtchnl_ss_vf_resource(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_vf_resource_LEGACY_SIZEOF)
+
+#define virtchnl_ss_vsi_queue_config_info(p, m, c)		      \
+	__vss_full(p, m, c, virtchnl_vsi_queue_config_info_LEGACY_SIZEOF)
+
+#define virtchnl_ss_irq_map_info(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_irq_map_info_LEGACY_SIZEOF)
+
+#define virtchnl_ss_ether_addr_list(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_ether_addr_list_LEGACY_SIZEOF)
+
+#define virtchnl_ss_vlan_filter_list(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_vlan_filter_list_LEGACY_SIZEOF)
+
+#define __vss_byone(p, member, count, old)				      \
+	(struct_size(p, member, count) + (old - 1 - struct_size(p, member, 0)))
+
+#define virtchnl_ss_byone(p, m, c, type)				      \
+	__vss_byone(p, m, c, type##_LEGACY_SIZEOF)
+
+#define virtchnl_ss_rss_key(p, m, c)				      \
+	virtchnl_ss_byone(p, m, c, virtchnl_rss_key)
+
+#define virtchnl_ss_rss_lut(p, m, c)				      \
+	virtchnl_ss_byone(p, m, c, virtchnl_rss_lut)
 
 /* Status returned to VF after VF requests FSUB commands
  * VIRTCHNL_FSUB_SUCCESS
@@ -3553,7 +3595,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		valid_len = sizeof(struct virtchnl_rxq_info);
 		break;
 	case VIRTCHNL_OP_CONFIG_VSI_QUEUES:
-		valid_len = sizeof(struct virtchnl_vsi_queue_config_info);
+		valid_len = virtchnl_vsi_queue_config_info_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_vsi_queue_config_info *vqc =
 			    (struct virtchnl_vsi_queue_config_info *)msg;
@@ -3564,13 +3606,12 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += (vqc->num_queue_pairs *
-				      sizeof(struct
-					     virtchnl_queue_pair_info));
+			valid_len = virtchnl_ss_vsi_queue_config_info(vqc, qpair,
+								      vqc->num_queue_pairs);
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_IRQ_MAP:
-		valid_len = sizeof(struct virtchnl_irq_map_info);
+		valid_len = virtchnl_irq_map_info_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_irq_map_info *vimi =
 			    (struct virtchnl_irq_map_info *)msg;
@@ -3581,8 +3622,8 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += (vimi->num_vectors *
-				      sizeof(struct virtchnl_vector_map));
+			valid_len = virtchnl_ss_irq_map_info(vimi, vecmap,
+							     vimi->num_vectors);
 		}
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES:
@@ -3593,7 +3634,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		break;
 	case VIRTCHNL_OP_ADD_ETH_ADDR:
 	case VIRTCHNL_OP_DEL_ETH_ADDR:
-		valid_len = sizeof(struct virtchnl_ether_addr_list);
+		valid_len = virtchnl_ether_addr_list_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_ether_addr_list *veal =
 			    (struct virtchnl_ether_addr_list *)msg;
@@ -3604,13 +3645,13 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += veal->num_elements *
-			    sizeof(struct virtchnl_ether_addr);
+			valid_len = virtchnl_ss_ether_addr_list(veal, list,
+								veal->num_elements);
 		}
 		break;
 	case VIRTCHNL_OP_ADD_VLAN:
 	case VIRTCHNL_OP_DEL_VLAN:
-		valid_len = sizeof(struct virtchnl_vlan_filter_list);
+		valid_len = virtchnl_vlan_filter_list_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_vlan_filter_list *vfl =
 			    (struct virtchnl_vlan_filter_list *)msg;
@@ -3621,7 +3662,8 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += vfl->num_elements * sizeof(u16);
+			valid_len = virtchnl_ss_vlan_filter_list(vfl, vlan_id,
+								 vfl->num_elements);
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE:
@@ -3659,7 +3701,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_KEY:
-		valid_len = sizeof(struct virtchnl_rss_key);
+		valid_len = virtchnl_rss_key_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_rss_key *vrk =
 				(struct virtchnl_rss_key *)msg;
@@ -3669,11 +3711,12 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += vrk->key_len - 1;
+			valid_len = virtchnl_ss_rss_key(vrk, key,
+							vrk->key_len);
 		}
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_LUT:
-		valid_len = sizeof(struct virtchnl_rss_lut);
+		valid_len = virtchnl_rss_lut_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_rss_lut *vrl =
 				(struct virtchnl_rss_lut *)msg;
@@ -3683,7 +3726,8 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				break;
 			}
 
-			valid_len += vrl->lut_entries - 1;
+			valid_len = virtchnl_ss_rss_lut(vrl, lut,
+							vrl->lut_entries);
 		}
 		break;
 	case VIRTCHNL_OP_GET_RSS_HENA_CAPS:
