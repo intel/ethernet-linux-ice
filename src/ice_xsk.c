@@ -58,9 +58,9 @@ static void ice_qp_reset_stats(struct ice_vsi *vsi, u16 q_idx)
  */
 static void ice_qp_clean_rings(struct ice_vsi *vsi, u16 q_idx)
 {
-	ice_clean_tx_ring(vsi->tx_rings[q_idx]);
+	ice_clean_tx_ring(vsi->tx_rings[q_idx], NULL);
 	if (ice_is_xdp_ena_vsi(vsi))
-		ice_clean_tx_ring(vsi->xdp_rings[q_idx]);
+		ice_clean_tx_ring(vsi->xdp_rings[q_idx], NULL);
 
 	ice_clean_rx_ring(vsi->rx_rings[q_idx]);
 }
@@ -96,7 +96,6 @@ ice_qvec_dis_irq(struct ice_vsi *vsi, struct ice_rx_ring *rx_ring,
 {
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
-	int base = vsi->base_vector;
 	u16 reg;
 	u32 val;
 
@@ -109,12 +108,10 @@ ice_qvec_dis_irq(struct ice_vsi *vsi, struct ice_rx_ring *rx_ring,
 	wr32(hw, QINT_RQCTL(reg), val);
 
 	if (q_vector) {
-		u16 v_idx = q_vector->v_idx;
-
 		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx), 0);
 
 		ice_flush(hw);
-		synchronize_irq(ice_get_irq_num(pf, v_idx + base));
+		synchronize_irq(q_vector->irq.virq);
 	}
 }
 
@@ -183,7 +180,7 @@ static int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 	rx_ring = vsi->rx_rings[q_idx];
 	q_vector = rx_ring->q_vector;
 
-	while (test_and_set_bit(ICE_CFG_BUSY, vsi->state)) {
+	while (test_and_set_bit(ICE_CFG_BUSY, vsi->back->state)) {
 		timeout--;
 		if (!timeout)
 			return -EBUSY;
@@ -250,7 +247,7 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 	rx_ring = vsi->rx_rings[q_idx];
 	q_vector = rx_ring->q_vector;
 
-	err = ice_vsi_cfg_txq(vsi, tx_ring, qg_buf);
+	err = ice_vsi_cfg_txq(vsi, tx_ring, NULL, qg_buf, NULL);
 	if (err)
 		goto free_buf;
 
@@ -259,7 +256,8 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 
 		memset(qg_buf, 0, size);
 		qg_buf->num_txqs = 1;
-		err = ice_vsi_cfg_txq(vsi, xdp_ring, qg_buf);
+		err = ice_vsi_cfg_txq(vsi, xdp_ring,
+				      NULL, qg_buf, NULL);
 		if (err)
 			goto free_buf;
 		ice_set_ring_xdp(xdp_ring);
@@ -276,7 +274,7 @@ static int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 	if (err)
 		goto free_buf;
 
-	clear_bit(ICE_CFG_BUSY, vsi->state);
+	clear_bit(ICE_CFG_BUSY, vsi->back->state);
 	ice_qvec_toggle_napi(vsi, q_vector, true);
 	ice_qvec_ena_irq(vsi, q_vector);
 
@@ -1026,8 +1024,7 @@ ice_construct_skb_zc(struct ice_rx_ring *rx_ring, struct ice_rx_buf *rx_buf,
 				     xdp->data_hard_start;
 	struct sk_buff *skb;
 
-	skb = __napi_alloc_skb(&rx_ring->q_vector->napi, datasize_hard,
-			       GFP_ATOMIC | __GFP_NOWARN);
+	skb = napi_alloc_skb(&rx_ring->q_vector->napi, datasize_hard);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -1183,7 +1180,7 @@ int ice_clean_rx_irq_zc(struct ice_rx_ring *rx_ring, int budget)
 		if (!rx_buf->xdp)
 			break;
 		rx_buf->xdp->data_end = (u8 *)rx_buf->xdp->data + size;
-		xsk_buff_dma_sync_for_cpu(rx_buf->xdp, rx_ring->xsk_pool);
+		xsk_buff_dma_sync_for_cpu(rx_buf->xdp);
 
 		xdp_res = ice_run_xdp_zc(rx_ring, rx_buf->xdp);
 #else
@@ -1191,7 +1188,7 @@ int ice_clean_rx_irq_zc(struct ice_rx_ring *rx_ring, int budget)
 		if (!xdp)
 			break;
 		xsk_buff_set_size(xdp, size);
-		xsk_buff_dma_sync_for_cpu(xdp, rx_ring->xsk_pool);
+		xsk_buff_dma_sync_for_cpu(xdp);
 
 		xdp_res = ice_run_xdp_zc(rx_ring, xdp);
 #endif /* HAVE_XSK_BATCHED_RX_ALLOC */

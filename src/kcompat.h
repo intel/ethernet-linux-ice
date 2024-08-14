@@ -1933,7 +1933,6 @@ unsigned int _kc_cpumask_local_spread(unsigned int i, int node);
 #endif /* HAVE_RHASHTABLE */
 #else /* >= 4,1,0 */
 #define HAVE_NDO_GET_PHYS_PORT_NAME
-#define HAVE_PTP_CLOCK_INFO_GETTIME64
 #define HAVE_NDO_BRIDGE_GETLINK_NLFLAGS
 #define HAVE_PASSTHRU_FEATURES_CHECK
 #define HAVE_NDO_SET_VF_RSS_QUERY_EN
@@ -2248,9 +2247,6 @@ int _kc_kstrtobool(const char *s, bool *res);
 #else /* >= 4.6.0 */
 #define HAVE_PAGE_COUNT_BULK_UPDATE
 #define HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
-#ifdef CONFIG_X86
-#define HAVE_PTP_CROSSTIMESTAMP
-#endif
 #define HAVE_TC_SETUP_CLSFLOWER
 #define HAVE_TC_SETUP_CLSU32
 #endif /* 4.6.0 */
@@ -2561,7 +2557,6 @@ static inline bool uuid_equal(const uuid_t *u1, const uuid_t *u2)
 #define HAVE_HWTSTAMP_FILTER_NTP_ALL
 #define HAVE_NDO_SETUP_TC_CHAIN_INDEX
 #define HAVE_PCI_ERROR_HANDLER_RESET_PREPARE
-#define HAVE_PTP_CLOCK_DO_AUX_WORK
 #endif /* 4.13.0 */
 
 /*****************************************************************************/
@@ -2916,13 +2911,6 @@ _kc_dev_change_flags(struct net_device *netdev, unsigned int flags,
 
 #define dev_change_flags _kc_dev_change_flags
 #endif /* !(RHEL_RELEASE_CODE && RHEL > RHEL(8,0)) */
-#if (RHEL_RELEASE_CODE && \
-     (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,7) && \
-      RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8,0)) || \
-     (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,1)))
-#define HAVE_PTP_SYS_OFFSET_EXTENDED_IOCTL
-#define HAVE_PTP_CLOCK_INFO_GETTIMEX64
-#endif /* !(RHEL >= 7.7 && RHEL != 8.0) */
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,1)))
 #define HAVE_NDO_BRIDGE_SETLINK_EXTACK
 #endif /* RHEL 8.1 */
@@ -2930,8 +2918,6 @@ _kc_dev_change_flags(struct net_device *netdev, unsigned int flags,
 #define HAVE_TC_INDIR_BLOCK
 #endif /* RHEL 8.2 */
 #else /* >= 5.0.0 */
-#define HAVE_PTP_SYS_OFFSET_EXTENDED_IOCTL
-#define HAVE_PTP_CLOCK_INFO_GETTIMEX64
 #define HAVE_NDO_BRIDGE_SETLINK_EXTACK
 #define HAVE_DMA_ALLOC_COHERENT_ZEROES_MEM
 #define HAVE_TC_INDIR_BLOCK

@@ -66,6 +66,7 @@ void ice_devlink_tc_params_unregister(struct ice_vsi *vsi);
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 int ice_devlink_rate_init_tx_topology(struct devlink *devlink, struct ice_vsi *vsi);
 void ice_tear_down_devlink_rate_tree(struct ice_pf *pf);
+void ice_devlink_rate_clear_tx_topology(struct ice_vsi *vsi);
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 
 #endif /* _ICE_DEVLINK_H_ */

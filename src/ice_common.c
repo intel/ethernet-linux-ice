@@ -84,6 +84,17 @@ static const char * const ice_link_mode_str_high[] = {
 	[2] = "100G_CAUI2",
 	[3] = "100G_AUI2_AOC_ACC",
 	[4] = "100G_AUI2",
+	[5] = "200G_CR4_PAM4",
+	[6] = "200G_SR4",
+	[7] = "200G_FR4",
+	[8] = "200G_LR4",
+	[9] = "200G_DR4",
+	[10] = "200G_KR4_PAM4",
+	[11] = "200G_AUI4_AOC_ACC",
+	[12] = "200G_AUI4",
+	[13] = "200G_AUI8_AOC_ACC",
+	[14] = "200G_AUI8",
+	[15] = "400GBASE_FR8",
 };
 
 /**
@@ -165,6 +176,17 @@ static int ice_set_mac_type(struct ice_hw *hw)
 	case ICE_DEV_ID_E825C_SGMII:
 		hw->mac_type = ICE_MAC_GENERIC_3K_E825;
 		break;
+	case ICE_DEV_ID_E830_BACKPLANE:
+	case ICE_DEV_ID_E830_QSFP56:
+	case ICE_DEV_ID_E830_SFP:
+	case ICE_DEV_ID_E830C_BACKPLANE:
+	case ICE_DEV_ID_E830_XXV_BACKPLANE:
+	case ICE_DEV_ID_E830C_QSFP:
+	case ICE_DEV_ID_E830_XXV_QSFP:
+	case ICE_DEV_ID_E830C_SFP:
+	case ICE_DEV_ID_E830_XXV_SFP:
+		hw->mac_type = ICE_MAC_E830;
+		break;
 	default:
 		hw->mac_type = ICE_MAC_UNKNOWN;
 		break;
@@ -193,7 +215,7 @@ bool ice_is_generic_mac(struct ice_hw *hw)
  *
  * returns true if the device is E822 based, false if not.
  */
-bool ice_is_e822(struct ice_hw *hw)
+bool ice_is_e822(const struct ice_hw *hw)
 {
 	switch (hw->device_id) {
 	case ICE_DEV_ID_E822C_BACKPLANE:
@@ -217,7 +239,7 @@ bool ice_is_e822(struct ice_hw *hw)
  *
  * returns true if the device is E810 based, false if not.
  */
-bool ice_is_e810(struct ice_hw *hw)
+bool ice_is_e810(const struct ice_hw *hw)
 {
 	return hw->mac_type == ICE_MAC_E810;
 }
@@ -228,7 +250,7 @@ bool ice_is_e810(struct ice_hw *hw)
  *
  * returns true if the device is E810T based, false if not.
  */
-bool ice_is_e810t(struct ice_hw *hw)
+bool ice_is_e810t(const struct ice_hw *hw)
 {
 	switch (hw->device_id) {
 	case ICE_DEV_ID_E810C_SFP:
@@ -258,12 +280,23 @@ bool ice_is_e810t(struct ice_hw *hw)
 }
 
 /**
+ * ice_is_e830
+ * @hw: pointer to the hardware structure
+ *
+ * returns true if the device is E830 based, false if not.
+ */
+bool ice_is_e830(const struct ice_hw *hw)
+{
+	return hw->mac_type == ICE_MAC_E830;
+}
+
+/**
  * ice_is_e823
  * @hw: pointer to the hardware structure
  *
  * returns true if the device is E823-L or E823-C based, false if not.
  */
-bool ice_is_e823(struct ice_hw *hw)
+bool ice_is_e823(const struct ice_hw *hw)
 {
 	switch (hw->device_id) {
 	case ICE_DEV_ID_E823L_BACKPLANE:
@@ -288,7 +321,7 @@ bool ice_is_e823(struct ice_hw *hw)
  *
  * returns true if the device is E825-C based, false if not.
  */
-bool ice_is_e825c(struct ice_hw *hw)
+bool ice_is_e825c(const struct ice_hw *hw)
 {
 	switch (hw->device_id) {
 	case ICE_DEV_ID_E825C_BACKPLANE:
@@ -432,16 +465,21 @@ static void ice_set_media_type(struct ice_port_info *pi)
 	 * type is FIBER
 	 */
 	else if (ice_phy_maps_to_media(phy_type_low, phy_type_high,
-				       ICE_MEDIA_OPT_PHY_TYPE_LOW_M, 0) ||
-		 (phy_type_low & ICE_MEDIA_OPT_PHY_TYPE_LOW_M &&
-		  phy_type_low & ICE_MEDIA_C2M_PHY_TYPE_LOW_M))
+				       ICE_MEDIA_OPT_PHY_TYPE_LOW_M,
+				       ICE_MEDIA_OPT_PHY_TYPE_HIGH_M) ||
+		 ((phy_type_low & ICE_MEDIA_OPT_PHY_TYPE_LOW_M ||
+		   phy_type_high & ICE_MEDIA_OPT_PHY_TYPE_HIGH_M) &&
+		  (phy_type_low & ICE_MEDIA_C2M_PHY_TYPE_LOW_M ||
+		   phy_type_high & ICE_MEDIA_C2C_PHY_TYPE_HIGH_M)))
 		*media_type = ICE_MEDIA_FIBER;
 	/* else if PHY types are only DA, or DA and C2C, then media type DA */
 	else if (ice_phy_maps_to_media(phy_type_low, phy_type_high,
-				       ICE_MEDIA_DAC_PHY_TYPE_LOW_M, 0) ||
-		 (phy_type_low & ICE_MEDIA_DAC_PHY_TYPE_LOW_M &&
-		 (phy_type_low & ICE_MEDIA_C2C_PHY_TYPE_LOW_M ||
-		  phy_type_high & ICE_MEDIA_C2C_PHY_TYPE_HIGH_M)))
+				       ICE_MEDIA_DAC_PHY_TYPE_LOW_M,
+				       ICE_MEDIA_DAC_PHY_TYPE_HIGH_M) ||
+		 ((phy_type_low & ICE_MEDIA_DAC_PHY_TYPE_LOW_M ||
+		   phy_type_high & ICE_MEDIA_DAC_PHY_TYPE_HIGH_M) &&
+		  (phy_type_low & ICE_MEDIA_C2C_PHY_TYPE_LOW_M ||
+		   phy_type_high & ICE_MEDIA_C2C_PHY_TYPE_HIGH_M)))
 		*media_type = ICE_MEDIA_DA;
 	/* else if PHY types are only C2M or only C2C, then media is AUI */
 	else if (ice_phy_maps_to_media(phy_type_low, phy_type_high,
@@ -639,7 +677,7 @@ int ice_aq_get_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
 	msg.msg_addr_low = lower_16_bits(reg_offset);
 	msg.msg_addr_high = lower_32_bits(receiver_id);
 	msg.opcode = ice_sbq_msg_rd;
-	msg.dest_dev = rmn_0;
+	msg.dest_dev = phy_0;
 	err = ice_sbq_rw_reg(hw, &msg, flag);
 	if (err)
 		return err;
@@ -648,7 +686,21 @@ int ice_aq_get_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
 	return 0;
 }
 
-#define ice_get_link_status_datalen(hw)	ICE_GET_LINK_STATUS_DATALEN_V1
+#define ice_get_link_status_data_ver(hw) ((hw)->mac_type == ICE_MAC_E830 ? \
+		ICE_GET_LINK_STATUS_DATA_V2 : ICE_GET_LINK_STATUS_DATA_V1)
+
+/**
+ * ice_get_link_status_datalen
+ * @hw: pointer to the HW struct
+ *
+ * return Get Link Status datalen
+ */
+static u16 ice_get_link_status_datalen(const struct ice_hw *hw)
+{
+	return (ice_get_link_status_data_ver(hw) ==
+		ICE_GET_LINK_STATUS_DATA_V1) ? ICE_GET_LINK_STATUS_DATALEN_V1 :
+		ICE_GET_LINK_STATUS_DATALEN_V2;
+}
 
 /**
  * ice_aq_get_link_info
@@ -771,17 +823,28 @@ ice_fill_tx_timer_and_fc_thresh(struct ice_hw *hw,
 	 * Also, because we are operating on transmit timer and FC
 	 * threshold of LFC, we don't turn on any bit in tx_tmr_priority
 	 */
-#define IDX_OF_LFC PRTMAC_HSEC_CTL_TX_PAUSE_QUANTA_MAX_INDEX
+#define E800_IDX_OF_LFC E800_PRTMAC_HSEC_CTL_TX_PAUSE_QUANTA_MAX_INDEX
 
-	/* Retrieve the transmit timer */
-	val = rd32(hw, PRTMAC_HSEC_CTL_TX_PAUSE_QUANTA(IDX_OF_LFC));
-	tx_timer_val = val &
-		PRTMAC_HSEC_CTL_TX_PAUSE_QUANTA_HSEC_CTL_TX_PAUSE_QUANTA_M;
-	cmd->tx_tmr_value = cpu_to_le16(tx_timer_val);
+	if ((hw)->mac_type == ICE_MAC_E830) {
+		/* Retrieve the transmit timer */
+		val = rd32(hw, E830_PRTMAC_CL01_PAUSE_QUANTA);
+		tx_timer_val = val & E830_PRTMAC_CL01_PAUSE_QUANTA_CL0_PAUSE_QUANTA_M;
+		cmd->tx_tmr_value = cpu_to_le16(tx_timer_val);
 
-	/* Retrieve the fc threshold */
-	val = rd32(hw, PRTMAC_HSEC_CTL_TX_PAUSE_REFRESH_TIMER(IDX_OF_LFC));
-	fc_thres_val = val & PRTMAC_HSEC_CTL_TX_PAUSE_REFRESH_TIMER_M;
+		/* Retrieve the fc threshold */
+		val = rd32(hw, E830_PRTMAC_CL01_QUANTA_THRESH);
+		fc_thres_val = val & E830_PRTMAC_CL01_QUANTA_THRESH_CL0_QUANTA_THRESH_M;
+	} else {
+		/* Retrieve the transmit timer */
+		val = rd32(hw, E800_PRTMAC_HSEC_CTL_TX_PAUSE_QUANTA(E800_IDX_OF_LFC));
+		tx_timer_val = val &
+			E800_PRTMAC_HSEC_CTL_TX_PAUSE_QUANTA_HSEC_CTL_TX_PAUSE_QUANTA_M;
+		cmd->tx_tmr_value = cpu_to_le16(tx_timer_val);
+
+		/* Retrieve the FC threshold */
+		val = rd32(hw, E800_PRTMAC_HSEC_CTL_TX_PAUSE_REFRESH_TIMER(E800_IDX_OF_LFC));
+		fc_thres_val = val & E800_PRTMAC_HSEC_CTL_TX_PAUSE_REFRESH_TIMER_M;
+	}
 
 	cmd->fc_refresh_threshold = cpu_to_le16(fc_thres_val);
 }
@@ -868,14 +931,7 @@ ice_cleanup_fltr_mgmt_single(struct ice_hw *hw, struct ice_switch_info *sw)
 	}
 	recps = sw->recp_list;
 	for (i = 0; i < ICE_MAX_NUM_RECIPES; i++) {
-		struct ice_recp_grp_entry *rg_entry, *tmprg_entry;
-
 		recps[i].root_rid = i;
-		list_for_each_entry_safe(rg_entry, tmprg_entry,
-					 &recps[i].rg_list, l_entry) {
-			list_del(&rg_entry->l_entry);
-			devm_kfree(ice_hw_to_dev(hw), rg_entry);
-		}
 
 		if (recps[i].adv_rule) {
 			struct ice_adv_fltr_mgmt_list_entry *tmp_entry;
@@ -900,8 +956,6 @@ ice_cleanup_fltr_mgmt_single(struct ice_hw *hw, struct ice_switch_info *sw)
 				devm_kfree(ice_hw_to_dev(hw), lst_itr);
 			}
 		}
-		if (recps[i].root_buf)
-			devm_kfree(ice_hw_to_dev(hw), recps[i].root_buf);
 	}
 	ice_rm_sw_replay_rule_info(hw, sw);
 	devm_kfree(ice_hw_to_dev(hw), sw->recp_list);
@@ -1164,6 +1218,7 @@ void ice_deinit_hw(struct ice_hw *hw)
 	ice_free_hw_tbls(hw);
 	mutex_destroy(&hw->tnl_lock);
 
+
 	ice_destroy_all_ctrlq(hw);
 
 	/* Clear VSI contexts if not already cleared */
@@ -1419,9 +1474,8 @@ static const struct ice_ctx_ele ice_rlan_ctx_info[] = {
  * it to HW register space and enables the hardware to prefetch descriptors
  * instead of only fetching them on demand
  */
-int
-ice_write_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
-		  u32 rxq_index)
+int ice_write_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
+		      u32 rxq_index)
 {
 	u8 ctx_buf[ICE_RXQ_CTX_SZ] = { 0 };
 
@@ -1443,9 +1497,8 @@ ice_write_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
  * Read rxq context from HW register space and then converts it from dense
  * structure to sparse
  */
-int
-ice_read_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
-		 u32 rxq_index)
+int ice_read_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
+		     u32 rxq_index)
 {
 	u8 ctx_buf[ICE_RXQ_CTX_SZ] = { 0 };
 	int status;
@@ -1598,9 +1651,8 @@ static DEFINE_MUTEX(ice_global_txq_ctx_lock);
  * Read txq context from HW register space and then converts it from dense
  * structure to sparse
  */
-int
-ice_read_txq_ctx(struct ice_hw *hw, struct ice_tlan_ctx *tlan_ctx,
-		 u32 txq_index)
+int ice_read_txq_ctx(struct ice_hw *hw, struct ice_tlan_ctx *tlan_ctx,
+		     u32 txq_index)
 {
 	u8 ctx_buf[ICE_TXQ_CTX_SZ] = { 0 };
 	int status;
@@ -1695,10 +1747,9 @@ static const struct ice_ctx_ele ice_tx_cmpltnq_ctx_info[] = {
  * Converts completion queue context from sparse to dense structure and then
  * writes it to HW register space
  */
-int
-ice_write_tx_cmpltnq_ctx(struct ice_hw *hw,
-			 struct ice_tx_cmpltnq_ctx *tx_cmpltnq_ctx,
-			 u32 tx_cmpltnq_index)
+int ice_write_tx_cmpltnq_ctx(struct ice_hw *hw,
+			     struct ice_tx_cmpltnq_ctx *tx_cmpltnq_ctx,
+			     u32 tx_cmpltnq_index)
 {
 	u8 ctx_buf[ICE_TX_CMPLTNQ_CTX_SIZE_DWORDS * sizeof(u32)] = { 0 };
 
@@ -1713,8 +1764,7 @@ ice_write_tx_cmpltnq_ctx(struct ice_hw *hw,
  *
  * Clears Tx completion queue context in HW register space
  */
-int
-ice_clear_tx_cmpltnq_ctx(struct ice_hw *hw, u32 tx_cmpltnq_index)
+int ice_clear_tx_cmpltnq_ctx(struct ice_hw *hw, u32 tx_cmpltnq_index)
 {
 	u8 i;
 
@@ -1786,10 +1836,9 @@ static const struct ice_ctx_ele ice_tx_drbell_q_ctx_info[] = {
  * Converts doorbell queue context from sparse to dense structure and then
  * writes it to HW register space
  */
-int
-ice_write_tx_drbell_q_ctx(struct ice_hw *hw,
-			  struct ice_tx_drbell_q_ctx *tx_drbell_q_ctx,
-			  u32 tx_drbell_q_index)
+int ice_write_tx_drbell_q_ctx(struct ice_hw *hw,
+			      struct ice_tx_drbell_q_ctx *tx_drbell_q_ctx,
+			      u32 tx_drbell_q_index)
 {
 	u8 ctx_buf[ICE_TX_DRBELL_Q_CTX_SIZE_DWORDS * sizeof(u32)] = { 0 };
 
@@ -1805,8 +1854,7 @@ ice_write_tx_drbell_q_ctx(struct ice_hw *hw,
  *
  * Clears doorbell queue context in HW register space
  */
-int
-ice_clear_tx_drbell_q_ctx(struct ice_hw *hw, u32 tx_drbell_q_index)
+int ice_clear_tx_drbell_q_ctx(struct ice_hw *hw, u32 tx_drbell_q_index)
 {
 	u8 i;
 
@@ -1819,6 +1867,31 @@ ice_clear_tx_drbell_q_ctx(struct ice_hw *hw, u32 tx_drbell_q_index)
 
 	return 0;
 }
+
+/* Tx time Queue Context */
+const struct ice_ctx_ele ice_txtime_ctx_info[] = {
+				    /* Field			Width	LSB */
+	ICE_CTX_STORE(ice_txtime_ctx, base,			57,	0),
+	ICE_CTX_STORE(ice_txtime_ctx, pf_num,			3,	57),
+	ICE_CTX_STORE(ice_txtime_ctx, vmvf_num,			10,	60),
+	ICE_CTX_STORE(ice_txtime_ctx, vmvf_type,		2,	70),
+	ICE_CTX_STORE(ice_txtime_ctx, src_vsi,			10,	72),
+	ICE_CTX_STORE(ice_txtime_ctx, cpuid,			8,	82),
+	ICE_CTX_STORE(ice_txtime_ctx, tphrd_desc,		1,	90),
+	ICE_CTX_STORE(ice_txtime_ctx, qlen,			13,	91),
+	ICE_CTX_STORE(ice_txtime_ctx, timer_num,		3,	104),
+	ICE_CTX_STORE(ice_txtime_ctx, txtime_ena_q,		1,	107),
+	ICE_CTX_STORE(ice_txtime_ctx, drbell_mode_32,		1,	108),
+	ICE_CTX_STORE(ice_txtime_ctx, ts_res,			4,	109),
+	ICE_CTX_STORE(ice_txtime_ctx, ts_round_type,		2,	113),
+	ICE_CTX_STORE(ice_txtime_ctx, ts_pacing_slot,		3,	115),
+	ICE_CTX_STORE(ice_txtime_ctx, merging_ena,		1,	118),
+	ICE_CTX_STORE(ice_txtime_ctx, ts_fetch_prof_id,		4,	119),
+	ICE_CTX_STORE(ice_txtime_ctx, ts_fetch_cache_line_aln_thld, 4,	123),
+	ICE_CTX_STORE(ice_txtime_ctx, tx_pipe_delay_mode,	1,	127),
+	ICE_CTX_STORE(ice_txtime_ctx, int_q_state,		70,	128),
+	{ 0 }
+};
 
 /* Sideband Queue command wrappers */
 
@@ -1859,6 +1932,7 @@ int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flag)
 {
 	struct ice_sbq_cmd_desc desc = {};
 	struct ice_sbq_msg_req msg = {};
+	struct ice_sq_cd cd = {};
 	u16 msg_len;
 	int status;
 
@@ -1871,7 +1945,7 @@ int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flag)
 	msg.msg_addr_low = cpu_to_le16(in->msg_addr_low);
 	msg.msg_addr_high = cpu_to_le32(in->msg_addr_high);
 
-	if (in->opcode)
+	if (in->opcode == ice_sbq_msg_wr_p || in->opcode == ice_sbq_msg_wr_np)
 		msg.data = cpu_to_le32(in->data);
 	else
 		/* data read comes back in completion, so shorten the struct by
@@ -1879,10 +1953,13 @@ int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flag)
 		 */
 		msg_len -= sizeof(msg.data);
 
+	if (in->opcode == ice_sbq_msg_wr_p)
+		cd.postpone = true;
+
 	desc.flags = cpu_to_le16(flag);
 	desc.opcode = cpu_to_le16(ice_sbq_opc_neigh_dev_req);
 	desc.param0.cmd_len = cpu_to_le16(msg_len);
-	status = ice_sbq_send_cmd(hw, &desc, &msg, msg_len, NULL);
+	status = ice_sbq_send_cmd(hw, &desc, &msg, msg_len, &cd);
 	if (!status && !in->opcode)
 		in->data = le32_to_cpu
 			(((struct ice_sbq_msg_cmpl *)&msg)->data);
@@ -2338,7 +2415,7 @@ void ice_release_res(struct ice_hw *hw, enum ice_aq_res_ids res)
 
 		if (status != -EIO)
 			break;
-		usleep_range(1000, 2000);
+                usleep_range(1000, 2000);
 	} while (time_before(jiffies, timeout));
 }
 
@@ -2975,11 +3052,11 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 	info->clk_src = ((number & ICE_TS_CLK_SRC_M) != 0);
 	clk_freq = FIELD_GET(ICE_TS_CLK_FREQ_M, number);
 	if (ice_is_e825c(hw)) {
-		info->clk_src = ICE_CLK_SRC_TCX0;
-		clk_freq = ICE_TIME_REF_FREQ_156_250;
+		info->clk_src = ICE_CLK_SRC_TCXO;
+		clk_freq = ICE_TSPLL_FREQ_156_250;
 	}
-	if (clk_freq < NUM_ICE_TIME_REF_FREQ) {
-		info->time_ref = (enum ice_time_ref_freq)clk_freq;
+	if (clk_freq < NUM_ICE_TSPLL_FREQ) {
+		info->time_ref = (enum ice_tspll_freq)clk_freq;
 	} else {
 		/* Unknown clock frequency, so assume a (probably incorrect)
 		 * default to avoid out-of-bounds look ups of frequency
@@ -2987,7 +3064,7 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 		 */
 		ice_debug(hw, ICE_DBG_INIT, "1588 func caps: unknown clock frequency %u\n",
 			  clk_freq);
-		info->time_ref = ICE_TIME_REF_FREQ_25_000;
+		info->time_ref = ICE_TSPLL_FREQ_25_000;
 	}
 
 	ice_debug(hw, ICE_DBG_INIT, "func caps: ieee_1588 = %u\n",
@@ -3019,10 +3096,12 @@ ice_parse_fdir_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p)
 	u32 reg_val, val;
 
 	reg_val = rd32(hw, GLQF_FD_SIZE);
-	val = FIELD_GET(GLQF_FD_SIZE_FD_GSIZE_M, reg_val);
+	val = (reg_val & GLQF_FD_SIZE_FD_GSIZE_M_BY_MAC(hw)) >>
+		GLQF_FD_SIZE_FD_GSIZE_S;
 	func_p->fd_fltr_guar =
 		ice_get_num_per_func(hw, val);
-	val = FIELD_GET(GLQF_FD_SIZE_FD_BSIZE_M, reg_val);
+	val = (reg_val & GLQF_FD_SIZE_FD_BSIZE_M_BY_MAC(hw)) >>
+		GLQF_FD_SIZE_FD_BSIZE_S;
 	func_p->fd_fltr_best_effort = val;
 
 	ice_debug(hw, ICE_DBG_INIT, "func caps: fd_fltr_guar = %d\n",
@@ -3985,6 +4064,18 @@ u16 ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high)
 	case ICE_PHY_TYPE_HIGH_100G_AUI2:
 		speed_phy_type_high = ICE_AQ_LINK_SPEED_100GB;
 		break;
+	case ICE_PHY_TYPE_HIGH_200G_CR4_PAM4:
+	case ICE_PHY_TYPE_HIGH_200G_SR4:
+	case ICE_PHY_TYPE_HIGH_200G_FR4:
+	case ICE_PHY_TYPE_HIGH_200G_LR4:
+	case ICE_PHY_TYPE_HIGH_200G_DR4:
+	case ICE_PHY_TYPE_HIGH_200G_KR4_PAM4:
+	case ICE_PHY_TYPE_HIGH_200G_AUI4_AOC_ACC:
+	case ICE_PHY_TYPE_HIGH_200G_AUI4:
+	case ICE_PHY_TYPE_HIGH_200G_AUI8_AOC_ACC:
+	case ICE_PHY_TYPE_HIGH_200G_AUI8:
+		speed_phy_type_high = ICE_AQ_LINK_SPEED_200GB;
+		break;
 	default:
 		speed_phy_type_high = ICE_AQ_LINK_SPEED_UNKNOWN;
 		break;
@@ -4682,7 +4773,6 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 	struct ice_aqc_sff_eeprom *cmd;
 	struct ice_aq_desc desc;
 	u16 i2c_bus_addr;
-	int status;
 
 	if (!data || (mem_addr & 0xff00))
 		return -EINVAL;
@@ -4700,8 +4790,33 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 	cmd->i2c_mem_addr = cpu_to_le16(mem_addr & 0xff);
 	cmd->eeprom_page = le16_encode_bits(page, ICE_AQC_SFF_EEPROM_PAGE_S);
 
-	status = ice_aq_send_cmd(hw, &desc, data, length, cd);
-	return status;
+	return ice_aq_send_cmd(hw, &desc, data, length, cd);
+}
+
+static enum ice_lut_size ice_lut_type_to_size(enum ice_lut_type type)
+{
+	switch (type) {
+	case ICE_LUT_GLOBAL:
+		return ICE_LUT_GLOBAL_SIZE;
+	case ICE_LUT_PF:
+		return ICE_LUT_PF_SIZE;
+	case ICE_LUT_VSI:
+	default:
+		return ICE_LUT_VSI_SIZE;
+	}
+}
+
+static enum ice_aqc_lut_flags ice_lut_size_to_flag(enum ice_lut_size size)
+{
+	switch (size) {
+	case ICE_LUT_GLOBAL_SIZE:
+		return ICE_AQC_LUT_SIZE_512;
+	case ICE_LUT_PF_SIZE:
+		return ICE_AQC_LUT_SIZE_2K;
+	case ICE_LUT_VSI_SIZE:
+	default:
+		return ICE_AQC_LUT_SIZE_SMALL;
+	}
 }
 
 /**
@@ -4772,37 +4887,6 @@ ice_aq_read_topo_dev_nvm(struct ice_hw *hw,
 	return 0;
 }
 
-static u16 ice_lut_type_to_size(u16 lut_type)
-{
-	switch (lut_type) {
-	case ICE_LUT_VSI:
-		return ICE_LUT_VSI_SIZE;
-	case ICE_LUT_GLOBAL:
-		return ICE_LUT_GLOBAL_SIZE;
-	case ICE_LUT_PF:
-		return ICE_LUT_PF_SIZE;
-	default:
-		return 0;
-	}
-}
-
-static u16 ice_lut_size_to_flag(u16 lut_size)
-{
-	u16 f = 0;
-
-	switch (lut_size) {
-	case ICE_LUT_GLOBAL_SIZE:
-		f = ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_512_FLAG;
-		break;
-	case ICE_LUT_PF_SIZE:
-		f = ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_2K_FLAG;
-		break;
-	default:
-		break;
-	}
-	return f << ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_S;
-}
-
 int ice_lut_size_to_type(int lut_size)
 {
 	switch (lut_size) {
@@ -4828,53 +4912,42 @@ int ice_lut_size_to_type(int lut_size)
 static int
 __ice_aq_get_set_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *params, bool set)
 {
-	u16 flags, vsi_id, lut_type, lut_size, glob_lut_idx = 0, vsi_handle;
-	struct ice_aqc_get_set_rss_lut *cmd_resp;
+	u16 flags, vsi_id, glob_lut_idx = 0, vsi_handle, opcode;
+	struct ice_aqc_get_set_rss_lut *desc_params;
+	enum ice_lut_size lut_size;
+	enum ice_lut_type lut_type;
 	struct ice_aq_desc desc;
-	int status;
 	u8 *lut;
 
 	if (!params)
 		return -EINVAL;
-
 	vsi_handle = params->vsi_handle;
 	lut = params->lut;
 	lut_type = params->lut_type;
-	lut_size = ice_lut_type_to_size(lut_type);
-	cmd_resp = &desc.params.get_set_rss_lut;
-	if (lut_type == ICE_LUT_GLOBAL)
-		glob_lut_idx = params->global_lut_id;
-
-	if (!lut || !lut_size || !ice_is_vsi_valid(hw, vsi_handle))
+	if (!lut || !ice_is_vsi_valid(hw, vsi_handle))
 		return -EINVAL;
 
+	lut_size = ice_lut_type_to_size(lut_type);
 	if (lut_size > params->lut_size)
 		return -EINVAL;
-
-	if (set && lut_size != params->lut_size)
+	else if (set && lut_size != params->lut_size)
 		return -EINVAL;
 
-	vsi_id = ice_get_hw_vsi_num(hw, vsi_handle);
-
-	if (set) {
-		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_rss_lut);
+	opcode = set ? ice_aqc_opc_set_rss_lut : ice_aqc_opc_get_rss_lut;
+	ice_fill_dflt_direct_cmd_desc(&desc, opcode);
+	if (set)
 		desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
-	} else {
-		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_rss_lut);
-	}
+	desc_params = &desc.params.get_set_rss_lut;
+	vsi_id = ice_get_hw_vsi_num(hw, vsi_handle);
+	desc_params->vsi_id = cpu_to_le16(vsi_id | ICE_AQC_RSS_VSI_VALID);
 
-	cmd_resp->vsi_id = cpu_to_le16(FIELD_PREP(ICE_AQC_GSET_RSS_LUT_VSI_ID_M,
-						  vsi_id) |
-				       ICE_AQC_GSET_RSS_LUT_VSI_VALID);
+	if (lut_type == ICE_LUT_GLOBAL)
+		glob_lut_idx = FIELD_PREP(ICE_AQC_LUT_GLOBAL_IDX,
+					  params->global_lut_id);
+	flags = lut_type | glob_lut_idx | (u16)ice_lut_size_to_flag(lut_size);
+	desc_params->flags = cpu_to_le16(flags);
+	return ice_aq_send_cmd(hw, &desc, lut, lut_size, NULL);
 
-	flags = ice_lut_size_to_flag(lut_size) |
-		 FIELD_PREP(ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_M, lut_type) |
-		 FIELD_PREP(ICE_AQC_GSET_RSS_LUT_GLOBAL_IDX_M, glob_lut_idx);
-
-	cmd_resp->flags = cpu_to_le16(flags);
-	status = ice_aq_send_cmd(hw, &desc, lut, lut_size, NULL);
-	params->lut_size = le16_to_cpu(desc.datalen);
-	return status;
 }
 
 /**
@@ -4916,11 +4989,9 @@ static int __ice_aq_get_set_rss_key(struct ice_hw *hw, u16 vsi_id,
 				    struct ice_aqc_get_set_rss_keys *key,
 				    bool set)
 {
-	struct ice_aqc_get_set_rss_key *cmd_resp;
+	struct ice_aqc_get_set_rss_key *desc_params;
 	u16 key_size = sizeof(*key);
 	struct ice_aq_desc desc;
-
-	cmd_resp = &desc.params.get_set_rss_key;
 
 	if (set) {
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_rss_key);
@@ -4929,9 +5000,8 @@ static int __ice_aq_get_set_rss_key(struct ice_hw *hw, u16 vsi_id,
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_rss_key);
 	}
 
-	cmd_resp->vsi_id = cpu_to_le16(FIELD_PREP(ICE_AQC_GSET_RSS_KEY_VSI_ID_M,
-						  vsi_id) |
-				       ICE_AQC_GSET_RSS_KEY_VSI_VALID);
+	desc_params = &desc.params.get_set_rss_key;
+	desc_params->vsi_id = cpu_to_le16(vsi_id | ICE_AQC_RSS_VSI_VALID);
 
 	return ice_aq_send_cmd(hw, &desc, key, key_size, NULL);
 }
@@ -5199,6 +5269,91 @@ ice_aq_move_recfg_lan_txq(struct ice_hw *hw, u8 num_qs, bool is_move,
 }
 
 /**
+ * ice_aq_set_txtimeq - set Tx time queues
+ * @hw: pointer to the hardware structure
+ * @txtimeq: first Tx time queue id to configure
+ * @q_count: number of queues to configure
+ * @txtime_qg: queue group to be set
+ * @buf_size: size of buffer for indirect command
+ * @cd: pointer to command details structure or NULL
+ *
+ * Set Tx Time queue (0x0C35)
+ */
+int
+ice_aq_set_txtimeq(struct ice_hw *hw, u16 txtimeq, u8 q_count,
+		   struct ice_aqc_set_txtime_qgrp *txtime_qg, u16 buf_size,
+		   struct ice_sq_cd *cd)
+{
+	struct ice_aqc_set_txtimeqs *cmd;
+	struct ice_aq_desc desc;
+	u16 size;
+
+	cmd = &desc.params.set_txtimeqs;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_txtimeqs);
+
+	if (!txtime_qg)
+		return -EINVAL;
+
+	if (txtimeq > ICE_TXTIME_MAX_QUEUE || q_count < 1 ||
+	    q_count > ICE_SET_TXTIME_MAX_Q_AMOUNT)
+		return -EINVAL;
+
+	size = struct_size(txtime_qg, txtimeqs, q_count);
+
+	if (buf_size != size)
+		return -EINVAL;
+
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+
+	cmd->q_id = cpu_to_le16(txtimeq);
+	cmd->q_amount = cpu_to_le16(q_count);
+	return ice_aq_send_cmd(hw, &desc, txtime_qg, buf_size, cd);
+}
+
+/**
+ * ice_aq_ena_dis_txtimeq - enable/disable Tx time queue
+ * @hw: pointer to the hardware structure
+ * @txtimeq: first Tx time queue id to configure
+ * @q_count: number of queues to configure
+ * @q_ena: enable/disable Tx time queue
+ * @txtime_qg: holds the first Tx time queue that failed enable/disable on
+ * response
+ * @cd: pointer to command details structure or NULL
+ *
+ * Enable/disable Tx Time queue (0x0C37)
+ */
+int
+ice_aq_ena_dis_txtimeq(struct ice_hw *hw, u16 txtimeq, u16 q_count, bool q_ena,
+		       struct ice_aqc_ena_dis_txtime_qgrp *txtime_qg,
+		       struct ice_sq_cd *cd)
+{
+	struct ice_aqc_ena_dis_txtimeqs *cmd;
+	struct ice_aq_desc desc;
+
+	cmd = &desc.params.operate_txtimeqs;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_ena_dis_txtimeqs);
+
+	if (!txtime_qg)
+		return -EINVAL;
+
+	if (txtimeq > ICE_TXTIME_MAX_QUEUE || q_count < 1 ||
+	    q_count > ICE_OP_TXTIME_MAX_Q_AMOUNT)
+		return -EINVAL;
+
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+
+	cmd->q_id = cpu_to_le16(txtimeq);
+	cmd->q_amount = cpu_to_le16(q_count);
+
+	if (q_ena)
+		cmd->cmd_type |= ICE_AQC_TXTIME_CMD_TYPE_Q_ENA;
+
+	return ice_aq_send_cmd(hw, &desc, txtime_qg, sizeof(*txtime_qg), cd);
+}
+
+/**
  * ice_aq_add_rdma_qsets
  * @hw: pointer to the hardware structure
  * @num_qset_grps: Number of RDMA Qset groups
@@ -5249,13 +5404,13 @@ ice_aq_add_rdma_qsets(struct ice_hw *hw, u8 num_qset_grps,
 /* End of FW Admin Queue command wrappers */
 
 /**
- * ice_write_byte - write a byte to a packed context structure
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_pack_ctx_byte - write a byte to a packed context structure
+ * @src_ctx: unpacked source context structure
+ * @dest_ctx: packed destination context data
+ * @ce_info: context element description
  */
-static void
-ice_write_byte(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_pack_ctx_byte(u8 *src_ctx, u8 *dest_ctx,
+			      const struct ice_ctx_ele *ce_info)
 {
 	u8 src_byte, dest_byte, mask;
 	u8 *from, *dest;
@@ -5266,14 +5421,11 @@ ice_write_byte(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-	mask = (u8)(BIT(ce_info->width) - 1);
+	mask = GENMASK(ce_info->width - 1 + shift_width, shift_width);
 
 	src_byte = *from;
-	src_byte &= mask;
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
 	src_byte <<= shift_width;
+	src_byte &= mask;
 
 	/* get the current bits from the target bit string */
 	dest = dest_ctx + (ce_info->lsb / 8);
@@ -5288,13 +5440,13 @@ ice_write_byte(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 }
 
 /**
- * ice_write_word - write a word to a packed context structure
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_pack_ctx_word - write a word to a packed context structure
+ * @src_ctx: unpacked source context structure
+ * @dest_ctx: packed destination context data
+ * @ce_info: context element description
  */
-static void
-ice_write_word(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_pack_ctx_word(u8 *src_ctx, u8 *dest_ctx,
+			      const struct ice_ctx_ele *ce_info)
 {
 	u16 src_word, mask;
 	__le16 dest_word;
@@ -5306,17 +5458,14 @@ ice_write_word(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-	mask = BIT(ce_info->width) - 1;
+	mask = GENMASK(ce_info->width - 1 + shift_width, shift_width);
 
 	/* don't swizzle the bits until after the mask because the mask bits
 	 * will be in a different bit position on big endian machines
 	 */
 	src_word = *(u16 *)from;
-	src_word &= mask;
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
 	src_word <<= shift_width;
+	src_word &= mask;
 
 	/* get the current bits from the target bit string */
 	dest = dest_ctx + (ce_info->lsb / 8);
@@ -5331,13 +5480,13 @@ ice_write_word(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 }
 
 /**
- * ice_write_dword - write a dword to a packed context structure
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_pack_ctx_dword - write a dword to a packed context structure
+ * @src_ctx: unpacked source context structure
+ * @dest_ctx: packed destination context data
+ * @ce_info: context element description
  */
-static void
-ice_write_dword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_pack_ctx_dword(u8 *src_ctx, u8 *dest_ctx,
+			       const struct ice_ctx_ele *ce_info)
 {
 	u32 src_dword, mask;
 	__le32 dest_dword;
@@ -5349,25 +5498,14 @@ ice_write_dword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-
-	/* if the field width is exactly 32 on an x86 machine, then the shift
-	 * operation will not work because the SHL instructions count is masked
-	 * to 5 bits so the shift will do nothing
-	 */
-	if (ce_info->width < 32)
-		mask = BIT(ce_info->width) - 1;
-	else
-		mask = (u32)~0;
+	mask = GENMASK(ce_info->width - 1 + shift_width, shift_width);
 
 	/* don't swizzle the bits until after the mask because the mask bits
 	 * will be in a different bit position on big endian machines
 	 */
 	src_dword = *(u32 *)from;
-	src_dword &= mask;
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
 	src_dword <<= shift_width;
+	src_dword &= mask;
 
 	/* get the current bits from the target bit string */
 	dest = dest_ctx + (ce_info->lsb / 8);
@@ -5382,13 +5520,13 @@ ice_write_dword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 }
 
 /**
- * ice_write_qword - write a qword to a packed context structure
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_pack_ctx_qword - write a qword to a packed context structure
+ * @src_ctx: unpacked source context structure
+ * @dest_ctx: packed destination context data
+ * @ce_info: context element description
  */
-static void
-ice_write_qword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_pack_ctx_qword(u8 *src_ctx, u8 *dest_ctx,
+			       const struct ice_ctx_ele *ce_info)
 {
 	u64 src_qword, mask;
 	__le64 dest_qword;
@@ -5400,25 +5538,14 @@ ice_write_qword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-
-	/* if the field width is exactly 64 on an x86 machine, then the shift
-	 * operation will not work because the SHL instructions count is masked
-	 * to 6 bits so the shift will do nothing
-	 */
-	if (ce_info->width < 64)
-		mask = BIT_ULL(ce_info->width) - 1;
-	else
-		mask = (u64)~0;
+	mask = GENMASK_ULL(ce_info->width - 1 + shift_width, shift_width);
 
 	/* don't swizzle the bits until after the mask because the mask bits
 	 * will be in a different bit position on big endian machines
 	 */
 	src_qword = *(u64 *)from;
-	src_qword &= mask;
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
 	src_qword <<= shift_width;
+	src_qword &= mask;
 
 	/* get the current bits from the target bit string */
 	dest = dest_ctx + (ce_info->lsb / 8);
@@ -5437,11 +5564,10 @@ ice_write_qword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
  * @hw: pointer to the hardware structure
  * @src_ctx:  pointer to a generic non-packed context structure
  * @dest_ctx: pointer to memory for the packed structure
- * @ce_info:  a description of the structure to be transformed
+ * @ce_info: List of Rx context elements
  */
-int
-ice_set_ctx(struct ice_hw *hw, u8 *src_ctx, u8 *dest_ctx,
-	    const struct ice_ctx_ele *ce_info)
+int ice_set_ctx(struct ice_hw *hw, u8 *src_ctx, u8 *dest_ctx,
+		const struct ice_ctx_ele *ce_info)
 {
 	int f;
 
@@ -5457,16 +5583,16 @@ ice_set_ctx(struct ice_hw *hw, u8 *src_ctx, u8 *dest_ctx,
 		}
 		switch (ce_info[f].size_of) {
 		case sizeof(u8):
-			ice_write_byte(src_ctx, dest_ctx, &ce_info[f]);
+			ice_pack_ctx_byte(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		case sizeof(u16):
-			ice_write_word(src_ctx, dest_ctx, &ce_info[f]);
+			ice_pack_ctx_word(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		case sizeof(u32):
-			ice_write_dword(src_ctx, dest_ctx, &ce_info[f]);
+			ice_pack_ctx_dword(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		case sizeof(u64):
-			ice_write_qword(src_ctx, dest_ctx, &ce_info[f]);
+			ice_pack_ctx_qword(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		default:
 			return -EINVAL;
@@ -5918,24 +6044,22 @@ void ice_dump_port_info(struct ice_port_info *pi)
 }
 
 /**
- * ice_read_byte - read context byte into struct
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_unpack_ctx_byte - read context byte into struct
+ * @src_ctx: packed source context data
+ * @dest_ctx: unpacked destination context structure
+ * @ce_info: context element description
  */
-static void
-ice_read_byte(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_unpack_ctx_byte(u8 *src_ctx, u8 *dest_ctx,
+				const struct ice_ctx_ele *ce_info)
 {
 	u8 dest_byte, mask;
-	u8 *src, *target;
 	u16 shift_width;
+	const u8 *src;
+	u8 *target;
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-	mask = (u8)(BIT(ce_info->width) - 1);
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
+	mask = GENMASK(ce_info->width - 1 + shift_width, shift_width);
 
 	/* get the current bits from the src bit string */
 	src = src_ctx + (ce_info->lsb / 8);
@@ -5954,25 +6078,23 @@ ice_read_byte(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 }
 
 /**
- * ice_read_word - read context word into struct
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_unpack_ctx_word - read context word into struct
+ * @src_ctx: packed source context data
+ * @dest_ctx: unpacked destination context structure
+ * @ce_info: context element description
  */
-static void
-ice_read_word(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_unpack_ctx_word(u8 *src_ctx, u8 *dest_ctx,
+				const struct ice_ctx_ele *ce_info)
 {
 	u16 dest_word, mask;
-	u8 *src, *target;
 	__le16 src_word;
 	u16 shift_width;
+	const u8 *src;
+	u8 *target;
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-	mask = BIT(ce_info->width) - 1;
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
+	mask = GENMASK(ce_info->width - 1 + shift_width, shift_width);
 
 	/* get the current bits from the src bit string */
 	src = src_ctx + (ce_info->lsb / 8);
@@ -5997,13 +6119,13 @@ ice_read_word(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 }
 
 /**
- * ice_read_dword - read context dword into struct
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_unpack_ctx_dword - read context dword into struct
+ * @src_ctx: packed source context data
+ * @dest_ctx: unpacked destination context structure
+ * @ce_info: context element description
  */
-static void
-ice_read_dword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_unpack_ctx_dword(u8 *src_ctx, u8 *dest_ctx,
+				 const struct ice_ctx_ele *ce_info)
 {
 	u32 dest_dword, mask;
 	__le32 src_dword;
@@ -6012,18 +6134,7 @@ ice_read_dword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-
-	/* if the field width is exactly 32 on an x86 machine, then the shift
-	 * operation will not work because the SHL instructions count is masked
-	 * to 5 bits so the shift will do nothing
-	 */
-	if (ce_info->width < 32)
-		mask = BIT(ce_info->width) - 1;
-	else
-		mask = (u32)~0;
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
+	mask = GENMASK(ce_info->width - 1 + shift_width, shift_width);
 
 	/* get the current bits from the src bit string */
 	src = src_ctx + (ce_info->lsb / 8);
@@ -6048,13 +6159,13 @@ ice_read_dword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 }
 
 /**
- * ice_read_qword - read context qword into struct
- * @src_ctx:  the context structure to read from
- * @dest_ctx: the context to be written to
- * @ce_info:  a description of the struct to be filled
+ * ice_unpack_ctx_qword - read context qword into struct
+ * @src_ctx: packed source context data
+ * @dest_ctx: unpacked destination context structure
+ * @ce_info: context element description
  */
-static void
-ice_read_qword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+static void ice_unpack_ctx_qword(u8 *src_ctx, u8 *dest_ctx,
+				 const struct ice_ctx_ele *ce_info)
 {
 	u64 dest_qword, mask;
 	__le64 src_qword;
@@ -6063,18 +6174,7 @@ ice_read_qword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 
 	/* prepare the bits and mask */
 	shift_width = ce_info->lsb % 8;
-
-	/* if the field width is exactly 64 on an x86 machine, then the shift
-	 * operation will not work because the SHL instructions count is masked
-	 * to 6 bits so the shift will do nothing
-	 */
-	if (ce_info->width < 64)
-		mask = BIT_ULL(ce_info->width) - 1;
-	else
-		mask = (u64)~0;
-
-	/* shift to correct alignment */
-	mask <<= shift_width;
+	mask = GENMASK(ce_info->width - 1 + shift_width, shift_width);
 
 	/* get the current bits from the src bit string */
 	src = src_ctx + (ce_info->lsb / 8);
@@ -6104,24 +6204,23 @@ ice_read_qword(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
  * @dest_ctx: pointer to a generic non-packed context structure
  * @ce_info:  a description of the structure to be read from
  */
-int
-ice_get_ctx(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
+int ice_get_ctx(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info)
 {
 	int f;
 
 	for (f = 0; ce_info[f].width; f++) {
 		switch (ce_info[f].size_of) {
 		case 1:
-			ice_read_byte(src_ctx, dest_ctx, &ce_info[f]);
+			ice_unpack_ctx_byte(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		case 2:
-			ice_read_word(src_ctx, dest_ctx, &ce_info[f]);
+			ice_unpack_ctx_word(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		case 4:
-			ice_read_dword(src_ctx, dest_ctx, &ce_info[f]);
+			ice_unpack_ctx_dword(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		case 8:
-			ice_read_qword(src_ctx, dest_ctx, &ce_info[f]);
+			ice_unpack_ctx_qword(src_ctx, dest_ctx, &ce_info[f]);
 			break;
 		default:
 			/* nothing to do, just keep going */
@@ -7966,6 +8065,7 @@ static const u32 ice_aq_to_link_speed[] = {
 	SPEED_40000,
 	SPEED_50000,
 	SPEED_100000,	/* BIT(10) */
+	SPEED_200000,
 };
 
 /**

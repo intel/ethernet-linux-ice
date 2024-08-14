@@ -8,10 +8,9 @@
 
 #include <linux/types.h>
 #include <linux/stddef.h>
-#include <linux/bitops.h>
 
 #define IEPS_VERSION_PEER_MAJOR    1
-#define IEPS_VERSION_PEER_MINOR    2
+#define IEPS_VERSION_PEER_MINOR    3
 
 struct ieps_peer_api_version {
 	__u8  major;
@@ -288,6 +287,17 @@ struct ieps_peer_arg {
 	unsigned int		port;
 	void			*data;
 	enum ieps_peer_status	status;
+	unsigned long		data_sz;
+};
+
+union ieps_peer_data {
+	struct ieps_peer_i2c i2c;
+	struct ieps_peer_mdio mdio;
+	struct ieps_peer_gpio gpio;
+	struct ieps_peer_phy_caps pcaps;
+	struct ieps_peer_phy_link_status lstatus;
+	struct ieps_peer_port_attr_data pa_data;
+	struct ieps_peer_intphy_reg_rw reg_rw;
 };
 
 #endif /* _IEPS_PEER_H_ */

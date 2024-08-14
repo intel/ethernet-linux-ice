@@ -70,6 +70,8 @@
 #else /* !HAVE_GNSS_MODULE || !IS_ENABLED(CONFIG_GNSS) */
 #include "kcompat_gnss.h"
 #endif /* HAVE_GNSS_MODULE && IS_ENABLED(CONFIG_GNSS) */
+#include <linux/radix-tree.h>
+#include <linux/percpu-defs.h>
 #include "ice_ddp.h"
 #include "ice_devids.h"
 #include "ice_type.h"
@@ -90,6 +92,7 @@
 #include "ice_sriov.h"
 #include "ice_vf_mbx.h"
 #include "ice_ptp.h"
+#include "ice_tspll.h"
 #include "ice_fdir.h"
 #include "ice_vdcm.h"
 #include "ice_siov.h"
@@ -139,6 +142,7 @@
 #endif
 #include "ice_migration.h"
 #include "ice_migration_private.h"
+#include "ice_irq.h"
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0			0
@@ -188,12 +192,8 @@ extern const char ice_drv_ver[];
 #define ICE_Q_WAIT_RETRY_LIMIT	10
 #define ICE_Q_WAIT_MAX_RETRY	(5 * ICE_Q_WAIT_RETRY_LIMIT)
 #define ICE_RES_VALID_BIT	0x8000
-#define ICE_RES_MISC_VEC_ID	(ICE_RES_VALID_BIT - 1)
-#define ICE_RES_RDMA_VEC_ID	(ICE_RES_MISC_VEC_ID - 1)
-/* All VF control VSIs share the same irq, so assign a unique ID for them */
-#define ICE_RES_VF_CTRL_VEC_ID	(ICE_RES_RDMA_VEC_ID - 1)
-#define ICE_RES_VF_BASE_VEC_ID	(ICE_RES_VF_CTRL_VEC_ID - 1 - ICE_MAX_SRIOV_VFS)
-#define ICE_RES_LL_TS_VEC_ID	(ICE_RES_VF_BASE_VEC_ID - 1)
+#define ICE_RES_VF_BASE_VEC_ID (ICE_RES_VALID_BIT - 1 - ICE_MAX_SRIOV_VFS)
+
 #define ICE_INVAL_Q_INDEX	0xffff
 #define ICE_INVAL_VFID		256
 
@@ -316,7 +316,10 @@ enum ice_feature {
 	ICE_F_SMA_CTRL,
 	ICE_F_CGU,
 	ICE_F_GNSS,
+	ICE_F_TXPP,
+	ICE_F_GCS,
 	ICE_F_LAG,
+	ICE_F_MBX_LIMIT,
 	ICE_F_MAX
 };
 
@@ -504,11 +507,14 @@ struct ice_vsi {
 	struct ice_pf *back;		 /* back pointer to PF */
 	struct ice_rx_ring **rx_rings;	 /* Rx ring array */
 	struct ice_tx_ring **tx_rings;	 /* Tx ring array */
+	struct ice_tx_ring **tstamp_rings;	 /* Time stamp ring array */
 #ifdef HAVE_NDO_DFWD_OPS
 	/* Initial VSI tx_rings array when L2 offload is off */
 	struct ice_tx_ring **base_tx_rings;
 #endif /* HAVE_NDO_DFWD_OPS */
 	struct ice_q_vector **q_vectors; /* q_vector array */
+	/* tell if only dynamic irq allocation is allowed */
+	bool irq_dyn_alloc;
 
 	irqreturn_t (*irq_handler)(int irq, void *data);
 
@@ -525,7 +531,6 @@ struct ice_vsi {
 	u32 rx_page_reuse;
 #endif /* ICE_ADD_PROBES */
 	u16 num_q_vectors;
-	u16 base_vector;		/* IRQ base for OS reserved vectors */
 	u16 vsi_num;			/* HW (absolute) index of this VSI */
 	u16 idx;			/* software index in pf->vsi[] */
 
@@ -535,11 +540,12 @@ struct ice_vsi {
 	u16 cntr_bfltr;
 
 	/* RSS config */
-	u16 rss_table_size;	/* HW RSS table size */
+	enum ice_lut_size rss_table_size;	/* HW RSS table size */
 	u16 rss_size;		/* Allocated RSS queues */
 	u8 *rss_hkey_user;	/* User configured hash keys */
 	u8 *rss_lut_user;	/* User configured lookup table entries */
-	u8 rss_lut_type;	/* used to configure Get/Set RSS LUT AQ call */
+	enum ice_lut_type rss_lut_type;
+	/* Used to configure Get/Set RSS LUT AQ call */
 	u16 *global_lut_id;
 
 	/* aRFS members only allocated for the PF VSI */
@@ -584,6 +590,7 @@ struct ice_vsi {
 	u16 req_rxq;			 /* User requested Rx queues */
 	u16 num_rx_desc;
 	u16 num_tx_desc;
+	u16 *tstampq_map;		 /* index in pf->avail_tstampqs */
 	struct ice_tc_cfg tc_cfg;
 #ifdef HAVE_XDP_SUPPORT
 	struct bpf_prog *xdp_prog;
@@ -618,7 +625,6 @@ struct ice_vsi {
 	 * they were before
 	 */
 	u16 orig_rss_size;
-	u8 vf_adq_tc;	/* traffic class number for VF ADQ VSI */
 	/* track various feature bits for channel VSI */
 	DECLARE_BITMAP(features, ICE_CHNL_FEATURE_NBITS);
 #define ICE_TBL_FULL_TIMES             5
@@ -731,7 +737,8 @@ struct ice_q_vector {
 	struct ice_vsi *vsi;
 
 	u16 v_idx;			/* index in the vsi->q_vector array. */
-	u16 reg_idx;
+	u16 reg_idx;			/* PF register index */
+	u16 vf_reg_idx;			/* VF register index */
 	u8 num_ring_rx;			/* total number of Rx rings in vector */
 	u8 num_ring_tx;			/* total number of Tx rings in vector */
 	u8 wb_on_itr:1;			/* if true, WB on ITR is enabled */
@@ -816,6 +823,7 @@ struct ice_q_vector {
 	struct ice_q_vector_ch_stats ch_stats;
 #endif /* ADQ_PERF_COUNTERS */
 	u64 last_wd_jiffy;
+	struct msi_map irq;
 } ____cacheline_internodealigned_in_smp;
 
 enum ice_pf_flags {
@@ -865,11 +873,11 @@ enum ice_pf_flags {
 	ICE_FLAG_LINK_LENIENT_MODE_ENA,
 	ICE_FLAG_ESWITCH_CAPABLE,
 	ICE_FLAG_DPLL_MONITOR,
-	ICE_FLAG_ITU_G8262_FILTER_USED,
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
 #if IS_ENABLED(CONFIG_DPLL)
 	ICE_FLAG_DPLL,			/* SyncE/PTP dplls initialized */
 #endif
+	ICE_FLAG_TXPP,
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
@@ -893,9 +901,9 @@ struct ice_macvlan {
 };
 #endif /* HAVE_NDO_DFWD_OPS */
 
-struct ice_switchdev_info {
-	struct ice_vsi *control_vsi;
+struct ice_eswitch {
 	struct ice_vsi *uplink_vsi;
+	struct radix_tree_root reprs;
 	bool is_running;
 };
 
@@ -953,7 +961,11 @@ struct ice_pf {
 
 	/* OS reserved IRQ details */
 	struct msix_entry *msix_entries;
+#ifdef HAVE_PCI_MSIX_ALLOC_IRQ_AT
+	struct ice_irq_tracker irq_tracker;
+#else
 	struct ice_res_tracker *irq_tracker;
+#endif /* HAVE_PCI_MSIX_ALLOC_IRQ_AT */
 	struct ice_res_tracker *vf_irq_tracker;
 	/* Store MSI-X requested by user via devlink */
 	struct ice_msix req_msix;
@@ -1026,9 +1038,9 @@ struct ice_pf {
 	u32 hw_csum_rx_error;
 	u32 hw_rx_eipe_error;
 	u32 oicr_err_reg;
-	u16 oicr_idx;		/* Other interrupt cause MSIX vector index */
-	u16 ll_ts_int_idx;	/* LL_TS interrupt MSIX vector index */
-	u16 num_avail_sw_msix;	/* remaining MSIX SW vectors left unclaimed */
+	struct msi_map oicr_irq;        /* Other interrupt cause MSIX vector */
+
+	struct msi_map ll_ts_irq;	/* LL_TS interrupt MSIX vector index */
 	u16 max_pf_txqs;	/* Total Tx queues PF wide */
 	u16 max_pf_rxqs;	/* Total Rx queues PF wide */
 	u16 num_lan_tx;		/* num LAN Tx queues setup */
@@ -1067,6 +1079,8 @@ struct ice_pf {
 	u64 rx_q_vlano;
 	u64 tx_ad_vlano;
 	u64 rx_ad_vlano;
+	u64 rx_gcs;
+	u64 tx_gcs;
 #endif
 	u16 dcbx_cap;
 	u32 tx_timeout_count;
@@ -1108,7 +1122,7 @@ struct ice_pf {
 #endif /* HAVE_UDP_TUNNEL_NIC_SHARED */
 	struct udp_tunnel_nic_info udp_tunnel_nic;
 #endif /* HAVE_UDP_TUNNEL_NIC_INFO */
-	struct ice_switchdev_info switchdev;
+	struct ice_eswitch eswitch;
 
 #define ICE_INVALID_AGG_NODE_ID		0
 #define ICE_PF_AGG_NODE_ID_START	1
@@ -1135,6 +1149,7 @@ struct ice_pf {
 #ifdef HAVE_HWMON_DEVICE_REGISTER_WITH_INFO
 	struct device *hwmon_dev;
 #endif
+	u8 ieps_lm_active : 1;
 };
 
 extern struct ice_pf *
@@ -1271,7 +1286,7 @@ ice_irq_dynamic_ena(struct ice_hw *hw, struct ice_vsi *vsi,
 		    struct ice_q_vector *q_vector)
 {
 	u32 vector = (vsi && q_vector) ? q_vector->reg_idx :
-				((struct ice_pf *)hw->back)->oicr_idx;
+				((struct ice_pf *)hw->back)->oicr_irq.index;
 	int itr = ICE_ITR_NONE;
 	u32 val;
 
@@ -1431,7 +1446,7 @@ static inline struct ice_vsi *ice_get_netdev_priv_vsi(struct ice_netdev_priv *np
  */
 static inline bool ice_is_switchdev_running(struct ice_pf *pf)
 {
-	return pf->switchdev.is_running;
+	return pf->eswitch.is_running;
 }
 
 #else
@@ -1547,8 +1562,8 @@ static inline u32 ice_get_current_fd_cnt(struct ice_vsi *vsi)
 
 	val = rd32(&vsi->back->hw, VSIQF_FD_CNT(vsi->vsi_num));
 
-	return (val & VSIQF_FD_CNT_FD_GCNT_M) +
-		((val & VSIQF_FD_CNT_FD_BCNT_M) >>
+	return (val & VSIQF_FD_CNT_FD_GCNT_M_BY_MAC(&vsi->back->hw)) +
+		((val & VSIQF_FD_CNT_FD_BCNT_M_BY_MAC(&vsi->back->hw)) >>
 		VSIQF_FD_CNT_FD_BCNT_S);
 }
 
@@ -1722,11 +1737,11 @@ ice_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 int ice_xdp_xmit(struct net_device *dev, struct xdp_buff *xdp);
 #endif /* HAVE_XDP_FRAME_STRUCT */
 #endif /* HAVE_XDP_SUPPORT */
-int ice_set_rss_lut(struct ice_vsi *vsi, u8 *lut, u16 lut_size);
-int ice_get_rss_lut(struct ice_vsi *vsi, u8 *lut, u16 lut_size);
+int ice_set_rss_lut(struct ice_vsi *vsi, u8 *lut, enum ice_lut_size lut_size);
+int ice_get_rss_lut(struct ice_vsi *vsi, u8 *lut, enum ice_lut_size lut_size);
 int ice_set_rss_key(struct ice_vsi *vsi, u8 *seed);
 int ice_get_rss_key(struct ice_vsi *vsi, u8 *seed);
-void ice_fill_rss_lut(u8 *lut, u16 rss_table_size, u16 rss_size);
+void ice_fill_rss_lut(u8 *lut, enum ice_lut_size rss_table_size, u16 rss_size);
 int ice_schedule_reset(struct ice_pf *pf, enum ice_reset_req reset);
 void ice_print_link_msg(struct ice_vsi *vsi, bool isup);
 int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name);
@@ -1804,8 +1819,6 @@ ice_ntuple_l4_proto_to_port(enum ice_flow_seg_hdr l4_proto,
 			    enum ice_flow_field *dst_port);
 int ice_ntuple_check_ip4_seg(struct ethtool_tcpip4_spec *tcp_ip4_spec);
 int ice_ntuple_check_ip4_usr_seg(struct ethtool_usrip4_spec *usr_ip4_spec);
-int ice_set_ether_flow_seg(struct ice_flow_seg_info *seg,
-			   struct ethhdr *eth_spec, bool fd_seg);
 int
 ice_get_fdir_fltr_ids(struct ice_hw *hw, struct ethtool_rxnfc *cmd,
 		      u32 *rule_locs);
@@ -1839,14 +1852,8 @@ ice_pf_src_tmr_owned(struct ice_pf *pf)
 {
 	if (ice_is_e825c(&pf->hw))
 		return !!pf->hw.func_caps.ts_func_info.src_tmr_owned &&
-		       pf->hw.ptp.primary_nac;
+		       ice_is_primary(&pf->hw);
 	else
 		return !!pf->hw.func_caps.ts_func_info.src_tmr_owned;
-}
-
-static inline bool
-ice_is_primary(struct ice_pf *pf)
-{
-	return !!(pf->hw.dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
 }
 #endif /* _ICE_H_ */

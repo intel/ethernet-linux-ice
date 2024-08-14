@@ -25,7 +25,7 @@
  * an appropriate message.
  */
 #define IIDC_MAJOR_VER		10
-#define IIDC_MINOR_VER		3
+#define IIDC_MINOR_VER		4
 
 enum iidc_event_type {
 	IIDC_EVENT_BEFORE_MTU_CHANGE,
@@ -220,6 +220,19 @@ struct cdev_info_id {
 	IIDC_RDMA_INFO		\
 }
 
+#define IIDC_IEPS_NAC_MODE_M       0x3
+
+enum iidc_ieps_nac_mode {
+	/* Single NAC - Secondary */
+	IIDC_IEPS_NAC_MODE_1B = 0x0,
+	/* Single NAC - Primary */
+	IIDC_IEPS_NAC_MODE_1A = 0x1,
+	/* Dual NAC - Secondary */
+	IIDC_IEPS_NAC_MODE_2_SECONDARY = 0x2,
+	/* Dual NAC - Primary */
+	IIDC_IEPS_NAC_MODE_2_PRIMARY = 0x3,
+};
+
 enum iidc_function_type {
 	IIDC_FUNCTION_TYPE_PF,
 	IIDC_FUNCTION_TYPE_VF,
@@ -272,6 +285,7 @@ struct iidc_core_dev_info {
 	u8 rdma_ports[2];
 	u8 bond_aa; /* is 1 if the bond is a supported active-active mode */
 	u8 rdma_port_bitmap; /* bitmap of port's link on active-active bond */
+	enum iidc_ieps_nac_mode nac_mode; /* NAC Topology */
 };
 
 struct iidc_auxiliary_dev {

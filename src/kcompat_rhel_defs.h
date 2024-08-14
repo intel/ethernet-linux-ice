@@ -125,7 +125,6 @@
 #define XSK_UMEM_RETURNS_XDP_DESC
 #undef NEED_XSK_UMEM_GET_RX_FRAME_SIZE
 #define HAVE_ETHTOOL_COALESCE_PARAMS_SUPPORT
-#define HAVE_PTP_FIND_PIN_UNLOCKED
 #endif /* 8.4 */
 
 /*****************************************************************************/
@@ -133,7 +132,6 @@
 #else /* >= 8.5 */
 #undef HAVE_NAPI_BUSY_LOOP
 #undef HAVE_XDP_RXQ_INFO_REG_3_PARAMS
-#undef NEED_XSK_BUFF_DMA_SYNC_FOR_CPU
 #define NO_XDP_QUERY_XSK_UMEM
 #undef NEED_XSK_BUFF_POOL_RENAME
 #define HAVE_NETDEV_BPF_XSK_POOL

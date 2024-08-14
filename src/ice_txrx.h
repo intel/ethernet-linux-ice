@@ -168,6 +168,7 @@ struct ice_tx_offload_params {
 	u32 td_l2tag1;
 	u32 cd_tunnel_params;
 	u16 cd_l2tag2;
+	u16 cd_gcs_params;
 	u8 header_len;
 };
 
@@ -412,6 +413,8 @@ struct ice_rx_ring {
 #define ICE_RX_FLAGS_RING_BUILD_SKB		BIT(1)
 #define ICE_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1	BIT(2)
 #define ICE_TX_FLAGS_VLAN_TAG_LOC_L2TAG2	BIT(3)
+#define ICE_TXRX_FLAGS_GCS_ENA			BIT(4)
+#define ICE_RX_FLAGS_MULTIDEV			BIT(5)
 #define ICE_RX_FLAGS_CRC_STRIP_DIS		BIT(6)
 	u8 flags;
 } ____cacheline_internodealigned_in_smp;
@@ -422,7 +425,10 @@ struct ice_tx_ring {
 	void *desc;			/* Descriptor ring memory */
 	struct device *dev;		/* Used for DMA mapping */
 	void __iomem *tail;
-	struct ice_tx_buf *tx_buf;
+	union {
+		struct ice_tx_buf *tx_buf;
+		struct ice_tstamp_buf *tstamp_buf;
+	};
 	struct ice_q_vector *q_vector;	/* Backreference to associated vector */
 	struct net_device *netdev;	/* netdev ring maps to */
 	struct ice_vsi *vsi;		/* Backreference to associated VSI */
@@ -459,6 +465,7 @@ struct ice_tx_ring {
 #ifdef HAVE_XDP_SUPPORT
 #define ICE_TX_FLAGS_RING_XDP			BIT(0)
 #endif /* HAVE_XDP_SUPPORT */
+#define ICE_TX_FLAGS_TXTIME			BIT(5)
 	u8 flags;
 	u8 dcb_tc;			/* Traffic class of ring */
 } ____cacheline_internodealigned_in_smp;
@@ -489,7 +496,7 @@ static inline bool ice_rx_ring_ch_enabled(struct ice_rx_ring *ring)
 }
 
 #ifdef HAVE_XDP_SUPPORT
-static inline bool ice_ring_is_xdp(struct ice_tx_ring *ring)
+static inline bool ice_ring_is_xdp(const struct ice_tx_ring *ring)
 {
 	return !!(ring->flags & ICE_TX_FLAGS_RING_XDP);
 }
@@ -575,8 +582,10 @@ u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
 #endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
 #endif /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
 int ice_setup_tstamp_ring(struct ice_tx_ring *tstamp_ring);
-void ice_free_tx_ring(struct ice_tx_ring *tx_ring);
-void ice_clean_tx_ring(struct ice_tx_ring *tx_ring);
+void ice_clean_tx_ring(struct ice_tx_ring *tx_ring,
+		       struct ice_tx_ring *tstamp_ring);
+void ice_free_tx_ring(struct ice_tx_ring *tx_ring,
+		      struct ice_tx_ring *tstamp_ring);
 void ice_clean_rx_ring(struct ice_rx_ring *rx_ring);
 int ice_setup_tx_ring(struct ice_tx_ring *tx_ring);
 int ice_setup_rx_ring(struct ice_rx_ring *rx_ring);

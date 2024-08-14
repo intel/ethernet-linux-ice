@@ -252,7 +252,7 @@ static ssize_t dump_cluster_id_write(struct file *file, const char __user *buf,
 	bool read_all_clusters = false;
 	const struct dentry *pfile;
 	char kbuf[11] = { 0 };
-	int bytes_read, err;
+	int bytes_read;
 	u16 cluster_id;
 
 	bytes_read = simple_write_to_buffer(kbuf, sizeof(kbuf), offset, buf,
@@ -264,7 +264,7 @@ static ssize_t dump_cluster_id_write(struct file *file, const char __user *buf,
 		cluster_id = 0;
 		read_all_clusters = true;
 	} else {
-		err = kstrtou16(kbuf, 10, &cluster_id);
+		int err = kstrtou16(kbuf, 10, &cluster_id);
 		if (err)
 			return err;
 	}
@@ -331,11 +331,16 @@ static void ice_dump_pf(struct ice_pf *pf)
 	dev_info(dev, "\tnum_macvlan = %d\n", pf->num_macvlan);
 	dev_info(dev, "\tmax_num_macvlan = %d\n", pf->max_num_macvlan);
 #endif /* HAVE_NDO_DFWD_OPS */
+#ifdef HAVE_PCI_MSIX_ALLOC_IRQ_AT
+	dev_info(dev, "\tirq_tracker.num_entries = %d\n",
+		 pf->irq_tracker.num_entries);
+#else
 	dev_info(dev, "\tirq_tracker->num_entries = %d\n",
 		 pf->irq_tracker->num_entries);
 	dev_info(dev, "\tirq_tracker->end = %d\n", pf->irq_tracker->end);
 	dev_info(dev, "\tirq_tracker valid count = %d\n",
 		 ice_get_valid_res_count(pf->irq_tracker));
+#endif /* HAVE_PCI_MSIX_ALLOC_IRQ_AT */
 	dev_info(dev, "\tsriov_base_vector = %d\n", pf->sriov_base_vector);
 	dev_info(dev, "\tnum_alloc_vfs = %d\n", ice_get_num_vfs(pf));
 	dev_info(dev, "\tnum_qps_per_vf = %d\n", pf->vfs.num_qps_per);
@@ -404,20 +409,20 @@ static void ice_dump_pf_fdir(struct ice_pf *pf)
 
 	dev_info(dev, "Flow Director filter usage:\n");
 	dev_info(dev, "\tPF guaranteed used = %ld\n",
-		 (pf_fltr_cnt & PFQF_FD_CNT_FD_GCNT_M) >>
+		 (pf_fltr_cnt & PFQF_FD_CNT_FD_GCNT_M_BY_MAC(hw)) >>
 		 PFQF_FD_CNT_FD_GCNT_S);
 	dev_info(dev, "\tPF best_effort used = %ld\n",
-		 (pf_fltr_cnt & PFQF_FD_CNT_FD_BCNT_M) >>
+		 (pf_fltr_cnt & PFQF_FD_CNT_FD_BCNT_M_BY_MAC(hw)) >>
 		 PFQF_FD_CNT_FD_BCNT_S);
 	dev_info(dev, "\tdevice guaranteed used = %ld\n",
-		 (dev_fltr_cnt & GLQF_FD_CNT_FD_GCNT_M) >>
+		 (dev_fltr_cnt & GLQF_FD_CNT_FD_GCNT_M_BY_MAC(hw)) >>
 		 GLQF_FD_CNT_FD_GCNT_S);
 	dev_info(dev, "\tdevice best_effort used = %ld\n",
-		 (dev_fltr_cnt & GLQF_FD_CNT_FD_BCNT_M) >>
+		 (dev_fltr_cnt & GLQF_FD_CNT_FD_BCNT_M_BY_MAC(hw)) >>
 		 GLQF_FD_CNT_FD_BCNT_S);
 	dev_info(dev, "\tPF guaranteed pool = %d\n", pf_guar_pool);
 	dev_info(dev, "\tdevice guaranteed pool = %ld\n",
-		 (dev_fltr_size & GLQF_FD_SIZE_FD_GSIZE_M) >>
+		 (dev_fltr_size & GLQF_FD_SIZE_FD_GSIZE_M_BY_MAC(hw)) >>
 		 GLQF_FD_SIZE_FD_GSIZE_S);
 	dev_info(dev, "\tdevice best_effort pool = %d\n",
 		 hw->func_caps.fd_fltr_best_effort);

@@ -425,7 +425,10 @@ static void ice_lag_rdma_del_fltr(struct ice_lag *lag)
 	struct ice_hw *hw = &lag->pf->hw;
 	u16 rule_buf_sz;
 
-	rule_buf_sz = struct_size(s_rule, hdr_data, 0);
+	if (!rm_entry->rid || !rm_entry->rule_id)
+		return;
+
+	rule_buf_sz = sizeof(struct ice_sw_rule_lkup_rx_tx);
 	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return;
@@ -477,7 +480,7 @@ static void ice_lag_rdma_del_action(struct ice_lag *lag)
 				    NULL);
 	if (ret)
 		dev_warn(ice_pf_to_dev(lag->pf),
-			 "Error trying to delete/unsub from large action %d\n",
+			 "Failed to delete/unsub from large action %d\n",
 			 ret);
 
 	kfree(sw_buf);
@@ -659,7 +662,8 @@ static void ice_lag_chk_rdma(struct ice_lag *lag, void *ptr)
 		goto unplug_out;
 
 	ice_set_rdma_cap(lag->pf);
-	ice_plug_aux_dev_lock(cdev, IIDC_RDMA_ROCE_NAME, lag);
+	if (!ice_is_reset_in_progress(lag->pf->state))
+		ice_plug_aux_dev_lock(cdev, IIDC_RDMA_ROCE_NAME, lag);
 
 	return;
 
@@ -1088,7 +1092,8 @@ static void ice_lag_unlink(struct ice_lag *lag)
 			name = IIDC_RDMA_IWARP_NAME;
 		else
 			name = IIDC_RDMA_ROCE_NAME;
-		ice_plug_aux_dev_lock(cdev, name, lag);
+		if (!ice_is_reset_in_progress(lag->pf->state))
+			ice_plug_aux_dev_lock(cdev, name, lag);
 	}
 }
 

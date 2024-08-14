@@ -7,23 +7,10 @@
 #include "ice.h"
 #include "ice_lib.h"
 #include "ice_trace.h"
-#include <linux/dpll.h>
 
 #define ICE_CGU_STATE_ACQ_ERR_THRESHOLD		50
 #define ICE_DPLL_PIN_IDX_INVALID		0xff
 #define ICE_DPLL_RCLK_NUM_PER_PF		1
-
-/**
- * enum ice_dpll_pin_type - enumerate ice pin types:
- * @ICE_DPLL_PIN_TYPE_INPUT: input pin
- * @ICE_DPLL_PIN_TYPE_OUTPUT: output pin
- * @ICE_DPLL_PIN_TYPE_RCLK_INPUT: recovery clock input pin
- */
-enum ice_dpll_pin_type {
-	ICE_DPLL_PIN_TYPE_INPUT,
-	ICE_DPLL_PIN_TYPE_OUTPUT,
-	ICE_DPLL_PIN_TYPE_RCLK_INPUT,
-};
 
 static const char * const pin_type_name[] = {
 	[ICE_DPLL_PIN_TYPE_INPUT] = "input",
@@ -89,11 +76,16 @@ ice_dpll_pin_freq_set(struct ice_pf *pf, struct ice_dpll_pin *pin,
 		return -EINVAL;
 	}
 	if (ret) {
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "err:%d %s failed to set pin freq:%u on pin:%u\n",
 				   ret,
 				   ice_aq_str(pf->hw.adminq.sq_last_status),
 				   freq, pin->idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Error setting pin frequency");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 		return ret;
 	}
 	pin->freq = freq;
@@ -339,10 +331,15 @@ ice_dpll_pin_enable(struct ice_hw *hw, struct ice_dpll_pin *pin,
 		return -EINVAL;
 	}
 	if (ret)
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "err:%d %s failed to enable %s pin:%u\n",
 				   ret, ice_aq_str(hw->adminq.sq_last_status),
 				   pin_type_name[pin_type], pin->idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Failed to enable pin");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 
 	return ret;
 }
@@ -383,10 +380,15 @@ ice_dpll_pin_disable(struct ice_hw *hw, struct ice_dpll_pin *pin,
 		return -EINVAL;
 	}
 	if (ret)
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "err:%d %s failed to disable %s pin:%u\n",
 				   ret, ice_aq_str(hw->adminq.sq_last_status),
 				   pin_type_name[pin_type], pin->idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Failed to disable pin");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 
 	return ret;
 }
@@ -493,11 +495,16 @@ ice_dpll_pin_state_update(struct ice_pf *pf, struct ice_dpll_pin *pin,
 	return 0;
 err:
 	if (extack)
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "err:%d %s failed to update %s pin:%u\n",
 				   ret,
 				   ice_aq_str(pf->hw.adminq.sq_last_status),
 				   pin_type_name[pin_type], pin->idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Failed to update pin settings");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 	else
 		dev_err_ratelimited(ice_pf_to_dev(pf),
 				    "err:%d %s failed to update %s pin:%u\n",
@@ -532,11 +539,16 @@ ice_dpll_hw_input_prio_set(struct ice_pf *pf, struct ice_dpll *dpll,
 	ret = ice_aq_set_cgu_ref_prio(&pf->hw, dpll->dpll_idx, pin->idx,
 				      (u8)prio);
 	if (ret)
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "err:%d %s failed to set pin prio:%u on pin:%u\n",
 				   ret,
 				   ice_aq_str(pf->hw.adminq.sq_last_status),
 				   prio, pin->idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Failed to set pin priority");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 	else
 		dpll->input_prio[pin->idx] = prio;
 
@@ -699,6 +711,8 @@ ice_dpll_output_state_set(const struct dpll_pin *pin, void *pin_priv,
 	struct ice_dpll_pin *p = pin_priv;
 	struct ice_dpll *d = dpll_priv;
 
+	if (state == DPLL_PIN_STATE_SELECTABLE)
+		return -EINVAL;
 	if (!enable && p->state[d->dpll_idx] == DPLL_PIN_STATE_DISCONNECTED)
 		return 0;
 
@@ -1043,11 +1057,16 @@ ice_dpll_pin_phase_adjust_set(const struct dpll_pin *pin, void *pin_priv,
 		p->phase_adjust = phase_adjust;
 	mutex_unlock(&pf->dplls.lock);
 	if (ret)
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "err:%d %s failed to set pin phase_adjust:%d for pin:%u on dpll:%u\n",
 				   ret,
 				   ice_aq_str(pf->hw.adminq.sq_last_status),
 				   phase_adjust, p->idx, d->dpll_idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Failed to set pin phase_adjust");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 
 	return ret;
 }
@@ -1171,7 +1190,7 @@ ice_dpll_rclk_state_on_pin_set(const struct dpll_pin *pin, void *pin_priv,
 			       struct netlink_ext_ack *extack)
 {
 	struct ice_dpll_pin *p = pin_priv;
-	struct ice_dpll_pin *parent = parent_pin_priv;
+	const struct ice_dpll_pin *parent = parent_pin_priv;
 	bool enable = state == DPLL_PIN_STATE_CONNECTED;
 	struct ice_pf *pf = p->pf;
 	int ret = -EINVAL;
@@ -1187,19 +1206,29 @@ ice_dpll_rclk_state_on_pin_set(const struct dpll_pin *pin, void *pin_priv,
 
 	if ((enable && p->state[hw_idx] == DPLL_PIN_STATE_CONNECTED) ||
 	    (!enable && p->state[hw_idx] == DPLL_PIN_STATE_DISCONNECTED)) {
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "pin:%u state:%u on parent:%u already set",
 				   p->idx, state, parent->idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Pin state on parent is already set");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 		goto unlock;
 	}
 	ret = ice_aq_set_phy_rec_clk_out(&pf->hw, hw_idx, enable,
 					 &p->freq);
 	if (ret)
+#ifdef HAVE_NL_SET_ERR_MSG_FMT
 		NL_SET_ERR_MSG_FMT(extack,
 				   "err:%d %s failed to set pin state:%u for pin:%u on parent:%u\n",
 				   ret,
 				   ice_aq_str(pf->hw.adminq.sq_last_status),
 				   state, p->idx, parent->idx);
+#else /* !HAVE_NL_SET_ERR_MSG_FMT */
+		NL_SET_ERR_MSG(extack,
+			       "Failed to set pin state for pin on parent");
+#endif /* HAVE_NL_SET_ERR_MSG_FMT */
 unlock:
 	mutex_unlock(&pf->dplls.lock);
 
@@ -1438,7 +1467,7 @@ static void ice_dpll_periodic_work(struct kthread_work *work)
 	int ret = 0;
 
 	if (ice_is_reset_in_progress(pf->state) ||
-	    test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags))
+	    !test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags))
 		goto resched;
 	mutex_lock(&pf->dplls.lock);
 	ret = ice_dpll_update_state(pf, de, false);
@@ -1667,7 +1696,7 @@ static void ice_dpll_deinit_rclk_pin(struct ice_pf *pf)
 	}
 	if (WARN_ON_ONCE(!vsi || !vsi->netdev))
 		return;
-	netdev_dpll_pin_clear(vsi->netdev);
+	dpll_netdev_pin_clear(vsi->netdev);
 	dpll_pin_put(rclk->pin);
 }
 
@@ -1711,7 +1740,7 @@ ice_dpll_init_rclk_pins(struct ice_pf *pf, struct ice_dpll_pin *pin,
 	}
 	if (WARN_ON((!vsi || !vsi->netdev)))
 		return -EINVAL;
-	netdev_dpll_pin_set(vsi->netdev, pf->dplls.rclk.pin);
+	dpll_netdev_pin_set(vsi->netdev, pf->dplls.rclk.pin);
 
 	return 0;
 
@@ -2226,4 +2255,44 @@ deinit_info:
 err_exit:
 	mutex_destroy(&d->lock);
 	dev_warn(ice_pf_to_dev(pf), "DPLLs init failure err:%d\n", err);
+}
+
+static struct ice_dpll_pin*
+ice_dpll_find_pin(struct ice_pf *pf, enum ice_dpll_pin_type pin_type,
+		  u8 pin_idx)
+{
+	switch (pin_type) {
+	case ICE_DPLL_PIN_TYPE_INPUT:
+		if (pin_idx >= pf->dplls.num_inputs)
+			return NULL;
+		return &pf->dplls.inputs[pin_idx];
+	case ICE_DPLL_PIN_TYPE_OUTPUT:
+		if (pin_idx >= pf->dplls.num_outputs)
+			return NULL;
+		return &pf->dplls.outputs[pin_idx];
+	default:
+		return NULL;
+	}
+}
+
+void ice_dpll_pin_update_lock(struct ice_pf *pf)
+{
+	mutex_lock(&pf->dplls.lock);
+}
+
+void ice_dpll_pin_update_unlock(struct ice_pf *pf, bool pin_updated,
+				enum ice_dpll_pin_type pin_type, u8 pin_idx)
+{
+	if (pin_updated) {
+		struct ice_dpll_pin *p = ice_dpll_find_pin(pf, pin_type,
+							   pin_idx);
+
+		if (p) {
+			ice_dpll_pin_state_update(pf, p, pin_type, NULL);
+			mutex_unlock(&pf->dplls.lock);
+			dpll_pin_change_ntf(p->pin);
+			return;
+		}
+	}
+	mutex_unlock(&pf->dplls.lock);
 }

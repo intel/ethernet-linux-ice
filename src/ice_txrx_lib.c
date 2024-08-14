@@ -126,6 +126,26 @@ ice_rx_extra_counters(struct ice_vsi *vsi, u16 rx_status, u32 inner_prot,
 }
 #endif /* ICE_ADD_PROBES */
 
+#ifdef ICE_ADD_PROBES
+static void ice_rx_gcs(struct sk_buff *skb, union ice_32b_rx_flex_desc *rx_desc,
+		       struct ice_rx_ring *rx_ring)
+#else
+static void ice_rx_gcs(struct sk_buff *skb, union ice_32b_rx_flex_desc *rx_desc)
+#endif /* ICE_ADD_PROBES */
+{
+	struct ice_32b_rx_flex_desc_nic *nic_csum;
+
+	if (rx_desc->wb.rxdid != ICE_RXDID_FLEX_NIC)
+		return;
+
+	nic_csum = (struct ice_32b_rx_flex_desc_nic *)rx_desc;
+	skb->ip_summed = CHECKSUM_COMPLETE;
+	skb->csum = (__force __wsum)htons(le16_to_cpu(nic_csum->raw_csum));
+#ifdef ICE_ADD_PROBES
+	rx_ring->vsi->back->rx_gcs++;
+#endif
+}
+
 /**
  * ice_rx_csum - Indicate in skb if checksum is good
  * @ring: the ring we care about
@@ -155,6 +175,25 @@ ice_rx_csum(struct ice_rx_ring *ring, struct sk_buff *skb,
 	/* check if Rx checksum is enabled */
 	if (!(ring->netdev->features & NETIF_F_RXCSUM))
 		return;
+
+	if (rx_desc->wb.rxdid == ICE_RXDID_FLEX_NIC &&
+	    ring->flags & ICE_TXRX_FLAGS_GCS_ENA &&
+	    (decoded.inner_prot == ICE_RX_PTYPE_INNER_PROT_TCP ||
+	     decoded.inner_prot == ICE_RX_PTYPE_INNER_PROT_UDP ||
+	     decoded.inner_prot == ICE_RX_PTYPE_INNER_PROT_ICMP)) {
+		/* ICE_RX_FLEX_DESC_STATUS1_L2TAG2P_S is overloaded in the
+		 * rx_status1 layout to indicate that the extracted data from
+		 * the packet is valid.
+		 */
+		if (rx_status1 & BIT(ICE_RX_FLEX_DESC_STATUS1_L2TAG2P_S))
+#ifdef ICE_ADD_PROBES
+			return ice_rx_gcs(skb, rx_desc, ring);
+#else
+			return ice_rx_gcs(skb, rx_desc);
+#endif /* ICE_ADD_PROBES */
+		else
+			goto checksum_fail;
+	}
 
 	/* check if HW has decoded the packet and checksum */
 	if (!(rx_status0 & BIT(ICE_RX_FLEX_DESC_STATUS0_L3L4P_S)))
@@ -240,14 +279,23 @@ ice_process_skb_fields(struct ice_rx_ring *rx_ring,
 	ice_rx_hash(rx_ring, rx_desc, skb, ptype);
 
 	/* modifies the skb - consumes the enet header */
-	skb->protocol = eth_type_trans(skb, rx_ring->netdev);
+	if (unlikely(rx_ring->flags & ICE_RX_FLAGS_MULTIDEV)) {
+		struct net_device *netdev = ice_eswitch_get_target(rx_ring,
+								   rx_desc);
+		if (ice_is_port_repr_netdev(netdev))
+			ice_repr_inc_rx_stats(netdev, skb->len);
+		skb->protocol = eth_type_trans(skb, netdev);
+	} else {
+		skb->protocol = eth_type_trans(skb, rx_ring->netdev);
+	}
 
 	ice_rx_csum(rx_ring, skb, rx_desc, ptype);
 	if (rx_ring->ptp_rx)
 		ice_ptp_rx_hwtstamp(rx_ring, rx_desc, skb);
 
 #ifdef HAVE_NDO_DFWD_OPS
-	if (!netif_is_ice(rx_ring->netdev))
+	if (!netif_is_ice(rx_ring->netdev) &&
+	    !ice_is_port_repr_netdev(rx_ring->netdev))
 		macvlan_count_rx((const struct macvlan_dev *)netdev_priv(rx_ring->netdev),
 				 skb->len + ETH_HLEN, true, false);
 #endif /* HAVE_NDO_DFWD_OPS */

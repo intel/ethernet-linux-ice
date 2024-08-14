@@ -20,7 +20,7 @@
  */
 static int ice_repr_get_sw_port_id(struct ice_repr *repr)
 {
-	return repr->vf->pf->hw.port_info->lport;
+	return repr->src_vsi->back->hw.port_info->lport;
 }
 
 /**
@@ -43,12 +43,51 @@ ice_repr_get_phys_port_name(struct net_device *netdev, char *buf, size_t len)
 #endif /* CONFIG_NET_DEVLINK */
 
 	res = snprintf(buf, len, "pf%dvfr%d", ice_repr_get_sw_port_id(repr),
-		       repr->vf->vf_id);
+		       repr->id);
 	if (res <= 0)
 		return -EOPNOTSUPP;
 	return 0;
 }
 #endif /* HAVE_NDO_GET_PHYS_PORT_NAME */
+
+/**
+ * ice_repr_inc_tx_stats - increment Tx statistic by one packet
+ * @repr: repr to increment stats on
+ * @len: length of the packet
+ * @ret: value returned by xmit function
+ */
+void ice_repr_inc_tx_stats(struct ice_repr *repr, unsigned int len, int ret)
+{
+	struct ice_repr_pcpu_stats *stats;
+
+	if (unlikely(ret != NET_XMIT_SUCCESS && ret != NET_XMIT_CN)) {
+		this_cpu_inc(repr->stats->tx_drops);
+		return;
+	}
+
+	stats = this_cpu_ptr(repr->stats);
+	u64_stats_update_begin(&stats->syncp);
+	stats->tx_packets++;
+	stats->tx_bytes += len;
+	u64_stats_update_end(&stats->syncp);
+}
+
+/**
+ * ice_repr_inc_rx_stats - increment Rx statistic by one packet
+ * @netdev: repr netdev to increment stats on
+ * @len: length of the packet
+ */
+void ice_repr_inc_rx_stats(const struct net_device *netdev, unsigned int len)
+{
+	struct ice_repr *repr = ice_netdev_to_repr(netdev);
+	struct ice_repr_pcpu_stats *stats;
+
+	stats = this_cpu_ptr(repr->stats);
+	u64_stats_update_begin(&stats->syncp);
+	stats->rx_packets++;
+	stats->rx_bytes += len;
+	u64_stats_update_end(&stats->syncp);
+}
 
 /**
  * ice_repr_get_stats64 - get VF stats for VFPR use
@@ -63,7 +102,7 @@ static struct rtnl_link_stats64 *
 ice_repr_get_stats64(struct net_device *netdev, struct rtnl_link_stats64 *stats)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_eth_stats *eth_stats;
+	const struct ice_eth_stats *eth_stats;
 	struct ice_vsi *vsi;
 
 	if (ice_is_vf_disabled(np->repr->vf))
@@ -97,11 +136,33 @@ ice_repr_get_stats64(struct net_device *netdev, struct rtnl_link_stats64 *stats)
  * ice_netdev_to_repr - Get port representor for given netdevice
  * @netdev: pointer to port representor netdev
  */
-struct ice_repr *ice_netdev_to_repr(struct net_device *netdev)
+struct ice_repr *ice_netdev_to_repr(const struct net_device *netdev)
 {
-	struct ice_netdev_priv *np = netdev_priv(netdev);
+	const struct ice_netdev_priv *np = netdev_priv(netdev);
 
 	return np->repr;
+}
+
+/**
+ * ice_repr_set_link - set PR link
+ * @reprs: radix_tree of representors
+ * @repr_id: id of the repr to set link on
+ * @link: true - up, false - down
+ *
+ * Called when upper device link is changed.
+ */
+void ice_repr_set_link(struct radix_tree_root *reprs, u32 repr_id, bool link)
+{
+	struct ice_repr *repr =
+		(struct ice_repr *)radix_tree_lookup(reprs, repr_id);
+	unsigned int flags;
+
+	if (!repr)
+		return;
+
+	flags = repr->netdev->flags;
+	flags = link ? flags | IFF_UP : flags & ~IFF_UP;
+	dev_change_flags(repr->netdev, flags, NULL);
 }
 
 /**
@@ -174,37 +235,35 @@ ice_repr_get_devlink_port(struct net_device *netdev)
  * ice_repr_sp_stats64 - get slow path stats for port representor
  * @dev: network interface device structure
  * @stats: netlink stats structure
- *
- * RX/TX stats are being swapped here to be consistent with VF stats. In slow
- * path, port representor receives data when the corresponding VF is sending it
- * (and vice versa), TX and RX bytes/packets are effectively swapped on port
- * representor.
  */
 static int
 ice_repr_sp_stats64(const struct net_device *dev,
 		    struct rtnl_link_stats64 *stats)
 {
-	struct ice_netdev_priv *np = netdev_priv(dev);
-	int vf_id = np->repr->vf->vf_id;
-	struct ice_tx_ring *tx_ring;
-	struct ice_rx_ring *rx_ring;
-	u64 pkts, bytes;
+	struct ice_repr *repr = ice_netdev_to_repr(dev);
+	int i;
 
-	tx_ring = np->vsi->tx_rings[vf_id];
-	ice_fetch_u64_stats_per_ring(&tx_ring->ring_stats->syncp,
-				     tx_ring->ring_stats->stats,
-				     &pkts, &bytes);
-	stats->rx_packets = pkts;
-	stats->rx_bytes = bytes;
+	for_each_possible_cpu(i) {
+		u64 tbytes, tpkts, tdrops, rbytes, rpkts;
+		struct ice_repr_pcpu_stats *repr_stats;
+		unsigned int start;
 
-	rx_ring = np->vsi->rx_rings[vf_id];
-	ice_fetch_u64_stats_per_ring(&rx_ring->ring_stats->syncp,
-				     rx_ring->ring_stats->stats,
-				     &pkts, &bytes);
-	stats->tx_packets = pkts;
-	stats->tx_bytes = bytes;
-	stats->tx_dropped = rx_ring->ring_stats->rx_stats.alloc_page_failed +
-			    rx_ring->ring_stats->rx_stats.alloc_buf_failed;
+		repr_stats = per_cpu_ptr(repr->stats, i);
+		do {
+			start = u64_stats_fetch_begin(&repr_stats->syncp);
+			tbytes = repr_stats->tx_bytes;
+			tpkts = repr_stats->tx_packets;
+			tdrops = repr_stats->tx_drops;
+			rbytes = repr_stats->rx_bytes;
+			rpkts = repr_stats->rx_packets;
+		} while (u64_stats_fetch_retry(&repr_stats->syncp, start));
+
+		stats->tx_bytes += tbytes;
+		stats->tx_packets += tpkts;
+		stats->tx_dropped += tdrops;
+		stats->rx_bytes += rbytes;
+		stats->rx_packets += rpkts;
+	}
 
 	return 0;
 }
@@ -365,7 +424,7 @@ static const struct net_device_ops ice_repr_netdev_ops = {
  * netdev
  * @netdev: pointer to netdev
  */
-bool ice_is_port_repr_netdev(struct net_device *netdev)
+bool ice_is_port_repr_netdev(const struct net_device *netdev)
 {
 	return netdev && (netdev->netdev_ops == &ice_repr_netdev_ops);
 }
@@ -391,25 +450,82 @@ ice_repr_reg_netdev(struct net_device *netdev)
 	return register_netdev(netdev);
 }
 
-/**
- * ice_repr_add - add representor for VF
- * @vf: pointer to VF structure
- */
-static int ice_repr_add(struct ice_vf *vf)
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+static void ice_repr_remove_node(struct devlink_port *devlink_port)
 {
-	struct ice_q_vector *q_vector;
+	devl_lock(devlink_port->devlink);
+	devl_rate_leaf_destroy(devlink_port);
+	devl_unlock(devlink_port->devlink);
+}
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
+#endif /* CONFIG_NET_DEVLINK */
+
+static void ice_repr_rem(struct ice_repr *repr)
+{
+	free_percpu(repr->stats);
+	free_netdev(repr->netdev);
+	kfree(repr);
+}
+
+/**
+ * ice_repr_rem_vf - remove representor from VF
+ * @repr: pointer to representor structure
+ */
+void ice_repr_rem_vf(struct ice_repr *repr)
+{
+	unregister_netdev(repr->netdev);
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	ice_repr_remove_node(&repr->vf->devlink_port);
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
+#ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
+	ice_devlink_destroy_vf_port(repr->vf);
+#endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
+#endif /* CONFIG_NET_DEVLINK */
+	ice_virtchnl_set_dflt_ops(repr->vf);
+	ice_repr_rem(repr);
+}
+
+static void ice_repr_set_tx_topology(struct ice_pf *pf)
+{
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	struct devlink *devlink = priv_to_devlink(pf);
+
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
+	if (!ice_is_switchdev_running(pf))
+		return;
+
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+	/* only export if RDMA and DCB disabled */
+	if (ice_is_aux_ena(pf) &&
+	    ice_is_rdma_aux_loaded(pf))
+		return;
+	if (ice_is_dcb_active(pf))
+		return;
+	devlink = priv_to_devlink(pf);
+	ice_devlink_rate_init_tx_topology(devlink, ice_get_main_vsi(pf));
+#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
+#endif /* CONFIG_NET_DEVLINK */
+}
+
+/**
+ * ice_repr_add - add representor for generic VSI
+ * @pf: pointer to PF structure
+ * @src_vsi: pointer to VSI structure of device to represent
+ * @parent_mac: device MAC address
+ */
+static struct ice_repr *
+ice_repr_add(struct ice_pf *pf, struct ice_vsi *src_vsi, const u8 *parent_mac)
+{
 	struct ice_netdev_priv *np;
 	struct ice_repr *repr;
-	struct ice_vsi *vsi;
 	int err;
-
-	vsi = ice_get_vf_vsi(vf);
-	if (!vsi)
-		return -EINVAL;
 
 	repr = kzalloc(sizeof(*repr), GFP_KERNEL);
 	if (!repr)
-		return -ENOMEM;
+		return (struct ice_repr *)ERR_PTR(-ENOMEM);
 
 	repr->netdev = alloc_etherdev(sizeof(struct ice_netdev_priv));
 	if (!repr->netdev) {
@@ -417,25 +533,56 @@ static int ice_repr_add(struct ice_vf *vf)
 		goto err_alloc;
 	}
 
-	repr->src_vsi = vsi;
-	repr->vf = vf;
-	vf->repr = repr;
+	repr->stats = netdev_alloc_pcpu_stats(struct ice_repr_pcpu_stats);
+	if (!repr->stats) {
+		err = -ENOMEM;
+		goto err_stats;
+	}
+
+	repr->src_vsi = src_vsi;
+	repr->id = src_vsi->vsi_num;
 	np = netdev_priv(repr->netdev);
 	np->repr = repr;
 
-	q_vector = kzalloc(sizeof(*q_vector), GFP_KERNEL);
-	if (!q_vector) {
-		err = -ENOMEM;
-		goto err_alloc_q_vector;
-	}
-	repr->q_vector = q_vector;
+	ether_addr_copy(repr->parent_mac, parent_mac);
 
+	return repr;
+err_stats:
+	free_netdev(repr->netdev);
+err_alloc:
+	kfree(repr);
+	return (struct ice_repr *)ERR_PTR(err);
+}
+
+/**
+ * ice_repr_add_vf - add representor for VF
+ * @vf: pointer to VF structure
+ */
+struct ice_repr *ice_repr_add_vf(struct ice_vf *vf)
+{
+	struct ice_repr *repr;
+	struct ice_vsi *vsi;
+	int err;
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return (struct ice_repr *)ERR_PTR(-ENOENT);
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
+
 	err = ice_devlink_create_vf_port(vf);
 	if (err)
-		goto err_devlink;
+		return (struct ice_repr *)ERR_PTR(err);
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
+#endif /* CONFIG_NET_DEVLINK */
+
+	repr = ice_repr_add(vf->pf, vsi, vf->hw_lan_addr.addr);
+	if (IS_ERR(repr)) {
+		err = PTR_ERR(repr);
+		goto err_repr_add;
+	}
+
+	repr->vf = vf;
 
 #ifdef HAVE_NETDEV_EXTENDED_MIN_MAX_MTU
 	repr->netdev->extended->min_mtu = ETH_MIN_MTU;
@@ -445,7 +592,6 @@ static int ice_repr_add(struct ice_vf *vf)
 	repr->netdev->min_mtu = ETH_MIN_MTU;
 	repr->netdev->max_mtu = ICE_MAX_MTU;
 #endif /* HAVE_NETDEV_MIN_MAX_MTU */
-#endif /* CONFIG_NET_DEVLINK */
 
 	SET_NETDEV_DEV(repr->netdev, ice_pf_to_dev(vf->pf));
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
@@ -468,122 +614,19 @@ static int ice_repr_add(struct ice_vf *vf)
 #endif /* CONFIG_NET_DEVLINK */
 
 	ice_virtchnl_set_repr_ops(vf);
+	ice_repr_set_tx_topology(vf->pf);
 
-	return 0;
+	return repr;
 
 err_netdev:
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-#ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
-	ice_devlink_destroy_vf_port(vf);
-err_devlink:
-#endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
-#endif /* CONFIG_NET_DEVLINK */
-	kfree(repr->q_vector);
-	vf->repr->q_vector = NULL;
-err_alloc_q_vector:
-	free_netdev(repr->netdev);
-	repr->netdev = NULL;
-err_alloc:
-	kfree(repr);
-	vf->repr = NULL;
-	return err;
-}
-
-/**
- * ice_repr_rem - remove representor from VF
- * @vf: pointer to VF structure
- */
-static void ice_repr_rem(struct ice_vf *vf)
-{
-	if (!vf->repr)
-		return;
-
-	kfree(vf->repr->q_vector);
-	vf->repr->q_vector = NULL;
-	unregister_netdev(vf->repr->netdev);
+	ice_repr_rem(repr);
+err_repr_add:
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
 	ice_devlink_destroy_vf_port(vf);
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 #endif /* CONFIG_NET_DEVLINK */
-	free_netdev(vf->repr->netdev);
-	vf->repr->netdev = NULL;
-	kfree(vf->repr);
-	vf->repr = NULL;
-
-	ice_virtchnl_set_dflt_ops(vf);
-}
-
-/**
- * ice_repr_rem_from_all_vfs - remove port representor for all VFs
- * @pf: pointer to PF structure
- */
-void ice_repr_rem_from_all_vfs(struct ice_pf *pf)
-{
-#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
-	struct devlink *devlink;
-#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
-	struct ice_vf *vf;
-	unsigned int bkt;
-
-	lockdep_assert_held(&pf->vfs.table_lock);
-
-	ice_for_each_vf(pf, bkt, vf)
-		ice_repr_rem(vf);
-
-#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
-	/* since all port representors are destroyed, there is
-	 * no point in keeping the nodes
-	 */
-	devlink = priv_to_devlink(pf);
-	devl_lock(devlink);
-	devl_rate_nodes_destroy(devlink);
-	devl_unlock(devlink);
-#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
-}
-
-/**
- * ice_repr_add_for_all_vfs - add port representor for all VFs
- * @pf: pointer to PF structure
- */
-int ice_repr_add_for_all_vfs(struct ice_pf *pf)
-{
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
-	struct devlink *devlink;
-#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
-#endif /* CONFIG_NET_DEVLINK */
-	struct ice_vf *vf;
-	unsigned int bkt;
-	int err;
-
-	lockdep_assert_held(&pf->vfs.table_lock);
-
-	ice_for_each_vf(pf, bkt, vf) {
-		err = ice_repr_add(vf);
-		if (err)
-			goto err;
-	}
-
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
-#ifdef HAVE_DEVLINK_RATE_NODE_CREATE
-	/* only export if RDMA and DCB disabled */
-	if (ice_is_aux_ena(pf) &&
-	    ice_is_rdma_aux_loaded(pf))
-		return 0;
-	if (ice_is_dcb_active(pf))
-		return 0;
-	devlink = priv_to_devlink(pf);
-	ice_devlink_rate_init_tx_topology(devlink, ice_get_main_vsi(pf));
-#endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
-#endif /* CONFIG_NET_DEVLINK */
-
-	return 0;
-
-err:
-	ice_repr_rem_from_all_vfs(pf);
-
-	return err;
+	return (struct ice_repr *)ERR_PTR(err);
 }
 
 /**
@@ -605,17 +648,3 @@ void ice_repr_stop_tx_queues(struct ice_repr *repr)
 	netif_carrier_off(repr->netdev);
 	netif_tx_stop_all_queues(repr->netdev);
 }
-
-#ifdef HAVE_METADATA_PORT_INFO
-/**
- * ice_repr_set_traffic_vsi - set traffic VSI for port representor
- * @repr: repr on with VSI will be set
- * @vsi: pointer to VSI that will be used by port representor to pass traffic
- */
-void ice_repr_set_traffic_vsi(struct ice_repr *repr, struct ice_vsi *vsi)
-{
-	struct ice_netdev_priv *np = netdev_priv(repr->netdev);
-
-	np->vsi = vsi;
-}
-#endif /* HAVE_METADATA_PORT_INFO */

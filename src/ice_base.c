@@ -97,18 +97,19 @@ static int ice_pf_rxq_wait(struct ice_pf *pf, int pf_q, bool ena)
  * ice_vsi_alloc_q_vector - Allocate memory for a single interrupt vector
  * @vsi: the VSI being configured
  * @v_idx: index of the vector in the VSI struct
+ * @tc: Traffic class number for VF ADQ
  *
  * We allocate one q_vector and set default value for ITR setting associated
  * with this q_vector. If allocation fails we return -ENOMEM.
  */
-static int ice_vsi_alloc_q_vector(struct ice_vsi *vsi, u16 v_idx)
+static int ice_vsi_alloc_q_vector(struct ice_vsi *vsi, u16 v_idx, u8 tc)
 {
 	struct ice_pf *pf = vsi->back;
 	struct ice_q_vector *q_vector;
+	int err;
 
 	/* allocate q_vector */
-	q_vector = devm_kzalloc(ice_pf_to_dev(pf), sizeof(*q_vector),
-				GFP_KERNEL);
+	q_vector = kzalloc(sizeof(*q_vector), GFP_KERNEL);
 	if (!q_vector)
 		return -ENOMEM;
 
@@ -120,9 +121,33 @@ static int ice_vsi_alloc_q_vector(struct ice_vsi *vsi, u16 v_idx)
 	q_vector->rx.itr_mode = ITR_DYNAMIC;
 	q_vector->tx.type = ICE_TX_CONTAINER;
 	q_vector->rx.type = ICE_RX_CONTAINER;
+	q_vector->irq.index = -ENOENT;
 
-	if (vsi->type == ICE_VSI_VF)
+	if (vsi->type == ICE_VSI_VF) {
+		ice_calc_vf_reg_idx(vsi->vf, q_vector, tc);
 		goto out;
+	} else if (vsi->type == ICE_VSI_CTRL && vsi->vf) {
+		struct ice_vsi *ctrl_vsi = ice_get_vf_ctrl_vsi(pf, vsi);
+
+		if (ctrl_vsi) {
+			if (unlikely(!ctrl_vsi->q_vectors)) {
+				err = -ENOENT;
+				goto err_free_q_vector;
+			}
+			q_vector->irq = ctrl_vsi->q_vectors[0]->irq;
+			goto skip_alloc;
+		}
+	}
+
+	q_vector->irq = ice_alloc_irq(pf, vsi->irq_dyn_alloc);
+	if (q_vector->irq.index < 0) {
+		err = -ENOMEM;
+		goto err_free_q_vector;
+	}
+
+skip_alloc:
+	q_vector->reg_idx = q_vector->irq.index;
+
 	/* only set affinity_mask if the CPU is online */
 	if (cpu_online(v_idx))
 		cpumask_set_cpu(v_idx, &q_vector->affinity_mask);
@@ -139,6 +164,11 @@ out:
 	vsi->q_vectors[v_idx] = q_vector;
 
 	return 0;
+
+err_free_q_vector:
+	kfree(q_vector);
+
+	return err;
 }
 
 /**
@@ -170,7 +200,19 @@ static void ice_free_q_vector(struct ice_vsi *vsi, int v_idx)
 	if (vsi->netdev)
 		netif_napi_del(&q_vector->napi);
 
-	devm_kfree(dev, q_vector);
+	/* release MSIX interrupt if q_vector had interrupt allocated */
+	if (q_vector->irq.index < 0)
+		goto free_q_vector;
+
+	/* only free last VF ctrl vsi interrupt */
+	if (vsi->type == ICE_VSI_CTRL && vsi->vf &&
+	    ice_get_vf_ctrl_vsi(pf, vsi))
+		goto free_q_vector;
+
+	ice_free_irq(pf, q_vector->irq);
+
+free_q_vector:
+	kfree(q_vector);
 	vsi->q_vectors[v_idx] = NULL;
 }
 
@@ -217,31 +259,6 @@ static u16 ice_calc_txq_handle(struct ice_vsi *vsi, struct ice_tx_ring *ring, u8
 	 * and as a result we get the queue's index within TC.
 	 */
 	return ring->q_index - vsi->tc_cfg.tc_info[tc].qoffset;
-}
-
-/**
- * ice_eswitch_calc_txq_handle
- * @ring: pointer to ring which unique index is needed
- *
- * To correctly work with many netdevs
- * ring->q_index of Tx rings on switchdev VSI can repeat. Hardware ring setup
- * requires unique q_index. Calculate it here by finding index in vsi->tx_rings
- * of this ring.
- *
- * Return -1 when index wasn't found. Should never happen, because vsi is get
- * from ring->vsi, so it has to be present in this vsi.
- */
-static u16 ice_eswitch_calc_txq_handle(struct ice_tx_ring *ring)
-{
-	struct ice_vsi *vsi = ring->vsi;
-	int i;
-
-	ice_for_each_txq(vsi, i) {
-		if (vsi->tx_rings[i] == ring)
-			return i;
-	}
-
-	return -1;
 }
 
 /**
@@ -307,7 +324,6 @@ ice_set_txq_ctx_vmvf(struct ice_tx_ring *ring, u8 *vmvf_type, u16 *vmvf_num)
 	case ICE_VSI_ADI:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
-	case ICE_VSI_SWITCHDEV_CTRL:
 		*vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
 		break;
 	default:
@@ -374,6 +390,41 @@ ice_setup_tx_ctx(struct ice_tx_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf
 	 * 1: Legacy Host Interface
 	 */
 	tlan_ctx->legacy_int = ICE_TX_LEGACY;
+}
+
+/**
+ * ice_setup_txtime_ctx - setup a struct ice_txtime_ctx instance
+ * @ring: The tstamp ring to configure
+ * @txtime_ctx: Pointer to the Tx time queue context structure to be initialized
+ */
+static void
+ice_setup_txtime_ctx(struct ice_tx_ring *ring,
+		     struct ice_txtime_ctx *txtime_ctx)
+{
+	struct ice_vsi *vsi = ring->vsi;
+	struct ice_hw *hw;
+
+	hw = &vsi->back->hw;
+	txtime_ctx->base = ring->dma >> ICE_TX_CMPLTNQ_CTX_BASE_S;
+
+	/* Tx time Queue Length */
+	txtime_ctx->qlen = ring->count;
+
+	/* PF number */
+	txtime_ctx->pf_num = hw->pf_id;
+
+	if (ice_set_txq_ctx_vmvf(ring, &txtime_ctx->vmvf_type,
+				 &txtime_ctx->vmvf_num))
+		return;
+
+	/* make sure the context is associated with the right VSI */
+	if (ring->ch)
+		txtime_ctx->src_vsi = ring->ch->vsi_num;
+	else
+		txtime_ctx->src_vsi = ice_get_hw_vsi_num(hw, vsi->idx);
+
+	txtime_ctx->ts_res = ICE_TXTIME_CTX_RESOLUTION_8US;
+	txtime_ctx->drbell_mode_32 = ICE_TXTIME_CTX_DRBELL_MODE_32;
 }
 
 /**
@@ -476,6 +527,14 @@ static int ice_setup_rx_ctx(struct ice_rx_ring *ring)
 
 	/* Rx queue threshold in units of 64 */
 	rlan_ctx.lrxqthresh = 1;
+
+	/* PF acts as uplink for switchdev; set flex descriptor with src_vsi
+	 * metadata and flags to allow redirecting to PR netdev
+	 */
+	if (ice_is_eswitch_mode_switchdev(vsi->back)) {
+		ring->flags |= ICE_RX_FLAGS_MULTIDEV;
+		rxdid = ICE_RXDID_FLEX_NIC_2;
+	}
 
 	/* Enable Flexible Descriptors in the queue context which
 	 * allows this driver to select a specific receive descriptor format
@@ -724,11 +783,12 @@ int ice_vsi_wait_one_rx_ring(struct ice_vsi *vsi, bool ena, u16 rxq_idx)
 /**
  * ice_vsi_alloc_q_vectors - Allocate memory for interrupt vectors
  * @vsi: the VSI being configured
+ * @tc: Traffic class number for VF ADQ
  *
  * We allocate one q_vector per queue interrupt. If allocation fails we
  * return -ENOMEM.
  */
-int ice_vsi_alloc_q_vectors(struct ice_vsi *vsi)
+int ice_vsi_alloc_q_vectors(struct ice_vsi *vsi, u8 tc)
 {
 	struct device *dev = ice_pf_to_dev(vsi->back);
 	u16 v_idx;
@@ -740,7 +800,7 @@ int ice_vsi_alloc_q_vectors(struct ice_vsi *vsi)
 	}
 
 	for (v_idx = 0; v_idx < vsi->num_q_vectors; v_idx++) {
-		err = ice_vsi_alloc_q_vector(vsi, v_idx);
+		err = ice_vsi_alloc_q_vector(vsi, v_idx, tc);
 		if (err)
 			goto err_out;
 	}
@@ -843,11 +903,15 @@ void ice_vsi_free_q_vectors(struct ice_vsi *vsi)
  * ice_vsi_cfg_txq - Configure single Tx queue
  * @vsi: the VSI that queue belongs to
  * @ring: Tx ring to be configured
+ * @tstamp_ring: Time stamp ring to be configured
  * @qg_buf: queue group buffer
+ * @txtime_qg_buf: Tx Time queue group buffer
  */
 int
 ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
-		struct ice_aqc_add_tx_qgrp *qg_buf)
+		struct ice_tx_ring *tstamp_ring,
+		struct ice_aqc_add_tx_qgrp *qg_buf,
+		struct ice_aqc_set_txtime_qgrp *txtime_qg_buf)
 {
 	u8 buf_len = struct_size(qg_buf, txqs, 1);
 	struct ice_tlan_ctx tlan_ctx = { 0 };
@@ -881,10 +945,7 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 	/* Add unique software queue handle of the Tx queue per
 	 * TC into the VSI Tx ring
 	 */
-	if (vsi->type == ICE_VSI_SWITCHDEV_CTRL)
-		ring->q_handle = ice_eswitch_calc_txq_handle(ring);
-	else
-		ring->q_handle = ice_calc_txq_handle(vsi, ring, tc);
+	ring->q_handle = ice_calc_txq_handle(vsi, ring, tc);
 
 	if (ch)
 		status = ice_ena_vsi_txq(vsi->port_info, ch->ch_vsi->idx, 0,
@@ -907,6 +968,27 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 	txq = &qg_buf->txqs[0];
 	if (pf_q == le16_to_cpu(txq->txq_id))
 		ring->txq_teid = le32_to_cpu(txq->q_teid);
+
+	if (tstamp_ring) {
+		u8 txtime_buf_len = struct_size(txtime_qg_buf, txtimeqs, 1);
+		struct ice_txtime_ctx txtime_ctx = { 0 };
+
+		ice_setup_txtime_ctx(tstamp_ring, &txtime_ctx);
+		ice_set_ctx(hw, (u8 *)&txtime_ctx,
+			    txtime_qg_buf->txtimeqs[0].txtime_ctx,
+			    ice_txtime_ctx_info);
+
+		tstamp_ring->tail =
+			ice_get_hw_addr(hw, E830_GLQTX_TXTIME_DBELL_LSB(pf_q));
+
+		status = ice_aq_set_txtimeq(hw, pf_q, 1, txtime_qg_buf,
+					    txtime_buf_len, NULL);
+		if (status) {
+			dev_err(ice_pf_to_dev(pf), "Failed to set Tx Time queue context, error: %d\n",
+				status);
+			return status;
+		}
+	}
 
 	return 0;
 }

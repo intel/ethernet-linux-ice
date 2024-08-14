@@ -5,6 +5,7 @@
 #define _ICE_FDIR_H_
 
 #include "ice_type.h"
+#include <linux/if_ether.h>
 
 #define ICE_FDIR_GTPU_IP_INNER_PKT_OFF 50
 #define ICE_FDIR_GTPU_EH_INNER_PKT_OFF 58
@@ -164,12 +165,6 @@ struct ice_rx_flow_userdef {
 	u16 flex_fltr;
 };
 
-struct ice_fdir_eth {
-	u8 dst[ETH_ALEN];
-	u8 src[ETH_ALEN];
-	__be16 type;
-};
-
 struct ice_fdir_v4 {
 	__be32 dst_ip;
 	__be32 src_ip;
@@ -252,7 +247,7 @@ struct ice_fdir_fltr {
 	struct list_head fltr_node;
 	enum ice_fltr_ptype flow_type;
 
-	struct ice_fdir_eth eth, eth_mask;
+	struct ethhdr eth, eth_mask;
 
 	union {
 		struct ice_fdir_v4 v4;

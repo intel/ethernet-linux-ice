@@ -16,6 +16,9 @@
 #include <linux/ethtool.h>
 #include <linux/if_ether.h>
 #include <linux/io.h>
+#ifndef NEED_READ_POLL_TIMEOUT
+#include <linux/iopoll.h>
+#endif /* !NEED_READ_POLL_TIMEOUT */
 #include <linux/pci_ids.h>
 #include <linux/types.h>
 
@@ -62,6 +65,9 @@ void __iomem *ice_get_hw_addr(struct ice_hw *hw, resource_size_t reg);
 #define rd32(a, reg)		readl(ice_get_hw_addr((a), (reg)))
 #define wr64(a, reg, value)	writeq((value), ice_get_hw_addr((a), (reg)))
 #define rd64(a, reg)		readq(ice_get_hw_addr((a), (reg)))
+
+#define rd32_poll_timeout(a, addr, val, cond, delay_us, timeout_us) \
+	read_poll_timeout(rd32, val, cond, delay_us, timeout_us, false, a, addr)
 
 #define ice_flush(a)		rd32((a), GLGEN_STAT)
 

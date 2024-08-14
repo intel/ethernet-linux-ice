@@ -13,6 +13,20 @@
 	124d  Ethernet Connection E823-L for SFP
 	124e  Ethernet Connection E823-L/X557-AT 10GBASE-T
 	124f  Ethernet Connection E823-L 1GbE
+	12d1  Ethernet Controller E830-CC for backplane
+	12d2  Ethernet Connection E830-CC QSFP
+		8086 0002  Ethernet Network Adapter E830-C-Q2 for OCP 3.0
+		8086 0004  Ethernet Network Adapter E830-CC-Q1 for OCP 3.0
+	12d3  Ethernet Controller E830-CC for SFP
+		8086 0001  Ethernet Network Adapter E830-XXV-2 for OCP 3.0
+		8086 0003  Ethernet Network Adapter E830-XXV-2
+		8086 0004  Ethernet Network Adapter E830-XXV-4 for OCP 3.0
+	12d5  Ethernet Controller E830-C for backplane
+	12d8  Ethernet Controller E830-C for QSFP
+	12da  Ethernet Controller E830-C for SFP
+	12dc  Ethernet Controller E830-XXV for backplane
+	12dd  Ethernet Controller E830-XXV for QSFP
+	12de  Ethernet Controller E830-XXV for SFP
 	151d  Ethernet Connection E823-L for QSFP
 	1591  Ethernet Controller E810-C for backplane
 		8086 bcce  Ethernet Controller E810-C for Intel Open FPGA Stack

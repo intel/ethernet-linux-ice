@@ -240,7 +240,7 @@ struct ice_vf {
 	struct ice_mdd_vf_events mdd_tx_events;
 	DECLARE_BITMAP(opcodes_allowlist, VIRTCHNL_OP_MAX);
 
-	struct ice_repr *repr;
+	unsigned long repr_id;
 	const struct ice_virtchnl_ops *virtchnl_ops;
 	const struct ice_vf_ops *vf_ops;
 	struct virtchnl_ptp_caps ptp_caps;
@@ -352,6 +352,7 @@ int ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 			     unsigned long *promisc_m);
 int ice_reset_vf(struct ice_vf *vf, u32 flags);
 void ice_reset_all_vfs(struct ice_pf *pf);
+struct ice_vsi *ice_get_vf_ctrl_vsi(struct ice_pf *pf, struct ice_vsi *vsi);
 int ice_init_vf_sysfs(struct ice_vf *vf);
 int ice_handle_vf_tx_lldp(struct ice_vf *vf, bool ena);
 void ice_ena_all_vfs_rx_lldp(struct ice_pf *pf);
@@ -451,6 +452,12 @@ static inline int ice_reset_vf(struct ice_vf *vf, bool is_vflr)
 
 static inline void ice_reset_all_vfs(struct ice_pf *pf)
 {
+}
+
+static inline struct ice_vsi *
+ice_get_vf_ctrl_vsi(struct ice_pf *pf, struct ice_vsi *vsi)
+{
+	return NULL;
 }
 #endif /* !CONFIG_PCI_IOV */
 

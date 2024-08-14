@@ -47,6 +47,7 @@
 #ifdef HAVE_TCF_VLAN_TPID
 #define ICE_TC_FLWR_FIELD_VLAN_TPID		BIT(29)
 #endif /* HAVE_TCF_VLAN_TPID */
+#define ICE_TC_FLWR_FIELD_IP_PROTO		BIT(30)
 
 /* TC flower supported filter match */
 #define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC		ICE_TC_FLWR_FIELD_DST_MAC

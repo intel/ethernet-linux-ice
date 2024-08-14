@@ -947,19 +947,32 @@ ice_debug_cq(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 }
 
 /**
- * ice_sq_done - check if the last send on a control queue has completed
+ * ice_sq_done - poll until the last send on a control queue has completed
  * @hw: pointer to the HW struct
  * @cq: pointer to the specific Control queue
+ *
+ * Use read_poll_timeout to poll the control queue head, checking until it
+ * matches next_to_use. According to the control queue designers, this has
+ * better timing reliability than the DD bit.
  *
  * Returns: true if all the descriptors on the send side of a control queue
  *          are finished processing, false otherwise.
  */
 static bool ice_sq_done(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 {
-	/* control queue designers suggest use of head for better
-	 * timing reliability than DD bit
+	u32 head;
+	int err;
+
+	/* Wait a short time before initial ice_sq_done() check, to allow
+	 * hardware time for completion.
 	 */
-	return rd32(hw, cq->sq.head) == cq->sq.next_to_use;
+	udelay(5);
+
+	err = rd32_poll_timeout(hw, cq->sq.head,
+				head, head == cq->sq.next_to_use,
+				20, ICE_CTL_Q_SQ_CMD_TIMEOUT);
+
+	return err ? false : true;
 }
 
 /**
@@ -983,7 +996,6 @@ ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	struct ice_dma_mem *dma_buf = NULL;
 	struct ice_aq_desc *desc_on_ring;
 	bool cmd_completed = false;
-	unsigned long timeout;
 	int status = 0;
 	u16 retval = 0;
 	u32 val = 0;
@@ -1070,20 +1082,13 @@ ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	wr32(hw, cq->sq.tail, cq->sq.next_to_use);
 	ice_flush(hw);
 
-	/* Wait a short time before initial ice_sq_done() check, to allow
-	 * hardware time for completion.
+	/* If the message is posted, don't wait for completion */
+	if (cd && cd->postpone)
+		goto sq_send_command_error;
+
+	/* Wait for the command to complete. If it finishes within the
+	 * timeout, copy the descriptor back to temp
 	 */
-	udelay(5);
-
-	timeout = jiffies + ICE_CTL_Q_SQ_CMD_TIMEOUT;
-	do {
-		if (ice_sq_done(hw, cq))
-			break;
-
-		usleep_range(10, 20);
-	} while (time_before(jiffies, timeout));
-
-	/* if ready, copy the desc back to temp */
 	if (ice_sq_done(hw, cq)) {
 		memcpy(desc, desc_on_ring, sizeof(*desc));
 		if (buf) {

@@ -489,11 +489,13 @@ ice_devlink_minsrev_get(struct devlink *devlink, u32 id, struct devlink_param_gs
 	return 0;
 }
 
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
 /**
  * ice_devlink_minsrev_set - Set the minimum security revision
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Set the minimum security revision value for fw.mgmt or fw.undi. The kernel
  * calls the validate handler before calling this, so we do not need to
@@ -501,8 +503,13 @@ ice_devlink_minsrev_get(struct devlink *devlink, u32 id, struct devlink_param_gs
  *
  * Returns: zero on success, or an error code on failure.
  */
+static int ice_devlink_minsrev_set(struct devlink *devlink, u32 id,
+				   struct devlink_param_gset_ctx *ctx,
+				   struct netlink_ext_ack *extack)
+#else
 static int
 ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gset_ctx *ctx)
+#endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
@@ -714,16 +721,23 @@ static int ice_devlink_txbalance_get(struct devlink *devlink, u32 id,
 	return 0;
 }
 
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
 /**
  * ice_devlink_txbalance_set - Set txbalance parameter
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to get the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns zero on success and negative value on failure.
  */
 static int ice_devlink_txbalance_set(struct devlink *devlink, u32 id,
+				     struct devlink_param_gset_ctx *ctx,
+				     struct netlink_ext_ack *extack)
+#else
+static int ice_devlink_txbalance_set(struct devlink *devlink, u32 id,
 				     struct devlink_param_gset_ctx *ctx)
+#endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
@@ -829,16 +843,23 @@ static int ice_devlink_loopback_get(struct devlink *devlink, u32 id,
 	return 0;
 }
 
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
 /**
  * ice_devlink_loopback_set - Set loopback parameter
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to get the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns zero on success.
  */
 static int ice_devlink_loopback_set(struct devlink *devlink, u32 id,
+				    struct devlink_param_gset_ctx *ctx,
+				    struct netlink_ext_ack *extack)
+#else
+static int ice_devlink_loopback_set(struct devlink *devlink, u32 id,
 				    struct devlink_param_gset_ctx *ctx)
+#endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	int new_loopback_mode = ice_devlink_loopback_str_to_mode(ctx->val.vstr);
 	struct ice_pf *pf = devlink_priv(devlink);
@@ -1370,6 +1391,8 @@ static const char *ice_devlink_port_opt_speed_str(u8 speed)
 		return "50";
 	case ICE_AQC_PORT_OPT_MAX_LANE_100G:
 		return "100";
+	case ICE_AQC_PORT_OPT_MAX_LANE_200G:
+		return "200";
 	}
 
 	return "-";
@@ -1733,6 +1756,10 @@ static void ice_traverse_tx_tree(struct devlink *devlink, struct ice_sched_node 
 	struct ice_vf *vf;
 	int i;
 
+	if (node->rate_node)
+		/* already added, skip to the next */
+		goto traverse_children;
+
 	if (node->parent == tc_node) {
 		/* create root node */
 		rate_node = devl_rate_node_create(devlink, node, node->name, NULL);
@@ -1754,6 +1781,7 @@ static void ice_traverse_tx_tree(struct devlink *devlink, struct ice_sched_node 
 	if (rate_node && !IS_ERR(rate_node))
 		node->rate_node = rate_node;
 
+traverse_children:
 	for (i = 0; i < node->num_children; i++)
 		ice_traverse_tx_tree(devlink, node->children[i], tc_node, pf);
 }
@@ -1782,6 +1810,29 @@ int ice_devlink_rate_init_tx_topology(struct devlink *devlink, struct ice_vsi *v
 	mutex_unlock(&pi->sched_lock);
 
 	return 0;
+}
+
+static void ice_clear_rate_nodes(struct ice_sched_node *node)
+{
+	node->rate_node = NULL;
+
+	for (int i = 0; i < node->num_children; i++)
+		ice_clear_rate_nodes(node->children[i]);
+}
+
+/**
+ * ice_devlink_rate_clear_tx_topology - clear node->rate_node
+ * @vsi: main vsi struct
+ *
+ * Clear rate_node to cleanup creation of Tx topology.
+ */
+void ice_devlink_rate_clear_tx_topology(struct ice_vsi *vsi)
+{
+	struct ice_port_info *pi = vsi->port_info;
+
+	mutex_lock(&pi->sched_lock);
+	ice_clear_rate_nodes(pi->root->children[0]);
+	mutex_unlock(&pi->sched_lock);
 }
 
 /**
@@ -2524,6 +2575,7 @@ void ice_devlink_destroy_vf_port(struct ice_vf *vf)
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	devlink_port_type_clear(devlink_port);
 	devlink_port_unregister(devlink_port);
+	devlink_port->devlink = NULL;
 }
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 
@@ -2947,17 +2999,25 @@ ice_devlink_tc_inline_fd_validate(struct devlink *devlink, u32 id,
 	return 0;
 }
 
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
 /**
  * ice_devlink_tc_inline_fd_set - Enable/Disable inline flow director
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns: zero on success, or an error code on failure.
  */
 static int
 ice_devlink_tc_inline_fd_set(struct devlink *devlink, u32 id,
+			     struct devlink_param_gset_ctx *ctx,
+			     struct netlink_ext_ack *extack)
+#else
+static int
+ice_devlink_tc_inline_fd_set(struct devlink *devlink, u32 id,
 			     struct devlink_param_gset_ctx *ctx)
+#endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_vsi *vsi = pf->vsi[0];
@@ -3037,17 +3097,24 @@ ice_devlink_tc_qps_per_poller_validate(struct devlink *devlink, u32 id,
 	return 0;
 }
 
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
 /**
  * ice_devlink_tc_qps_per_poller_set - Set the number of qps per poller
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns: zero on success, or an error code on failure.
  */
+static int ice_devlink_tc_qps_per_poller_set(struct devlink *devlink, u32 id,
+					     struct devlink_param_gset_ctx *ctx,
+					     struct netlink_ext_ack *extack)
+#else
 static int
 ice_devlink_tc_qps_per_poller_set(struct devlink *devlink, u32 id,
 				  struct devlink_param_gset_ctx *ctx)
+#endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_vsi *ch_vsi;
@@ -3125,17 +3192,25 @@ ice_devlink_tc_poller_timeout_validate(struct devlink *devlink, u32 id,
 	return 0;
 }
 
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
 /**
  * ice_devlink_tc_poller_timeout_set - Set the poller timeout
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns: zero on success, or an error code on failure.
  */
 static int
 ice_devlink_tc_poller_timeout_set(struct devlink *devlink, u32 id,
+				  struct devlink_param_gset_ctx *ctx,
+				  struct netlink_ext_ack *extack)
+#else
+static int
+ice_devlink_tc_poller_timeout_set(struct devlink *devlink, u32 id,
 				  struct devlink_param_gset_ctx *ctx)
+#endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_vsi *ch_vsi;

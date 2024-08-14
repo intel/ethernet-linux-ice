@@ -112,6 +112,7 @@ else
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o
 endif
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_cpi.o
+ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_tspll.o
 ice-$(CONFIG_DCB) += ice_dcb.o ice_dcb_nl.o ice_dcb_lib.o
 ice-$(CONFIG_RFS_ACCEL) += ice_arfs.o
 ice-$(CONFIG_XDP_SOCKETS) += ice_xsk.o

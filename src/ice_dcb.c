@@ -321,6 +321,8 @@ ice_parse_ieee_etscfg_tlv(struct ice_lldp_org_tlv *tlv,
 	etscfg->willing = FIELD_GET(ICE_IEEE_ETS_WILLING_M, buf[0]);
 	etscfg->cbs = FIELD_GET(ICE_IEEE_ETS_CBS_M, buf[0]);
 	etscfg->maxtcs = FIELD_GET(ICE_IEEE_ETS_MAXTC_M, buf[0]);
+	if (etscfg->maxtcs == ICE_DCB_MAXTC_ENCODE)
+		etscfg->maxtcs = ICE_DCB_MAXTC;
 
 	/* Begin parsing at Priority Assignment Table (offset 1 in buf) */
 	ice_parse_ieee_ets_common_tlv(&buf[1], etscfg);

@@ -816,7 +816,8 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	    ice_is_aux_ena(pf) && ice_is_rdma_aux_loaded(pf))
 		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_RDMA;
 
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_PTP)
+	if (ice_is_ptp_supported(pf) &&
+	    vf->driver_caps & VIRTCHNL_VF_CAP_PTP)
 		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_PTP;
 
 	vfres->num_vsis = 1;
@@ -824,7 +825,7 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	vfres->num_queue_pairs = vsi->num_txq;
 	vfres->max_vectors = vf->num_msix;
 	vfres->rss_key_size = ICE_VSIQF_HKEY_ARRAY_SIZE;
-	vfres->rss_lut_size = vsi->rss_table_size;
+	vfres->rss_lut_size = ICE_LUT_VSI_SIZE;
 	vfres->max_mtu = ice_vc_get_max_frame_size(vf);
 
 	vfres->vsi_res[0].vsi_id = vf->vm_vsi_num;
@@ -2740,7 +2741,7 @@ static int ice_vc_config_rss_lut(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	if (vrl->lut_entries != vsi->rss_table_size) {
+	if (vrl->lut_entries != ICE_LUT_VSI_SIZE) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto error_param;
 	}
@@ -2750,7 +2751,7 @@ static int ice_vc_config_rss_lut(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	if (ice_set_rss_lut(vsi, vrl->lut, vrl->lut_entries))
+	if (ice_set_rss_lut(vsi, vrl->lut, vsi->rss_table_size))
 		v_ret = VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
 error_param:
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_RSS_LUT, v_ret,
@@ -3157,11 +3158,8 @@ static int ice_vc_ena_qs_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 	/* Set flag to indicate that queues are enabled */
-	if (v_ret == VIRTCHNL_STATUS_SUCCESS) {
+	if (v_ret == VIRTCHNL_STATUS_SUCCESS)
 		set_bit(ICE_VF_STATE_QS_ENA, vf->vf_states);
-		if (vf->repr)
-			netif_carrier_on(vf->repr->netdev);
-	}
 
 error_param:
 	/* send the response to the VF */
@@ -3370,11 +3368,8 @@ static int ice_vc_dis_qs_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 	/* Clear enabled queues flag */
-	if (v_ret == VIRTCHNL_STATUS_SUCCESS && ice_vf_has_no_qs_ena(vf)) {
+	if (v_ret == VIRTCHNL_STATUS_SUCCESS && ice_vf_has_no_qs_ena(vf))
 		clear_bit(ICE_VF_STATE_QS_ENA, vf->vf_states);
-		if (vf->repr)
-			netif_carrier_off(vf->repr->netdev);
-	}
 
 error_param:
 	/* send the response to the VF */
@@ -3417,7 +3412,7 @@ ice_cfg_interrupt(struct ice_vf *vf, struct ice_vsi *vsi,
 		q_vector->rx.itr_idx = map->rxitr_idx;
 		vsi->rx_rings[vsi_q_id]->q_vector = q_vector;
 		ice_cfg_rxq_interrupt(vsi, vsi_q_id,
-				      q_vector->v_idx + vsi->base_vector,
+				      q_vector->vf_reg_idx,
 				      q_vector->rx.itr_idx);
 	}
 
@@ -3436,7 +3431,7 @@ ice_cfg_interrupt(struct ice_vf *vf, struct ice_vsi *vsi,
 		q_vector->tx.itr_idx = map->txitr_idx;
 		vsi->tx_rings[vsi_q_id]->q_vector = q_vector;
 		ice_cfg_txq_interrupt(vsi, vsi_q_id,
-				      q_vector->v_idx + vsi->base_vector,
+				      q_vector->vf_reg_idx,
 				      q_vector->tx.itr_idx);
 	}
 
@@ -5469,12 +5464,14 @@ static int ice_vc_dcf_get_vsi_map(struct ice_vf *vf)
 		    test_bit(ICE_VF_STATE_INIT, tmp_vf->vf_states)) {
 			struct ice_vsi *tmp_vsi = ice_get_vf_vsi(tmp_vf);
 
+			if (!tmp_vsi)
+				continue;
+
 			vsi_map->vf_vsi[tmp_vf->vf_id] = tmp_vsi->vsi_num |
 				VIRTCHNL_DCF_VF_VSI_VALID;
 		}
 	}
 	mutex_unlock(&pf->vfs.table_lock);
-
 err:
 	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DCF_GET_VSI_MAP, v_ret,
 				    (u8 *)vsi_map, len);
@@ -6280,7 +6277,7 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 	for (i = 0; i < qv_maps->num_qv_maps; i++) {
 		struct virtchnl_queue_vector *qv_map = &qv_maps->qv_maps[i];
 		struct ice_q_vector *q_vector;
-		u16 msix_id, vector_id;
+		u16 vector_id;
 		int vsi_q_id;
 
 		vsi = ice_get_vf_vsi(vf);
@@ -6309,18 +6306,17 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 			goto error_param;
 		}
 
-		msix_id = q_vector->v_idx + vsi->base_vector;
 
 		if (!ice_vc_isvalid_q_id(vsi, vsi_q_id))
 			return VIRTCHNL_STATUS_ERR_PARAM;
 
 		if (qv_map->queue_type == VIRTCHNL_QUEUE_TYPE_RX)
 			ice_cfg_rxq_interrupt(vsi, vsi_q_id,
-					      msix_id,
+					      q_vector->vf_reg_idx,
 					      qv_map->itr_idx);
 		else if (qv_map->queue_type == VIRTCHNL_QUEUE_TYPE_TX)
 			ice_cfg_txq_interrupt(vsi, vsi_q_id,
-					      msix_id,
+					      q_vector->vf_reg_idx,
 					      qv_map->itr_idx);
 	}
 
@@ -7363,7 +7359,7 @@ static int ice_vc_get_phc_time(struct ice_vf *vf)
 		goto err;
 	}
 
-	phc_time->time = pf->ptp.cached_phc_time;
+	phc_time->time = ice_ptp_read_src_clk_reg(pf, NULL);
 
 err:
 	/* send the response back to the VF */
@@ -8298,9 +8294,11 @@ ice_is_malicious_vf(struct ice_vf *vf, struct ice_mbx_data *mbxdata)
  * 1. the common asq/arq handler to process request from VF
  *
  *    The return value is ignored, as the command will send the status of the
- *    request as a response to the VF. This flow sets the mbxdata to
- *    a non-NULL value and must call ice_is_malicious_vf to determine if this
- *    VF might be attempting to overflow the PF message queue.
+ *    request as a response to the VF. When this flow is used for devices with
+ *    hardware VF to PF message queue overflow support (ICE_F_MBX_LIMIT)
+ *    mbxdata is set to NULL and skips the ice_is_malicious_vf check, else
+ *    mbxdata is set to a non-NULL value and must call ice_is_malicious_vf to
+ *    determine if this VF might be attempting to overflow the PF message queue.
  *
  * 2. replay virtual channel commamds during live migration
  *

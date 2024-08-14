@@ -1234,21 +1234,6 @@ static inline u32 _xsk_umem_get_rx_frame_size(struct xdp_umem *umem)
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 #endif
 
-#ifdef NEED_XSK_BUFF_DMA_SYNC_FOR_CPU
-#ifdef HAVE_MEM_TYPE_XSK_BUFF_POOL
-#include <net/xdp_sock_drv.h>
-static inline void
-_kc_xsk_buff_dma_sync_for_cpu(struct xdp_buff *xdp,
-			      void __always_unused *pool)
-{
-	xsk_buff_dma_sync_for_cpu(xdp);
-}
-
-#define xsk_buff_dma_sync_for_cpu(xdp, pool) \
-	_kc_xsk_buff_dma_sync_for_cpu(xdp, pool)
-#endif /* HAVE_MEM_TYPE_XSK_BUFF_POOL */
-#endif /* NEED_XSK_BUFF_DMA_SYNC_FOR_CPU */
-
 #ifdef NEED_XSK_BUFF_POOL_RENAME
 #define XDP_SETUP_XSK_POOL XDP_SETUP_XSK_UMEM
 #define xsk_get_pool_from_qid xdp_get_umem_from_qid
@@ -1291,9 +1276,19 @@ static inline void linkmode_zero(unsigned long *dst)
 {
 	bitmap_zero(dst, __ETHTOOL_LINK_MODE_MASK_NBITS);
 }
+
+static inline void linkmode_copy(unsigned long *dst, const unsigned long *src)
+{
+	bitmap_copy(dst, src, __ETHTOOL_LINK_MODE_MASK_NBITS);
+}
+
+static inline bool linkmode_empty(const unsigned long *src)
+{
+	return bitmap_empty(src, __ETHTOOL_LINK_MODE_MASK_NBITS);
+}
 #endif /* !HAVE_LINKMODE */
 
-#ifndef ETHTOOL_GLINKSETTINGS
+#ifdef NEED_ETHTOOL_LINK_MODE_BIT_INDICES
 /* Link mode bit indices */
 enum ethtool_link_mode_bit_indices {
 	ETHTOOL_LINK_MODE_10baseT_Half_BIT      = 0,
@@ -1327,6 +1322,33 @@ enum ethtool_link_mode_bit_indices {
 	ETHTOOL_LINK_MODE_56000baseCR4_Full_BIT = 28,
 	ETHTOOL_LINK_MODE_56000baseSR4_Full_BIT = 29,
 	ETHTOOL_LINK_MODE_56000baseLR4_Full_BIT = 30,
+#ifdef ETHTOOL_GLINKSETTINGS
+	ETHTOOL_LINK_MODE_25000baseCR_Full_BIT	= 31,
+	ETHTOOL_LINK_MODE_25000baseKR_Full_BIT	= 32,
+	ETHTOOL_LINK_MODE_25000baseSR_Full_BIT	= 33,
+	ETHTOOL_LINK_MODE_50000baseCR2_Full_BIT	= 34,
+	ETHTOOL_LINK_MODE_50000baseKR2_Full_BIT	= 35,
+	ETHTOOL_LINK_MODE_100000baseKR4_Full_BIT	= 36,
+	ETHTOOL_LINK_MODE_100000baseSR4_Full_BIT	= 37,
+	ETHTOOL_LINK_MODE_100000baseCR4_Full_BIT	= 38,
+	ETHTOOL_LINK_MODE_100000baseLR4_ER4_Full_BIT	= 39,
+	ETHTOOL_LINK_MODE_50000baseSR2_Full_BIT		= 40,
+	ETHTOOL_LINK_MODE_1000baseX_Full_BIT	= 41,
+	ETHTOOL_LINK_MODE_10000baseCR_Full_BIT	= 42,
+	ETHTOOL_LINK_MODE_10000baseSR_Full_BIT	= 43,
+	ETHTOOL_LINK_MODE_10000baseLR_Full_BIT	= 44,
+	ETHTOOL_LINK_MODE_10000baseLRM_Full_BIT	= 45,
+	ETHTOOL_LINK_MODE_10000baseER_Full_BIT	= 46,
+	ETHTOOL_LINK_MODE_2500baseT_Full_BIT	= 47,
+	ETHTOOL_LINK_MODE_5000baseT_Full_BIT	= 48,
+
+	ETHTOOL_LINK_MODE_FEC_NONE_BIT	= 49,
+	ETHTOOL_LINK_MODE_FEC_RS_BIT	= 50,
+	ETHTOOL_LINK_MODE_FEC_BASER_BIT	= 51,
+
+	__ETHTOOL_LINK_MODE_LAST
+	  = ETHTOOL_LINK_MODE_FEC_BASER_BIT,
+#else
 
 	/* Last allowed bit for __ETHTOOL_LINK_MODE_LEGACY_MASK is bit
 	 * 31. Please do NOT define any SUPPORTED_* or ADVERTISED_*
@@ -1336,8 +1358,9 @@ enum ethtool_link_mode_bit_indices {
 
 	__ETHTOOL_LINK_MODE_LAST
 	  = ETHTOOL_LINK_MODE_56000baseLR4_Full_BIT,
-};
 #endif /* !ETHTOOL_GLINKSETTINGS */
+};
+#endif /* NEED_ETHTOOL_LINK_MODE_BIT_INDICES */
 
 #if defined(NEED_FLOW_MATCH) && defined(HAVE_TC_SETUP_CLSFLOWER)
 /* NEED_FLOW_MATCH
@@ -2219,6 +2242,16 @@ static inline bool dev_page_is_reusable(struct page *page)
 }
 #endif /* NEED_DEV_PAGE_IS_REUSABLE */
 
+#ifdef NEED_NAPI_ALLOC_SKB
+static inline
+struct sk_buff *kc_napi_alloc_skb(struct napi_struct *napi, unsigned int len)
+{
+	return __napi_alloc_skb(napi, len, GFP_ATOMIC | __GFP_NOWARN);
+}
+
+#define napi_alloc_skb(napi, len) kc_napi_alloc_skb(napi, len)
+#endif /* NEED_NAPI_ALLOC_SKB */
+
 /* NEED_NAPI_BUILD_SKB
  *
  * napi_build_skb was introduced by
@@ -2666,10 +2699,10 @@ enum dpll_lock_status_error {
 
 #endif /* HAVE_DPLL_LOCK_STATUS_ERROR */
 
-#ifndef NEED_DPLL_NETDEV_PIN_SET
-#define netdev_dpll_pin_set dpll_netdev_pin_set
-#define netdev_dpll_pin_clear dpll_netdev_pin_clear
-#endif /* HAVE_DPLL_NETDEV_PIN_SET */
+#ifdef NEED_DPLL_NETDEV_PIN_SET
+#define dpll_netdev_pin_set netdev_dpll_pin_set
+#define dpll_netdev_pin_clear netdev_dpll_pin_clear
+#endif /* NEED_DPLL_NETDEV_PIN_SET */
 
 #ifdef NEED_RADIX_TREE_EMPTY
 static inline bool radix_tree_empty(struct radix_tree_root *root)
@@ -2701,5 +2734,53 @@ static inline bool radix_tree_empty(struct radix_tree_root *root)
 	WARN_ON_ONCE(sched_setscheduler_nocheck((p), SCHED_FIFO,&sp) != 0);\
 })
 #endif /* NEED_SET_SCHED_FIFO */
+
+#ifndef HAVE_ETHTOOL_KEEE
+#ifndef __ETHTOOL_DECLARE_LINK_MODE_MASK
+#define __ETHTOOL_DECLARE_LINK_MODE_MASK(name)		\
+	DECLARE_BITMAP(name, __ETHTOOL_LINK_MODE_MASK_NBITS)
+#endif /* __ETHTOOL_DECLARE_LINK_MODE_MASK */
+struct ethtool_keee {
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(advertised);
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(lp_advertised);
+	u32	tx_lpi_timer;
+	bool	tx_lpi_enabled;
+	bool	eee_active;
+	bool	eee_enabled;
+};
+
+void eee_to_keee(struct ethtool_keee *keee,
+		 const struct ethtool_eee *eee);
+
+void ethtool_convert_legacy_u32_to_link_mode(unsigned long *dst,
+					     u32 legacy_u32);
+bool ethtool_convert_link_mode_to_legacy_u32(u32 *legacy_u32,
+					     const unsigned long *src);
+bool ethtool_eee_use_linkmodes(const struct ethtool_keee *eee);
+
+void keee_to_eee(struct ethtool_eee *eee,
+		 const struct ethtool_keee *keee);
+#endif /* !HAVE_ETHTOOL_KEEE */
+
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
+#define _kc__assign_str(dst, src) __assign_str(dst, src)
+#else
+#define _kc__assign_str(dst, src) __assign_str(dst)
+#endif
+
+#ifdef NEED_XSK_BUFF_DMA_SYNC_FOR_CPU_NO_POOL
+#include <net/xdp_sock_drv.h>
+static inline void
+_kc_xsk_buff_dma_sync_for_cpu(struct xdp_buff *xdp)
+{
+	struct xdp_buff_xsk *xskb = container_of(xdp, struct xdp_buff_xsk, xdp);
+
+	xsk_buff_dma_sync_for_cpu(xdp, xskb->pool);
+}
+
+#define xsk_buff_dma_sync_for_cpu(xdp) \
+	_kc_xsk_buff_dma_sync_for_cpu(xdp)
+#endif /* NEED_XSK_BUFF_DMA_SYNC_FOR_CPU_NO_POOL */
 
 #endif /* _KCOMPAT_IMPL_H_ */

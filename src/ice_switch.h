@@ -14,6 +14,7 @@
 #define ICE_FLTR_RX	BIT(0)
 #define ICE_FLTR_TX	BIT(1)
 #define ICE_FLTR_RX_LB	BIT(2)
+#define ICE_FLTR_TX_ONLY	BIT(3)
 #define ICE_FLTR_TX_RX	(ICE_FLTR_RX | ICE_FLTR_TX)
 
 /* Switch Profile IDs for Profile related switch rules */
@@ -269,7 +270,6 @@ struct ice_sw_recipe {
 	/* For a chained recipe the root recipe is what should be used for
 	 * programming rules
 	 */
-	u8 is_root;
 	u8 root_rid;
 	u8 recp_created;
 
@@ -280,19 +280,8 @@ struct ice_sw_recipe {
 	 */
 	struct ice_fv_word ext_words[ICE_MAX_CHAIN_WORDS];
 	u16 word_masks[ICE_MAX_CHAIN_WORDS];
-
-	/* if this recipe is a collection of other recipe */
-	u8 big_recp;
-
-	/* if this recipe is part of another bigger recipe then chain index
-	 * corresponding to this recipe
-	 */
-	u8 chain_idx;
-
-	/* if this recipe is a collection of other recipe then count of other
-	 * recipes and recipe IDs of those recipes
-	 */
-	u8 n_grp_count;
+	u8 fv_idx[ICE_MAX_CHAIN_WORDS];
+	u16 fv_mask[ICE_MAX_CHAIN_WORDS];
 
 	/* Bit map specifying the IDs associated with this group of recipe */
 	DECLARE_BITMAP(r_bitmap, ICE_MAX_NUM_RECIPES);
@@ -322,10 +311,6 @@ struct ice_sw_recipe {
 	 */
 	u8 priority;
 
-	struct list_head rg_list;
-
-	/* AQ buffer associated with this recipe */
-	struct ice_aqc_recipe_data_elem *root_buf;
 	/* This struct saves the fv_words for a given lookup */
 	struct ice_prot_lkup_ext lkup_exts;
 };
@@ -414,11 +399,6 @@ int
 ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		   u16 lkups_cnt, struct ice_adv_rule_info *rinfo, u16 *rid);
 
-struct ice_adv_fltr_mgmt_list_entry *
-ice_find_adv_rule_entry(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
-			u16 lkups_cnt, u16 recp_id,
-			struct ice_adv_rule_info *rinfo);
-
 int
 ice_adv_add_update_vsi_list(struct ice_hw *hw,
 			    struct ice_adv_fltr_mgmt_list_entry *m_entry,
@@ -476,7 +456,7 @@ ice_free_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 		  u16 counter_id);
 
 int ice_update_sw_rule_bridge_mode(struct ice_hw *hw);
-int ice_alloc_rss_global_lut(struct ice_hw *hw, bool shared_res, u16 *global_lut_id);
+int ice_alloc_rss_global_lut(struct ice_hw *hw, u16 *global_lut_id);
 int ice_free_rss_global_lut(struct ice_hw *hw, u16 global_lut_id);
 int
 ice_alloc_sw(struct ice_hw *hw, bool ena_stats, bool shared_res, u16 *sw_id,

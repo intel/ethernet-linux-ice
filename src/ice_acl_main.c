@@ -127,6 +127,37 @@ ice_acl_set_ip4_usr_seg(struct ice_flow_seg_info *seg,
 }
 
 /**
+ * ice_acl_set_ether_seg
+ * @seg: flow segment for programming
+ * @eth_spec: mask data from ethtool
+ */
+static int
+ice_acl_set_ether_seg(struct ice_flow_seg_info *seg,
+		      struct ethhdr *eth_spec)
+{
+	u16 val_loc, mask_loc;
+
+	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_ETH);
+
+	val_loc = offsetof(struct ice_fdir_fltr, eth.h_proto);
+	mask_loc = offsetof(struct ice_fdir_fltr, eth_mask.h_proto);
+	ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_ETH_TYPE, val_loc, mask_loc,
+			 ICE_FLOW_FLD_OFF_INVAL, false);
+
+	val_loc = offsetof(struct ice_fdir_fltr, eth.h_source);
+	mask_loc = offsetof(struct ice_fdir_fltr, eth_mask.h_source);
+	ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_ETH_SA, val_loc, mask_loc,
+			 ICE_FLOW_FLD_OFF_INVAL, false);
+
+	val_loc = offsetof(struct ice_fdir_fltr, eth.h_dest);
+	mask_loc = offsetof(struct ice_fdir_fltr, eth_mask.h_dest);
+	ice_flow_set_fld(seg, ICE_FLOW_FIELD_IDX_ETH_DA, val_loc,
+			 mask_loc, ICE_FLOW_FLD_OFF_INVAL, false);
+
+	return 0;
+}
+
+/**
  * ice_acl_check_input_set - Checks that a given ACL input set is valid
  * @pf: ice PF structure
  * @fsp: pointer to ethtool Rx flow specification
@@ -167,7 +198,14 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 		err = ice_acl_set_ip4_usr_seg(seg, &fsp->m_u.usr_ip4_spec);
 		break;
 	case ETHER_FLOW:
-		err = ice_set_ether_flow_seg(seg, &fsp->m_u.ether_spec, false);
+		if (!fsp->m_ext.vlan_tci && !fsp->m_ext.vlan_etype) {
+			err = ice_acl_set_ether_seg(seg, &fsp->m_u.ether_spec);
+			break;
+		}
+
+		dev_warn(dev, "VLAN and masks are not allowed in one filter");
+		err = -EOPNOTSUPP;
+
 		break;
 	default:
 		err = -EOPNOTSUPP;
@@ -215,12 +253,13 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 	/* Adding a profile for the given flow specification with no
 	 * actions (NULL) and zero actions 0.
 	 */
-	err = ice_flow_add_prof(hw, ICE_BLK_ACL, ICE_FLOW_RX, fltr_type, seg, 1,
+	err = ice_flow_add_prof(hw, ICE_BLK_ACL, ICE_FLOW_RX, seg, 1,
 				NULL, 0, &prof);
 	if (err)
 		goto err_exit;
 
 	hw_prof->fdir_seg[0] = seg;
+	hw_prof->prof_id[0] = prof->id;
 	return 0;
 
 err_acl_prof_flow_exit:
@@ -300,9 +339,9 @@ int ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd)
 	flow = ice_ethtool_flow_to_fltr(fsp->flow_type & ~FLOW_EXT);
 	hw_prof = hw->acl_prof[flow];
 
-	ret = ice_flow_add_entry(hw, ICE_BLK_ACL, flow, fsp->location,
-				 vsi->idx, ICE_FLOW_PRIO_NORMAL, input, acts,
-				 act_cnt, &entry_h);
+	ret = ice_flow_add_entry(hw, ICE_BLK_ACL, hw_prof->prof_id[0],
+				 fsp->location, vsi->idx, ICE_FLOW_PRIO_NORMAL,
+				 input, acts, act_cnt, &entry_h);
 	if (ret) {
 		dev_err(dev, "Could not add flow entry %d\n", flow);
 		goto free_input;

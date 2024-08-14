@@ -811,7 +811,8 @@ static void ice_sched_clear_rl_prof(struct ice_port_info *pi)
 		struct ice_aqc_rl_profile_info *rl_prof_tmp;
 
 		list_for_each_entry_safe(rl_prof_elem, rl_prof_tmp,
-					 &hw->rl_prof_list[ln], list_entry) {
+					 &hw->rl_prof_list[ln],
+					 list_entry) {
 			int status;
 
 			rl_prof_elem->prof_id_ref = 0;
@@ -838,12 +839,14 @@ void ice_sched_clear_agg(struct ice_hw *hw)
 	struct ice_sched_agg_info *agg_info;
 	struct ice_sched_agg_info *atmp;
 
-	list_for_each_entry_safe(agg_info, atmp, &hw->agg_list, list_entry) {
+	list_for_each_entry_safe(agg_info, atmp, &hw->agg_list,
+				 list_entry) {
 		struct ice_sched_agg_vsi_info *agg_vsi_info;
 		struct ice_sched_agg_vsi_info *vtmp;
 
 		list_for_each_entry_safe(agg_vsi_info, vtmp,
-					 &agg_info->agg_vsi_list, list_entry) {
+					 &agg_info->agg_vsi_list,
+					 list_entry) {
 			list_del(&agg_vsi_info->list_entry);
 			devm_kfree(ice_hw_to_dev(hw), agg_vsi_info);
 		}
@@ -2135,7 +2138,8 @@ static void ice_sched_rm_agg_vsi_info(struct ice_port_info *pi, u16 vsi_handle)
 		struct ice_sched_agg_vsi_info *vtmp;
 
 		list_for_each_entry_safe(agg_vsi_info, vtmp,
-					 &agg_info->agg_vsi_list, list_entry)
+					 &agg_info->agg_vsi_list,
+					 list_entry)
 			if (agg_vsi_info->vsi_handle == vsi_handle) {
 				list_del(&agg_vsi_info->list_entry);
 				devm_kfree(ice_hw_to_dev(pi->hw),
@@ -2986,7 +2990,8 @@ ice_get_agg_vsi_info(struct ice_sched_agg_info *agg_info, u16 vsi_handle)
 {
 	struct ice_sched_agg_vsi_info *agg_vsi_info;
 
-	list_for_each_entry(agg_vsi_info, &agg_info->agg_vsi_list, list_entry)
+	list_for_each_entry(agg_vsi_info, &agg_info->agg_vsi_list,
+			    list_entry)
 		if (agg_vsi_info->vsi_handle == vsi_handle)
 			return agg_vsi_info;
 
@@ -3139,7 +3144,8 @@ static void ice_sched_rm_unused_rl_prof(struct ice_hw *hw)
 		struct ice_aqc_rl_profile_info *rl_prof_tmp;
 
 		list_for_each_entry_safe(rl_prof_elem, rl_prof_tmp,
-					 &hw->rl_prof_list[ln], list_entry) {
+					 &hw->rl_prof_list[ln],
+					 list_entry) {
 			if (!ice_sched_del_rl_profile(hw, rl_prof_elem))
 				ice_debug(hw, ICE_DBG_SCHED, "Removed rl profile\n");
 		}
@@ -5389,7 +5395,8 @@ ice_sched_validate_agg_id(struct ice_port_info *pi, u32 agg_id)
 	if (status)
 		return status;
 
-	list_for_each_entry_safe(agg_info, tmp, &pi->hw->agg_list, list_entry)
+	list_for_each_entry_safe(agg_info, tmp, &pi->hw->agg_list,
+				 list_entry)
 		if (agg_info->agg_id == agg_id) {
 			agg_id_present = true;
 			break;
