@@ -1440,7 +1440,18 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_HIGH_100G_CAUI2		BIT_ULL(2)
 #define ICE_PHY_TYPE_HIGH_100G_AUI2_AOC_ACC	BIT_ULL(3)
 #define ICE_PHY_TYPE_HIGH_100G_AUI2		BIT_ULL(4)
-#define ICE_PHY_TYPE_HIGH_MAX_INDEX		4
+#define ICE_PHY_TYPE_HIGH_200G_CR4_PAM4		BIT_ULL(5)
+#define ICE_PHY_TYPE_HIGH_200G_SR4		BIT_ULL(6)
+#define ICE_PHY_TYPE_HIGH_200G_FR4		BIT_ULL(7)
+#define ICE_PHY_TYPE_HIGH_200G_LR4		BIT_ULL(8)
+#define ICE_PHY_TYPE_HIGH_200G_DR4		BIT_ULL(9)
+#define ICE_PHY_TYPE_HIGH_200G_KR4_PAM4		BIT_ULL(10)
+#define ICE_PHY_TYPE_HIGH_200G_AUI4_AOC_ACC	BIT_ULL(11)
+#define ICE_PHY_TYPE_HIGH_200G_AUI4		BIT_ULL(12)
+#define ICE_PHY_TYPE_HIGH_200G_AUI8_AOC_ACC	BIT_ULL(13)
+#define ICE_PHY_TYPE_HIGH_200G_AUI8		BIT_ULL(14)
+#define ICE_PHY_TYPE_HIGH_400GBASE_FR8		BIT_ULL(15)
+#define ICE_PHY_TYPE_HIGH_MAX_INDEX		15
 
 struct ice_aqc_get_phy_caps_data {
 	__le64 phy_type_low; /* Use values from ICE_PHY_TYPE_LOW_* */
@@ -1594,9 +1605,11 @@ struct ice_aqc_get_link_status {
 
 enum ice_get_link_status_data_version {
 	ICE_GET_LINK_STATUS_DATA_V1 = 1,
+	ICE_GET_LINK_STATUS_DATA_V2 = 2,
 };
 
 #define ICE_GET_LINK_STATUS_DATALEN_V1		32
+#define ICE_GET_LINK_STATUS_DATALEN_V2		56
 
 /* Get link status response data structure, also used for Link Status Event */
 struct ice_aqc_get_link_status_data {
@@ -1671,7 +1684,7 @@ struct ice_aqc_get_link_status_data {
 #define ICE_AQ_LINK_PWR_QSFP_CLASS_3	2
 #define ICE_AQ_LINK_PWR_QSFP_CLASS_4	3
 	__le16 link_speed;
-#define ICE_AQ_LINK_SPEED_M		0x7FF
+#define ICE_AQ_LINK_SPEED_M		GENMASK(11, 0)
 #define ICE_AQ_LINK_SPEED_10MB		BIT(0)
 #define ICE_AQ_LINK_SPEED_100MB		BIT(1)
 #define ICE_AQ_LINK_SPEED_1000MB	BIT(2)
@@ -1683,10 +1696,33 @@ struct ice_aqc_get_link_status_data {
 #define ICE_AQ_LINK_SPEED_40GB		BIT(8)
 #define ICE_AQ_LINK_SPEED_50GB		BIT(9)
 #define ICE_AQ_LINK_SPEED_100GB		BIT(10)
+#define ICE_AQ_LINK_SPEED_200GB		BIT(11)
 #define ICE_AQ_LINK_SPEED_UNKNOWN	BIT(15)
-	__le32 reserved3; /* Aligns next field to 8-byte boundary */
+	__le16 reserved3; /* Aligns next field to 8-byte boundary */
+	u8 ext_fec_status;
+#define ICE_AQ_LINK_RS_272_FEC_EN	BIT(0) /* RS 272 FEC enabled */
+	u8 reserved4;
 	__le64 phy_type_low; /* Use values from ICE_PHY_TYPE_LOW_* */
 	__le64 phy_type_high; /* Use values from ICE_PHY_TYPE_HIGH_* */
+	/* Get link status version 2 link partner data */
+	__le64 lp_phy_type_low; /* Use values from ICE_PHY_TYPE_LOW_* */
+	__le64 lp_phy_type_high; /* Use values from ICE_PHY_TYPE_HIGH_* */
+	u8 lp_fec_adv;
+#define ICE_AQ_LINK_LP_10G_KR_FEC_CAP	BIT(0)
+#define ICE_AQ_LINK_LP_25G_KR_FEC_CAP	BIT(1)
+#define ICE_AQ_LINK_LP_RS_528_FEC_CAP	BIT(2)
+#define ICE_AQ_LINK_LP_50G_KR_272_FEC_CAP BIT(3)
+#define ICE_AQ_LINK_LP_100G_KR_272_FEC_CAP BIT(4)
+#define ICE_AQ_LINK_LP_200G_KR_272_FEC_CAP BIT(5)
+	u8 lp_fec_req;
+#define ICE_AQ_LINK_LP_10G_KR_FEC_REQ	BIT(0)
+#define ICE_AQ_LINK_LP_25G_KR_FEC_REQ	BIT(1)
+#define ICE_AQ_LINK_LP_RS_528_FEC_REQ	BIT(2)
+#define ICE_AQ_LINK_LP_KR_272_FEC_REQ	BIT(3)
+	u8 lp_flowcontrol;
+#define ICE_AQ_LINK_LP_PAUSE_ADV	BIT(0)
+#define ICE_AQ_LINK_LP_ASM_DIR_ADV	BIT(1)
+	u8 reserved5[5];
 };
 
 /* Set event mask command (direct 0x0613) */
@@ -2224,6 +2260,7 @@ struct ice_aqc_get_port_options_elem {
 #define ICE_AQC_PORT_OPT_MAX_LANE_25G	5
 #define ICE_AQC_PORT_OPT_MAX_LANE_50G	6
 #define ICE_AQC_PORT_OPT_MAX_LANE_100G	7
+#define ICE_AQC_PORT_OPT_MAX_LANE_200G	8
 	u8 global_scid[2];
 	u8 phy_scid[2];
 	u8 pf2port_cid[2];
@@ -2371,28 +2408,14 @@ struct ice_aqc_nvm {
 #define ICE_AQC_NVM_LLDP_STATUS_M_LEN		4 /* In Bits */
 #define ICE_AQC_NVM_LLDP_STATUS_RD_LEN		4 /* In Bytes */
 
-#define ICE_AQC_NVM_SDP_CFG_PTR_OFFSET		0xD8
-#define ICE_AQC_NVM_SDP_CFG_PTR_RD_LEN		2 /* In Bytes */
-#define ICE_AQC_NVM_SDP_CFG_PTR_M		ICE_M(0x7FFF, 0)
-#define ICE_AQC_NVM_SDP_CFG_PTR_TYPE_M		BIT(15)
-#define ICE_AQC_NVM_SDP_CFG_HEADER_LEN		2 /* In Bytes */
-#define ICE_AQC_NVM_SDP_CFG_SEC_LEN_LEN		2 /* In Bytes */
-#define ICE_AQC_NVM_SDP_CFG_DATA_LEN		14 /* In Bytes */
-#define ICE_AQC_NVM_SDP_CFG_MAX_SECTION_SIZE	7
-#define ICE_AQC_NVM_SDP_CFG_PIN_SIZE		10
-#define ICE_AQC_NVM_SDP_CFG_PIN_OFFSET		6
-#define ICE_AQC_NVM_SDP_CFG_PIN_MASK		ICE_M(0x3FF, \
-						ICE_AQC_NVM_SDP_CFG_PIN_OFFSET)
-#define ICE_AQC_NVM_SDP_CFG_CHAN_OFFSET		4
-#define ICE_AQC_NVM_SDP_CFG_CHAN_MASK		ICE_M(0x3, \
-						ICE_AQC_NVM_SDP_CFG_CHAN_OFFSET)
-#define ICE_AQC_NVM_SDP_CFG_DIR_OFFSET		3
-#define ICE_AQC_NVM_SDP_CFG_DIR_MASK		ICE_M(0x1, \
-						ICE_AQC_NVM_SDP_CFG_DIR_OFFSET)
-#define ICE_AQC_NVM_SDP_CFG_SDP_NUM_OFFSET		0
-#define ICE_AQC_NVM_SDP_CFG_SDP_NUM_MASK	ICE_M(0x7, \
-					     ICE_AQC_NVM_SDP_CFG_SDP_NUM_OFFSET)
-#define ICE_AQC_NVM_SDP_CFG_NA_PIN_MASK		ICE_M(0x1, 15)
+#define ICE_AQC_NVM_SDP_AC_PTR_OFFSET		0xD8
+#define ICE_AQC_NVM_SDP_AC_PTR_M		GENMASK(14, 0)
+#define ICE_AQC_NVM_SDP_AC_PTR_INVAL		0x7FFF
+#define ICE_AQC_NVM_SDP_AC_PTR_TYPE_M		BIT(15)
+#define ICE_AQC_NVM_SDP_AC_SDP_NUM_M		GENMASK(2, 0)
+#define ICE_AQC_NVM_SDP_AC_DIR_M		BIT(3)
+#define ICE_AQC_NVM_SDP_AC_PIN_M		GENMASK(15, 6)
+#define ICE_AQC_NVM_SDP_AC_MAX_SIZE		7
 
 #define ICE_AQC_NVM_MINSREV_MOD_ID		0x130
 #define ICE_AQC_NVM_TX_TOPO_MOD_ID		0x14B
@@ -2704,11 +2727,9 @@ struct ice_aqc_lldp_filter_ctrl {
 	u8 reserved2[12];
 };
 
+#define ICE_AQC_RSS_VSI_VALID BIT(15)
 /* Get/Set RSS key (indirect 0x0B04/0x0B02) */
 struct ice_aqc_get_set_rss_key {
-#define ICE_AQC_GSET_RSS_KEY_VSI_VALID	BIT(15)
-#define ICE_AQC_GSET_RSS_KEY_VSI_ID_S	0
-#define ICE_AQC_GSET_RSS_KEY_VSI_ID_M	(0x3FF << ICE_AQC_GSET_RSS_KEY_VSI_ID_S)
 	__le16 vsi_id;
 	u8 reserved[6];
 	__le32 addr_high;
@@ -2740,7 +2761,6 @@ enum ice_lut_type {
 	ICE_LUT_VSI = 0,
 	ICE_LUT_PF = 1,
 	ICE_LUT_GLOBAL = 2,
-	ICE_LUT_TYPE_MASK = 3
 };
 
 enum ice_lut_size {
@@ -2749,27 +2769,20 @@ enum ice_lut_size {
 	ICE_LUT_PF_SIZE = 2048,
 };
 
+/* enum ice_aqc_lut_flags combines constants used to fill
+ * &ice_aqc_get_set_rss_lut ::flags, which is an amalgamation of global LUT ID,
+ * LUT size and LUT type, last of which does not need neither shift nor mask.
+ */
+enum ice_aqc_lut_flags {
+	ICE_AQC_LUT_SIZE_SMALL = 0, /* size = 64 or 128 */
+	ICE_AQC_LUT_SIZE_512 = BIT(2),
+	ICE_AQC_LUT_SIZE_2K = BIT(3),
+	ICE_AQC_LUT_GLOBAL_IDX = GENMASK(7, 4),
+};
+
 /* Get/Set RSS LUT (indirect 0x0B05/0x0B03) */
 struct ice_aqc_get_set_rss_lut {
-#define ICE_AQC_GSET_RSS_LUT_VSI_VALID	BIT(15)
-#define ICE_AQC_GSET_RSS_LUT_VSI_ID_S	0
-#define ICE_AQC_GSET_RSS_LUT_VSI_ID_M	(0x3FF << ICE_AQC_GSET_RSS_LUT_VSI_ID_S)
 	__le16 vsi_id;
-#define ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_S	0
-#define ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_M	\
-	(ICE_LUT_TYPE_MASK << ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_S)
-
-#define ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_S	 2
-#define ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_M	 \
-	(ICE_LUT_TYPE_MASK << ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_S)
-
-#define ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_512_FLAG 1
-#define ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_2K_FLAG	 2
-
-#define ICE_AQC_GSET_RSS_LUT_GLOBAL_IDX_S	 4
-#define ICE_AQC_GSET_RSS_LUT_GLOBAL_IDX_M	 \
-				(0xF << ICE_AQC_GSET_RSS_LUT_GLOBAL_IDX_S)
-
 	__le16 flags;
 	__le32 reserved;
 	__le32 addr_high;
@@ -3382,6 +3395,54 @@ struct ice_aqc_move_rdma_qset_buffer {
 	__le32 dest_parent_teid;
 	struct ice_aqc_move_rdma_qset_buffer_desc descs[];
 };
+
+/* Set Tx Time LAN Queue (indirect 0x0C35) */
+struct ice_aqc_set_txtimeqs {
+	__le16 q_id;
+	__le16 q_amount;
+	u8 reserved[4];
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+/* This is the descriptor of each queue entry for the Set Tx Time Queue
+ * command (0x0C35). Only used within struct ice_aqc_set_txtime_qgrp.
+ */
+struct ice_aqc_set_txtimeqs_perq {
+	u8 reserved[4];
+	u8 txtime_ctx[25];
+	u8 reserved1[3];
+};
+
+/* The format of the command buffer for Set Tx Time Queue (0x0C35)
+ * is an array of the following structs. Please note that the length of
+ * each struct ice_aqc_set_txtime_qgrp is variable due to the variable
+ * number of queues in each group!
+ */
+struct ice_aqc_set_txtime_qgrp {
+	u8 reserved[8];
+	struct ice_aqc_set_txtimeqs_perq txtimeqs[];
+};
+
+/* Operate Tx Time Queue (indirect 0x0C37) */
+struct ice_aqc_ena_dis_txtimeqs {
+	__le16 q_id;
+	__le16 q_amount;
+	u8 cmd_type;
+#define ICE_AQC_TXTIME_CMD_TYPE_S      0
+#define ICE_AQC_TXTIME_CMD_TYPE_M      (0x1 << ICE_AQC_Q_CMD_TYPE_S)
+#define ICE_AQC_TXTIME_CMD_TYPE_Q_ENA  1
+	u8 reserved[3];
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+struct ice_aqc_ena_dis_txtime_qgrp {
+	u8 reserved[5];
+	__le16 fail_txtime_q;
+	u8 reserved1[1];
+} __packed;
+
 
 /* Download Package (indirect 0x0C40) */
 /* Also used for Update Package (indirect 0x0C41 and 0x0C42) */
@@ -4018,6 +4079,8 @@ struct ice_aq_desc {
 		struct ice_aqc_move_txqs move_txqs;
 		struct ice_aqc_add_rdma_qset add_rdma_qset;
 		struct ice_aqc_move_rdma_qset_cmd move_rdma_qset;
+		struct ice_aqc_set_txtimeqs set_txtimeqs;
+		struct ice_aqc_ena_dis_txtimeqs operate_txtimeqs;
 		struct ice_aqc_txqs_cleanup txqs_cleanup;
 		struct ice_aqc_add_get_update_free_vsi vsi_cmd;
 		struct ice_aqc_add_update_free_vsi_resp add_update_free_vsi_res;
@@ -4330,6 +4393,10 @@ enum ice_adminq_opc {
 	ice_aqc_opc_move_recfg_txqs			= 0x0C32,
 	ice_aqc_opc_add_rdma_qset			= 0x0C33,
 	ice_aqc_opc_move_rdma_qset			= 0x0C34,
+
+	/* Tx Time queue commands */
+	ice_aqc_opc_set_txtimeqs			= 0x0C35,
+	ice_aqc_opc_ena_dis_txtimeqs			= 0x0C37,
 
 	/* package commands */
 	ice_aqc_opc_download_pkg			= 0x0C40,

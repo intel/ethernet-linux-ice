@@ -379,6 +379,7 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 	tbl->info = *params;
 	tbl->info.width = width;
 	tbl->info.depth = depth;
+	INIT_LIST_HEAD(&tbl->scens);
 	hw->acl_tbl = tbl;
 
 	for (i = 0; i < ICE_AQC_MAX_ACTION_MEMORIES; i++)
@@ -408,8 +409,6 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 
 	/* Indicate available entries in the table */
 	bitmap_set(tbl->avail, first_e, last_e - first_e + 1);
-
-	INIT_LIST_HEAD(&tbl->scens);
 out:
 
 	return status;
@@ -850,7 +849,8 @@ static int ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id)
 		return -ENOENT;
 
 	/* Remove profiles that use "scen_id" scenario */
-	list_for_each_entry_safe(p, tmp, &hw->fl_profs[ICE_BLK_ACL], l_entry)
+	list_for_each_entry_safe(p, tmp, &hw->fl_profs[ICE_BLK_ACL],
+				 l_entry)
 		if (p->cfg.scen && p->cfg.scen->id == scen_id) {
 			status = ice_flow_rem_prof(hw, ICE_BLK_ACL, p->id);
 			if (status) {

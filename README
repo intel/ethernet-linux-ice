@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-June 11, 2024
+August 14, 2024
 
 
 Contents
@@ -37,10 +37,10 @@ Contents
 Overview
 ========
 
-This driver supports kernel versions 3.10.0 and newer. However, some
-features may require a newer kernel version. The associated Virtual
-Function (VF) driver for this driver is iavf. The associated RDMA
-driver for this driver is irdma.
+This driver supports Linux* kernel versions 3.10.0 and newer. However,
+some features may require a newer kernel version. The associated
+Virtual Function (VF) driver for this driver is iavf. The associated
+RDMA driver for this driver is irdma.
 
 Driver information can be obtained using ethtool, devlink, lspci, and
 ip. Instructions on updating ethtool can be found in the section
@@ -64,12 +64,7 @@ Related Documentation
 
 See the "Intel(R) Ethernet Adapters and Devices User Guide" for
 additional information on features. It is available on the Intel
-website at either of the following:
-
-* https://cdrdv2.intel.com/v1/dl/getContent/705831
-
-* https://www.intel.com/content/www/us/en/download/19373/adapter-user-
-  guide-for-intel-ethernet-adapters.html
+website at https://cdrdv2.intel.com/v1/dl/getContent/705831.
 
 
 Identifying Your Adapter
@@ -91,7 +86,7 @@ The driver is compatible with devices based on the following:
 
 For information on how to identify your adapter, and for the latest
 Intel network drivers, refer to the Intel Support website at
-http://www.intel.com/support.
+https://www.intel.com/support.
 
 
 Important Notes
@@ -221,8 +216,7 @@ To manually build the driver
    Note:
 
      To build the driver using the schema for unified ethtool
-     statistics defined in https://sourceforge.net/p/e1000/wiki/Home/,
-     use the following command:
+     statistics, use the following command:
 
         make CFLAGS_EXTRA='-DUNIFIED_STATS' install
 
@@ -2095,7 +2089,11 @@ mode:
 
      * GTP: TEID, PDU type, QFI, Outer Destination IP, Outer Source IP
 
-* Supported filter actions: redirect, drop
+     * PPPoE: session ID, Protocol
+
+     * L2TPv3: session ID
+
+* Supported filter actions: redirect, drop, mirror
 
 Note:
 
@@ -2186,6 +2184,68 @@ Where:
 
 * See Creating Traffic Class Filters in this README for an explanation
   of "skip_sw" and "ingress flower".
+
+
+Switching Modes
+---------------
+
+Devices based on the Intel(R) Ethernet 800 Series support Virtual
+Ethernet Bridging (VEB) and Virtual Ethernet Port Aggregator (VEPA)
+switching modes.
+
+In Virtual Ethernet Bridging (VEB) switching mode:
+
+* Functionality: VEB acts as an internal switch within the Intel
+  Ethernet 800 Series, managing the interconnectivity and traffic flow
+  between various Virtual Functions (VFs) on the same physical device.
+
+* Network Topology and Loopback: It is VLAN-aware, capable of
+  segregating and routing traffic based on VLAN tags. Importantly, VEB
+  handles loopback traffic directly on the network controller,
+  allowing for efficient internal communication without needing to
+  send traffic out of the host system and back in.
+
+* Use Case Example: In a scenario with multiple virtual machines (VMs)
+  on a single server, each assigned a different VF, VEB facilitates
+  direct, efficient communication between these VMs at the hardware
+  level. This is particularly beneficial for applications requiring
+  low latency and high-speed internal data transfer.
+
+In Virtual Ethernet Port Aggregator (VEPA) switching mode:
+
+* Functionality: VEPA, in contrast, forwards all inter-VF traffic to
+  an external network switch, relying on this external entity for
+  traffic management and routing.
+
+* Network Topology: It is typically used in environments where
+  centralized control and analysis of traffic, such as for security or
+  policy enforcement, are conducted at an external switch.
+
+* Use Case Example: In data centers where external traffic monitoring
+  and policy enforcement are essential, VEPA enables the aggregation
+  of traffic from various VFs to an external switch, which then
+  manages routing, monitoring, and policy application.
+
+Key differences between VEB and VEPA:
+
+1. Traffic Management: VEB provides efficient internal traffic
+   management between VFs and handles loopback on the Network
+   Controller. VEPA, in contrast, depends on external devices for
+   managing and routing inter-VF traffic.
+
+2. Efficiency vs. Control: VEB is more efficient for internal traffic
+   and loopback scenarios, while VEPA offers advantages in centralized
+   external control and monitoring of traffic.
+
+3. Application Use Cases: VEB is suited for environments needing high-
+   speed, low-latency internal communication, such as in dense VM
+   deployments. VEPA is preferred in scenarios where external traffic
+   analysis and policy enforcement are prioritized.
+
+Use the following commands to set and show the hardware switch mode:
+
+   bridge link set dev <ethX> hwmode {vepa|veb}
+   bridge link show dev <ethX>
 
 
 Jumbo Frames
@@ -2682,11 +2742,11 @@ it for advanced configuration of this feature.
 * Intel(R) Ethernet Network Adapter E810-C-Q2T:
   https://cdrdv2.intel.com/v1/dl/getContent/722960
 
-Some devices support hardware-generated timestamps. The ice driver
-uses these timestamps to synchronize clocks on the platform and report
-precise timestamps on packets. Use the following "hwstamp_ctl"
-command, which is available in the linuxptp utility, to enable this
-setting:
+Intel Ethernet 800 Series devices support hardware-generated
+timestamps. The ice driver uses these timestamps to synchronize clocks
+on the platform and report precise timestamps on packets. Use the
+following "hwstamp_ctl" command, which is available in the linuxptp
+utility, to enable this setting:
 
    hwstamp_ctl -i <ethX> -t 1 -r 1
 
@@ -3369,26 +3429,44 @@ the number of local node CPU threads with the following constraints:
 * The driver will allocate a maximum of 64 queue pairs, or 256 for the
   iavf driver.
 
-You can set the number of queues symmetrical or asymmetrical using the
-"ethtool -L" command. For example:
+You can set the number of symmetrical (Rx/Tx) or asymmetrical (mix of
+combined and Tx or Rx) queues using the "ethtool -L" command. Use the
+"combined" parameter to set the symmetrical part of the configuration,
+and then use either "rx" or "tx" to set the remaining asymmetrical
+part of the configuration. For example:
 
-* Setting 16 queue pairs for the interface:
+* To set 16 queue pairs, regardless of what the previous configuration
+  was:
 
-     ethtool -L <ethX> combined 16
-     ethtool -L <ethX> tx 16 rx 16
+     ethtool -L <ethX> combined 16 rx 0 tx 0
 
-* Setting 16 Tx queues and 8 Rx queues:
+  Note:
 
-     ethtool -L <ethX> tx 16 rx 8
+    If the current configuration is already symmetric, you can omit
+    the "rx" and "tx" parameters. For example:
+
+       ethtool -L <ethX> combined 16
+
+* To set 16 Tx queues and 8 Rx queues:
+
+     ethtool -L <ethX> combined 8 tx 8
 
 Note:
 
-  * You cannot configure less than 1 Rx or 1 Tx queue. Attempts to do
-    so will be rejected by the driver.
+  * You cannot configure less than 1 queue pair. Attempts to do so
+    will be rejected by the kernel.
 
   * You cannot configure more Tx/Rx queues than there are MSI-X
     interrupts available. Attempts to do so will be rejected by the
     driver.
+
+  * "ethtool" preserves the previous values of "combined", "rx", and
+    "tx" independently, same as it handles flags. If you do not
+    specify a certain value in the command, it will stay the same
+    instead of being set to zero.
+
+  * Tx/Rx queues cannot exist outside of queue pairs simultaneously,
+    so either "rx" or "tx" parameter has to be zero.
 
 
 IRQ to Adapter Queue Alignment
@@ -3959,15 +4037,16 @@ driver or install compatible out-of-tree irdma driver.
 Support
 =======
 
-For general information, go to the Intel support website at:
-http://www.intel.com/support/
+For general information, go to the Intel support website at
+https://www.intel.com/support/
 
-or the Intel Wired Networking project hosted by Sourceforge at:
-http://sourceforge.net/projects/e1000
+or the Intel Ethernet Linux project hosted by GitHub at
+https://github.com/intel/ethernet-linux-ice
 
 If an issue is identified with the released source code on a supported
-kernel with a supported adapter, email the specific information
-related to the issue to e1000-devel@lists.sf.net.
+kernel with a supported adapter, contact Intel Customer Support at
+https://www.intel.com/content/www/us/en/support/products/36773
+/ethernet-products.html
 
 
 License

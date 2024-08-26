@@ -125,10 +125,9 @@ enum ice_phy_cache_mode {
 };
 
 enum ice_fec_mode {
-	ICE_FEC_NONE	= 0,
-	ICE_FEC_RS	= 1,
-	ICE_FEC_BASER	= 2,
-	ICE_FEC_FC	= 2,
+	ICE_FEC_NONE = 0,
+	ICE_FEC_RS,
+	ICE_FEC_BASER,
 	ICE_FEC_AUTO,
 	ICE_FEC_DIS_AUTO
 };
@@ -154,6 +153,7 @@ enum ice_mac_type {
 	ICE_MAC_UNKNOWN = 0,
 	ICE_MAC_VF,
 	ICE_MAC_E810,
+	ICE_MAC_E830,
 	ICE_MAC_GENERIC,
 	ICE_MAC_GENERIC_3K,
 	ICE_MAC_GENERIC_3K_E825,
@@ -187,7 +187,9 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_100G_AUI4_AOC_ACC)
 
 #define ICE_MEDIA_C2M_PHY_TYPE_HIGH_M (ICE_PHY_TYPE_HIGH_100G_CAUI2_AOC_ACC | \
-				       ICE_PHY_TYPE_HIGH_100G_AUI2_AOC_ACC)
+				       ICE_PHY_TYPE_HIGH_100G_AUI2_AOC_ACC | \
+				       ICE_PHY_TYPE_HIGH_200G_AUI4_AOC_ACC | \
+				       ICE_PHY_TYPE_HIGH_200G_AUI8_AOC_ACC)
 
 #define ICE_MEDIA_OPT_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_1000BASE_SX | \
 					 ICE_PHY_TYPE_LOW_1000BASE_LX | \
@@ -207,6 +209,12 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_50GBASE_FR | \
 					 ICE_PHY_TYPE_LOW_100GBASE_DR)
 
+#define ICE_MEDIA_OPT_PHY_TYPE_HIGH_M	(ICE_PHY_TYPE_HIGH_200G_SR4 | \
+					 ICE_PHY_TYPE_HIGH_200G_LR4 | \
+					 ICE_PHY_TYPE_HIGH_200G_FR4 | \
+					 ICE_PHY_TYPE_HIGH_200G_DR4 | \
+					 ICE_PHY_TYPE_HIGH_400GBASE_FR8)
+
 #define ICE_MEDIA_BP_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_1000BASE_KX | \
 					 ICE_PHY_TYPE_LOW_2500BASE_KX | \
 					 ICE_PHY_TYPE_LOW_5GBASE_KR | \
@@ -220,7 +228,8 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_100GBASE_KR4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_KR4_PAM4)
 
-#define ICE_MEDIA_BP_PHY_TYPE_HIGH_M    ICE_PHY_TYPE_HIGH_100GBASE_KR2_PAM4
+#define ICE_MEDIA_BP_PHY_TYPE_HIGH_M	(ICE_PHY_TYPE_HIGH_100GBASE_KR2_PAM4 | \
+					 ICE_PHY_TYPE_HIGH_200G_KR4_PAM4)
 
 #define ICE_MEDIA_DAC_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_10G_SFI_DA | \
 					 ICE_PHY_TYPE_LOW_25GBASE_CR | \
@@ -232,6 +241,8 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4 | \
 					 ICE_PHY_TYPE_LOW_50GBASE_CR_PAM4 | \
 					 ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4)
+
+#define ICE_MEDIA_DAC_PHY_TYPE_HIGH_M	ICE_PHY_TYPE_HIGH_200G_CR4_PAM4
 
 #define ICE_MEDIA_C2C_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_100M_SGMII | \
 					 ICE_PHY_TYPE_LOW_1G_SGMII | \
@@ -246,7 +257,9 @@ enum ice_media_type {
 					 ICE_PHY_TYPE_LOW_100G_AUI4)
 
 #define ICE_MEDIA_C2C_PHY_TYPE_HIGH_M	(ICE_PHY_TYPE_HIGH_100G_CAUI2 | \
-					 ICE_PHY_TYPE_HIGH_100G_AUI2)
+					 ICE_PHY_TYPE_HIGH_100G_AUI2 | \
+					 ICE_PHY_TYPE_HIGH_200G_AUI4 | \
+					 ICE_PHY_TYPE_HIGH_200G_AUI8)
 
 /* Software VSI types. */
 enum ice_vsi_type {
@@ -257,7 +270,6 @@ enum ice_vsi_type {
 	ICE_VSI_CHNL = 4,
 	ICE_VSI_OFFLOAD_MACVLAN = 5,
 	ICE_VSI_LB = 6,
-	ICE_VSI_SWITCHDEV_CTRL = 7,
 	ICE_VSI_ADI = 8,
 };
 
@@ -561,6 +573,7 @@ struct ice_fd_hw_prof {
 	int cnt;
 	u64 entry_h[ICE_MAX_FDIR_VSI_PER_FILTER][ICE_FD_HW_SEG_MAX];
 	u16 vsi_h[ICE_MAX_FDIR_VSI_PER_FILTER];
+	u64 prof_id[ICE_FD_HW_SEG_MAX];
 };
 
 /* Common HW capabilities for SW use */
@@ -715,36 +728,36 @@ enum ice_src_tmr_mode {
 };
 
 /* TIME_REF clock rate specification */
-enum ice_time_ref_freq {
-	ICE_TIME_REF_FREQ_25_000	= 0,
-	ICE_TIME_REF_FREQ_122_880	= 1,
-	ICE_TIME_REF_FREQ_125_000	= 2,
-	ICE_TIME_REF_FREQ_153_600	= 3,
-	ICE_TIME_REF_FREQ_156_250	= 4,
-	ICE_TIME_REF_FREQ_245_760	= 5,
+enum ice_tspll_freq {
+	ICE_TSPLL_FREQ_25_000	= 0,
+	ICE_TSPLL_FREQ_122_880	= 1,
+	ICE_TSPLL_FREQ_125_000	= 2,
+	ICE_TSPLL_FREQ_153_600	= 3,
+	ICE_TSPLL_FREQ_156_250	= 4,
+	ICE_TSPLL_FREQ_245_760	= 5,
 
-	NUM_ICE_TIME_REF_FREQ,
+	NUM_ICE_TSPLL_FREQ,
 
-	ICE_TIME_REF_FREQ_INVALID	= -1,
+	ICE_TSPLL_FREQ_INVALID	= -1,
 };
 
 /* Clock source specification */
 enum ice_clk_src {
-	ICE_CLK_SRC_TCX0	= 0, /* Temperature compensated oscillator  */
+	ICE_CLK_SRC_TCXO	= 0, /* Temperature compensated oscillator  */
 	ICE_CLK_SRC_TIME_REF	= 1, /* Use TIME_REF reference clock */
 
 	NUM_ICE_CLK_SRC
 };
 
-enum ice_e825c_clk_synce {
-	ICE_E825C_CLK_SYNCE0,
-	ICE_E825C_CLK_SYNCE1,
-	ICE_E825C_CLK_SYNCE_NUM,
+enum ice_synce_clk {
+	ICE_SYNCE_CLK0,
+	ICE_SYNCE_CLK1,
+	ICE_SYNCE_CLK_NUM,
 };
 
 struct ice_ts_func_info {
 	/* Function specific info */
-	enum ice_time_ref_freq time_ref;
+	enum ice_tspll_freq time_ref;
 	u8 clk_src : 1;
 	u8 tmr_index_assoc : 1;
 	u8 ena : 1;
@@ -836,7 +849,8 @@ enum ice_pcie_bus_speed {
 	ice_pcie_speed_2_5GT	= 0x14,
 	ice_pcie_speed_5_0GT	= 0x15,
 	ice_pcie_speed_8_0GT	= 0x16,
-	ice_pcie_speed_16_0GT	= 0x17
+	ice_pcie_speed_16_0GT	= 0x17,
+	ice_pcie_speed_32_0GT	= 0x18,
 };
 
 /* PCI bus widths */
@@ -1337,7 +1351,7 @@ struct ice_mbx_data {
 
 struct ice_eth56g_params {
 	u8 num_phys;
-	u8 phy_addr[2];		/* PHY address */
+	u8 lane_num;
 	bool onestep_ena;
 	bool sfd_ena;
 	u32 peer_delay;
@@ -1351,8 +1365,17 @@ union ice_phy_params {
 enum ice_phy_model {
 	ICE_PHY_UNSUP = -1,
 	ICE_PHY_E82X = 1,
-	ICE_PHY_E810,
 	ICE_PHY_ETH56G,
+	ICE_PHY_E810,
+	ICE_PHY_E830,
+};
+
+/* Global Link Topology */
+enum ice_global_link_topo {
+	ICE_LINK_TOPO_UP_TO_2_LINKS,
+	ICE_LINK_TOPO_UP_TO_4_LINKS,
+	ICE_LINK_TOPO_UP_TO_8_LINKS,
+	ICE_LINK_TOPO_RESERVED,
 };
 
 struct ice_ptp_hw {
@@ -1361,11 +1384,12 @@ struct ice_ptp_hw {
 	u8 num_lports;
 	u8 ports_per_phy;
 	enum ice_src_tmr_mode src_tmr_mode;
-	enum ice_time_ref_freq time_ref_freq;
+	enum ice_tspll_freq tspll_freq;
 	enum ice_clk_src clk_src;
-	u32 ts_pll_lock_retries;
-	bool primary_nac;
-	struct ice_hw *primary_hw;
+	u32 tspll_lock_retries;
+	struct ice_hw *primary_nac_hw;
+	u16 io_expander_handle;
+	u8 cgu_part_number;
 };
 
 /* Port hardware description */
@@ -1466,7 +1490,6 @@ struct ice_hw {
 	u32 pkg_seg_id;
 	u32 pkg_sign_type;
 	u32 active_track_id;
-	u8 pkg_has_signing_seg:1;
 	u8 active_pkg_name[ICE_PKG_NAME_SIZE];
 	u8 active_pkg_in_nvm;
 
@@ -1519,8 +1542,6 @@ struct ice_hw {
 	struct ice_mbx_snapshot mbx_snapshot;
 	DECLARE_BITMAP(hw_ptype, ICE_FLOW_PTYPE_MAX);
 	u8 dvm_ena;
-	u16 io_expander_handle;
-	u8 cgu_part_number;
 
 	bool subscribable_recipes_supported;
 };
@@ -1623,8 +1644,8 @@ enum ice_sw_fwd_act_type {
 
 struct ice_aq_get_set_rss_lut_params {
 	u16 vsi_handle;		/* software VSI handle */
-	u16 lut_size;		/* size of the LUT buffer */
-	u8 lut_type;		/* type of the LUT (i.e. VSI, PF, Global) */
+	enum ice_lut_size lut_size; /* size of the LUT buffer */
+	enum ice_lut_type lut_type; /* type of the LUT (i.e. VSI, PF, Global) */
 	u8 *lut;		/* input RSS LUT for set and output RSS LUT for get */
 	u8 global_lut_id;	/* only valid when lut_type is global */
 };
@@ -1768,8 +1789,6 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_FW_API_LINK_OVERRIDE_PATCH		2
 
 #define ICE_PBA_FLAG_DFLT		0xFAFA
-/* Hash redirection LUT for VSI - maximum array size */
-#define ICE_VSIQF_HLUT_ARRAY_SIZE	((VSIQF_HLUT_MAX_INDEX + 1) * 4)
 
 /*
  * Defines for values in the VF_PE_DB_SIZE bits in the GLPCI_LBARCTRL register.

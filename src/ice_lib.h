@@ -148,6 +148,7 @@ void ice_vsi_ctx_clear_antispoof(struct ice_vsi_ctx *ctx);
 #endif /* HAVE_METADATA_PORT_INFO */
 void ice_vsi_ctx_set_allow_override(struct ice_vsi_ctx *ctx);
 void ice_vsi_ctx_clear_allow_override(struct ice_vsi_ctx *ctx);
+int ice_vsi_update_local_lb(struct ice_vsi *vsi, bool set);
 #ifndef HAVE_NETDEV_MIN_MAX_MTU
 int ice_check_mtu_valid(struct net_device *netdev, int new_mtu);
 #endif /* !HAVE_NETDEV_MIN_MAX_MTU */
@@ -166,5 +167,5 @@ int ice_vsi_alloc_rss_global_lut(struct ice_vsi *vsi);
 ssize_t
 ice_vsi_alloc_rss_lut(struct ice_hw *hw, struct device *dev,
 		      struct ice_vsi *vsi, const char *buf, size_t count);
-u16 ice_lut_type_to_qs_num(u16 lut_type);
+u16 ice_lut_type_to_qs_num(enum ice_lut_type lut_type);
 #endif /* !_ICE_LIB_H_ */

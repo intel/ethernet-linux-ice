@@ -167,7 +167,6 @@
 #define NEED_DEVLINK_REGION_CREATE_OPS
 #define NEED_CPU_LATENCY_QOS_RENAME
 #else /* >= 5.7.0 */
-#define HAVE_PTP_FIND_PIN_UNLOCKED
 #endif /* 5.7.0 */
 
 /*****************************************************************************/
@@ -190,7 +189,6 @@
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0))
 #define NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY
-#define NEED_XSK_BUFF_DMA_SYNC_FOR_CPU
 #define NEED_XSK_BUFF_POOL_RENAME
 #else /* >= 5.10.0 */
 #define HAVE_UDP_TUNNEL_NIC_SHARED

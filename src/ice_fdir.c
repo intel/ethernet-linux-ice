@@ -5,11 +5,7 @@
 #include "ice_fdir.h"
 
 /* These are training packet headers used to program flow director filters. */
-static const u8 ice_fdir_eth_pkt[] = {
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
+static const u8 ice_fdir_eth_pkt[22] = { 0x00 };
 
 static const u8 ice_fdir_tcpv4_pkt[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -4031,19 +4027,18 @@ ice_fdir_get_gen_prgm_pkt(struct ice_hw *hw, struct ice_fdir_fltr *input,
 	 */
 	switch (flow) {
 	case ICE_FLTR_PTYPE_NONF_ETH:
-		ice_pkt_insert_mac_addr(loc, input->eth.dst);
-		ice_pkt_insert_mac_addr(loc + ETH_ALEN, input->eth.src);
-		if (input->ext_data.vlan_tag ||
-		    input->ext_data.vlan_type) {
+		ice_pkt_insert_mac_addr(loc, input->eth.h_dest);
+		ice_pkt_insert_mac_addr(loc + ETH_ALEN, input->eth.h_source);
+		if (input->ext_data.vlan_tag || input->ext_data.vlan_type) {
 			ice_pkt_insert_u16(loc, ICE_ETH_TYPE_F_OFFSET,
 					   input->ext_data.vlan_type);
 			ice_pkt_insert_u16(loc, ICE_ETH_VLAN_TCI_OFFSET,
 					   input->ext_data.vlan_tag);
 			ice_pkt_insert_u16(loc, ICE_ETH_TYPE_VLAN_OFFSET,
-					   input->eth.type);
+					   input->eth.h_proto);
 		} else {
 			ice_pkt_insert_u16(loc, ICE_ETH_TYPE_F_OFFSET,
-					   input->eth.type);
+					   input->eth.h_proto);
 		}
 		break;
 	case ICE_FLTR_PTYPE_NONF_IPV4_TCP:

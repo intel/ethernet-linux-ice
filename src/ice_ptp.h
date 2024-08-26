@@ -12,39 +12,12 @@
 #include "kcompat_kthread.h"
 #include "ice_ptp_hw.h"
 
-enum ice_ptp_pin_e82x {
-	TIME_SYNC_PIN_INDEX = 4,
-	PPS_PIN_INDEX
-};
-
 /* DPLL REF_SW state */
 enum ice_dpll_ref_sw_state {
 	ICE_DPLL_REF_SW_DISABLE,
 	ICE_DPLL_REF_SW_ENABLE,
 	NUM_ICE_DPLL_REF_SW_STATE,
 };
-
-enum ice_ptp_pin_e810 {
-	GPIO_20 = 0,
-	GPIO_21,
-	GPIO_22,
-	GPIO_23,
-	NUM_PTP_PIN_E810,
-	NO_GPIO,
-};
-
-enum ice_ptp_pin_e810t {
-	GNSS = 0,
-	SMA1,
-	UFL1,
-	SMA2,
-	UFL2,
-	NUM_PTP_PINS_E810T,
-	GPIO_NA = ICE_AQC_NVM_SDP_CFG_PIN_SIZE - 1,
-	NO_PTP_PIN
-};
-
-#define N_CHAN_E810			3
 
 #define E82X_CGU_RCLK_PHY_PINS_NUM	1
 #define E82X_CGU_RCLK_PIN_NAME		"NAC_CLK_SYNCE0_PN"
@@ -57,19 +30,6 @@ enum ice_ptp_pin_e810t {
 #define ICE_DPLL_PIN_STATE_INVALID	"invalid"
 #define ICE_DPLL_PIN_STATE_VALIDATING	"validating"
 #define ICE_DPLL_PIN_STATE_VALID	"valid"
-
-struct ice_perout_channel {
-	bool ena;
-	u32 gpio_pin;
-	u64 period;
-	u64 start_time;
-};
-
-struct ice_extts_channel {
-	bool ena;
-	u32 gpio_pin;
-	u32 flags;
-};
 
 /* The ice hardware captures Tx hardware timestamps in the PHY. The timestamp
  * is stored in a buffer of registers. Depending on the specific hardware,
@@ -157,28 +117,6 @@ enum ice_tx_tstamp_work {
 };
 
 /**
- * struct ice_ptp_pin_desc - hardware pin description data
- * @pin_name_idx: index of the name of pin in ice_pin_names_e810t
- * @index: index of pin in pin_config interface
- * @func: the initial function assigned to the pin at load
- * @chan: the matching channel assigned to this pin
- * @gpio_out: the associated output GPIO pin
- * @gpio_in: the associated input GPIO pin
- *
- * Structure describing a PTP-capable GPIO pin. Used to setup the ptp_pin_desc
- * array for the device. Device families have separate sets of available pins
- * with varying restrictions.
- */
-struct ice_ptp_pin_desc {
-	u8 pin_name_idx;
-	int index;
-	unsigned int func;
-	unsigned int chan;
-	int gpio_out;
-	int gpio_in;
-};
-
-/**
  * struct ice_ptp_tx - Tracking structure for all Tx timestamp requests on a port
  * @lock: lock to prevent concurrent access to fields of this struct
  * @tstamps: array of len to store outstanding requests
@@ -208,10 +146,9 @@ struct ice_ptp_tx {
 };
 
 /* Quad and port information for initializing timestamp blocks */
-#define INDEX_PER_QUAD			64
-#define INDEX_PER_PORT_E82X		16
-#define INDEX_PER_PORT_E810		64
-#define INDEX_PER_PORT_ETH56G		64
+#define INDEX_PER_QUAD		64
+#define INDEX_PER_PORT_E82X	16
+#define INDEX_PER_PORT		64
 
 /**
  * struct ice_ptp_port - data used to initialize an external port for PTP
@@ -229,6 +166,7 @@ struct ice_ptp_tx {
  * @tx_fifo_busy_cnt: number of times the Tx FIFO was busy
  * @port_num: the port number this structure represents
  * @tx_clk: Tx reference clock source
+ * @tx_clk_prev: previously set Tx reference clock source
  */
 struct ice_ptp_port {
 	struct list_head list_member;
@@ -241,10 +179,8 @@ struct ice_ptp_port {
 	u8 port_num;
 	u8 rx_calibrating : 1;
 	enum ice_e825c_ref_clk tx_clk;
+	enum ice_e825c_ref_clk tx_clk_prev;
 };
-
-#define GLTSYN_TGT_H_IDX_MAX		4
-#define GLTSYN_EVNT_H_IDX_MAX		3
 
 enum ice_ptp_state {
 	ICE_PTP_UNINIT = 0,
@@ -258,6 +194,60 @@ enum ice_ptp_tx_interrupt {
 	ICE_PTP_TX_INTERRUPT_NONE = 0,
 	ICE_PTP_TX_INTERRUPT_SELF,
 	ICE_PTP_TX_INTERRUPT_ALL,
+};
+
+enum ice_ptp_pin {
+	SDP0 = 0,
+	SDP1,
+	SDP2,
+	SDP3,
+	TIME_SYNC,
+	ONE_PPS,
+};
+
+/* Those enum values are shared with NVM, hence non-contiguous values */
+enum ice_ptp_pin_nvm {
+	GNSS = 0,
+	SMA1,
+	UFL1,
+	SMA2,
+	UFL2,
+	NUM_PTP_PINS_NVM,
+	GPIO_NA = 9
+};
+
+/* Per-channel register definitions */
+#define GLTSYN_AUX_OUT(_chan, _idx)	(GLTSYN_AUX_OUT_0(_idx) + ((_chan) * 8))
+#define GLTSYN_AUX_IN(_chan, _idx)	(GLTSYN_AUX_IN_0(_idx) + ((_chan) * 8))
+#define GLTSYN_CLKO(_chan, _idx)	(GLTSYN_CLKO_0(_idx) + ((_chan) * 8))
+#define GLTSYN_TGT_L(_chan, _idx)	(GLTSYN_TGT_L_0(_idx) + ((_chan) * 16))
+#define GLTSYN_TGT_H(_chan, _idx)	(GLTSYN_TGT_H_0(_idx) + ((_chan) * 16))
+#define GLTSYN_TGT_H_IDX_MAX		4
+#define GLTSYN_EVNT_L(_chan, _idx)	(GLTSYN_EVNT_L_0(_idx) + ((_chan) * 16))
+#define GLTSYN_EVNT_H(_chan, _idx)	(GLTSYN_EVNT_H_0(_idx) + ((_chan) * 16))
+#define GLTSYN_EVNT_H_IDX_MAX		3
+
+/* Pin definitions for PTP */
+#define ICE_N_PINS_MAX			6
+#define ICE_SMA_PINS_NUM		4
+#define ICE_PIN_DESC_ARR_LEN(_arr)	(sizeof(_arr) / \
+					 sizeof(struct ice_ptp_pin_desc))
+#define MAX_PIN_NAME			15
+#define	ICE_PTP_PIN_FREQ_1HZ		1
+#define	ICE_PTP_PIN_FREQ_10MHZ		10000000
+
+/**
+ * struct ice_ptp_pin_desc - hardware pin description data
+ * @name_idx: index of the name of pin in ice_pin_names
+ * @gpio: the associated GPIO input and output pins
+ *
+ * Structure describing a PTP-capable GPIO pin that extends ptp_pin_desc array
+ * for the device. Device families have separate sets of available pins with
+ * varying restrictions.
+ */
+struct ice_ptp_pin_desc {
+	int name_idx;
+	int gpio[2];
 };
 
 /**
@@ -291,16 +281,14 @@ struct ice_ptp_port_owner {
  * @ports_owner: data for the auxiliary driver owner
  * @cached_phc_time: a cached copy of the PHC time for timestamp extension
  * @cached_phc_jiffies: jiffies when cached_phc_time was last updated
- * @ext_ts_chan: the external timestamp channel in use
  * @ext_ts_irq: the external timestamp IRQ in use
- * @perout_channels: periodic output data
- * @extts_channels: channels for external timestamps
+ * @pin_desc: structure defining pins
+ * @ice_pin_desc: internal structure describing pin relations
+ * @perout_rqs: cached periodic output requests
+ * @extts_rqs: cached external timestamp requests
  * @info: structure defining PTP hardware capabilities
  * @clock: pointer to registered PTP clock device
  * @tstamp_config: hardware timestamping configuration
- * @sdp_section_exist: true if exists
- * @ice_pin_desc: structure defining pins
- * @ice_pin_desc_num: how many pin_desc structs
  * @phy_kobj: pointer to phy sysfs object
  * @reset_time: kernel time after clock stop on reset
  * @tx_hwtstamp_skipped: number of Tx time stamp requests skipped
@@ -317,16 +305,15 @@ struct ice_ptp {
 	struct ice_ptp_port_owner ports_owner;
 	u64 cached_phc_time;
 	unsigned long cached_phc_jiffies;
-	u8 ext_ts_chan;
 	u8 ext_ts_irq;
-	struct ice_perout_channel perout_channels[GLTSYN_TGT_H_IDX_MAX];
-	struct ice_extts_channel extts_channels[GLTSYN_EVNT_H_IDX_MAX];
+	u8 first_pin_idx;
+	struct ptp_pin_desc pin_desc[ICE_N_PINS_MAX];
+	const struct ice_ptp_pin_desc *ice_pin_desc;
+	struct ptp_perout_request perout_rqs[GLTSYN_TGT_H_IDX_MAX];
+	struct ptp_extts_request extts_rqs[GLTSYN_EVNT_H_IDX_MAX];
 	struct ptp_clock_info info;
 	struct ptp_clock *clock;
 	struct hwtstamp_config tstamp_config;
-	bool sdp_section_exist;
-	struct ice_ptp_pin_desc *ice_pin_desc;
-	u8 ice_pin_desc_num;
 	struct kobject *phy_kobj;
 	struct kobject *ptp_802_3cx_kobj;
 	u64 reset_time;
@@ -373,50 +360,12 @@ static inline int ice_ptp_get_seq_id(struct sk_buff *skb)
 	return be16_to_cpu(hdr->sequence_id);
 }
 
-#define MAC_RX_LINK_COUNTER(_port)	(0x600090 + 0x1000 * (_port))
-#define PFTSYN_SEM_BYTES		4
-#define PTP_SHARED_CLK_IDX_VALID	BIT(31)
-#define PHY_TIMER_SELECT_VALID_BIT	0
-#define PHY_TIMER_SELECT_BIT		1
-#define PHY_TIMER_SELECT_MASK		0xFFFFFFFC
-#define TS_CMD_MASK_EXT			0xFF
-#define TS_CMD_MASK			0xF
 #define SYNC_EXEC_CMD			0x3
 #define ICE_PTP_TS_VALID		BIT(0)
 #define FIFO_EMPTY			BIT(2)
 #define FIFO_OK				0xFF
 #define ICE_PTP_FIFO_NUM_CHECKS		5
 #define TX_INTR_QUAD_MASK		0x1Fu
-/* Per-channel register definitions */
-#define GLTSYN_AUX_OUT(_chan, _idx)	(GLTSYN_AUX_OUT_0(_idx) + ((_chan) * 8))
-#define GLTSYN_AUX_IN(_chan, _idx)	(GLTSYN_AUX_IN_0(_idx) + ((_chan) * 8))
-#define GLTSYN_CLKO(_chan, _idx)	(GLTSYN_CLKO_0(_idx) + ((_chan) * 8))
-#define GLTSYN_TGT_L(_chan, _idx)	(GLTSYN_TGT_L_0(_idx) + ((_chan) * 16))
-#define GLTSYN_TGT_H(_chan, _idx)	(GLTSYN_TGT_H_0(_idx) + ((_chan) * 16))
-#define GLTSYN_EVNT_L(_chan, _idx)	(GLTSYN_EVNT_L_0(_idx) + ((_chan) * 16))
-#define GLTSYN_EVNT_H(_chan, _idx)	(GLTSYN_EVNT_H_0(_idx) + ((_chan) * 16))
-#define GLTSYN_EVNT_H_IDX_MAX		3
-
-/* Pin definitions for PTP PPS out */
-#define PPS_CLK_GEN_CHAN		3
-#define N_EXT_TS_E810			3
-#define N_PER_OUT_E810			4
-#define N_PER_OUT_E810T			3
-#define N_PER_OUT_NO_SMA_E810T		2
-#define N_EXT_TS_NO_SMA_E810T		2
-/* Macros to derive the low and high addresses for PHY */
-#define LOWER_ADDR_SIZE			16
-/* Macros to derive offsets for TimeStampLow and TimeStampHigh */
-#define PORT_TIMER_ASSOC(_i)		(0x0300102C + ((_i) * 256))
-#define ETH_GLTSYN_ENA(_i)		(0x03000348 + ((_i) * 4))
-
-#define MAX_PIN_NAME			15
-
-#define	ICE_PTP_PIN_FREQ_1HZ		1
-#define	ICE_PTP_PIN_FREQ_10MHZ		10000000
-
-/* Time allowed for programming periodic clock output */
-#define START_OFFS_NS 100000000
 
 #define ICE_PTP_PIN_INVALID		0xFF
 
@@ -453,6 +402,7 @@ void ice_ptp_restore_timestamp_mode(struct ice_pf *pf);
 void ice_ptp_extts_event(struct ice_pf *pf);
 s8 ice_ptp_request_ts(struct ice_ptp_tx *tx, struct sk_buff *skb);
 enum ice_tx_tstamp_work ice_ptp_process_ts(struct ice_pf *pf);
+irqreturn_t ice_ptp_ts_irq(struct ice_pf *pf);
 void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx);
 void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx);
 
@@ -466,9 +416,9 @@ void
 ice_ptp_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type);
 void ice_ptp_init(struct ice_pf *pf);
 void ice_ptp_release(struct ice_pf *pf);
-void ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup);
+void ice_ptp_link_change(struct ice_pf *pf, bool linkup);
 int ice_ptp_check_rx_fifo(struct ice_pf *pf, u8 port);
-int ice_ptp_update_incval(struct ice_pf *pf, enum ice_time_ref_freq time_ref_freq,
+int ice_ptp_update_incval(struct ice_pf *pf, enum ice_tspll_freq tspll_freq,
 			  enum ice_src_tmr_mode src_tmr_mode);
 void ice_dpll_pin_idx_to_name(struct ice_pf *pf, u8 pin, char *pin_name);
 int ice_ptp_phy_restart(struct ice_pf *pf);
@@ -504,6 +454,11 @@ static inline bool ice_ptp_process_ts(struct ice_pf *pf)
 	return true;
 }
 
+static inline irqreturn_t ice_ptp_ts_irq(struct ice_pf *pf)
+{
+	return IRQ_HANDLED;
+}
+
 static inline void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 { }
 
@@ -525,7 +480,7 @@ static inline void ice_ptp_prepare_for_reset(struct ice_pf *pf,
 
 static inline void ice_ptp_init(struct ice_pf *pf) { }
 static inline void ice_ptp_release(struct ice_pf *pf) { }
-static inline void ice_ptp_link_change(struct ice_pf *pf, u8 port, bool linkup)
+static inline void ice_ptp_link_change(struct ice_pf *pf, bool linkup)
 {
 }
 static inline int ice_ptp_clock_index(struct ice_pf *pf)

@@ -157,8 +157,10 @@ static struct netdev_queue *txring_txq(const struct ice_tx_ring *ring)
 /**
  * ice_clean_tx_ring - Free any empty Tx buffers
  * @tx_ring: ring to be cleaned
+ * @tstamp_ring: tstamp_ring to be cleaned
  */
-void ice_clean_tx_ring(struct ice_tx_ring *tx_ring)
+void ice_clean_tx_ring(struct ice_tx_ring *tx_ring,
+		       struct ice_tx_ring *tstamp_ring)
 {
 	u32 size;
 	u16 i;
@@ -192,6 +194,15 @@ tx_skip_free:
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
 
+	/* clean tstamp ring */
+	if (tstamp_ring) {
+		size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+			     PAGE_SIZE);
+		memset(tstamp_ring->desc, 0, size);
+		tstamp_ring->next_to_use = 0;
+		tstamp_ring->next_to_clean = 0;
+	}
+
 	if (!tx_ring->netdev)
 		return;
 
@@ -202,14 +213,16 @@ tx_skip_free:
 /**
  * ice_free_tx_ring - Free Tx resources per queue
  * @tx_ring: Tx descriptor ring for a specific queue
+ * @tstamp_ring: tstamp ring tied to tx ring
  *
  * Free all transmit software resources
  */
-void ice_free_tx_ring(struct ice_tx_ring *tx_ring)
+void ice_free_tx_ring(struct ice_tx_ring *tx_ring,
+		      struct ice_tx_ring *tstamp_ring)
 {
 	u32 size;
 
-	ice_clean_tx_ring(tx_ring);
+	ice_clean_tx_ring(tx_ring, tstamp_ring);
 	devm_kfree(tx_ring->dev, tx_ring->tx_buf);
 	tx_ring->tx_buf = NULL;
 
@@ -219,6 +232,14 @@ void ice_free_tx_ring(struct ice_tx_ring *tx_ring)
 		dmam_free_coherent(tx_ring->dev, size,
 				   tx_ring->desc, tx_ring->dma);
 		tx_ring->desc = NULL;
+	}
+
+	if (tstamp_ring && tstamp_ring->desc) {
+		size = ALIGN(tstamp_ring->count * sizeof(struct ice_tx_desc),
+			     PAGE_SIZE);
+		dmam_free_coherent(tstamp_ring->dev, size,
+				   tstamp_ring->desc, tstamp_ring->dma);
+		tstamp_ring->desc = NULL;
 	}
 }
 
@@ -368,6 +389,37 @@ static bool ice_clean_tx_irq(struct ice_tx_ring *tx_ring, int napi_budget)
 	}
 
 	return !!budget;
+}
+
+/**
+ * ice_setup_tstamp_ring - Allocate the Time Stamp ring
+ * @tstamp_ring: the time stamp ring to set up
+ *
+ * Return 0 on success, negative on error
+ */
+int ice_setup_tstamp_ring(struct ice_tx_ring *tstamp_ring)
+{
+	struct device *dev = tstamp_ring->dev;
+	u32 size;
+
+	if (!dev)
+		return -ENOMEM;
+
+	/* round up to nearest page */
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	tstamp_ring->desc = dmam_alloc_coherent(dev, size, &tstamp_ring->dma,
+						GFP_KERNEL);
+
+	if (!tstamp_ring->desc) {
+		dev_err(dev, "Unable to allocate memory for Timstamp Ring, size=%d\n",
+			size);
+		return -ENOMEM;
+	}
+
+	tstamp_ring->next_to_use = 0;
+	tstamp_ring->next_to_clean = 0;
+	return 0;
 }
 
 /**
@@ -613,7 +665,7 @@ ice_alloc_mapped_skb(struct ice_rx_ring *rx_ring, struct ice_rx_buf *bi)
 	if (unlikely(skb))
 		return true;
 
-	/* must not call __napi_alloc_skb with preemption enabled */
+	/* must not call napi_alloc_skb with preemption enabled */
 	preempt_disable();
 
 	/* there is one case where ethtool loopback test doesn't populate
@@ -623,9 +675,8 @@ ice_alloc_mapped_skb(struct ice_rx_ring *rx_ring, struct ice_rx_buf *bi)
 		skb = __netdev_alloc_skb(rx_ring->netdev, rx_ring->rx_buf_len,
 					 GFP_ATOMIC | __GFP_NOWARN);
 	else
-		skb = __napi_alloc_skb(&rx_ring->q_vector->napi,
-				       rx_ring->rx_buf_len,
-				       GFP_ATOMIC | __GFP_NOWARN);
+		skb = napi_alloc_skb(&rx_ring->q_vector->napi,
+				     rx_ring->rx_buf_len);
 	if (unlikely(!skb)) {
 		rx_ring->ring_stats->rx_stats.alloc_buf_failed++;
 		preempt_enable();
@@ -1283,7 +1334,7 @@ ice_build_skb(struct ice_rx_ring *rx_ring, struct ice_rx_buf *rx_buf,
 	net_prefetch(xdp->data);
 #endif /* HAVE_XDP_BUFF_DATA_META */
 	/* build an skb around the page buffer */
-	skb = build_skb(xdp->data_hard_start, truesize);
+	skb = napi_build_skb(xdp->data_hard_start, truesize);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -1328,8 +1379,7 @@ ice_construct_skb(struct ice_rx_ring *rx_ring, struct ice_rx_buf *rx_buf,
 	net_prefetch(xdp->data);
 
 	/* allocate a skb to store the frags */
-	skb = __napi_alloc_skb(&rx_ring->q_vector->napi, ICE_RX_HDR_SIZE,
-			       GFP_ATOMIC | __GFP_NOWARN);
+	skb = napi_alloc_skb(&rx_ring->q_vector->napi, ICE_RX_HDR_SIZE);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -2693,6 +2743,7 @@ static int ice_maybe_stop_tx(struct ice_tx_ring *tx_ring, unsigned int size)
 /**
  * ice_tx_map - Build the Tx descriptor
  * @tx_ring: ring to send buffer on
+ * @tstamp_ring: ring tied to tx_ring
  * @first: first buffer info buffer to use
  * @off: pointer to struct that holds offload parameters
  *
@@ -2702,7 +2753,7 @@ static int ice_maybe_stop_tx(struct ice_tx_ring *tx_ring, unsigned int size)
  */
 static void
 ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
-	   struct ice_tx_offload_params *off)
+	   struct ice_tx_ring *tstamp_ring, struct ice_tx_offload_params *off)
 {
 	u64 td_offset, td_tag, td_cmd;
 	u16 i = tx_ring->next_to_use;
@@ -2824,7 +2875,32 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 				      netdev_xmit_more());
 	if (kick) {
 		/* notify HW of packet */
-		writel_relaxed(i, tx_ring->tail);
+		if (tx_ring->flags & ICE_TX_FLAGS_TXTIME) {
+			struct ice_ts_desc *ts_desc;
+			struct timespec64 ts;
+			u32 tstamp;
+
+			ts = ktime_to_timespec64(first->skb->tstamp);
+
+			/* 8us time stamp resolution to insert in 19bit
+			 * ts_desc field
+			 */
+			tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_8US;
+
+			ts_desc = ICE_TS_DESC(tstamp_ring,
+					      tstamp_ring->next_to_use);
+			ts_desc->tx_desc_idx_tstamp =
+					ice_build_tstamp_desc(i, tstamp);
+
+			tstamp_ring->next_to_use++;
+			if (tstamp_ring->next_to_use == tx_ring->count)
+				tstamp_ring->next_to_use = 0;
+
+			writel_relaxed(tstamp_ring->next_to_use,
+				       tstamp_ring->tail);
+		} else {
+			writel_relaxed(i, tx_ring->tail);
+		}
 #ifndef SPIN_UNLOCK_IMPLIES_MMIOWB
 
 		/* we need this if more than one processor can write to our tail
@@ -2861,11 +2937,10 @@ dma_error:
 static
 int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 {
-#if defined(ICE_ADD_PROBES)
-	struct ice_tx_ring *tx_ring = off->tx_ring;
-#endif /* ICE_ADD_PROBES */
+	const struct ice_tx_ring *tx_ring = off->tx_ring;
 	u32 l4_len = 0, l3_len = 0, l2_len = 0;
 	struct sk_buff *skb = first->skb;
+	const unsigned char *exthdr;
 	union {
 		struct iphdr *v4;
 		struct ipv6hdr *v6;
@@ -2876,8 +2951,11 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 		unsigned char *hdr;
 	} l4;
 	__be16 frag_off, protocol;
-	unsigned char *exthdr;
 	u32 offset, cmd = 0;
+	u16 cso_params = 0;
+#if defined(ICE_ADD_PROBES)
+	u8 tx_ip4_cso = 0;
+#endif /* ICE_ADD_PROBES */
 	u8 l4_proto = 0;
 
 	if (skb->ip_summed != CHECKSUM_PARTIAL)
@@ -2944,7 +3022,7 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 
 #ifdef ICE_ADD_PROBES
 		if (protocol == htons(ETH_P_IP))
-			tx_ring->vsi->back->tx_ip4_cso++;
+			tx_ip4_cso++;
 #endif
 		/* compute outer L3 header size */
 		tunnel |= ((l4.hdr - ip.hdr) / 4) <<
@@ -2993,7 +3071,7 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 		 */
 
 #ifdef ICE_ADD_PROBES
-		tx_ring->vsi->back->tx_ip4_cso++;
+		tx_ip4_cso++;
 #endif
 		if (first->tx_flags & ICE_TX_FLAGS_TSO)
 			cmd |= ICE_TX_DESC_CMD_IIPT_IPV4_CSUM;
@@ -3017,6 +3095,40 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 	/* compute inner L3 header size */
 	l3_len = l4.hdr - ip.hdr;
 	offset |= (l3_len / 4) << ICE_TX_DESC_LEN_IPLEN_S;
+
+#define TX_GCS_ENABLED	1
+	if (tx_ring->netdev->features & NETIF_F_HW_CSUM &&
+	    tx_ring->flags & ICE_TXRX_FLAGS_GCS_ENA &&
+	    !(first->tx_flags & ICE_TX_FLAGS_TSO) &&
+#ifdef HAVE_SKB_CSUM_IS_SCTP
+	    !skb_csum_is_sctp(skb)) {
+#else /* !HAVE_SKB_CSUM_IS_SCTP */
+	    l4_proto != IPPROTO_SCTP) {
+#endif /* HAVE_SKB_CSUM_IS_SCTP */
+		/* Set GCS */
+		cso_params |= ((skb->csum_start - skb->mac_header) / 2) <<
+			      ICE_TX_GCS_DESC_START;
+		cso_params |= (skb->csum_offset / 2) << ICE_TX_GCS_DESC_OFFSET;
+		/* Type is 1 for 16-bit TCP/UDP checksums w/ pseudo */
+		cso_params |= TX_GCS_ENABLED << ICE_TX_GCS_DESC_TYPE;
+
+		/* Unlike legacy HW checksums, GCS requires a context
+		 * descriptor.
+		 */
+		off->cd_qw1 |= (u64)(ICE_TX_DESC_DTYPE_CTX);
+		off->cd_gcs_params = cso_params;
+		/* Fill out CSO info in data descriptors */
+		off->td_offset |= offset;
+		off->td_cmd |= cmd;
+#ifdef ICE_ADD_PROBES
+		tx_ring->vsi->back->tx_gcs++;
+#endif /* ICE_ADD_PROBES */
+		return 1;
+	}
+
+#ifdef ICE_ADD_PROBES
+	tx_ring->vsi->back->tx_ip4_cso += tx_ip4_cso;
+#endif /* ICE_ADD_PROBES */
 
 	/* Enable L4 checksum offloads */
 	switch (l4_proto) {
@@ -3693,11 +3805,13 @@ ice_tstamp(struct ice_tx_ring *tx_ring, struct sk_buff *skb,
  * ice_xmit_frame_ring - Sends buffer on Tx ring
  * @skb: send buffer
  * @tx_ring: ring to send buffer on
+ * @tstamp_ring: ring tied to tx
  *
  * Returns NETDEV_TX_OK if sent, else an error code
  */
 static netdev_tx_t
-ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring)
+ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring,
+		    struct ice_tx_ring *tstamp_ring)
 {
 	struct ice_tx_offload_params offload = { 0 };
 	struct ice_vsi *vsi = tx_ring->vsi;
@@ -3789,14 +3903,14 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring)
 		/* setup context descriptor */
 		cdesc->tunneling_params = cpu_to_le32(offload.cd_tunnel_params);
 		cdesc->l2tag2 = cpu_to_le16(offload.cd_l2tag2);
-		cdesc->rsvd = cpu_to_le16(0);
+		cdesc->gcs = cpu_to_le16(offload.cd_gcs_params);
 		cdesc->qw1 = cpu_to_le64(offload.cd_qw1);
 	}
 
 	if (ice_tx_ring_ch_enabled(tx_ring))
 		ice_chnl_inline_fd(tx_ring, skb, first->tx_flags);
 
-	ice_tx_map(tx_ring, first, &offload);
+	ice_tx_map(tx_ring, first, tstamp_ring, &offload);
 	return NETDEV_TX_OK;
 
 out_drop:
@@ -3815,6 +3929,7 @@ out_drop:
 netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_tx_ring *tstamp_ring = NULL;
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_tx_ring *tx_ring;
 
@@ -3828,7 +3943,10 @@ netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	if (skb_put_padto(skb, ICE_MIN_TX_LEN))
 		return NETDEV_TX_OK;
 
-	return ice_xmit_frame_ring(skb, tx_ring);
+	if (tx_ring->flags & ICE_TX_FLAGS_TXTIME)
+		tstamp_ring = vsi->tstamp_rings[skb->queue_mapping];
+
+	return ice_xmit_frame_ring(skb, tx_ring, tstamp_ring);
 }
 
 /**

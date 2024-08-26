@@ -618,7 +618,7 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 	}
 
 	if (!phy_type_found || phy_type_multi) {
-		dev_err(ice_pf_to_dev(pf),
+		dev_dbg(ice_pf_to_dev(pf),
 			"ERROR: MULTIPLE_PHY_TYPE l=0x%llx h=0x%llx\n",
 			phy_cfg->phy_type_low, phy_cfg->phy_type_high);
 		return IEPS_PEER_MULTIPLE_PHY_TYPE;
@@ -841,6 +841,8 @@ ice_ieps_set_get_attr(struct ice_pf *pf, bool op_set,
 		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_phy_caps status=%d\n",
 			status);
 		pstatus = IEPS_PEER_FW_ERROR;
+	} else {
+		pf->ieps_lm_active = true;
 	}
 
 release_exit:
@@ -871,7 +873,7 @@ ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
 	sbq_msg.msg_addr_high = (rw->reg >> ICE_IEPS_SBQ_ADDR_HIGH_S) &
 				ICE_IEPS_SBQ_ADDR_HIGH_M;
 	if (rw->is_write) {
-		sbq_msg.opcode = ice_sbq_msg_wr;
+		sbq_msg.opcode = ice_sbq_msg_wr_p;
 		sbq_msg.data   = rw->data;
 	} else {
 		sbq_msg.opcode = ice_sbq_msg_rd;
@@ -940,6 +942,8 @@ ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
 		dev_err(ice_pf_to_dev(pf), "ERROR: lm port config status=%d\n",
 			status);
 		pstatus = IEPS_PEER_FW_ERROR;
+	} else {
+		pf->ieps_lm_active = !en_lesm;
 	}
 
 release_exit:

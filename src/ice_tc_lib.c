@@ -37,15 +37,16 @@ static bool ice_is_tunnel_fltr(struct ice_tc_flower_fltr *f)
 /**
  * ice_tc_count_lkups - determine lookup count for switch filter
  * @flags: TC-flower flags
- * @headers: Pointer to TC flower filter header structure
  * @fltr: Pointer to outer TC filter structure
  *
  * Determine lookup count based on TC flower input for switch filter.
  */
 static int
-ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
-		   struct ice_tc_flower_fltr *fltr)
+ice_tc_count_lkups(u32 flags, struct ice_tc_flower_fltr const *fltr)
 {
+#ifdef HAVE_FLOW_DISSECTOR_KEY_IP
+	struct ice_tc_flower_lyr_2_4_hdrs const *headers = &fltr->outer_headers;
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 	int lkups_cnt = 1; /* 0th lookup is metadata */
 
 	/* Always add metadata as the 0th lookup. Included elements:
@@ -53,6 +54,8 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 	 * - ICE_TC_FLWR_FIELD_VLAN_TPID (present if specified)
 	 * - Tunnel flag (present if tunnel)
 	 */
+	if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS)
+		lkups_cnt++;
 
 	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID)
 		lkups_cnt++;
@@ -80,6 +83,12 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 #endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
 	if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT)
 		lkups_cnt++;
+
+#ifdef HAVE_FLOW_DISSECTOR_KEY_IP
+	/* Encap is already checked, choose correct header */
+	if (fltr->tunnel_type != TNL_LAST)
+		headers = &fltr->inner_headers;
+#endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
 	if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID)
 		lkups_cnt++;
@@ -109,7 +118,9 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_lyr_2_4_hdrs *headers,
 		lkups_cnt++;
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_IP
-	if (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL))
+	if (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL) ||
+	    (headers->l2_key.n_proto == htons(ETH_P_IP) &&
+	     flags & ICE_TC_FLWR_FIELD_IP_PROTO))
 		lkups_cnt++;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
@@ -409,6 +420,11 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	/* Always add direction metadata */
 	ice_rule_add_direction_metadata(&list[ICE_TC_METADATA_LKUP_IDX]);
 
+	if (tc_fltr->direction == ICE_ESWITCH_FLTR_EGRESS) {
+		ice_rule_add_src_vsi_metadata(&list[i]);
+		i++;
+	}
+
 	rule_info->tun_type = ice_sw_type_from_tunnel(tc_fltr->tunnel_type);
 	if (tc_fltr->tunnel_type != TNL_LAST) {
 		i = ice_tc_fill_tunnel_outer(flags, tc_fltr, list, rule_info,
@@ -567,7 +583,8 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_IP
 	if (headers->l2_key.n_proto == htons(ETH_P_IP) &&
-	    (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL))) {
+	    (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL |
+		      ICE_TC_FLWR_FIELD_IP_PROTO))) {
 		list[i].type = ice_proto_type_from_ipv4(inner);
 
 		if (flags & ICE_TC_FLWR_FIELD_IP_TOS) {
@@ -580,6 +597,13 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 				headers->l3_key.ttl;
 			list[i].m_u.ipv4_hdr.time_to_live =
 				headers->l3_mask.ttl;
+		}
+
+		if (flags & ICE_TC_FLWR_FIELD_IP_PROTO) {
+			list[i].h_u.ipv4_hdr.protocol =
+				headers->l3_key.ip_proto;
+			list[i].m_u.ipv4_hdr.protocol =
+				headers->l3_mask.ip_proto;
 		}
 
 		i++;
@@ -793,7 +817,7 @@ ice_tc_setup_action(struct net_device *filter_dev,
 		   ice_tc_is_dev_uplink(target_dev)) {
 		struct ice_repr *repr = ice_netdev_to_repr(filter_dev);
 
-		fltr->dest_vsi = repr->src_vsi->back->switchdev.uplink_vsi;
+		fltr->dest_vsi = repr->src_vsi->back->eswitch.uplink_vsi;
 		fltr->direction = ICE_ESWITCH_FLTR_EGRESS;
 	} else if (ice_tc_is_dev_uplink(filter_dev) &&
 		   ice_is_port_repr_netdev(target_dev)) {
@@ -898,7 +922,6 @@ ice_eswitch_tc_parse_action(struct net_device *filter_dev,
 static int
 ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 {
-	struct ice_tc_flower_lyr_2_4_hdrs *headers = &fltr->outer_headers;
 	struct ice_adv_rule_info rule_info = { 0 };
 	struct ice_rule_query_data rule_added;
 	struct ice_hw *hw = &vsi->back->hw;
@@ -912,7 +935,7 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		return -EOPNOTSUPP;
 	}
 
-	lkups_cnt = ice_tc_count_lkups(flags, headers, fltr);
+	lkups_cnt = ice_tc_count_lkups(flags, fltr);
 	list = kcalloc(lkups_cnt, sizeof(*list), GFP_ATOMIC);
 	if (!list)
 		return -ENOMEM;
@@ -924,7 +947,9 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	}
 
 	rule_info.sw_act.fltr_act = fltr->action.fltr_act;
-	if (fltr->action.fltr_act != ICE_DROP_PACKET)
+
+	/* fltr->dest_vsi isn't set for ICE_DROP_PACKET action */
+	if (fltr->dest_vsi)
 		rule_info.sw_act.vsi_handle = fltr->dest_vsi->idx;
 	/* For now, making priority to be highest, and it also becomes
 	 * the priority for recipe which will get created as a result of
@@ -940,11 +965,22 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 		rule_info.sw_act.src = hw->pf_id;
 		rule_info.flags_info.act = ICE_SINGLE_ACT_LB_ENABLE;
 	} else if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS &&
-		   fltr->dest_vsi == vsi->back->switchdev.uplink_vsi) {
+		   fltr->dest_vsi == vsi->back->eswitch.uplink_vsi) {
 		/* VF to PF */
 		rule_info.sw_act.flag |= ICE_FLTR_TX;
 		rule_info.sw_act.src = vsi->idx;
 		rule_info.flags_info.act = ICE_SINGLE_ACT_LAN_ENABLE;
+		/* This is specific case. The destination VSI index is
+		 * overwritten by the source VSI index. This type of filter
+		 * should allow the packet to go to the LAN, not to the
+		 * VSI passed here. It should set LAN_EN bit only. However,
+		 * the value can't be incorrect. Setting source VSI index
+		 * here is safe. Even if the result from switch is set LAN_EN
+		 * and LB_EN (which normally will pass the packet to this VSI)
+		 * packet won't be seen on the VSI, because local loopback is
+		 * turned off.
+		 */
+		rule_info.sw_act.vsi_handle = vsi->idx;
 	} else {
 		/* VF to VF */
 		rule_info.sw_act.flag |= ICE_FLTR_TX;
@@ -957,6 +993,7 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 
 	/* specify the cookie as filter_rule_id */
 	rule_info.fltr_rule_id = fltr->cookie;
+	rule_info.src_vsi = vsi->idx;
 
 	ret = ice_add_adv_rule(hw, list, lkups_cnt, &rule_info, &rule_added);
 	if (ret == -EEXIST) {
@@ -1190,7 +1227,6 @@ int
 ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			   struct ice_tc_flower_fltr *tc_fltr)
 {
-	struct ice_tc_flower_lyr_2_4_hdrs *headers = &tc_fltr->outer_headers;
 	struct ice_adv_rule_info rule_info = {0};
 	struct ice_rule_query_data rule_added;
 	struct ice_rx_ring *rx_ring = NULL;
@@ -1225,7 +1261,7 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	if (ret)
 		return ret;
 
-	lkups_cnt = ice_tc_count_lkups(flags, headers, tc_fltr);
+	lkups_cnt = ice_tc_count_lkups(flags, tc_fltr);
 	list = kcalloc(lkups_cnt, sizeof(*list), GFP_ATOMIC);
 	if (!list)
 		return -ENOMEM;
@@ -1782,6 +1818,16 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 		 * header were already set by ice_parse_tunnel_attr
 		 */
 		headers = &fltr->inner_headers;
+	} else if (dissector->used_keys &
+		   (BIT(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS) |
+		    BIT(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS) |
+		    BIT(FLOW_DISSECTOR_KEY_ENC_KEYID) |
+		    BIT(FLOW_DISSECTOR_KEY_ENC_PORTS) |
+		    BIT(FLOW_DISSECTOR_KEY_ENC_IP) |
+		    BIT(FLOW_DISSECTOR_KEY_ENC_OPTS) |
+		    BIT(FLOW_DISSECTOR_KEY_ENC_CONTROL))) {
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Tunnel key used, but device isn't a tunnel");
+		return -EOPNOTSUPP;
 	} else {
 		fltr->tunnel_type = TNL_LAST;
 	}
@@ -1808,6 +1854,10 @@ ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
 
 		headers->l2_key.n_proto = cpu_to_be16(n_proto_key);
 		headers->l2_mask.n_proto = cpu_to_be16(n_proto_mask);
+
+		if (match.key->ip_proto)
+			fltr->flags |= ICE_TC_FLWR_FIELD_IP_PROTO;
+
 		headers->l3_key.ip_proto = match.key->ip_proto;
 		headers->l3_mask.ip_proto = match.mask->ip_proto;
 	}

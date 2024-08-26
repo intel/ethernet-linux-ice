@@ -679,15 +679,13 @@ void ice_free_cpu_rx_rmap(struct ice_vsi *vsi)
 int ice_set_cpu_rx_rmap(struct ice_vsi *vsi)
 {
 	struct net_device *netdev;
-	struct ice_pf *pf;
-	int base_idx, i;
+	int i;
 
 	if (!vsi || vsi->type != ICE_VSI_PF)
 		return 0;
 
-	pf = vsi->back;
 	netdev = vsi->netdev;
-	if (!pf || !netdev || !vsi->num_q_vectors)
+	if (!vsi->back || !netdev || !vsi->num_q_vectors)
 		return -EINVAL;
 
 	netdev_dbg(netdev, "Setup CPU RMAP: vsi type 0x%x, ifname %s, q_vectors %d\n",
@@ -697,10 +695,9 @@ int ice_set_cpu_rx_rmap(struct ice_vsi *vsi)
 	if (unlikely(!netdev->rx_cpu_rmap))
 		return -EINVAL;
 
-	base_idx = vsi->base_vector;
 	ice_for_each_q_vector(vsi, i)
 		if (irq_cpu_rmap_add(netdev->rx_cpu_rmap,
-				     ice_get_irq_num(pf, base_idx + i))) {
+				     vsi->q_vectors[i]->irq.virq)) {
 			ice_free_cpu_rx_rmap(vsi);
 			return -EINVAL;
 		}

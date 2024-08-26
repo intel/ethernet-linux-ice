@@ -1904,7 +1904,7 @@ ice_flow_find_prof_conds(struct ice_hw *hw, enum ice_block blk,
 				if (segs[i].hdrs != p->segs[i].hdrs ||
 				    ((conds & ICE_FLOW_FIND_PROF_CHK_FLDS) &&
 				     (bitmap_equal(segs[i].match, p->segs[i].match, ICE_FLOW_FIELD_IDX_MAX) ==
-				       false)))
+				      false)))
 					break;
 
 			/* A match is found if all segments are matched */
@@ -2176,7 +2176,6 @@ ice_flow_rem_entry_sync(struct ice_hw *hw, enum ice_block blk,
  * @hw: pointer to the HW struct
  * @blk: classification stage
  * @dir: flow direction
- * @prof_id: unique ID to identify this flow profile
  * @segs: array of one or more packet segments that describe the flow
  * @segs_cnt: number of packet segments provided
  * @acts: array of default actions
@@ -2187,17 +2186,24 @@ ice_flow_rem_entry_sync(struct ice_hw *hw, enum ice_block blk,
  */
 static int
 ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
-		       enum ice_flow_dir dir, u64 prof_id,
+		       enum ice_flow_dir dir,
 		       struct ice_flow_seg_info *segs, u8 segs_cnt,
 		       struct ice_flow_action *acts, u8 acts_cnt,
 		       struct ice_flow_prof **prof)
 {
 	struct ice_flow_prof_params *params;
+	struct ice_prof_id *ids;
 	int status;
+	u64 prof_id;
 	u8 i;
 
 	if (!prof || (acts_cnt && !acts))
 		return -EINVAL;
+
+	ids = &hw->blk[blk].prof_id;
+	prof_id = find_first_zero_bit(ids->id, ids->count);
+	if (prof_id >= (u64)ids->count)
+		return -ENOSPC;
 
 	params = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*params), GFP_KERNEL);
 	if (!params)
@@ -2258,6 +2264,7 @@ ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
 
 	INIT_LIST_HEAD(&params->prof->entries);
 	mutex_init(&params->prof->entries_lock);
+	set_bit(prof_id, ids->id);
 	*prof = params->prof;
 
 out:
@@ -2337,6 +2344,7 @@ ice_flow_rem_prof_sync(struct ice_hw *hw, enum ice_block blk,
 	/* Remove all hardware profiles associated with this flow profile */
 	status = ice_rem_prof(hw, blk, prof->id);
 	if (!status) {
+		clear_bit(prof->id, hw->blk[blk].prof_id.id);
 		list_del(&prof->l_entry);
 		mutex_destroy(&prof->entries_lock);
 		if (prof->acts)
@@ -2616,7 +2624,6 @@ free_params:
  * @hw: pointer to the HW struct
  * @blk: classification stage
  * @dir: flow direction
- * @prof_id: unique ID to identify this flow profile
  * @segs: array of one or more packet segments that describe the flow
  * @segs_cnt: number of packet segments provided
  * @acts: array of default actions
@@ -2625,7 +2632,7 @@ free_params:
  */
 int
 ice_flow_add_prof(struct ice_hw *hw, enum ice_block blk, enum ice_flow_dir dir,
-		  u64 prof_id, struct ice_flow_seg_info *segs, u8 segs_cnt,
+		  struct ice_flow_seg_info *segs, u8 segs_cnt,
 		  struct ice_flow_action *acts, u8 acts_cnt,
 		  struct ice_flow_prof **prof)
 {
@@ -2646,7 +2653,7 @@ ice_flow_add_prof(struct ice_hw *hw, enum ice_block blk, enum ice_flow_dir dir,
 
 	mutex_lock(&hw->fl_profs_locks[blk]);
 
-	status = ice_flow_add_prof_sync(hw, blk, dir, prof_id, segs, segs_cnt,
+	status = ice_flow_add_prof_sync(hw, blk, dir, segs, segs_cnt,
 					acts, acts_cnt, prof);
 	if (!status)
 		list_add(&(*prof)->l_entry, &hw->fl_profs[blk]);
@@ -2851,6 +2858,9 @@ ice_flow_acl_frmt_entry_fld(u16 fld, struct ice_flow_fld_info *info, u8 *buf,
 	if (mask != ICE_FLOW_FLD_OFF_INVAL)
 		use_mask = true;
 
+	if (WARN_ON_ONCE(src == ICE_FLOW_FLD_OFF_INVAL))
+		return;
+
 	for (k = 0; k < info->entry.last; k++, dst++) {
 		/* Add overflow bits from previous byte */
 		buf[dst] = FIELD_GET(0xff00, tmp_s);
@@ -2975,6 +2985,11 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 
 		for_each_set_bit(j, seg->match, (u16)ICE_FLOW_FIELD_IDX_MAX) {
 			struct ice_flow_fld_info *info = &seg->fields[j];
+
+			if (info->src.val == ICE_FLOW_FLD_OFF_INVAL) {
+				status = -EINVAL;
+				goto out;
+			}
 
 			if (info->type == ICE_FLOW_FLD_TYPE_RANGE)
 				ice_flow_acl_frmt_entry_range(j, info,
@@ -3836,12 +3851,12 @@ int ice_rem_vsi_rss_cfg(struct ice_hw *hw, u16 vsi_handle)
 		int ret;
 
 		/* check if vsig is already removed */
+
 		ret = ice_vsig_find_vsi(hw, blk,
 					ice_get_hw_vsi_num(hw, vsi_handle),
 					&vsig);
 		if (!ret && !vsig)
 			break;
-
 		if (test_bit(vsi_handle, p->vsis)) {
 			status = ice_flow_disassoc_prof(hw, blk, p, vsi_handle);
 			if (status)
@@ -3957,6 +3972,7 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 
 	rss_cfg = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*rss_cfg),
 			       GFP_KERNEL);
+
 	if (!rss_cfg)
 		return -ENOMEM;
 
@@ -3970,27 +3986,6 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 
 	return 0;
 }
-
-#define ICE_FLOW_PROF_HASH_S	0
-#define ICE_FLOW_PROF_HASH_M	(0xFFFFFFFFULL << ICE_FLOW_PROF_HASH_S)
-#define ICE_FLOW_PROF_HDR_S	32
-#define ICE_FLOW_PROF_HDR_M	(0x3FFFFFFFULL << ICE_FLOW_PROF_HDR_S)
-#define ICE_FLOW_PROF_ENCAP_S	62
-#define ICE_FLOW_PROF_ENCAP_M	(0x3ULL << ICE_FLOW_PROF_ENCAP_S)
-
-/* Flow profile ID format:
- * [0:31] - Packet match fields
- * [32:61] - Protocol header
- * [62:63] - Encapsulation flag:
- *	     0 if non-tunneled
- *	     1 if tunneled
- *	     2 for tunneled with outer IPv4
- *	     3 for tunneled with outer IPv6
- */
-#define ICE_FLOW_GEN_PROFID(hash, hdr, encap)                                \
-	((u64)(((u64)(hash) & ICE_FLOW_PROF_HASH_M) |                        \
-	       FIELD_PREP(ICE_FLOW_PROF_HDR_M, hdr) | \
-	       FIELD_PREP(ICE_FLOW_PROF_ENCAP_M, (u64)(encap))))
 
 static void
 ice_rss_config_xor_word(struct ice_hw *hw, u8 prof_id, u8 src, u8 dst)
@@ -4301,13 +4296,8 @@ ice_add_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle,
 		goto exit;
 	}
 
-	/* Create a new flow profile with generated profile and packet
-	 * segment information.
-	 */
+	/* Create a new flow profile with packet segment information. */
 	status = ice_flow_add_prof(hw, blk, ICE_FLOW_RX,
-				   ICE_FLOW_GEN_PROFID(cfg->hash_flds,
-						       segs[segs_cnt - 1].hdrs,
-						       cfg->hdr_type),
 				   segs, segs_cnt, NULL, 0, &prof);
 	if (status)
 		goto exit;

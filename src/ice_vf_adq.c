@@ -465,7 +465,6 @@ int ice_vf_rebuild_adq_vsi(struct ice_vf *vf)
 		return -EINVAL;
 
 	for (tc = ICE_VF_CHNL_START_TC; tc < vf->num_tc; tc++) {
-		struct ice_vsi *vsi;
 		int ret;
 
 		if (!ice_vf_adq_vsi_valid(vf, tc))

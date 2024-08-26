@@ -200,6 +200,8 @@ static const struct ice_stats ice_gstrings_pf_stats[] = {
 	ICE_PF_STAT(ICE_PORT_TX_Q_VLANO, tx_q_vlano),
 	ICE_PF_STAT(ICE_PORT_RX_AD_VLANO, rx_ad_vlano),
 	ICE_PF_STAT(ICE_PORT_TX_AD_VLANO, tx_ad_vlano),
+	ICE_PF_STAT(ICE_PORT_RX_GCS, rx_gcs),
+	ICE_PF_STAT(ICE_PORT_TX_GCS, tx_gcs),
 #endif
 	ICE_PF_STAT(ICE_PORT_FDIR_SB_MATCH, stats.fd_sb_match),
 	ICE_PF_STAT(ICE_PORT_FDIR_SB_STATUS, stats.fd_sb_status),
@@ -261,7 +263,6 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 	ICE_PRIV_FLAG("legacy-rx", ICE_FLAG_LEGACY_RX),
 	/* Flag enable/disable monitoring DPLL Admin Queue error events */
 	ICE_PRIV_FLAG("dpll_monitor", ICE_FLAG_DPLL_MONITOR),
-	ICE_PRIV_FLAG("itu_g8262_filter_used", ICE_FLAG_ITU_G8262_FILTER_USED),
 	ICE_PRIV_FLAG("allow-no-fec-modules-in-auto",
 		      ICE_FLAG_ALLOW_FEC_DIS_AUTO),
 };
@@ -1382,7 +1383,7 @@ static u64 ice_intr_test(struct net_device *netdev)
 
 	netdev_info(netdev, "interrupt test\n");
 
-	wr32(&pf->hw, GLINT_DYN_CTL(pf->oicr_idx),
+	wr32(&pf->hw, GLINT_DYN_CTL(pf->oicr_irq.index),
 	     GLINT_DYN_CTL_SW_ITR_INDX_M |
 	     GLINT_DYN_CTL_INTENA_MSK_M |
 	     GLINT_DYN_CTL_SWINT_TRIG_M);
@@ -1541,21 +1542,26 @@ ice_get_xdp_tx_strings(struct ice_vsi *vsi, u8 **loc_in_buf)
 
 /**
  * ice_get_xdp_rx_stats - get stats for Rx rings if XDP is enabled
- * @xdp_stats: ptr to stats being updated
+ * @vsi: ptr to VSI
+ * @q:  queue index
  * @data: ptr to data
  * @idx: ptr to idx in data buffer (input/output param)
+ * @set: copy counters if true otherwise copy zero
  *
  * This function reads XDP per-action Rx statistics.
  */
 static void
-ice_get_xdp_rx_stats(struct ice_xdp_stats *xdp_stats, u64 *data, int *idx)
+ice_get_xdp_rx_stats(struct ice_vsi *vsi, int q, u64 *data, int *idx, bool set)
 {
-	bool set = !!xdp_stats;
+	struct ice_xdp_stats *xdp_stats;
+	struct ice_rx_ring *rx_ring;
 	int i;
 
-	if (!idx)
+	if (!idx || q >= vsi->num_rxq)
 		return;
 
+	rx_ring = vsi->rx_rings[q];
+	xdp_stats = &rx_ring->xdp_stats;
 	i = *idx; /* start index in data buffer */
 
 	data[i++] = set ? xdp_stats->xdp_rx_pkts : 0;
@@ -2699,15 +2705,6 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			goto ethtool_exit;
 		}
 	}
-	if (test_bit(ICE_FLAG_ITU_G8262_FILTER_USED, change_flags)) {
-		if (!ice_is_e825c(&pf->hw)) {
-			dev_err(dev, "itu_g8262_filter_used: only supported on E825C\n");
-			/* toggle bit back to previous state */
-			change_bit(ICE_FLAG_ITU_G8262_FILTER_USED, pf->flags);
-			ret = -EOPNOTSUPP;
-			goto ethtool_exit;
-		}
-	}
 
 	if (test_bit(ICE_FLAG_ALLOW_FEC_DIS_AUTO, change_flags)) {
 		enum ice_fec_mode fec = ICE_FEC_AUTO;
@@ -2842,7 +2839,7 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 #endif /* ADQ_PERF_COUNTERS */
 #ifdef HAVE_XDP_SUPPORT
 #ifdef ICE_ADD_PROBES
-			ice_get_xdp_rx_stats(&rx_ring->xdp_stats, data, &i);
+			ice_get_xdp_rx_stats(vsi, j, data, &i, true);
 #endif /* ICE_ADD_PROBES */
 #endif /* HAVE_XDP_SUPPORT */
 		} else {
@@ -2853,7 +2850,7 @@ __ice_get_ethtool_stats(struct net_device *netdev,
 #endif /* ADQ_PERF_COUNTERS */
 #ifdef HAVE_XDP_SUPPORT
 #ifdef ICE_ADD_PROBES
-			ice_get_xdp_rx_stats(NULL, data, &i);
+			ice_get_xdp_rx_stats(vsi, j, data, &i, false);
 #endif /* ICE_ADD_PROBES */
 #endif /* HAVE_XDP_SUPPORT */
 		}
@@ -2937,6 +2934,18 @@ void ice_get_ethtool_stats(struct net_device *netdev,
 					 ICE_PHY_TYPE_HIGH_100G_AUI2_AOC_ACC | \
 					 ICE_PHY_TYPE_HIGH_100G_AUI2)
 
+#define ICE_PHY_TYPE_HIGH_MASK_200G	(ICE_PHY_TYPE_HIGH_200G_CR4_PAM4 | \
+					 ICE_PHY_TYPE_HIGH_200G_SR4 |\
+					 ICE_PHY_TYPE_HIGH_200G_FR4 |\
+					 ICE_PHY_TYPE_HIGH_200G_LR4 |\
+					 ICE_PHY_TYPE_HIGH_200G_DR4 |\
+					 ICE_PHY_TYPE_HIGH_200G_KR4_PAM4 |\
+					 ICE_PHY_TYPE_HIGH_200G_AUI4_AOC_ACC |\
+					 ICE_PHY_TYPE_HIGH_200G_AUI4 |\
+					 ICE_PHY_TYPE_HIGH_200G_AUI8_AOC_ACC |\
+					 ICE_PHY_TYPE_HIGH_200G_AUI8 |\
+					 ICE_PHY_TYPE_HIGH_400GBASE_FR8)
+
 /**
  * ice_mask_min_supported_speeds
  * @hw: pointer to the HW structure
@@ -2955,12 +2964,16 @@ static void ice_mask_min_supported_speeds(struct ice_hw *hw, u64 *phy_types_low)
 #endif  /* !HAVE_ETHTOOL_100G_BITS */
 {
 	/* if QSFP connection with 100G speed, minimum supported speed is 25G */
-#ifdef HAVE_ETHTOOL_100G_BITS
+#ifdef HAVE_ETHTOOL_200G_BITS
+	if (*phy_types_low & ICE_PHY_TYPE_LOW_MASK_100G ||
+	    phy_types_high & ICE_PHY_TYPE_HIGH_MASK_100G ||
+	    phy_types_high & ICE_PHY_TYPE_HIGH_MASK_200G)
+#elif defined(HAVE_ETHTOOL_100G_BITS)
 	if (*phy_types_low & ICE_PHY_TYPE_LOW_MASK_100G ||
 	    phy_types_high & ICE_PHY_TYPE_HIGH_MASK_100G)
-#else /* !HAVE_ETHTOOL_100G_BITS */
+#else
 	if (*phy_types_low & ICE_PHY_TYPE_LOW_MASK_100G)
-#endif /* HAVE_ETHTOOL_100G_BITS */
+#endif /* HAVE_ETHTOOL_200G_BITS */
 		*phy_types_low &= ~ICE_PHY_TYPE_LOW_MASK_MIN_25G;
 	else if (!ice_is_100m_speed_supported(hw))
 		*phy_types_low &= ~ICE_PHY_TYPE_LOW_MASK_MIN_1G;
@@ -3120,6 +3133,11 @@ ice_get_settings_link_up(struct ethtool_link_ksettings *ks,
 	ice_phy_type_to_ethtool(netdev, ks);
 
 	switch (link_info->link_speed) {
+#ifdef HAVE_ETHTOOL_200G_BITS
+	case ICE_AQ_LINK_SPEED_200GB:
+		ks->base.speed = SPEED_200000;
+		break;
+#endif /* HAVE_ETHTOOL_200G_BITS */
 #ifdef HAVE_ETHTOOL_100G_BITS
 	case ICE_AQ_LINK_SPEED_100GB:
 		ks->base.speed = SPEED_100000;
@@ -3454,6 +3472,19 @@ ice_ksettings_find_adv_link_speed(const struct ethtool_link_ksettings *ks)
 						  100000baseKR2_Full))
 		adv_link_speed |= ICE_AQ_LINK_SPEED_100GB;
 #endif /* HAVE_ETHTOOL_NEW_100G_BITS */
+#ifdef HAVE_ETHTOOL_200G_BITS
+	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  200000baseKR4_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  200000baseSR4_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  200000baseLR4_ER4_FR4_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  200000baseDR4_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  200000baseCR4_Full))
+		adv_link_speed |= ICE_AQ_LINK_SPEED_200GB;
+#endif /* HAVE_ETHTOOL_200G_BITS */
 
 	return adv_link_speed;
 }
@@ -3491,6 +3522,10 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 				err = -EINVAL;
 			} else {
 				/* Autoneg is allowed to change */
+
+				/* Set AN_EN_CLAUSE37 to 1 to enable AN on E822 devices.*/
+				if (ice_is_e822(p->hw))
+					config->low_power_ctrl_an |= ICE_AQC_PHY_AN_EN_CLAUSE37;
 				config->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 				*autoneg_changed = 1;
 			}
@@ -3508,7 +3543,19 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 				err = -EINVAL;
 			} else {
 				/* Autoneg is allowed to change */
-				config->caps &= ~ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
+
+				/**
+				 * Set AN_EN_CLAUSE37 to 0 to disable AN for E822 devices.
+				 * When disabling we also need to set ICE_AQ_PHY_ENA_AUTO_LINK_UPDT
+				 * high to propagate the changes, otherwise manual link down/up
+				 * would be required to have the change reflected in HW.
+				 */
+				if (ice_is_e822(p->hw)) {
+					config->low_power_ctrl_an &= ~ICE_AQC_PHY_AN_EN_CLAUSE37;
+					config->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
+				}
+				else
+					config->caps &= ~ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 				*autoneg_changed = 1;
 			}
 		}
@@ -3618,6 +3665,15 @@ ice_set_link_ksettings(struct net_device *netdev,
 	/* Get link modes supported by hardware.*/
 	ice_phy_type_to_ethtool(netdev, &safe_ks);
 
+	/* Pull the value of autoneg from phy caps to ensure we allow toggling
+	 * it on all PHYs that support it
+	 */
+	if (ice_is_phy_caps_an_enabled(phy_caps)) {
+		ethtool_link_ksettings_add_link_mode(&safe_ks, supported, Autoneg);
+#ifdef HAVE_ETHTOOL_LINK_MODE_FEC_NONE_BIT
+		set_bit(ETHTOOL_LINK_MODE_FEC_NONE_BIT, safe_ks.link_modes.supported);
+#endif
+	}
 	/* and check against modes requested by user.
 	 * Return an error if unsupported mode was set.
 	 */
@@ -4728,7 +4784,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		err = ice_setup_tx_ring(&tx_rings[i]);
 		if (err) {
 			while (i--)
-				ice_clean_tx_ring(&tx_rings[i]);
+				ice_clean_tx_ring(&tx_rings[i], NULL);
 			kfree(tx_rings);
 			tx_rings = NULL;
 			goto done;
@@ -4758,7 +4814,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		err = ice_setup_tx_ring(&xdp_rings[i]);
 		if (err) {
 			while (i--)
-				ice_clean_tx_ring(&xdp_rings[i]);
+				ice_clean_tx_ring(&xdp_rings[i], NULL);
 			kfree(xdp_rings);
 			xdp_rings = NULL;
 			goto free_tx;
@@ -4823,7 +4879,13 @@ process_link:
 
 		if (tx_rings) {
 			ice_for_each_txq(vsi, i) {
-				ice_free_tx_ring(vsi->tx_rings[i]);
+				if (vsi->tx_rings[i]->flags &
+				    ICE_TX_FLAGS_TXTIME)
+					ice_free_tx_ring(vsi->tx_rings[i],
+							 vsi->tstamp_rings[i]);
+				else
+					ice_free_tx_ring(vsi->tx_rings[i],
+							 NULL);
 				*vsi->tx_rings[i] = tx_rings[i];
 			}
 			kfree(tx_rings);
@@ -4852,7 +4914,7 @@ process_link:
 #ifdef HAVE_XDP_SUPPORT
 		if (xdp_rings) {
 			ice_for_each_xdp_txq(vsi, i) {
-				ice_free_tx_ring(vsi->xdp_rings[i]);
+				ice_free_tx_ring(vsi->xdp_rings[i], NULL);
 				*vsi->xdp_rings[i] = xdp_rings[i];
 			}
 			kfree(xdp_rings);
@@ -4870,7 +4932,7 @@ free_tx:
 	/* error cleanup if the Rx allocations failed after getting Tx */
 	if (tx_rings) {
 		ice_for_each_txq(vsi, i)
-			ice_free_tx_ring(&tx_rings[i]);
+			ice_free_tx_ring(&tx_rings[i], NULL);
 	}
 
 done:
@@ -5119,7 +5181,7 @@ static u32 ice_get_rxfh_indir_size(struct net_device *netdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 
-	return np->vsi->rss_table_size;
+	return (u32)np->vsi->rss_table_size;
 }
 
 #ifdef HAVE_RXFH_HASHFUNC
@@ -5144,6 +5206,7 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
+	u16 table_size;
 	int err, i;
 	u8 *lut;
 
@@ -5185,7 +5248,8 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 	if (err)
 		goto out;
 
-	for (i = 0; i < vsi->rss_table_size; i++)
+	table_size = (u16)vsi->rss_table_size;
+	for (i = 0; i < table_size; i++)
 #if defined(HAVE_ETHTOOL_RXFH_PARAM)
 		rxfh->indir[i] = (u32)(lut[i]);
 #else
@@ -5254,8 +5318,9 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 	if (indir) {
 #endif /* HAVE_ETHTOOL_RXFH_PARAM */
 		int i;
+		u16 table_size = (u16)vsi->rss_table_size;
 
-		for (i = 0; i < vsi->rss_table_size; i++)
+		for (i = 0; i < table_size; i++)
 #if defined(HAVE_ETHTOOL_RXFH_PARAM)
 			if (rxfh->indir[i] >= vsi->rss_size)
 #else
@@ -5309,8 +5374,9 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 	if (indir) {
 #endif /* HAVE_ETHTOOL_RXFH_PARAM */
 		int i;
+		u16 table_size = (u16)vsi->rss_table_size;
 
-		for (i = 0; i < vsi->rss_table_size; i++)
+		for (i = 0; i < table_size; i++)
 #if defined(HAVE_ETHTOOL_RXFH_PARAM)
 			vsi->rss_lut_user[i] = (u8)(rxfh->indir[i]);
 #else
@@ -5329,8 +5395,13 @@ ice_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key)
 }
 #endif /* ETHTOOL_GRSSH && ETHTOOL_SRSSH */
 
+#ifdef HAVE_ETHTOOL_KERNEL_TS_INFO
+static int
+ice_get_ts_info(struct net_device *dev, struct kernel_ethtool_ts_info *info)
+#else
 static int
 ice_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
+#endif /* HAVE_ETHTOOL_KERNEL_TS_INFO */
 {
 	struct ice_pf *pf = ice_netdev_to_pf(dev);
 
@@ -5445,10 +5516,6 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
 	int new_rx = 0, new_tx = 0;
-#ifdef HAVE_AF_XDP_ZC_SUPPORT
-	int max_xsk_qp = 0, xsk_qp;
-#endif /* HAVE_AF_XDP_ZC_SUPPORT */
-	u32 curr_combined;
 	int err;
 
 	/* do not support changing channels in Safe Mode */
@@ -5478,22 +5545,8 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 		return -EOPNOTSUPP;
 	}
 
-	curr_combined = ice_get_combined_cnt(vsi);
-
-	/* these checks are for cases where user didn't specify a particular
-	 * value on cmd line but we get non-zero value anyway via
-	 * get_channels(); look at ethtool.c in ethtool repository (the user
-	 * space part), particularly, do_schannels() routine
-	 */
-	if (ch->rx_count == vsi->num_rxq - curr_combined)
-		ch->rx_count = 0;
-	if (ch->tx_count == vsi->num_txq - curr_combined)
-		ch->tx_count = 0;
-	if (ch->combined_count == curr_combined)
-		ch->combined_count = 0;
-
-	if (!(ch->combined_count || (ch->rx_count && ch->tx_count))) {
-		netdev_err(dev, "Please specify at least 1 Rx and 1 Tx channel\n");
+	if (ch->rx_count && ch->tx_count) {
+		netdev_err(dev, "Dedicated RX or TX channels cannot be used simultaneously\n");
 		return -EINVAL;
 	}
 
@@ -5520,16 +5573,6 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 			   ice_get_max_txq(pf));
 		return -EINVAL;
 	}
-#ifdef HAVE_AF_XDP_ZC_SUPPORT
-	for_each_set_bit(xsk_qp, vsi->af_xdp_zc_qps,
-			 max_t(int, vsi->alloc_txq, vsi->alloc_rxq))
-		max_xsk_qp = xsk_qp;
-
-	if (min_t(int, new_tx, new_rx) <= max_xsk_qp) {
-		netdev_err(dev, "Requested channel counts are too low for existing zerocopy AF_XDP sockets\n");
-		return -EINVAL;
-	}
-#endif /* HAVE_AF_XDP_ZC_SUPPORT */
 
 	set_bit(ICE_SET_CHANNELS, pf->state);
 	err = ice_vsi_recfg_qs(vsi, new_rx, new_tx);

@@ -8,6 +8,7 @@
 #include "ice_fltr.h"
 #include "ice_dcb_lib.h"
 #include "ice_eswitch.h"
+#include "ice_repr.h"
 #include "ice_virtchnl_allowlist.h"
 #include "ice_flex_pipe.h"
 #include "ice_vf_adq.h"
@@ -136,17 +137,8 @@ static void ice_dis_vf_mappings(struct ice_vf *vf)
  */
 static int ice_sriov_free_msix_res(struct ice_pf *pf)
 {
-	struct ice_res_tracker *res;
-
 	if (!pf)
 		return -EINVAL;
-
-	res = pf->irq_tracker;
-	if (!res)
-		return -EINVAL;
-
-	/* give back irq_tracker resources used */
-	WARN_ON(pf->sriov_base_vector < res->num_entries);
 
 	kfree(pf->vf_irq_tracker);
 
@@ -184,8 +176,6 @@ void ice_free_vfs(struct ice_pf *pf)
 
 	mutex_lock(&vfs->table_lock);
 
-	ice_eswitch_release(pf);
-
 	if (ice_dcf_get_state(pf) != ICE_DCF_STATE_OFF) {
 		ice_rm_all_dcf_sw_rules(pf);
 		ice_dcf_set_state(pf, ICE_DCF_STATE_OFF);
@@ -197,6 +187,7 @@ void ice_free_vfs(struct ice_pf *pf)
 
 		mutex_lock(&vf->cfg_lock);
 
+		ice_eswitch_detach(pf, vf);
 		ice_dis_vf_qs(vf);
 
 		if (test_bit(ICE_VF_STATE_INIT, vf->vf_states)) {
@@ -223,7 +214,8 @@ void ice_free_vfs(struct ice_pf *pf)
 		}
 
 		/* clear malicious info since the VF is getting released */
-		list_del(&vf->mbx_info.list_entry);
+		if (!ice_is_feature_supported(pf, ICE_F_MBX_LIMIT))
+			list_del(&vf->mbx_info.list_entry);
 
 		mutex_unlock(&vf->cfg_lock);
 	}
@@ -402,48 +394,22 @@ static void ice_ena_vf_mappings(struct ice_vf *vf)
  * @q_vector: a q_vector associated to the VF
  * @tc: Traffic class number for VF ADQ
  */
-int ice_calc_vf_reg_idx(struct ice_vf *vf, struct ice_q_vector *q_vector,
-			u8 __maybe_unused tc)
+void ice_calc_vf_reg_idx(struct ice_vf *vf, struct ice_q_vector *q_vector,
+			 u8 __maybe_unused tc)
 {
 	struct ice_pf *pf;
-	u32 reg_idx;
 
 	if (!vf || !q_vector)
-		return -EINVAL;
+		return;
 
 	pf = vf->pf;
 
+	q_vector->vf_reg_idx = q_vector->v_idx + ICE_NONQ_VECS_VF;
+	q_vector->vf_reg_idx += vf->ch[tc].offset;
+
 	/* always add one to account for the OICR being the first MSIX */
-	reg_idx = pf->sriov_base_vector + vf->num_msix * vf->vf_id +
-		  q_vector->v_idx + 1;
-
-	if (tc && ice_is_vf_adq_ena(vf))
-		return reg_idx + vf->ch[tc].offset;
-	else
-		return reg_idx;
-}
-
-/**
- * ice_get_max_valid_res_idx - Get the max valid resource index
- * @res: pointer to the resource to find the max valid index for
- *
- * Start from the end of the ice_res_tracker and return right when we find the
- * first res->list entry with the ICE_RES_VALID_BIT set. This function is only
- * valid for SR-IOV because it is the only consumer that manipulates the
- * res->end and this is always called when res->end is set to res->num_entries.
- */
-static int ice_get_max_valid_res_idx(struct ice_res_tracker *res)
-{
-	int i;
-
-	if (!res)
-		return -EINVAL;
-
-	for (i = res->num_entries - 1; i >= 0; i--)
-		if (res->list[i] & ICE_RES_VALID_BIT)
-			return i;
-
-	return 0;
+	q_vector->reg_idx = pf->sriov_base_vector + vf->num_msix * vf->vf_id +
+			    q_vector->vf_reg_idx;
 }
 
 /**
@@ -464,7 +430,7 @@ static int ice_get_max_valid_res_idx(struct ice_res_tracker *res)
 static int ice_sriov_set_msix_res(struct ice_pf *pf, u16 num_msix_needed)
 {
 	u16 total_vectors = pf->hw.func_caps.common_cap.num_msix_vectors;
-	int vectors_used = pf->irq_tracker->num_entries;
+	int vectors_used = ice_get_max_used_msix_vector(pf);
 	int sriov_base_vector;
 
 	sriov_base_vector = total_vectors - num_msix_needed;
@@ -512,7 +478,6 @@ static int ice_sriov_set_msix_res(struct ice_pf *pf, u16 num_msix_needed)
  */
 static int ice_set_per_vf_res(struct ice_pf *pf, u16 num_vfs)
 {
-	int max_valid_res_idx = ice_get_max_valid_res_idx(pf->irq_tracker);
 	u16 num_msix_per_vf, num_txq, num_rxq, avail_qs;
 	int msix_avail_per_vf, msix_avail_for_sriov;
 	struct device *dev = ice_pf_to_dev(pf);
@@ -522,9 +487,6 @@ static int ice_set_per_vf_res(struct ice_pf *pf, u16 num_vfs)
 
 	if (!num_vfs)
 		return -EINVAL;
-
-	if (max_valid_res_idx < 0)
-		return -ENOSPC;
 
 	/* determine MSI-X resources per VF */
 	msix_avail_for_sriov = pf->req_msix.vf;
@@ -666,6 +628,14 @@ static int ice_start_vfs(struct ice_pf *pf)
 			ice_dev_err_errno(ice_pf_to_dev(pf), retval,
 					  "Failed to initialize VSI resources for VF %d",
 					  vf->vf_id);
+			goto teardown;
+		}
+
+		retval = ice_eswitch_attach(pf, vf);
+		if (retval) {
+			dev_err(ice_pf_to_dev(pf), "Failed to attach VF %d to eswitch, error %d\n",
+				vf->vf_id, retval);
+			ice_vf_vsi_release(vf);
 			goto teardown;
 		}
 
@@ -1040,21 +1010,19 @@ static int ice_ena_vfs(struct ice_pf *pf, u16 num_vfs)
 {
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_hw *hw = &pf->hw;
-	int ret;
+	int ret = 0;
 
 	/* Disable global interrupt 0 so we don't try to handle the VFLR. */
-	wr32(hw, GLINT_DYN_CTL(pf->oicr_idx),
+	wr32(hw, GLINT_DYN_CTL(pf->oicr_irq.index),
 	     ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S);
 	set_bit(ICE_OICR_INTR_DIS, pf->state);
 	ice_flush(hw);
 
-	ret = pci_enable_sriov(pf->pdev, num_vfs);
-	if (ret)
-		goto err_unroll_intr;
-
 	pf->vf_irq_tracker = ice_alloc_res_tracker(pf->req_msix.vf);
-	if (!pf->vf_irq_tracker)
-		goto err_unroll_sriov;
+	if (!pf->vf_irq_tracker) {
+		ret = -ENOMEM;
+		goto err_unroll_intr;
+	}
 
 	mutex_lock(&pf->vfs.table_lock);
 
@@ -1067,11 +1035,17 @@ static int ice_ena_vfs(struct ice_pf *pf, u16 num_vfs)
 		goto err_unroll_tracker;
 	}
 
+	ret = pci_enable_sriov(pf->pdev, num_vfs);
+	if (ret) {
+		dev_err(dev, "Cannot enable SRIO-V, err %d\n", ret);
+		goto err_unroll_tracker;
+	}
+
 	ret = ice_create_vf_entries(pf, num_vfs);
 	if (ret) {
 		dev_err(dev, "Failed to allocate VF entries for %d VFs\n",
 			num_vfs);
-		goto err_unroll_tracker;
+		goto err_unroll_sriov;
 	}
 
 	ret = ice_start_vfs(pf);
@@ -1083,12 +1057,6 @@ static int ice_ena_vfs(struct ice_pf *pf, u16 num_vfs)
 
 	clear_bit(ICE_VF_DIS, pf->state);
 
-	ret = ice_eswitch_configure(pf);
-	if (ret) {
-		dev_err(dev, "Failed to configure eswitch, err %d\n", ret);
-		goto err_unroll_vf_entries;
-	}
-
 	/* rearm global interrupts */
 	if (test_and_clear_bit(ICE_OICR_INTR_DIS, pf->state))
 		ice_irq_dynamic_ena(hw, NULL, NULL);
@@ -1099,11 +1067,11 @@ static int ice_ena_vfs(struct ice_pf *pf, u16 num_vfs)
 
 err_unroll_vf_entries:
 	ice_free_vf_entries(pf);
+err_unroll_sriov:
+	pci_disable_sriov(pf->pdev);
 err_unroll_tracker:
 	mutex_unlock(&pf->vfs.table_lock);
 	kfree(pf->vf_irq_tracker);
-err_unroll_sriov:
-	pci_disable_sriov(pf->pdev);
 err_unroll_intr:
 	/* rearm interrupts here */
 	ice_irq_dynamic_ena(hw, NULL, NULL);
@@ -1819,14 +1787,7 @@ int ice_set_vf_link_state(struct net_device *netdev, int vf_id, int link_state)
 		goto out_put_vf;
 	}
 
-	if (vf->repr) {
-		struct net_device *pr_netdev = vf->repr->netdev;
-		unsigned int flags = pr_netdev->flags;
-
-		flags = vf->link_up ? flags | IFF_UP : flags & ~IFF_UP;
-		dev_change_flags(pr_netdev, flags, NULL);
-	}
-
+	ice_repr_set_link(&vf->pf->eswitch.reprs, vf->repr_id, vf->link_up);
 	ice_vc_notify_vf_link_state(vf);
 
 out_put_vf:
@@ -2164,7 +2125,7 @@ out_put_vf:
  * ice_print_vf_rx_mdd_event - print VF Rx malicious driver detect event
  * @vf: pointer to the VF structure
  */
-void ice_print_vf_rx_mdd_event(struct ice_vf *vf)
+static void ice_print_vf_rx_mdd_event(struct ice_vf *vf)
 {
 	struct ice_pf *pf = vf->pf;
 	struct device *dev;
@@ -2179,6 +2140,24 @@ void ice_print_vf_rx_mdd_event(struct ice_vf *vf)
 }
 
 /**
+ * ice_print_vf_tx_mdd_event - print VF Tx malicious driver detect event
+ * @vf: pointer to the VF structure
+ */
+static void ice_print_vf_tx_mdd_event(struct ice_vf *vf)
+{
+	struct ice_pf *pf = vf->pf;
+	struct device *dev;
+
+	dev = ice_pf_to_dev(pf);
+
+	dev_info(dev, "%d Tx Malicious Driver Detection events detected on PF %d VF %d MAC %pM. mdd-auto-reset-vfs=%s\n",
+		 vf->mdd_tx_events.count, pf->hw.pf_id, vf->vf_id,
+		 vf->dev_lan_addr.addr,
+		 test_bit(ICE_FLAG_MDD_AUTO_RESET_VF, pf->flags)
+			  ? "on" : "off");
+}
+
+/**
  * ice_print_vfs_mdd_events - print VFs malicious driver detect event
  * @pf: pointer to the PF structure
  *
@@ -2186,8 +2165,6 @@ void ice_print_vf_rx_mdd_event(struct ice_vf *vf)
  */
 void ice_print_vfs_mdd_events(struct ice_pf *pf)
 {
-	struct device *dev = ice_pf_to_dev(pf);
-	struct ice_hw *hw = &pf->hw;
 	struct ice_vf *vf;
 	unsigned int bkt;
 
@@ -2215,9 +2192,7 @@ void ice_print_vfs_mdd_events(struct ice_pf *pf)
 			vf->mdd_tx_events.last_printed =
 							vf->mdd_tx_events.count;
 
-			dev_info(dev, "%d Tx Malicious Driver Detection events detected on PF %d VF %d MAC %pM.\n",
-				 vf->mdd_tx_events.count, hw->pf_id, vf->vf_id,
-				 vf->dev_lan_addr.addr);
+			ice_print_vf_tx_mdd_event(vf);
 		}
 	}
 	mutex_unlock(&pf->vfs.table_lock);

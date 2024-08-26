@@ -90,6 +90,7 @@ function gen-devlink() {
 	gen HAVE_DEVLINK_INFO_DRIVER_NAME_PUT if fun devlink_info_driver_name_put in "$dh"
 	gen HAVE_DEVLINK_PARAMS if method validate of devlink_param matches extack in "$dh"
 	gen HAVE_DEVLINK_PARAMS_PUBLISH if fun devlink_params_publish in "$dh"
+	gen HAVE_DEVLINK_PARAMS_SET_EXTACK if method set of devlink_param matches extack in "$dh"
 	gen HAVE_DEVLINK_PORT_NEW if method port_new of devlink_ops in "$dh"
 	gen HAVE_DEVLINK_PORT_OPS if struct devlink_port_ops in "$dh"
 	gen HAVE_DEVLINK_PORT_SPLIT if method port_split of devlink_ops in "$dh"
@@ -141,10 +142,14 @@ function gen-ethtool() {
 	ueth='include/uapi/linux/ethtool.h'
 	gen HAVE_ETHTOOL_COALESCE_EXTACK if method get_coalesce of ethtool_ops matches 'struct kernel_ethtool_coalesce \\*' in "$eth"
 	gen HAVE_ETHTOOL_EXTENDED_RINGPARAMS if method get_ringparam of ethtool_ops matches 'struct kernel_ethtool_ringparam \\*' in "$eth"
+	gen HAVE_ETHTOOL_GET_FEC_STATS_OPS if struct ethtool_ops matches '\\*get_fec_stats' in "$eth"
 	gen HAVE_ETHTOOL_KEEE if struct ethtool_keee in "$eth"
+	gen HAVE_ETHTOOL_KERNEL_TS_INFO if struct kernel_ethtool_ts_info in "$eth"
 	gen HAVE_ETHTOOL_RXFH_PARAM if struct ethtool_rxfh_param in "$eth"
 	gen NEED_ETHTOOL_SPRINTF if fun ethtool_sprintf absent in "$eth"
 	gen HAVE_ETHTOOL_FLOW_RSS if macro FLOW_RSS in "$ueth"
+	gen HAVE_ETHTOOL_LINK_MODE_FEC_NONE_BIT if enum ethtool_link_mode_bit_indices matches ETHTOOL_LINK_MODE_FEC_NONE_BIT in "$ueth"
+	gen NEED_ETHTOOL_LINK_MODE_BIT_INDICES if enum ethtool_link_mode_bit_indices absent in "$ueth"
 }
 
 function gen-filter() {
@@ -219,6 +224,34 @@ function gen-pci() {
 	gen NEED_PCI_ENABLE_PTM if fun pci_enable_ptm absent in "$pcih"
 }
 
+function gen-ptp() {
+	classifyh='include/linux/ptp_classify.h'
+	clockh='include/linux/ptp_clock_kernel.h'
+	uapih='include/uapi/linux/ptp_clock.h'
+	gen NEED_PTP_CLASSIFY_RAW if fun ptp_classify_raw absent in "$classifyh"
+	gen NEED_PTP_PARSE_HEADER if fun ptp_parse_header absent in "$classifyh"
+	gen HAVE_PTP_CLOCK_DO_AUX_WORK if method do_aux_work of ptp_clock_info in "$clockh"
+	gen HAVE_PTP_CLOCK_INFO_ADJFINE if method adjfine of ptp_clock_info in "$clockh"
+	gen HAVE_PTP_CLOCK_INFO_GETTIME64 if method gettime64 of ptp_clock_info in "$clockh"
+	gen HAVE_PTP_CLOCK_INFO_GETTIMEX64 if method gettimex64 of ptp_clock_info in "$clockh"
+	gen HAVE_PTP_FIND_PIN_UNLOCKED if fun ptp_find_pin_unlocked in "$clockh"
+	gen NEED_DIFF_BY_SCALED_PPM if fun diff_by_scaled_ppm absent in "$clockh"
+	gen NEED_PTP_SYSTEM_TIMESTAMP if fun ptp_read_system_prets absent in "$clockh"
+	gen HAVE_PTP_SYS_OFFSET_EXTENDED_IOCTL if macro PTP_SYS_OFFSET_EXTENDED in "$uapih"
+
+	# aarch64 requires additional function to enable cross timestamping
+	if config_has CONFIG_ARM64; then
+		PTP_CROSS_TSTAMP_FUNC="$(find-fun-decl arch_timer_wrap_counter include/clocksource/arm_arch_timer.h)"
+		HAVE_CROSS_TSTAMP="${PTP_CROSS_TSTAMP_FUNC:+1}"
+	elif config_has CONFIG_X86; then
+		PTP_CROSS_TSTAMP_FUNC="$(find-fun-decl convert_art_ns_to_tsc arch/x86/include/asm/tsc.h)"
+		HAVE_CROSS_TSTAMP="${PTP_CROSS_TSTAMP_FUNC:+1}"
+	else
+		HAVE_CROSS_TSTAMP=-1
+	fi
+	gen HAVE_PTP_CROSSTIMESTAMP if string "${HAVE_CROSS_TSTAMP}" equals 1
+}
+
 function gen-stddef() {
 	stddef='include/linux/stddef.h'
 	ustddef='include/uapi/linux/stddef.h'
@@ -289,16 +322,13 @@ function gen-other() {
 	gen HAVE_NL_SET_ERR_MSG_FMT if macro NL_SET_ERR_MSG_FMT in include/linux/netlink.h
 	gen NEED_DEV_PM_DOMAIN_ATTACH if fun dev_pm_domain_attach absent in include/linux/pm_domain.h include/linux/pm.h
 	gen NEED_DEV_PM_DOMAIN_DETACH if fun dev_pm_domain_detach absent in include/linux/pm_domain.h include/linux/pm.h
-	gen NEED_PTP_CLASSIFY_RAW if fun ptp_classify_raw absent in include/linux/ptp_classify.h
-	gen NEED_PTP_PARSE_HEADER if fun ptp_parse_header absent in include/linux/ptp_classify.h
-	gen HAVE_PTP_CLOCK_INFO_ADJFINE if method adjfine of ptp_clock_info in include/linux/ptp_clock_kernel.h
-	gen NEED_DIFF_BY_SCALED_PPM if fun diff_by_scaled_ppm absent in include/linux/ptp_clock_kernel.h
-	gen NEED_PTP_SYSTEM_TIMESTAMP if fun ptp_read_system_prets absent in include/linux/ptp_clock_kernel.h
 	gen NEED_RADIX_TREE_EMPTY if fun radix_tree_empty absent in include/linux/radix-tree.h
 	gen NEED_SCHED_PARAM if struct sched_param absent in include/linux/sched.h
 	gen NEED_SET_SCHED_FIFO if fun sched_set_fifo absent in include/linux/sched.h
 	gen NEED_RT_H if macro MAX_RT_PRIO absent in include/linux/sched/prio.h
+	gen HAVE_SKB_CSUM_IS_SCTP if fun skb_csum_is_sctp in include/linux/skbuff.h
 	gen NEED_DEV_PAGE_IS_REUSABLE if fun dev_page_is_reusable absent in include/linux/skbuff.h
+	gen NEED_NAPI_ALLOC_SKB if fun __napi_alloc_skb in include/linux/skbuff.h
 	gen NEED_NAPI_BUILD_SKB if fun napi_build_skb absent in include/linux/skbuff.h
 	gen NEED_KREALLOC_ARRAY if fun krealloc_array absent in include/linux/slab.h
 	gen NEED_SYSFS_MATCH_STRING if macro sysfs_match_string absent in include/linux/string.h
@@ -309,7 +339,10 @@ function gen-other() {
 	gen HAVE_U64_STATS_FETCH_RETRY_IRQ if fun u64_stats_fetch_retry_irq in "$ush"
 	gen NEED_U64_STATS_READ if fun u64_stats_read absent in "$ush"
 	gen NEED_U64_STATS_SET if fun u64_stats_set absent in "$ush"
+	gen HAVE_XARRAY_API if struct xarray in include/linux/xarray.h
 	gen HAVE_NET_RPS_H if macro RPS_NO_FILTER in include/net/rps.h
+	gen NEED_XSK_BUFF_DMA_SYNC_FOR_CPU_NO_POOL if fun xsk_buff_dma_sync_for_cpu matches 'struct xsk_buff_pool' in include/net/xdp_sock_drv.h
+	gen HAVE_ASSIGN_STR_2_PARAMS if macro __assign_str matches src in include/trace/stages/stage6_event_callback.h include/trace/trace_events.h include/trace/ftrace.h
 }
 
 # all the generations, extracted from main() to keep normal code and various
@@ -334,6 +367,7 @@ function gen-all() {
 	gen-gnss
 	gen-mdev
 	gen-pci
+	gen-ptp
 	gen-stddef
 	gen-vfio
 	gen-other

@@ -31,6 +31,21 @@ ice_build_ctob(u64 td_cmd, u64 td_offset, unsigned int size, u64 td_tag)
 			   (td_tag    << ICE_TXD_QW1_L2TAG1_S));
 }
 
+#define ICE_TXTIME_TX_DESC_IDX_M	GENMASK(12, 0)
+#define ICE_TXTIME_STAMP_M		GENMASK(31, 13)
+
+/**
+ * ice_build_tstamp_desc - build Tx time stamp descriptor
+ * @tx_desc: Tx LAN descriptor index
+ * @tstamp: time stamp
+ */
+static inline __le32
+ice_build_tstamp_desc(u16 tx_desc, u32 tstamp)
+{
+	return cpu_to_le32((ICE_TXTIME_TX_DESC_IDX_M & tx_desc) |
+			   (ICE_TXTIME_STAMP_M & tstamp));
+}
+
 /**
  * ice_get_vlan_tag_from_rx_desc - get VLAN from Rx flex descriptor
  * @rx_desc: Rx 32b flex descriptor with RXDID=2

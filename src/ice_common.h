@@ -90,28 +90,21 @@ ice_aq_get_internal_data(struct ice_hw *hw, u16 cluster_id, u16 table_id,
 			 u16 *ret_next_cluster, u16 *ret_next_table,
 			 u32 *ret_next_index, struct ice_sq_cd *cd);
 
-int
-ice_write_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
-		  u32 rxq_index);
-int
-ice_read_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
-		 u32 rxq_index);
-int
-ice_read_txq_ctx(struct ice_hw *hw, struct ice_tlan_ctx *tlan_ctx,
-		 u32 txq_index);
+int ice_write_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
+		      u32 rxq_index);
+int ice_read_rxq_ctx(struct ice_hw *hw, struct ice_rlan_ctx *rlan_ctx,
+		     u32 rxq_index);
+int ice_read_txq_ctx(struct ice_hw *hw, struct ice_tlan_ctx *tlan_ctx,
+		     u32 txq_index);
 int ice_clear_rxq_ctx(struct ice_hw *hw, u32 rxq_index);
-int
-ice_clear_tx_cmpltnq_ctx(struct ice_hw *hw, u32 tx_cmpltnq_index);
-int
-ice_write_tx_cmpltnq_ctx(struct ice_hw *hw,
-			 struct ice_tx_cmpltnq_ctx *tx_cmpltnq_ctx,
-			 u32 tx_cmpltnq_index);
-int
-ice_clear_tx_drbell_q_ctx(struct ice_hw *hw, u32 tx_drbell_q_index);
-int
-ice_write_tx_drbell_q_ctx(struct ice_hw *hw,
-			  struct ice_tx_drbell_q_ctx *tx_drbell_q_ctx,
-			  u32 tx_drbell_q_index);
+int ice_clear_tx_cmpltnq_ctx(struct ice_hw *hw, u32 tx_cmpltnq_index);
+int ice_write_tx_cmpltnq_ctx(struct ice_hw *hw,
+			     struct ice_tx_cmpltnq_ctx *tx_cmpltnq_ctx,
+			     u32 tx_cmpltnq_index);
+int ice_clear_tx_drbell_q_ctx(struct ice_hw *hw, u32 tx_drbell_q_index);
+int ice_write_tx_drbell_q_ctx(struct ice_hw *hw,
+			      struct ice_tx_drbell_q_ctx *tx_drbell_q_ctx,
+			      u32 tx_drbell_q_index);
 
 int ice_lut_size_to_type(int lut_size);
 int
@@ -131,15 +124,22 @@ ice_aq_move_recfg_lan_txq(struct ice_hw *hw, u8 num_qs, bool is_move,
 			  struct ice_aqc_move_txqs_data *buf, u16 buf_size,
 			  u8 *txqs_moved, struct ice_sq_cd *cd);
 
+int
+ice_aq_set_txtimeq(struct ice_hw *hw, u16 txtimeq, u8 q_count,
+		   struct ice_aqc_set_txtime_qgrp *txtime_qg,
+		   u16 buf_size, struct ice_sq_cd *cd);
+int
+ice_aq_ena_dis_txtimeq(struct ice_hw *hw, u16 txtimeq, u16 q_count, bool q_ena,
+		       struct ice_aqc_ena_dis_txtime_qgrp *txtime_qg,
+		       struct ice_sq_cd *cd);
+extern const struct ice_ctx_ele ice_txtime_ctx_info[];
 bool ice_check_sq_alive(struct ice_hw *hw, struct ice_ctl_q_info *cq);
 int ice_aq_q_shutdown(struct ice_hw *hw, bool unloading);
 void ice_fill_dflt_direct_cmd_desc(struct ice_aq_desc *desc, u16 opcode);
 extern const struct ice_ctx_ele ice_tlan_ctx_info[];
-int
-ice_set_ctx(struct ice_hw *hw, u8 *src_ctx, u8 *dest_ctx,
-	    const struct ice_ctx_ele *ce_info);
-int
-ice_get_ctx(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info);
+int ice_set_ctx(struct ice_hw *hw, u8 *src_ctx, u8 *dest_ctx,
+		const struct ice_ctx_ele *ce_info);
+int ice_get_ctx(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info);
 
 extern struct mutex ice_global_cfg_lock_sw;
 
@@ -355,11 +355,12 @@ ice_stat_update32(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw);
 void ice_print_rollback_msg(struct ice_hw *hw);
 bool ice_is_generic_mac(struct ice_hw *hw);
-bool ice_is_e822(struct ice_hw *hw);
-bool ice_is_e810(struct ice_hw *hw);
-bool ice_is_e810t(struct ice_hw *hw);
-bool ice_is_e825c(struct ice_hw *hw);
-bool ice_is_e823(struct ice_hw *hw);
+bool ice_is_e822(const struct ice_hw *hw);
+bool ice_is_e810(const struct ice_hw *hw);
+bool ice_is_e810t(const struct ice_hw *hw);
+bool ice_is_e830(const struct ice_hw *hw);
+bool ice_is_e825c(const struct ice_hw *hw);
+bool ice_is_e823(const struct ice_hw *hw);
 int
 ice_sched_query_elem(struct ice_hw *hw, u32 node_teid,
 		     struct ice_aqc_txsched_elem_data *buf);
@@ -376,8 +377,7 @@ int
 ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
 		bool *value, struct ice_sq_cd *cd);
 bool ice_is_100m_speed_supported(struct ice_hw *hw);
-u16
-ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high);
+u16 ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high);
 int
 ice_aq_set_lldp_mib(struct ice_hw *hw, u8 mib_type, void *buf, u16 buf_size,
 		    struct ice_sq_cd *cd);

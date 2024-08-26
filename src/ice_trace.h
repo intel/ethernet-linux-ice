@@ -88,7 +88,11 @@ DECLARE_EVENT_CLASS(ice_print_msg,
 
 		    TP_STRUCT__entry(__string(msg, msg)),
 
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 		    TP_fast_assign(__assign_str(msg, msg);),
+#else
+		    TP_fast_assign(__assign_str(msg);),
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("%s", __get_str(msg))
 );
@@ -117,7 +121,11 @@ DECLARE_EVENT_CLASS(ice_rx_dim_template,
 
 		    TP_fast_assign(__entry->q_vector = q_vector;
 				   __entry->dim = dim;
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 				   __assign_str(devname, q_vector->rx.rx_ring->netdev->name);),
+#else
+				   __assign_str(devname);),
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s Rx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
 			      __get_str(devname),
@@ -144,7 +152,11 @@ DECLARE_EVENT_CLASS(ice_tx_dim_template,
 
 		    TP_fast_assign(__entry->q_vector = q_vector;
 				   __entry->dim = dim;
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 				   __assign_str(devname, q_vector->tx.tx_ring->netdev->name);),
+#else
+				   __assign_str(devname);),
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s Tx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
 			      __get_str(devname),
@@ -176,7 +188,11 @@ DECLARE_EVENT_CLASS(ice_tx_template,
 		    TP_fast_assign(__entry->ring = ring;
 				   __entry->desc = desc;
 				   __entry->buf = buf;
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 				   __assign_str(devname, ring->netdev->name);),
+#else
+				   __assign_str(devname);),
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s ring: %p desc: %p buf %p", __get_str(devname),
 			      __entry->ring, __entry->desc, __entry->buf)
@@ -204,7 +220,11 @@ DECLARE_EVENT_CLASS(ice_rx_template,
 
 		    TP_fast_assign(__entry->ring = ring;
 				   __entry->desc = desc;
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 				   __assign_str(devname, ring->netdev->name);),
+#else
+				   __assign_str(devname);),
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s ring: %p desc: %p", __get_str(devname),
 			      __entry->ring, __entry->desc)
@@ -228,7 +248,11 @@ DECLARE_EVENT_CLASS(ice_rx_indicate_template,
 		    TP_fast_assign(__entry->ring = ring;
 				   __entry->desc = desc;
 				   __entry->skb = skb;
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 				   __assign_str(devname, ring->netdev->name);),
+#else
+				   __assign_str(devname);),
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s ring: %p desc: %p skb %p", __get_str(devname),
 			      __entry->ring, __entry->desc, __entry->skb)
@@ -251,7 +275,11 @@ DECLARE_EVENT_CLASS(ice_xmit_template,
 
 		    TP_fast_assign(__entry->ring = ring;
 				   __entry->skb = skb;
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 				   __assign_str(devname, ring->netdev->name);),
+#else
+				   __assign_str(devname);),
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s skb: %p ring: %p", __get_str(devname),
 			      __entry->skb, __entry->ring)
@@ -285,9 +313,14 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_template,
 				     __field(u8, calibrating)),
 
 		    TP_fast_assign(lockdep_assert_held(&tx->lock);
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
 				   __assign_str(dev_name, dev_name(dev));
 				   __assign_str(netdev_name,
 						netdev_name(skb->dev));
+#else
+				   __assign_str(dev_name);
+				   __assign_str(netdev_name);
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
 				   __entry->skb = skb;
 				   __entry->seq = ice_ptp_get_seq_id(skb);
 				   __entry->idx = idx;

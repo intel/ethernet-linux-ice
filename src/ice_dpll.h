@@ -7,10 +7,26 @@
 #ifndef _ICE_DPLL_H_
 #define _ICE_DPLL_H_
 
+#ifdef CONFIG_DPLL
 #include "ice.h"
+#include <linux/dpll.h>
 
 #define ICE_DPLL_RCLK_NUM_MAX	4
+#endif /* CONFIG_DPLL */
 
+/**
+ * enum ice_dpll_pin_type - enumerate ice pin types:
+ * @ICE_DPLL_PIN_TYPE_INPUT: input pin
+ * @ICE_DPLL_PIN_TYPE_OUTPUT: output pin
+ * @ICE_DPLL_PIN_TYPE_RCLK_INPUT: recovery clock input pin
+ */
+enum ice_dpll_pin_type {
+	ICE_DPLL_PIN_TYPE_INPUT,
+	ICE_DPLL_PIN_TYPE_OUTPUT,
+	ICE_DPLL_PIN_TYPE_RCLK_INPUT,
+};
+
+#ifdef CONFIG_DPLL
 /** ice_dpll_pin - store info about pins
  * @pin: dpll pin structure
  * @pf: pointer to pf, which has registered the dpll_pin
@@ -108,9 +124,18 @@ struct ice_dplls {
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 void ice_dpll_init(struct ice_pf *pf);
 void ice_dpll_deinit(struct ice_pf *pf);
-#else
+void ice_dpll_pin_update_lock(struct ice_pf *pf);
+void ice_dpll_pin_update_unlock(struct ice_pf *pf, bool pin_updated,
+				enum ice_dpll_pin_type pin_type, u8 pin_idx);
+#else /* CONFIG_PTP_1588_CLOCK */
 static inline void ice_dpll_init(struct ice_pf *pf) { }
 static inline void ice_dpll_deinit(struct ice_pf *pf) { }
-#endif
+#endif /* CONFIG_PTP_1588_CLOCK */
+#else /* CONFIG_DPLL */
+static inline void ice_dpll_pin_update_lock(struct ice_pf *pf) { }
+static inline void
+ice_dpll_pin_update_unlock(struct ice_pf *pf, bool pin_updated,
+			   enum ice_dpll_pin_type pin_type, u8 pin_idx) { }
+#endif /* CONFIG_DPLL */
 
-#endif
+#endif /* _ICE_DPLL_H_ */

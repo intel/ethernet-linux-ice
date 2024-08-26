@@ -11,6 +11,7 @@
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 #include "ice_devlink.h"
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
+#include "ice_irq.h"
 
 static DEFINE_IDA(ice_cdev_info_ida);
 
@@ -173,38 +174,6 @@ int ice_unroll_cdev_info(struct iidc_core_dev_info *cdev_info,
 	return 0;
 }
 
-#ifdef CONFIG_PM
-/**
- * ice_cdev_info_refresh_msix - load new values into iidc_core_dev_info structs
- * @pf: pointer to private board struct
- */
-void ice_cdev_info_refresh_msix(struct ice_pf *pf)
-{
-	struct iidc_core_dev_info *cdev_info;
-	unsigned int i;
-
-	if (!pf->cdev_infos)
-		return;
-
-	for (i = 0; i < ARRAY_SIZE(ice_cdev_ids); i++) {
-		if (!pf->cdev_infos[i])
-			continue;
-
-		cdev_info = pf->cdev_infos[i];
-
-		switch (cdev_info->cdev_info_id) {
-		case IIDC_RDMA_ID:
-			cdev_info->msix_count = pf->msix.rdma;
-			cdev_info->msix_entries =
-				&pf->msix_entries[pf->rdma_base_vector];
-			break;
-		default:
-			break;
-		}
-	}
-}
-
-#endif /* CONFIG_PM */
 /**
  * ice_alloc_rdma_qsets - Allocate Leaf Nodes for RDMA Qset
  * @cdev_info: aux driver that is requesting the Leaf Nodes
@@ -784,24 +753,6 @@ ice_cdev_info_vc_send(struct iidc_core_dev_info *cdev_info, u32 vf_id,
 }
 
 /**
- * ice_reserve_cdev_info_qvector - Reserve vector resources for aux drivers
- * @pf: board private structure to initialize
- */
-static int ice_reserve_cdev_info_qvector(struct ice_pf *pf)
-{
-	if (ice_is_aux_ena(pf)) {
-		int index;
-
-		index = ice_get_res(pf, pf->irq_tracker, pf->msix.rdma,
-				    ICE_RES_RDMA_VEC_ID);
-		if (index < 0)
-			return index;
-		pf->rdma_base_vector = (u16)index;
-	}
-	return 0;
-}
-
-/**
  * ice_send_vf_reset_to_aux - send a VF reset notification to the aux driver
  * @cdev_info: pointer to the cdev_info object
  * @vf_id: VF ID to query
@@ -962,6 +913,9 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	iadev->cdev_info = cdev_info;
 	mutex_unlock(&pf->adev_mutex);
 
+	cdev_info->msix_entries = ice_alloc_aux_vectors(pf,
+							cdev_info->msix_count);
+
 	adev->id = pf->aux_idx;
 	adev->dev.release = ice_cdev_info_adev_release;
 	adev->dev.parent = &cdev_info->pdev->dev;
@@ -1004,6 +958,9 @@ void ice_unplug_aux_dev(struct iidc_core_dev_info *cdev_info)
 	auxiliary_device_delete(cdev_info->adev);
 	auxiliary_device_uninit(cdev_info->adev);
 	cdev_info->adev = NULL;
+
+	ice_free_aux_vectors(pf, cdev_info->msix_entries,
+			     cdev_info->msix_count);
 	mutex_unlock(&pf->adev_mutex);
 }
 
@@ -1091,15 +1048,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 	struct ice_vsi *vsi = pf->vsi[0];
 	struct pci_dev *pdev = pf->pdev;
 	struct device *dev = &pdev->dev;
-	int err;
 	unsigned int i;
-
-	/* Reserve vector resources */
-	err = ice_reserve_cdev_info_qvector(pf);
-	if (err < 0) {
-		dev_err(dev, "failed to reserve vectors for aux drivers\n");
-		return err;
-	}
 
 	/* This PFs auxiliary id value */
 	pf->aux_idx = ida_alloc(&ice_cdev_info_ida, GFP_KERNEL);
@@ -1109,7 +1058,6 @@ int ice_init_aux_devices(struct ice_pf *pf)
 	}
 
 	for (i = 0; i < ARRAY_SIZE(ice_cdev_ids); i++) {
-		struct msix_entry *entry = NULL;
 		struct iidc_core_dev_info *cdev_info;
 
 		/* structure layout needed for container_of's looks like:
@@ -1175,16 +1123,18 @@ int ice_init_aux_devices(struct ice_pf *pf)
 			 * and msix_entries are initialized
 			 */
 			cdev_info->msix_count = pf->msix.rdma;
-			entry = &pf->msix_entries[pf->rdma_base_vector];
+			break;
+		case IIDC_IEPS_ID:
+			cdev_info->nac_mode = pf->hw.dev_caps.nac_topo.mode &
+						IIDC_IEPS_NAC_MODE_M;
 			break;
 		default:
 			break;
 		}
-		cdev_info->msix_entries = entry;
 	}
 	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
 
-	return err;
+	return 0;
 }
 
 /**

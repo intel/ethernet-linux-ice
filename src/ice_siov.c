@@ -665,7 +665,7 @@ static struct ice_adi_priv *ice_create_adi(struct ice_pf *pf)
 	struct ice_vf *vf;
 
 	/* Disable global interrupts */
-	wr32(&pf->hw, GLINT_DYN_CTL(pf->oicr_idx),
+	wr32(&pf->hw, GLINT_DYN_CTL(pf->oicr_irq.index),
 	     ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S);
 	set_bit(ICE_OICR_INTR_DIS, pf->state);
 	ice_flush(&pf->hw);
@@ -755,6 +755,7 @@ static int ice_adi_get_vector_irq(struct ice_adi *adi, u32 vector)
 {
 	struct ice_adi_priv *priv = adi_priv(adi);
 	struct ice_vf *vf = &priv->vf;
+	struct ice_q_vector *q_vector;
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 
@@ -764,10 +765,14 @@ static int ice_adi_get_vector_irq(struct ice_adi *adi, u32 vector)
 		return -EFAULT;
 	}
 
-	if (vector >= vsi->num_q_vectors)
+	if (!vsi->q_vectors)
 		return -EINVAL;
 
-	return ice_get_irq_num(pf, vsi->base_vector + vector);
+	q_vector = vsi->q_vectors[vector];
+	if (!q_vector)
+		return -EINVAL;
+
+	return q_vector->irq.virq;
 }
 
 /**

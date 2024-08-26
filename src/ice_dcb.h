@@ -109,6 +109,9 @@
 #define ICE_DSCP_TC_BW_TLV_LEN		25
 #define ICE_DSCP_PFC_TLV_LEN		6
 
+#define ICE_DCB_MAXTC			8
+#define ICE_DCB_MAXTC_ENCODE		0x0
+
 /* IEEE 802.1AB LLDP Organization specific TLV */
 struct ice_lldp_org_tlv {
 	__be16 typelen;
