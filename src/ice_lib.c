@@ -340,7 +340,7 @@ static void ice_vsi_set_num_qs(struct ice_vsi *vsi)
 		 * original vector count
 		 */
 		if (vf->adq_enabled && vf->num_tc) {
-			u8 tc = vsi->vf_adq_tc;
+			u8 tc = vsi->tc;
 
 			vsi->alloc_txq = vf->ch[tc].num_qps;
 			vsi->alloc_rxq = vf->ch[tc].num_qps;
@@ -992,7 +992,7 @@ static struct ice_vsi * ice_vsi_alloc(struct ice_pf *pf,
 	/* For VSIs which don't have a connected VF, this will be NULL */
 	vsi->vf = params->vf;
 	if (vsi->type == ICE_VSI_VF)
-		vsi->vf_adq_tc = params->tc;
+		vsi->tc = params->tc;
 	set_bit(ICE_VSI_DOWN, vsi->state);
 
 	/* fill slot and prepare pf->next_vsi for next use */

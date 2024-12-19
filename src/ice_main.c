@@ -30,9 +30,9 @@
 
 #define DRV_VERSION_MAJOR 1
 #define DRV_VERSION_MINOR 14
-#define DRV_VERSION_BUILD 11
+#define DRV_VERSION_BUILD 13
 
-#define DRV_VERSION	"1.14.11"
+#define DRV_VERSION	"1.14.13"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"

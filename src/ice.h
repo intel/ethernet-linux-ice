@@ -618,7 +618,6 @@ struct ice_vsi {
 	 * they were before
 	 */
 	u16 orig_rss_size;
-	u8 vf_adq_tc;	/* traffic class number for VF ADQ VSI */
 	/* track various feature bits for channel VSI */
 	DECLARE_BITMAP(features, ICE_CHNL_FEATURE_NBITS);
 #define ICE_TBL_FULL_TIMES             5
