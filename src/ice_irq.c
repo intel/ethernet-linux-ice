@@ -338,7 +338,7 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	}
 #endif /* OFFLOAD_MACVLAN_SUPPORT */
 
-	if (ice_is_aux_ena(pf)) {
+	if (ice_is_aux_ena(pf) && ice_is_rdma_ena(pf)) {
 		needed += rdma_adj_vec[ICE_ADJ_VEC_BEST_CASE];
 		ice_adj_vec_sum(adj_vec, rdma_adj_vec, ICE_ADJ_VEC_STEPS);
 	} else {

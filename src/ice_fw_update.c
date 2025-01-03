@@ -1,7 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2024 Intel Corporation */
 
+#include "kcompat.h"
+#ifdef HAVE_LINUX_UNALIGNED_HEADER
+#include <linux/unaligned.h>
+#else /* HAVE_LINUX_UNALIGNED_HEADER */
 #include <asm/unaligned.h>
+#endif /* !HAVE_LINUX_UNALIGNED_HEADER */
 #include <linux/uuid.h>
 #include <linux/crc32.h>
 #if IS_ENABLED(CONFIG_PLDMFW)
@@ -996,6 +1001,11 @@ int ice_flash_pldm_image(struct devlink *devlink,
 	const struct firmware *fw;
 #endif
 	struct ice_fwu_priv priv;
+#ifdef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_OVERWRITE_MASK
+	u32 overwrite_mask = params->overwrite_mask;
+#else
+	u32 overwrite_mask = 0;
+#endif
 	u8 preservation;
 	int err;
 
@@ -1007,7 +1017,7 @@ int ice_flash_pldm_image(struct devlink *devlink,
 		return -EOPNOTSUPP;
 	}
 
-	switch (params->overwrite_mask) {
+	switch (overwrite_mask) {
 	case 0:
 		/* preserve all settings and identifiers */
 		preservation = ICE_AQC_NVM_PRESERVE_ALL;

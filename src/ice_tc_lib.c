@@ -1231,10 +1231,10 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 	struct ice_rule_query_data rule_added;
 	struct ice_rx_ring *rx_ring = NULL;
 	struct ice_adv_lkup_elem *list;
+	struct ice_vsi *ch_vsi = NULL;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	u32 flags = tc_fltr->flags;
-	struct ice_vsi *ch_vsi;
 	struct device *dev;
 	u16 lkups_cnt = 0;
 	u16 l4_proto = 0;
@@ -1256,10 +1256,11 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		return -EOPNOTSUPP;
 	}
 
-	/* validate forwarding action VSI and queue */
-	ret = ice_tc_forward_action(vsi, tc_fltr, &rx_ring, &ch_vsi);
-	if (ret)
-		return ret;
+	if (ice_is_forward_action(tc_fltr->action.fltr_act)) {
+		ret = ice_tc_forward_action(vsi, tc_fltr, &rx_ring, &ch_vsi);
+		if (ret)
+			return ret;
+	}
 
 	lkups_cnt = ice_tc_count_lkups(flags, tc_fltr);
 	list = kcalloc(lkups_cnt, sizeof(*list), GFP_ATOMIC);
@@ -1295,11 +1296,13 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			tc_fltr->action.fwd.q.queue,
 			tc_fltr->action.fwd.q.hw_queue,
 			lkups_cnt);
-	} else {
-		rule_info.sw_act.flag |= ICE_FLTR_TX;
-		/* In case of Tx (LOOKUP_TX), src needs to be src VSI */
-		rule_info.sw_act.src = ch_vsi->idx;
+	} else if (tc_fltr->action.fltr_act == ICE_DROP_PACKET) {
+		rule_info.sw_act.flag |= ICE_FLTR_RX;
+		rule_info.sw_act.src = hw->pf_id;
 		rule_info.priority = ICE_SWITCH_FLTR_PRIO_VSI;
+	} else {
+		ret = -EOPNOTSUPP;
+		goto exit;
 	}
 
 	rule_info.add_dir_lkup = false;
@@ -1347,6 +1350,9 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 			lkups_cnt, flags, tc_fltr->action.fwd.q.queue,
 			tc_fltr->action.fwd.q.hw_queue, rule_added.rid,
 			rule_added.rule_id);
+	} else if (tc_fltr->action.fltr_act == ICE_DROP_PACKET) {
+		dev_dbg(dev, "added switch rule (lkups_cnt %u, flags 0x%x), action is drop, rid %u, rule_id %u\n",
+			lkups_cnt, flags, rule_added.rid, rule_added.rule_id);
 	}
 exit:
 	kfree(list);
@@ -1735,18 +1741,10 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
  * @f: Pointer to struct flow_cls_offload
  * @fltr: Pointer to filter structure
  */
-#ifdef HAVE_TC_INDIR_BLOCK
 static int
 ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		     struct flow_cls_offload *f,
 		     struct ice_tc_flower_fltr *fltr)
-#else
-static int
-ice_parse_cls_flower(struct net_device __always_unused *filter_dev,
-		     struct ice_vsi __always_unused *vsi,
-		     struct tc_cls_flower_offload *f,
-		     struct ice_tc_flower_fltr *fltr)
-#endif /* HAVE_TC_INDIR_BLOCK */
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &fltr->outer_headers;
 	struct flow_rule *rule = flow_cls_offload_flow_rule(f);
@@ -2177,9 +2175,10 @@ ice_add_switch_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	if (fltr->action.fltr_act == ICE_FWD_TO_QGRP)
 		return -EOPNOTSUPP;
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
-	if (fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC ||
-	    fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_VLAN ||
-	    fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN)
+	if ((fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC ||
+	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_VLAN ||
+	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN) &&
+	    fltr->action.fltr_act != ICE_DROP_PACKET)
 		return ice_add_remove_tc_flower_dflt_fltr(vsi, fltr, true);
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 	return ice_add_tc_flower_adv_fltr(vsi, fltr);
@@ -2309,6 +2308,38 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 }
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 
+static int
+#ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
+ice_tc_parse_action(struct ice_tc_flower_fltr *fltr,
+		    struct flow_action_entry *act)
+#else
+ice_tc_parse_action(struct ice_tc_flower_fltr *fltr,
+		    struct tc_action *tc_act)
+#endif
+{
+#ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
+	switch (act->id) {
+	case FLOW_ACTION_DROP:
+		fltr->action.fltr_act = ICE_DROP_PACKET;
+		return 0;
+	default:
+		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported TC action");
+		return -EOPNOTSUPP;
+	}
+#elif defined(HAVE_TCF_MIRRED_DEV)
+	if (is_tcf_gact_shot(tc_act)) {
+		fltr->action.fltr_act = ICE_DROP_PACKET;
+		return 0;
+	}
+
+	NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported TC action");
+	return -EOPNOTSUPP;
+
+#else
+	return -EINVAL;
+#endif
+}
+
 /**
  * ice_parse_tc_flower_actions - Parse the actions for a TC filter
  * @filter_dev: Ingress netdev
@@ -2365,33 +2396,30 @@ ice_parse_tc_flower_actions(struct net_device *filter_dev,
 #else
 	list_for_each_entry_safe(tc_act, temp, &(exts)->actions, list) {
 #endif /* HAVE_TCF_EXTS_TO_LIST */
+		int err;
 		if (ice_is_eswitch_mode_switchdev(vsi->back)) {
 #ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
-			int err = ice_eswitch_tc_parse_action(filter_dev,
-							      fltr,
-							      act);
+			err = ice_eswitch_tc_parse_action(filter_dev,
+							  fltr,
+							  act);
 #else
-			int err = ice_eswitch_tc_parse_action(filter_dev,
-							      fltr,
-							      tc_act);
+			err = ice_eswitch_tc_parse_action(filter_dev,
+							  fltr,
+							  tc_act);
 #endif
 
 			if (err)
 				return err;
 			continue;
 		}
-		/* Allow only one rule per filter */
-
-		/* Drop action */
 #ifdef HAVE_TC_FLOW_RULE_INFRASTRUCTURE
-		if (act->id == FLOW_ACTION_DROP) {
+		err = ice_tc_parse_action(fltr, act);
 #else
-		if (is_tcf_gact_shot(tc_act)) {
+		err = ice_tc_parse_action(fltr, tc_act);
 #endif
-			NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported action DROP");
-			return -EINVAL;
-		}
-		fltr->action.fltr_act = ICE_FWD_TO_VSI;
+		if (err)
+			return err;
+		continue;
 	}
 	return 0;
 }
@@ -2411,7 +2439,8 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	if ((fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC ||
 	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_VLAN ||
 	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN) &&
-	    !ice_is_eswitch_mode_switchdev(vsi->back)) {
+	    !ice_is_eswitch_mode_switchdev(vsi->back) &&
+	    fltr->action.fltr_act != ICE_DROP_PACKET) {
 		err = ice_add_remove_tc_flower_dflt_fltr(vsi, fltr, false);
 	} else {
 		err = ice_rem_adv_rule_by_fltr(&pf->hw, fltr);
@@ -2453,17 +2482,10 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
  * This function parses TC-flower input fields, parses action,
  * and adds a filter.
  */
-#ifdef HAVE_TC_INDIR_BLOCK
 static int
 ice_add_tc_fltr(struct net_device *netdev, struct ice_vsi *vsi,
 		struct flow_cls_offload *f,
 		struct ice_tc_flower_fltr **__fltr)
-#else
-static int
-ice_add_tc_fltr(struct net_device *netdev, struct ice_vsi *vsi,
-		struct tc_cls_flower_offload *f,
-		struct ice_tc_flower_fltr **__fltr)
-#endif /* HAVE_TC_INDIR_BLOCK */
 {
 	struct ice_tc_flower_fltr *fltr;
 	int err;
@@ -2527,14 +2549,8 @@ ice_find_tc_flower_fltr(struct ice_pf *pf, unsigned long cookie)
  * @cls_flower: Pointer to flower offload structure
  */
 int
-#ifdef HAVE_TC_INDIR_BLOCK
 ice_add_cls_flower(struct net_device *netdev, struct ice_vsi *vsi,
 		   struct flow_cls_offload *cls_flower)
-#else
-ice_add_cls_flower(struct net_device __always_unused *netdev,
-		   struct ice_vsi *vsi,
-		   struct tc_cls_flower_offload *cls_flower)
-#endif /* HAVE_TC_INDIR_BLOCK */
 {
 #ifdef HAVE_TC_FLOWER_OFFLOAD_COMMON_EXTACK
 	struct netlink_ext_ack *extack = cls_flower->common.extack;

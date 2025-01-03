@@ -50,6 +50,7 @@ enum ice_sbq_msg_dev {
 	phy_0	= 2,
 	cgu	= 6,
 	phy_0_peer = 13,
+	cgu_peer = 15,
 };
 
 enum ice_sbq_msg_opcode {

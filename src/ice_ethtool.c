@@ -10,6 +10,18 @@
 #include "ice_dcb_lib.h"
 #include "ice_dcb_nl.h"
 
+#define ICE_ETHTOOL_PFR (ETH_RESET_IRQ | ETH_RESET_DMA | \
+	ETH_RESET_FILTER | ETH_RESET_OFFLOAD)
+
+#define ICE_ETHTOOL_CORER ((ICE_ETHTOOL_PFR | ETH_RESET_RAM) << \
+	ETH_RESET_SHARED_SHIFT)
+
+#define ICE_ETHTOOL_GLOBR (ICE_ETHTOOL_CORER | \
+	(ETH_RESET_MAC << ETH_RESET_SHARED_SHIFT) | \
+	(ETH_RESET_PHY << ETH_RESET_SHARED_SHIFT))
+
+#define ICE_ETHTOOL_VFR ICE_ETHTOOL_PFR
+
 static int ice_q_stats_len(struct net_device *netdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
@@ -314,52 +326,163 @@ static int ice_get_regs_len(struct net_device __always_unused *netdev)
 		sizeof(struct ice_regdump_to_ethtool));
 }
 
-/*
+/**
  * ice_ethtool_get_maxspeed - Get the max speed for given lport
  * @hw: pointer to the HW struct
  * @lport: logical port for which max speed is requested
  * @max_speed: return max speed for input lport
+ *
+ * Return: 0 on success, negative on failure.
  */
 static int ice_ethtool_get_maxspeed(struct ice_hw *hw, u8 lport, u8 *max_speed)
 {
-	struct ice_aqc_get_port_options_elem options[ICE_AQC_PORT_OPT_MAX];
+	struct ice_aqc_get_port_options_elem options[ICE_AQC_PORT_OPT_MAX] = {};
+	bool active_valid = false, pending_valid = true;
 	u8 option_count = ICE_AQC_PORT_OPT_MAX;
-	bool active_valid, pending_valid;
-	u8 active_idx, pending_idx;
+	u8 active_idx = 0, pending_idx = 0;
 	int status;
 
 	status = ice_aq_get_port_options(hw, options, &option_count, lport,
 					 true, &active_idx, &active_valid,
 					 &pending_idx, &pending_valid);
-
-	if (status) {
-		ice_debug(hw, ICE_DBG_PHY, "Port split read err: %d\n", status);
+	if (status)
 		return -EIO;
-	}
-
-	if (active_valid) {
-		ice_debug(hw, ICE_DBG_PHY, "Active idx: %d\n", active_idx);
-	} else {
-		ice_debug(hw, ICE_DBG_PHY, "No valid Active option:\n");
+	if (!active_valid)
 		return -EINVAL;
-	}
-	/* Speed values range from 0 to 7 So max speed can occupy 3 bit */
-	*max_speed = (options[active_idx].max_lane_speed & 0x7);
+
+	*max_speed = options[active_idx].max_lane_speed &
+		     ICE_AQC_PORT_OPT_MAX_LANE_M;
 	return 0;
 }
 
 /**
  * ice_is_serdes_muxed - returns whether serdes is muxed in hardware
  * @hw: pointer to the HW struct
- * Returns True : when serdes is muxed False: when serdes is not muxed
+ *
+ * Return: true when serdes is muxed, false when serdes is not muxed.
  */
 static bool ice_is_serdes_muxed(struct ice_hw *hw)
 {
-	u32 reg_value;
+	u32 reg_value = rd32(hw, GLGEN_SWITCH_MODE_CONFIG);
 
-	reg_value = rd32(hw, GLGEN_SWITCH_MODE_CONFIG);
 	return FIELD_GET(GLGEN_SWITCH_MODE_CONFIG_SELECT_25X4_ON_SINGLE_QUAD_M,
 			 reg_value);
+}
+
+static int
+ice_map_port_topology_for_sfp(struct ice_port_topology *port_topology,
+			      u8 lport, bool is_muxed)
+{
+	switch (lport) {
+	case 0:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 0;
+		port_topology->primary_serdes_lane = 0;
+		break;
+	case 1:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 0;
+		if (is_muxed)
+			port_topology->primary_serdes_lane = 2;
+		else
+			port_topology->primary_serdes_lane = 4;
+		break;
+	case 2:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 1;
+		port_topology->primary_serdes_lane = 1;
+		break;
+	case 3:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 1;
+		if (is_muxed)
+			port_topology->primary_serdes_lane = 3;
+		else
+			port_topology->primary_serdes_lane = 5;
+		break;
+	case 4:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 2;
+		port_topology->primary_serdes_lane = 2;
+		break;
+	case 5:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 2;
+		port_topology->primary_serdes_lane = 6;
+		break;
+	case 6:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 3;
+		port_topology->primary_serdes_lane = 3;
+		break;
+	case 7:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 3;
+		port_topology->primary_serdes_lane = 7;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int
+ice_map_port_topology_for_qsfp(struct ice_port_topology *port_topology,
+			       u8 lport, bool is_muxed)
+{
+	switch (lport) {
+	case 0:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 0;
+		port_topology->primary_serdes_lane = 0;
+		break;
+	case 1:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 0;
+		if (is_muxed)
+			port_topology->primary_serdes_lane = 2;
+		else
+			port_topology->primary_serdes_lane = 4;
+		break;
+	case 2:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 1;
+		port_topology->primary_serdes_lane = 1;
+		break;
+	case 3:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 1;
+		if (is_muxed)
+			port_topology->primary_serdes_lane = 3;
+		else
+			port_topology->primary_serdes_lane = 5;
+		break;
+	case 4:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 2;
+		port_topology->primary_serdes_lane = 2;
+		break;
+	case 5:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 2;
+		port_topology->primary_serdes_lane = 6;
+		break;
+	case 6:
+		port_topology->pcs_quad_select = 0;
+		port_topology->pcs_port = 3;
+		port_topology->primary_serdes_lane = 3;
+		break;
+	case 7:
+		port_topology->pcs_quad_select = 1;
+		port_topology->pcs_port = 3;
+		port_topology->primary_serdes_lane = 7;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 /**
@@ -369,7 +492,7 @@ static bool ice_is_serdes_muxed(struct ice_hw *hw)
  * @lport: logical port for which physical info requested
  * @port_topology: buffer to hold port topology
  *
- * Returns the physical component associated with the Port
+ * Return: 0 on success, negative on failure.
  */
 static int ice_get_port_topology(struct ice_hw *hw, u8 lport,
 				 struct ice_port_topology *port_topology)
@@ -410,56 +533,10 @@ static int ice_get_port_topology(struct ice_hw *hw, u8 lport,
 		if (cage_type == 0x11 ||	/* SFP+ */
 		    cage_type == 0x12) {	/* SFP28 */
 			port_topology->serdes_lane_count = 1;
-			switch (lport) {
-			case 0:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 0;
-				port_topology->primary_serdes_lane = 0;
-				break;
-			case 1:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 0;
-				if (is_muxed)
-					port_topology->primary_serdes_lane = 2;
-				else
-					port_topology->primary_serdes_lane = 4;
-				break;
-			case 2:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 1;
-				port_topology->primary_serdes_lane = 1;
-				break;
-			case 3:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 1;
-				if (is_muxed)
-					port_topology->primary_serdes_lane = 3;
-				else
-					port_topology->primary_serdes_lane = 5;
-				break;
-			case 4:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 2;
-				port_topology->primary_serdes_lane = 2;
-				break;
-			case 5:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 2;
-				port_topology->primary_serdes_lane = 6;
-				break;
-			case 6:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 3;
-				port_topology->primary_serdes_lane = 3;
-				break;
-			case 7:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 3;
-				port_topology->primary_serdes_lane = 7;
-				break;
-			default:
-				return -EINVAL;
-			}
+			err = ice_map_port_topology_for_sfp(port_topology,
+							    lport, is_muxed);
+			if (err)
+				return err;
 		} else if (cage_type == 0x13 ||	/* QSFP */
 			   cage_type == 0x14) {	/* QSFP28 */
 			u8 max_speed = 0;
@@ -474,56 +551,10 @@ static int ice_get_port_topology(struct ice_hw *hw, u8 lport,
 			else
 				port_topology->serdes_lane_count = 1;
 
-			switch (lport) {
-			case 0:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 0;
-				port_topology->primary_serdes_lane = 0;
-				break;
-			case 1:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 0;
-				if (is_muxed)
-					port_topology->primary_serdes_lane = 2;
-				else
-					port_topology->primary_serdes_lane = 4;
-				break;
-			case 2:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 1;
-				port_topology->primary_serdes_lane = 1;
-				break;
-			case 3:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 1;
-				if (is_muxed)
-					port_topology->primary_serdes_lane = 3;
-				else
-					port_topology->primary_serdes_lane = 5;
-				break;
-			case 4:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 2;
-				port_topology->primary_serdes_lane = 2;
-				break;
-			case 5:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 2;
-				port_topology->primary_serdes_lane = 6;
-				break;
-			case 6:
-				port_topology->pcs_quad_select = 0;
-				port_topology->pcs_port = 3;
-				port_topology->primary_serdes_lane = 3;
-				break;
-			case 7:
-				port_topology->pcs_quad_select = 1;
-				port_topology->pcs_port = 3;
-				port_topology->primary_serdes_lane = 7;
-				break;
-			default:
-				return -EINVAL;
-			}
+			err = ice_map_port_topology_for_qsfp(port_topology,
+							     lport, is_muxed);
+			if (err)
+				return err;
 		} else {
 			return -EINVAL;
 		}
@@ -546,67 +577,67 @@ static int ice_get_tx_rx_equa(struct ice_hw *hw, u8 serdes_num,
 	if (!ptr)
 		return -EOPNOTSUPP;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_PRE1,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_PRE1,
 					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
 					  &ptr->tx_equalization_pre1);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_PRE3,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_PRE3,
 					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
 					  &ptr->tx_equalization_pre3);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_ATTEN,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_ATTEN,
 					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
 					  &ptr->tx_equalization_atten);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_POST1,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_POST1,
 					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
 					  &ptr->tx_equalization_post1);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_TX_EQU_PRE2,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_PRE2,
 					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
 					  &ptr->tx_equalization_pre2);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_PRE2,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_PRE2,
 					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
 					  &ptr->rx_equalization_pre2);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_PRE1,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_PRE1,
 					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
 					  &ptr->rx_equalization_pre1);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_POST1,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_POST1,
 					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
 					  &ptr->rx_equalization_post1);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_BFLF,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_BFLF,
 					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
 					  &ptr->rx_equalization_bflf);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_BFHF,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_BFHF,
 					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
 					  &ptr->rx_equalization_bfhf);
 	if (err)
 		return err;
 
-	err = ice_aq_get_phy_equalisation(hw, ICE_AQC_RX_EQU_DRATE,
+	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_DRATE,
 					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
 					  &ptr->rx_equalization_drate);
 	if (err)
@@ -615,6 +646,7 @@ static int ice_get_tx_rx_equa(struct ice_hw *hw, u8 serdes_num,
 	return 0;
 }
 
+#ifdef HAVE_GET_FEC_STATS_OPS
 /**
  * ice_get_port_fec_stats - returns FEC correctable, uncorrectable stats per
  *                          pcsquad, pcsport
@@ -623,43 +655,91 @@ static int ice_get_tx_rx_equa(struct ice_hw *hw, u8 serdes_num,
  * @pcs_port: pcsport for input port
  * @fec_stats: buffer to hold FEC statistics for given port
  *
- * Returns FEC stats
+ * Return: 0 on success, negative on failure.
  */
 static int ice_get_port_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
-				  struct ice_fec_stats_to_ethtool *fec_stats)
+				  struct ethtool_fec_stats *fec_stats)
 {
-	u32 rs_fec_uncorr_low_val = 0, rs_fec_uncorr_high_val = 0;
-	u32 rs_fec_corr_low_val = 0, rs_fec_corr_high_val = 0;
+	u32 fec_uncorr_low_val = 0, fec_uncorr_high_val = 0;
+	u32 fec_corr_low_val = 0, fec_corr_high_val = 0;
 	int err;
 
 	if (pcs_quad > 1 || pcs_port > 3)
 		return -EINVAL;
 
-	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_RS_FEC_CORR_LOW,
-				   &rs_fec_corr_low_val);
-	if (err)
-		return err;
-	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_RS_FEC_CORR_HIGH,
-				   &rs_fec_corr_high_val);
-	if (err)
-		return err;
-	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
-				   ICE_RS_FEC_UNCORR_LOW,
-				   &rs_fec_uncorr_low_val);
-	if (err)
-		return err;
-	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
-				   ICE_RS_FEC_UNCORR_HIGH,
-				   &rs_fec_uncorr_high_val);
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_FEC_CORR_LOW,
+				   &fec_corr_low_val);
+
 	if (err)
 		return err;
 
-	fec_stats->fec_corr_cnt_low = lower_16_bits(rs_fec_corr_low_val);
-	fec_stats->fec_corr_cnt_high = lower_16_bits(rs_fec_corr_high_val);
-	fec_stats->fec_uncorr_cnt_low = lower_16_bits(rs_fec_uncorr_low_val);
-	fec_stats->fec_uncorr_cnt_high = lower_16_bits(rs_fec_uncorr_high_val);
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_FEC_CORR_HIGH,
+				   &fec_corr_high_val);
+
+	if (err)
+		return err;
+
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
+				   ICE_FEC_UNCORR_LOW,
+				   &fec_uncorr_low_val);
+
+	if (err)
+		return err;
+
+	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
+				   ICE_FEC_UNCORR_HIGH,
+				   &fec_uncorr_high_val);
+
+	if (err)
+		return err;
+
+	fec_stats->corrected_blocks.total = (fec_corr_high_val << 16) +
+					     fec_corr_low_val;
+	fec_stats->uncorrectable_blocks.total = (fec_uncorr_high_val << 16) +
+						 fec_uncorr_low_val;
+
 	return 0;
 }
+
+/**
+ * ice_get_fec_stats - returns FEC correctable, uncorrectable stats per netdev
+ * @netdev: network interface device structure
+ * @fec_stats: buffer to hold FEC statistics for given port
+ *
+ */
+static void ice_get_fec_stats(struct net_device *netdev,
+			      struct ethtool_fec_stats *fec_stats)
+{
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_port_topology port_topology;
+	struct ice_port_info *pi;
+	struct ice_pf *pf;
+	struct ice_hw *hw;
+	int err;
+
+	pf = np->vsi->back;
+	hw = &pf->hw;
+	pi = np->vsi->port_info;
+
+	/* Serdes parameters are not supported if not the PF VSI */
+	if (np->vsi->type != ICE_VSI_PF || !pi)
+		return;
+
+	err = ice_get_port_topology(hw, pi->lport, &port_topology);
+	if (err) {
+		netdev_info(netdev, "Extended register dump failed Lport %d\n",
+			    pi->lport);
+		return;
+	}
+
+	/* Get FEC correctable, uncorrectable counter */
+	err = ice_get_port_fec_stats(hw, port_topology.pcs_quad_select,
+				     port_topology.pcs_port, fec_stats);
+	if (err)
+		netdev_info(netdev, "FEC stats get failed Lport %d Err %d\n",
+			    pi->lport, err);
+}
+#endif /* HAVE_GET_FEC_STATS_OPS */
 
 /**
  * ice_get_extended_regs - returns FEC correctable, uncorrectable stats per
@@ -667,13 +747,13 @@ static int ice_get_port_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
  * @netdev: pointer to net device structure
  * @p: output buffer to fill requested register dump
  *
- * Returns error/success
+ * Return: 0 on success, negative on failure.
  */
 static int ice_get_extended_regs(struct net_device *netdev, void *p)
 {
-	struct ice_regdump_to_ethtool *ice_prv_regs_buf;
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_port_topology port_topology;
+	struct ice_regdump_to_ethtool *ice_prv_regs_buf;
+	struct ice_port_topology port_topology = {};
 	struct ice_port_info *pi;
 	struct ice_pf *pf;
 	struct ice_hw *hw;
@@ -684,29 +764,15 @@ static int ice_get_extended_regs(struct net_device *netdev, void *p)
 	hw = &pf->hw;
 	pi = np->vsi->port_info;
 
-	if (!pi) {
-		netdev_info(netdev, "Port info structure is null\n");
-		return -EINVAL;
-	}
-
 	/* Serdes parameters are not supported if not the PF VSI */
-	if (np->vsi->type != ICE_VSI_PF) {
-		netdev_info(netdev, "Supported VSI type PF : failed\n");
+	if (np->vsi->type != ICE_VSI_PF || !pi)
 		return -EINVAL;
-	}
 
 	err = ice_get_port_topology(hw, pi->lport, &port_topology);
-	if (err) {
-		netdev_info(netdev, "Extended register dump failed Lport %d\n",
-			    pi->lport);
+	if (err)
 		return -EINVAL;
-	}
-
-	if (port_topology.serdes_lane_count > 4) {
-		netdev_info(netdev, "Extended register dump failed:  Lport %d Serdes count %d\n",
-			    pi->lport, port_topology.serdes_lane_count);
+	if (port_topology.serdes_lane_count > 4)
 		return -EINVAL;
-	}
 
 	ice_prv_regs_buf = p;
 
@@ -717,21 +783,8 @@ static int ice_get_extended_regs(struct net_device *netdev, void *p)
 		serdes_num = port_topology.primary_serdes_lane + i;
 		err = ice_get_tx_rx_equa(hw, serdes_num,
 					 &ice_prv_regs_buf->equalization[i]);
-		if (err) {
-			netdev_info(netdev, "Lport:Serd %d:%d equa get err:%d",
-				    pi->lport, serdes_num, err);
+		if (err)
 			return -EINVAL;
-		}
-	}
-
-	/* Get FEC correctable, uncorrectable counter */
-	err = ice_get_port_fec_stats(hw, port_topology.pcs_quad_select,
-				     port_topology.pcs_port,
-				     &ice_prv_regs_buf->stats);
-	if (err) {
-		netdev_info(netdev, "FEC stats get failed Lport %d Err %d\n",
-			    pi->lport, err);
-		return -EINVAL;
 	}
 
 	return 0;
@@ -2218,7 +2271,7 @@ static int ice_set_fec_cfg(struct net_device *netdev, enum ice_fec_mode req_fec)
 	ice_cfg_phy_fec(pi, &config, req_fec);
 	config.caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 
-	if (ice_aq_set_phy_cfg(pi->hw, pi, &config, NULL))
+	if (pi->hw->lm_ops->set_phy_cfg(pi->hw, pi, &config, NULL))
 		return -EAGAIN;
 
 	/* Save requested FEC config */
@@ -2307,8 +2360,9 @@ ice_get_fecparam(struct net_device *netdev, struct ethtool_fecparam *fecparam)
 	if (!caps)
 		return -ENOMEM;
 
-	err = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
-				  caps, NULL);
+	err = pi->hw->lm_ops->get_phy_caps(pi, false,
+					   ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+					   caps, NULL);
 	if (err)
 		goto done;
 
@@ -3309,8 +3363,9 @@ ice_get_link_ksettings(struct net_device *netdev,
 	if (!caps)
 		return -ENOMEM;
 
-	err = ice_aq_get_phy_caps(vsi->port_info, false,
-				  ICE_AQC_REPORT_ACTIVE_CFG, caps, NULL);
+	err = vsi->back->hw.lm_ops->get_phy_caps(vsi->port_info, false,
+						 ICE_AQC_REPORT_ACTIVE_CFG,
+						 caps, NULL);
 	if (err)
 		goto done;
 
@@ -3346,8 +3401,9 @@ ice_get_link_ksettings(struct net_device *netdev,
 		ethtool_link_ksettings_add_link_mode(ks, advertising, FEC_RS);
 #endif /* ETHTOOL_GFECPARAM */
 
-	err = ice_aq_get_phy_caps(vsi->port_info, false,
-				  ICE_AQC_REPORT_TOPO_CAP_MEDIA, caps, NULL);
+	err = vsi->back->hw.lm_ops->get_phy_caps(vsi->port_info, false,
+						 ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+						 caps, NULL);
 	if (err)
 		goto done;
 
@@ -3514,10 +3570,14 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 	if (autoneg_enabled == AUTONEG_ENABLE) {
 		/* If autoneg was not already enabled */
 		if (!(p->phy.link_info.an_info & ICE_AQ_AN_COMPLETED)) {
-			/* If autoneg is not supported, return error */
+			/* If autoneg is not supported, return error. 
+			 * E822 will always allow us to toggle autoneg
+			 * so bypass the check for that device. 
+			 */
 			if (!ethtool_link_ksettings_test_link_mode(ks,
 								   supported,
-								   Autoneg)) {
+								   Autoneg) &&
+			    !ice_is_e822(p->hw)) {
 				netdev_info(netdev, "Autoneg not supported on this phy.\n");
 				err = -EINVAL;
 			} else {
@@ -3534,11 +3594,14 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 		/* If autoneg is currently enabled */
 		if (p->phy.link_info.an_info & ICE_AQ_AN_COMPLETED) {
 			/* If autoneg is supported 10GBASE_T is the only PHY
-			 * that can disable it, so otherwise return error
+			 * that can disable it, so otherwise return error.
+			 * On E822 devices, this condition is not valid
+			 * and any PHY can disable autoneg instead.
 			 */
 			if (ethtool_link_ksettings_test_link_mode(ks,
 								  supported,
-								  Autoneg)) {
+								  Autoneg) &&
+			    !ice_is_e822(p->hw)) {
 				netdev_info(netdev, "Autoneg cannot be disabled on this phy\n");
 				err = -EINVAL;
 			} else {
@@ -3621,6 +3684,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 	struct ice_aqc_set_phy_cfg_data config;
 	u16 adv_link_speed, curr_link_speed;
 	struct ice_pf *pf = np->vsi->back;
+	struct ice_hw *hw = &pf->hw;
 	struct ice_port_info *pi;
 	u8 autoneg_changed = 0;
 	u64 phy_type_high = 0;
@@ -3651,11 +3715,13 @@ ice_set_link_ksettings(struct net_device *netdev,
 
 	/* Get the PHY capabilities based on media */
 	if (ice_fw_supports_report_dflt_cfg(pi->hw))
-		err = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_DFLT_CFG,
-					  phy_caps, NULL);
+		err = hw->lm_ops->get_phy_caps(pi, false,
+					       ICE_AQC_REPORT_DFLT_CFG,
+					       phy_caps, NULL);
 	else
-		err = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
-					  phy_caps, NULL);
+		err = hw->lm_ops->get_phy_caps(pi, false,
+					       ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+					       phy_caps, NULL);
 	if (err)
 		goto done;
 
@@ -3804,7 +3870,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 	}
 
 	/* make the aq call */
-	err = ice_aq_set_phy_cfg(&pf->hw, pi, &config, NULL);
+	err = hw->lm_ops->set_phy_cfg(&pf->hw, pi, &config, NULL);
 	if (err) {
 		netdev_info(netdev, "Set phy config failed,\n");
 		goto done;
@@ -4017,9 +4083,11 @@ static int ice_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	struct ice_aqc_get_phy_caps_data *caps;
 	struct ice_link_status *hw_link_info;
 	struct ice_vsi *vsi = np->vsi;
+	struct ice_hw *hw;
 	bool link_up;
 	int status;
 
+	hw = &vsi->back->hw;
 	hw_link_info = &vsi->port_info->phy.link_info;
 	link_up = hw_link_info->link_info & ICE_AQ_LINK_UP;
 
@@ -4063,8 +4131,9 @@ static int ice_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	if (!caps)
 		return -ENOMEM;
 
-	status = ice_aq_get_phy_caps(vsi->port_info, false,
-				     ICE_AQC_REPORT_TOPO_CAP_MEDIA, caps, NULL);
+	status = hw->lm_ops->get_phy_caps(vsi->port_info, false,
+					  ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+					  caps, NULL);
 	if (status) {
 		dev_dbg(ice_pf_to_dev(vsi->back), "get PHY caps failed, status %d\n",
 			status);
@@ -4269,8 +4338,9 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	}
 
 	/* Get the current PHY config */
-	err = ice_aq_get_phy_caps(p, false, ICE_AQC_REPORT_TOPO_CAP_MEDIA,
-				  abilities, NULL);
+	err = p->hw->lm_ops->get_phy_caps(p, false,
+					  ICE_AQC_REPORT_TOPO_CAP_MEDIA,
+					  abilities, NULL);
 	if (err)
 		goto done;
 
@@ -4344,7 +4414,7 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	}
 
 	/* make the AQ call */
-	err = ice_aq_set_phy_cfg(&pf->hw, p, &config, NULL);
+	err = pf->hw.lm_ops->set_phy_cfg(&pf->hw, p, &config, NULL);
 	if (err) {
 		netdev_info(netdev, "Set phy config failed,\n");
 		goto done;
@@ -4976,8 +5046,9 @@ ice_get_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 		return;
 
 	/* Get current PHY config */
-	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_ACTIVE_CFG, pcaps,
-				     NULL);
+	status = pi->hw->lm_ops->get_phy_caps(pi, false,
+					      ICE_AQC_REPORT_ACTIVE_CFG,
+					      pcaps, NULL);
 	if (status)
 		goto out;
 
@@ -5094,8 +5165,8 @@ ice_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 		return -ENOMEM;
 
 	/* Get current PHY config */
-	err = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_ACTIVE_CFG, pcaps,
-				  NULL);
+	err = pi->hw->lm_ops->get_phy_caps(pi, false, ICE_AQC_REPORT_ACTIVE_CFG,
+					   pcaps, NULL);
 	if (err) {
 		kfree(pcaps);
 		return err;
@@ -6086,11 +6157,13 @@ static int
 ice_repr_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
 #endif /* HAVE_ETHTOOL_COALESCE_EXTACK */
 {
-	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_vsi *vsi = np->vsi;
+	struct ice_repr *repr = ice_netdev_to_repr(netdev);
+	struct ice_vsi *vsi = repr->src_vsi;
 	struct ice_pf *pf = vsi->back;
-	struct ice_rx_ring *rx_ring;
 	int v_idx;
+
+	if (ice_check_vf_ready_for_cfg(repr->vf))
+		return -EBUSY;
 
 #ifndef ETHTOOL_COALESCE_USECS
 	if (ice_repr_is_coalesce_param_invalid(ec))
@@ -6100,12 +6173,14 @@ ice_repr_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
 	if (ec->rx_coalesce_usecs_high > ICE_MAX_INTRL ||
 	    (ec->rx_coalesce_usecs_high &&
 	     ec->rx_coalesce_usecs_high < pf->hw.intrl_gran)) {
-		netdev_info(vsi->netdev, "Invalid value,  rx-usecs-high valid values are 0 (disabled), %d-%d\n",
+		netdev_info(netdev, "Invalid value,  rx-usecs-high valid values are 0 (disabled), %d-%d\n",
 			    pf->hw.intrl_gran, ICE_MAX_INTRL);
 		return -EINVAL;
 	}
 
 	ice_for_each_q_vector(vsi, v_idx) {
+		struct ice_rx_ring *rx_ring;
+
 		rx_ring = vsi->rx_rings[v_idx];
 		ice_write_intrl(rx_ring->q_vector, ec->rx_coalesce_usecs_high);
 		rx_ring->q_vector->intrl = ec->rx_coalesce_usecs_high;
@@ -6136,8 +6211,11 @@ static int
 ice_repr_get_coalesce(struct net_device *netdev, struct ethtool_coalesce *ec)
 #endif /* HAVE_ETHTOOL_COALESCE_EXTACK */
 {
-	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_vsi *vsi = np->vsi;
+	struct ice_repr *repr = ice_netdev_to_repr(netdev);
+	struct ice_vsi *vsi = repr->src_vsi;
+
+	if (ice_check_vf_ready_for_cfg(repr->vf))
+		return -EBUSY;
 
 	if (!vsi->rx_rings || !vsi->rx_rings[0]->q_vector->rx.rx_ring)
 		return -EINVAL;
@@ -6193,6 +6271,33 @@ static int ice_repr_get_sset_count(struct net_device *netdev, int sset)
 	default:
 		return -EOPNOTSUPP;
 	}
+}
+
+/**
+ * ice_repr_ethtool_reset - triggers a VF reset
+ * @dev: network interface device structure
+ * @flags: set of reset flags
+ *
+ * Return: 0 on success,
+ * -EOPNOTSUPP when using unsupported set of flags
+ * -EBUSY when VF is not ready for reset.
+ */
+static int ice_repr_ethtool_reset(struct net_device *dev, u32 *flags)
+{
+	struct ice_repr *repr = ice_netdev_to_repr(dev);
+	struct ice_vf *vf;
+
+	if (*flags != ICE_ETHTOOL_VFR)
+		return -EOPNOTSUPP;
+
+	vf = repr->vf;
+
+	if (ice_check_vf_ready_for_cfg(vf))
+		return -EBUSY;
+
+	*flags = 0;
+
+	return ice_reset_vf(vf, ICE_VF_RESET_VFLR | ICE_VF_RESET_LOCK);
 }
 
 #ifdef ETHTOOL_GMODULEINFO
@@ -6372,6 +6477,41 @@ ice_get_module_eeprom(struct net_device *netdev,
 }
 #endif /* ETHTOOL_GMODULEINFO */
 
+/**
+ * ice_ethtool_reset - triggers a given type of reset
+ * @dev: network interface device structure
+ * @flags: set of reset flags
+ *
+ * Return: 0 on success, -EOPNOTSUPP when using unsupported set of flags.
+ */
+static int ice_ethtool_reset(struct net_device *dev, u32 *flags)
+{
+	struct ice_netdev_priv *np = netdev_priv(dev);
+	struct ice_pf *pf = np->vsi->back;
+	enum ice_reset_req reset;
+
+	switch (*flags) {
+	case ICE_ETHTOOL_CORER:
+		reset = ICE_RESET_CORER;
+		break;
+	case ICE_ETHTOOL_GLOBR:
+		reset = ICE_RESET_GLOBR;
+		break;
+	case ICE_ETHTOOL_PFR:
+		reset = ICE_RESET_PFR;
+		break;
+	default:
+		netdev_info(dev, "Unsupported set of ethtool flags");
+		return -EOPNOTSUPP;
+	}
+
+	ice_schedule_reset(pf, reset);
+
+	*flags = 0;
+
+	return 0;
+}
+
 static const struct ethtool_ops ice_ethtool_ops = {
 #ifdef ETHTOOL_COALESCE_USECS
 	.supported_coalesce_params = ETHTOOL_COALESCE_USECS |
@@ -6385,6 +6525,9 @@ static const struct ethtool_ops ice_ethtool_ops = {
 	.get_settings		= ice_get_settings,
 	.set_settings		= ice_set_settings,
 #endif /* ETHTOOL_GLINKSETTINGS */
+#ifdef HAVE_GET_FEC_STATS_OPS
+	.get_fec_stats		= ice_get_fec_stats,
+#endif /* HAVE_GET_FEC_STATS_OPS */
 	.get_drvinfo		= ice_get_drvinfo,
 	.get_regs_len		= ice_get_regs_len,
 	.get_regs		= ice_get_regs,
@@ -6412,6 +6555,7 @@ static const struct ethtool_ops ice_ethtool_ops = {
 	.nway_reset		= ice_nway_reset,
 	.get_pauseparam		= ice_get_pauseparam,
 	.set_pauseparam		= ice_set_pauseparam,
+	.reset			= ice_ethtool_reset,
 #if defined(ETHTOOL_GRSSH) && defined(ETHTOOL_SRSSH)
 	.get_rxfh_key_size	= ice_get_rxfh_key_size,
 	.get_rxfh_indir_size	= ice_get_rxfh_indir_size,
@@ -6468,6 +6612,7 @@ static const struct ethtool_ops ice_ethtool_safe_mode_ops = {
 	.set_ringparam		= ice_set_ringparam,
 	.nway_reset		= ice_nway_reset,
 	.get_channels		= ice_get_channels,
+	.reset			= ice_ethtool_reset,
 };
 
 /**
@@ -6490,6 +6635,7 @@ static const struct ethtool_ops ice_ethtool_repr_ops = {
 	.get_strings		= ice_repr_get_strings,
 	.get_ethtool_stats      = ice_repr_get_ethtool_stats,
 	.get_sset_count		= ice_repr_get_sset_count,
+	.reset			= ice_repr_ethtool_reset,
 };
 
 /**

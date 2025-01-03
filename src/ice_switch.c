@@ -3,6 +3,8 @@
 
 #include "ice_common.h"
 #include "ice_switch.h"
+#include "ice.h"
+#include "ice_trace.h"
 #include "ice_flex_type.h"
 #include "ice_flow.h"
 
@@ -3114,6 +3116,15 @@ ice_aq_sw_rules(struct ice_hw *hw, void *rule_list, u16 rule_list_sz,
 	    hw->adminq.sq_last_status == ICE_AQ_RC_ENOENT)
 		status = -ENOENT;
 
+	if (!status) {
+		if (opc == ice_aqc_opc_add_sw_rules)
+			hw->switch_info->rule_cnt += num_rules;
+		else if (opc == ice_aqc_opc_remove_sw_rules)
+			hw->switch_info->rule_cnt -= num_rules;
+	}
+
+	ice_trace(aq_sw_rules, hw->switch_info, &hw->bus);
+
 	return status;
 }
 
@@ -3310,7 +3321,8 @@ void ice_init_chk_subscribable_recipe_support(struct ice_hw *hw)
 {
 	struct ice_nvm_info *nvm = &hw->flash.nvm;
 
-	if (nvm->major >= 0x04 && nvm->minor >= 0x30)
+	if ((nvm->major >= 0x04 && nvm->minor >= 0x30) ||
+	    hw->mac_type == ICE_MAC_GENERIC_3K_E825)
 		hw->subscribable_recipes_supported = true;
 	else
 		hw->subscribable_recipes_supported = false;
@@ -3389,10 +3401,19 @@ exit:
  */
 int ice_alloc_recipe(struct ice_hw *hw, u16 *rid)
 {
+	int status;
+
 	if (hw->subscribable_recipes_supported)
-		return ice_alloc_subscribable_recipe(hw, rid);
+		status = ice_alloc_subscribable_recipe(hw, rid);
 	else
-		return ice_alloc_legacy_shared_recipe(hw, rid);
+		status = ice_alloc_legacy_shared_recipe(hw, rid);
+
+	if (!status) {
+		hw->switch_info->recp_cnt++;
+		ice_trace(alloc_recipe, hw->switch_info, &hw->bus);
+	}
+
+	return status;
 }
 
 /**
@@ -3400,9 +3421,17 @@ int ice_alloc_recipe(struct ice_hw *hw, u16 *rid)
  * @hw: pointer to the hardware structure
  * @rid: recipe ID to free
  */
-static int ice_free_recipe_res(struct ice_hw *hw, u16 rid)
+static noinline int ice_free_recipe_res(struct ice_hw *hw, u16 rid)
 {
-	return ice_free_hw_res(hw, ICE_AQC_RES_TYPE_RECIPE, 1, &rid);
+	int status;
+
+	status = ice_free_hw_res(hw, ICE_AQC_RES_TYPE_RECIPE, 1, &rid);
+	if (!status) {
+		hw->switch_info->recp_cnt--;
+		ice_trace(free_recipe_res, hw->switch_info, &hw->bus);
+	}
+
+	return status;
 }
 
 /*
@@ -8606,7 +8635,8 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	sw->recp_list[rid].adv_rule = true;
 	rule_head = &sw->recp_list[rid].filt_rules;
 
-	if (rinfo->sw_act.fltr_act == ICE_FWD_TO_VSI)
+	if (rinfo->sw_act.fltr_act == ICE_FWD_TO_VSI ||
+	    rinfo->sw_act.fltr_act == ICE_MIRROR_PACKET)
 		adv_fltr->vsi_count = 1;
 
 	/* Add rule entry to book keeping list */
@@ -8957,8 +8987,6 @@ ice_replay_vsi_fltr(struct ice_hw *hw, struct ice_port_info *pi,
 		if (!itr->vsi_list_info ||
 		    !test_bit(vsi_handle, itr->vsi_list_info->vsi_map))
 			continue;
-		/* Clearing it so that the logic can add it back */
-		clear_bit(vsi_handle, itr->vsi_list_info->vsi_map);
 		f_entry.fltr_info.vsi_handle = vsi_handle;
 		f_entry.fltr_info.fltr_act = ICE_FWD_TO_VSI;
 		/* update the src in case it is VSI num */

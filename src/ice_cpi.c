@@ -6,6 +6,42 @@
 #include "ice_ptp_hw.h"
 #include "ice_cpi.h"
 
+/* CPI is per PHY and the LM CMD and Response register
+ * are used to control all ports of the same PHY.
+ * Lock is required to when multiple PEER driver try to executes
+ * CPI command sequence on same PHY
+ */
+/* PHY 0 Mutex object */
+static DEFINE_MUTEX(ice_global_cpi_phy0);
+/* PHY 1 Mutex object */
+static DEFINE_MUTEX(ice_global_cpi_phy1);
+
+/**
+ * ice_cpi_lock_mutex - acquire mutex lock for given phy
+ * @hw: pointer to the HW struct
+ * @phy: phy index of port
+ */
+static void ice_cpi_lock_mutex(struct ice_hw *hw, u8 phy)
+{
+	if (!phy)
+		mutex_lock(&ice_global_cpi_phy0);
+	else
+		mutex_lock(&ice_global_cpi_phy1);
+}
+
+/**
+ * ice_cpi_unlock_mutex - release mutex lock for given phy
+ * @hw: pointer to the HW struct
+ * @phy: phy index of port
+ */
+static void ice_cpi_unlock_mutex(struct ice_hw *hw, u8 phy)
+{
+	if (!phy)
+		mutex_unlock(&ice_global_cpi_phy0);
+	else
+		mutex_unlock(&ice_global_cpi_phy1);
+}
+
 /**
  * ice_cpi_get_dest_dev - get destination PHY for given phy index
  * @hw: pointer to the HW struct
@@ -14,7 +50,15 @@
 static enum ice_sbq_msg_dev ice_cpi_get_dest_dev(struct ice_hw *hw,
 						 u8 phy)
 {
-	u8 curr_phy = hw->ptp.phy.eth56g.lane_num / hw->ptp.ports_per_phy;
+	u8 curr_phy;
+
+	if (ice_is_dual(hw)) {
+		if (ice_is_primary(hw))
+			curr_phy = PHY0;
+		else
+			curr_phy = PHY1;
+	}
+
 	/* In the driver, lanes 4..7 are in fact 0..3 on a second PHY.
 	 * On a single complex E825C, PHY 0 is always destination device phy_0
 	 * and PHY 1 is phy_0_peer.
@@ -213,7 +257,7 @@ static int ice_cpi_exec_cmd(struct ice_hw *hw, int phy, u32 data)
 }
 
 /**
- * ice_cpi_cmd - executes CPI command
+ * ice_cpi_exec - executes CPI command
  * @hw: pointer to the HW struct
  * @phy: phy index of port the CPI action is taken on
  * @cmd: pointer to the command struct to execute
@@ -224,33 +268,37 @@ static int ice_cpi_exec_cmd(struct ice_hw *hw, int phy, u32 data)
  *
  * Returns 0 on success.
  */
-static int ice_cpi_cmd(struct ice_hw *hw, u8 phy,
-		       const struct ice_cpi_cmd *cmd,
-		       struct ice_cpi_resp *resp)
+int ice_cpi_exec(struct ice_hw *hw, u8 phy,
+		 const struct ice_cpi_cmd *cmd,
+		 struct ice_cpi_resp *resp)
 {
+	u8 curr_phy = ICE_GET_QUAD_NUM((u8)hw->lane_num);
 	union cpi_reg_phy_cmd_data phy_cmd_data;
 	union cpi_reg_lm_cmd_data lm_cmd_data;
-	int err = 0;
+	int err, err1 = 0;
 
 	if (!cmd || !resp)
 		return -EINVAL;
 
 	memset(&lm_cmd_data, 0, sizeof(lm_cmd_data));
+
+	ice_cpi_lock_mutex(hw, curr_phy);
+
 	lm_cmd_data.field.cpi_req = CPI_LM_CMD_REQ;
 	lm_cmd_data.field.get_set = cmd->set;
 	lm_cmd_data.field.opcode = cmd->opcode;
 	lm_cmd_data.field.portlane = cmd->port;
-	lm_cmd_data.field.params.raw_data = cmd->data;
+	lm_cmd_data.field.data = cmd->data;
 
 	/* 1. Try to acquire the bus, PHY ACK should be low before we begin */
 	err = ice_cpi_wait_req0_ack0(hw, phy);
 	if (err)
-		return err;
+		goto rel_mutex_exit;
 
 	/* 2. We start the CPI request */
 	err = ice_cpi_exec_cmd(hw, phy, lm_cmd_data.val);
 	if (err)
-		return err;
+		goto rel_mutex_exit;
 
 	/*
 	 * 3. Wait for CPI confirmation, PHY ACK should be asserted and opcode
@@ -258,22 +306,58 @@ static int ice_cpi_cmd(struct ice_hw *hw, u8 phy,
 	 */
 	err = ice_cpi_wait_ack1(hw, phy, &phy_cmd_data.val);
 	if (err)
-		return err;
+		goto rel_cpi_exit;
+
 	if (phy_cmd_data.field.ack &&
-	    lm_cmd_data.field.opcode != phy_cmd_data.field.opcode)
-		return -EFAULT;
+	    lm_cmd_data.field.opcode != phy_cmd_data.field.opcode) {
+		err = -EFAULT;
+		goto rel_cpi_exit;
+	}
 
 	resp->opcode = phy_cmd_data.field.opcode;
 	resp->data = phy_cmd_data.field.data;
 	resp->port = phy_cmd_data.field.data;
 
+rel_cpi_exit:
 	/* 4. We deassert REQ */
-	err = ice_cpi_req0(hw, phy, lm_cmd_data.val);
-	if (err)
-		return err;
+	err1 = ice_cpi_req0(hw, phy, lm_cmd_data.val);
+	if (err1)
+		goto rel_mutex_exit;
 
 	/* 5. PHY ACK should be deasserted in response */
-	return ice_cpi_wait_ack0(hw, phy);
+	err1 = ice_cpi_wait_ack0(hw, phy);
+
+rel_mutex_exit:
+	ice_cpi_unlock_mutex(hw, curr_phy);
+
+	if (!err)
+		err = err1;
+
+	return err;
+}
+
+/**
+ * ice_cpi_set_cmd - execute CPI SET command
+ * @hw: pointer to the HW struct
+ * @opcode: CPI command opcode
+ * @phy: phy index CPI command is applied for
+ * @port_lane: ephy index CPI command is applied for
+ * @data: CPI opcode context specific data
+ *
+ * Return: 0 on success.
+ */
+static int ice_cpi_set_cmd(struct ice_hw *hw, u16 opcode, u8 phy, u8 port_lane,
+			   u16 data)
+{
+	struct ice_cpi_resp cpi_resp = {0};
+	struct ice_cpi_cmd cpi_cmd = {
+		.opcode = opcode,
+		.set = true,
+		.port = port_lane,
+		.data = data,
+	};
+
+	return ice_cpi_exec(hw, phy, &cpi_cmd, &cpi_resp);
 }
 
 /**
@@ -286,29 +370,105 @@ static int ice_cpi_cmd(struct ice_hw *hw, u8 phy,
  * This function executes CPI request to enable or disable specific
  * Tx reference clock on given PHY.
  *
- * Returns 0 on success.
+ * Return: 0 on success.
  */
 int ice_cpi_ena_dis_clk_ref(struct ice_hw *hw, u8 phy,
 			    enum ice_e825c_ref_clk clk, bool enable)
 {
-	struct cpi_tx_clk_cfg *clk_ref_cfg;
-	struct ice_cpi_resp cpi_resp = {0};
-	struct ice_cpi_cmd cpi_cmd = {0};
-	int err = 0;
+	u16 val;
 
-	cpi_cmd.opcode = CPI_OPCODE_TX_CLK_CFG;
-	cpi_cmd.set = true;
-	cpi_cmd.port = 0; /* unused for enable/disable variant */
+	val = FIELD_PREP(CPI_OPCODE_PHY_CLK_PHY_SEL_M, phy) |
+	      FIELD_PREP(CPI_OPCODE_PHY_CLK_REF_CTRL_M,
+			 enable ? CPI_OPCODE_PHY_CLK_ENABLE :
+			 CPI_OPCODE_PHY_CLK_DISABLE) |
+	      FIELD_PREP(CPI_OPCODE_PHY_CLK_REF_SEL_M, clk);
 
-	clk_ref_cfg = (struct cpi_tx_clk_cfg *)&cpi_cmd.data;
-	clk_ref_cfg->refclksrc = clk;
-	clk_ref_cfg->en_dis_sel = enable ? CPI_TX_CLK_ENABLE :
-	       CPI_TX_CLK_DISABLE;
-	clk_ref_cfg->phy_sel = phy;
-
-	err = ice_cpi_cmd(hw, phy, &cpi_cmd, &cpi_resp);
-	if (err)
-		return err;
-
-	return 0;
+	return ice_cpi_set_cmd(hw, CPI_OPCODE_PHY_CLK, phy, 0, val);
 }
+
+/**
+ * ice_cpi_select_clk_ref - selects Tx reference clock for given port
+ * @hw: pointer to the HW struct
+ * @phy: phy index of port to be enabled/disabled
+ * @port: phy index of port for which Tx reference clock is selected
+ * @clk: Tx reference clock to enable or disable
+ *
+ * This function executes CPI request to select specific Tx reference
+ * clock on given port.
+ *
+ * Return: 0 on success.
+ */
+int ice_cpi_select_clk_ref(struct ice_hw *hw, u8 phy, u8 port,
+			   enum ice_e825c_ref_clk clk)
+{
+	u16 val;
+
+	val = FIELD_PREP(CPI_OPCODE_PHY_CLK_PHY_SEL_M, phy) |
+	      FIELD_PREP(CPI_OPCODE_PHY_CLK_REF_CTRL_M,
+			 CPI_OPCODE_PHY_CLK_PORT_SEL) |
+	      FIELD_PREP(CPI_OPCODE_PHY_CLK_REF_SEL_M, clk);
+
+	return ice_cpi_set_cmd(hw, CPI_OPCODE_PHY_CLK, phy, port, val);
+}
+
+/**
+ * ice_cpi_set_port_state - disables/enables port
+ * @hw: pointer to the HW struct
+ * @phy: phy index of port for which Tx reference clock is selected
+ * @port: port/lane to enable/disable
+ * @disable: bool value to enable or disable the port
+ *
+ * This function executes CPI request to enable or disable specific port.
+ *
+ * Return: 0 on success.
+ */
+int ice_cpi_set_port_state(struct ice_hw *hw, u8 phy, u8 port, bool disable)
+{
+	u16 val = disable ? CPI_OPCODE_PORT_STATE_DISABLE : 0;
+
+	ice_debug(hw, ICE_DBG_PHY, "CPI Set Port State: phy=%d port=%d disable=%d\n",
+		  phy, port, disable);
+	return ice_cpi_set_cmd(hw, CPI_OPCODE_PORT_STATE, phy, port, val);
+}
+
+/**
+ * ice_cpi_set_port_mode - configure port
+ * @hw: pointer to the HW struct
+ * @phy: phy index of port to be configured
+ * @port: port to be configured
+ * @port_width: the width of the port to be established
+ * @port_mode: port mode to be configured
+ *
+ * Return: 0 on success.
+ */
+int ice_cpi_set_port_mode(struct ice_hw *hw, u8 phy, u8 port, u8 port_width,
+			  u8 port_mode)
+{
+	u16 val;
+
+	val = FIELD_PREP(CPI_OPCODE_PORT_MODE_PORT_WIDTH_M, port_width) |
+	      FIELD_PREP(CPI_OPCODE_PORT_MODE_PORT_MODE_M, port_mode);
+
+	return ice_cpi_set_cmd(hw, CPI_OPCODE_PORT_MODE, phy, port, val);
+}
+
+/**
+ * ice_cpi_reset_port - resets port
+ * @hw: pointer to the HW struct
+ * @phy: phy index of port to be reset
+ * @port: port to be reset
+ *
+ * This function executes CPI request to reset specific port.
+ *
+ * Return: 0 on success.
+ */
+int ice_cpi_reset_port(struct ice_hw *hw, u8 phy, u8 port)
+{
+	u16 val;
+
+	val = FIELD_PREP(CPI_OPCODE_COMMAND_CMD_M,
+			 CPI_OPCODE_COMMAND_RESET_PORT);
+
+	return ice_cpi_set_cmd(hw, CPI_OPCODE_COMMAND, phy, port, val);
+}
+

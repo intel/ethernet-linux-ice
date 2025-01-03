@@ -17,29 +17,30 @@
 #include "ice_switch.h"
 #include "ice_fdir.h"
 
+#define ICE_SQ_SEND_ATOMIC_DELAY_TIME_US 100
 #define ICE_SQ_SEND_DELAY_TIME_MS	10
 #define ICE_SQ_SEND_MAX_EXECUTE		3
 
-#define RS_FEC_REG_SHIFT 2
-#define RS_FEC_RECV_ID_SHIFT 4
-#define RS_FEC_CORR_LOW_REG_PORT0 (0x02 << RS_FEC_REG_SHIFT)
-#define RS_FEC_CORR_HIGH_REG_PORT0 (0x03 << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_LOW_REG_PORT0 (0x04 << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_HIGH_REG_PORT0 (0x05 << RS_FEC_REG_SHIFT)
-#define RS_FEC_CORR_LOW_REG_PORT1 (0x42 << RS_FEC_REG_SHIFT)
-#define RS_FEC_CORR_HIGH_REG_PORT1 (0x43 << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_LOW_REG_PORT1 (0x44 << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_HIGH_REG_PORT1 (0x45 << RS_FEC_REG_SHIFT)
-#define RS_FEC_CORR_LOW_REG_PORT2 (0x4A << RS_FEC_REG_SHIFT)
-#define RS_FEC_CORR_HIGH_REG_PORT2 (0x4B << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_LOW_REG_PORT2 (0x4C << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_HIGH_REG_PORT2 (0x4D << RS_FEC_REG_SHIFT)
-#define RS_FEC_CORR_LOW_REG_PORT3 (0x52 << RS_FEC_REG_SHIFT)
-#define RS_FEC_CORR_HIGH_REG_PORT3 (0x53 << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_LOW_REG_PORT3 (0x54 << RS_FEC_REG_SHIFT)
-#define RS_FEC_UNCORR_HIGH_REG_PORT3 (0x55 << RS_FEC_REG_SHIFT)
-#define RS_FEC_RECEIVER_ID_PCS0 (0x33 << RS_FEC_RECV_ID_SHIFT)
-#define RS_FEC_RECEIVER_ID_PCS1 (0x34 << RS_FEC_RECV_ID_SHIFT)
+#define FEC_REG_SHIFT 2
+#define FEC_RECV_ID_SHIFT 4
+#define FEC_CORR_LOW_REG_PORT0 (0x02 << FEC_REG_SHIFT)
+#define FEC_CORR_HIGH_REG_PORT0 (0x03 << FEC_REG_SHIFT)
+#define FEC_UNCORR_LOW_REG_PORT0 (0x04 << FEC_REG_SHIFT)
+#define FEC_UNCORR_HIGH_REG_PORT0 (0x05 << FEC_REG_SHIFT)
+#define FEC_CORR_LOW_REG_PORT1 (0x42 << FEC_REG_SHIFT)
+#define FEC_CORR_HIGH_REG_PORT1 (0x43 << FEC_REG_SHIFT)
+#define FEC_UNCORR_LOW_REG_PORT1 (0x44 << FEC_REG_SHIFT)
+#define FEC_UNCORR_HIGH_REG_PORT1 (0x45 << FEC_REG_SHIFT)
+#define FEC_CORR_LOW_REG_PORT2 (0x4A << FEC_REG_SHIFT)
+#define FEC_CORR_HIGH_REG_PORT2 (0x4B << FEC_REG_SHIFT)
+#define FEC_UNCORR_LOW_REG_PORT2 (0x4C << FEC_REG_SHIFT)
+#define FEC_UNCORR_HIGH_REG_PORT2 (0x4D << FEC_REG_SHIFT)
+#define FEC_CORR_LOW_REG_PORT3 (0x52 << FEC_REG_SHIFT)
+#define FEC_CORR_HIGH_REG_PORT3 (0x53 << FEC_REG_SHIFT)
+#define FEC_UNCORR_LOW_REG_PORT3 (0x54 << FEC_REG_SHIFT)
+#define FEC_UNCORR_HIGH_REG_PORT3 (0x55 << FEC_REG_SHIFT)
+#define FEC_RECEIVER_ID_PCS0 (0x33 << FEC_RECV_ID_SHIFT)
+#define FEC_RECEIVER_ID_PCS1 (0x34 << FEC_RECV_ID_SHIFT)
 
 enum ice_fw_modes {
 	ICE_FW_MODE_NORMAL,
@@ -75,6 +76,7 @@ int
 ice_aq_alloc_free_res(struct ice_hw *hw, u16 num_entries,
 		      struct ice_aqc_alloc_free_res_elem *buf, u16 buf_size,
 		      enum ice_adminq_opc opc, struct ice_sq_cd *cd);
+struct ice_ctl_q_info *ice_get_sbq(struct ice_hw *hw);
 int
 ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 		struct ice_aq_desc *desc, void *buf, u16 buf_size,
@@ -156,19 +158,14 @@ ice_aq_set_port_params(struct ice_port_info *pi, u16 bad_frame_vsi,
 		       bool save_bad_pac, bool pad_short_pac, bool double_vlan,
 		       struct ice_sq_cd *cd);
 int
-ice_aq_get_phy_caps(struct ice_port_info *pi, bool qual_mods, u8 report_mode,
-		    struct ice_aqc_get_phy_caps_data *caps,
-		    struct ice_sq_cd *cd);
-int
 ice_aq_get_netlist_node_pin(struct ice_hw *hw,
 			    struct ice_aqc_get_link_topo_pin *cmd,
 			    u16 *node_handle);
 int
 ice_aq_get_netlist_node(struct ice_hw *hw, struct ice_aqc_get_link_topo *cmd,
 			u8 *node_part_number, u16 *node_handle);
-int
-ice_find_netlist_node(struct ice_hw *hw, u8 node_type_ctx, u8 node_part_number,
-		      u16 *node_handle);
+int ice_find_netlist_node(struct ice_hw *hw, u8 node_type, u8 ctx,
+			  u8 node_part_number, u16 *node_handle);
 int ice_get_pf_c827_idx(struct ice_hw *hw, u8 *idx);
 bool ice_is_pf_c827(struct ice_hw *hw);
 bool ice_is_phy_rclk_in_netlist(struct ice_hw *hw);
@@ -186,20 +183,17 @@ ice_aq_manage_mac_write(struct ice_hw *hw, const u8 *mac_addr, u8 flags,
 			struct ice_sq_cd *cd);
 
 int ice_clear_pf_cfg(struct ice_hw *hw);
-int
-ice_aq_set_phy_cfg(struct ice_hw *hw, struct ice_port_info *pi,
-		   struct ice_aqc_set_phy_cfg_data *cfg, struct ice_sq_cd *cd);
 bool ice_fw_supports_link_override(struct ice_hw *hw);
 bool ice_fw_supports_fec_dis_auto(struct ice_hw *hw);
 int
 ice_get_link_default_override(struct ice_link_default_override_tlv *ldo,
 			      struct ice_port_info *pi);
 bool ice_is_phy_caps_an_enabled(struct ice_aqc_get_phy_caps_data *caps);
-int ice_aq_get_phy_equalisation(struct ice_hw *hw, u16 data_in, u16 op_code,
+int ice_aq_get_phy_equalization(struct ice_hw *hw, u16 data_in, u16 op_code,
 				u8 serdes_num, int *output);
 int
 ice_aq_get_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
-		     enum ice_rs_fec_stats_types rs_fec_type, u32 *output);
+		     enum ice_fec_stats_types fec_type, u32 *output);
 enum ice_fc_mode ice_caps_to_fc_mode(u8 caps);
 enum ice_fec_mode ice_caps_to_fec_mode(u8 caps, u8 fec_options);
 int
@@ -219,19 +213,17 @@ int
 ice_cfg_phy_fec(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
 		enum ice_fec_mode fec);
 int
-ice_aq_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
-			   struct ice_sq_cd *cd, u8 refclk);
-int
 ice_aq_set_mac_cfg(struct ice_hw *hw, u16 max_frame_size, bool auto_drop,
 		   struct ice_sq_cd *cd);
-int
-ice_aq_get_link_info(struct ice_port_info *pi, bool ena_lse,
-		     struct ice_link_status *link, struct ice_sq_cd *cd);
 int
 ice_aq_set_event_mask(struct ice_hw *hw, u8 port_num, u16 mask,
 		      struct ice_sq_cd *cd);
 int
 ice_aq_set_mac_loopback(struct ice_hw *hw, bool ena_lpbk, struct ice_sq_cd *cd);
+
+int
+ice_aq_set_phy_debug(struct ice_hw *hw, u8 port_num, u8 cmd_flags, u8 phy_index,
+		     struct ice_sq_cd *cd);
 
 int
 ice_aq_set_port_id_led(struct ice_port_info *pi, bool is_orig_mode,
@@ -295,8 +287,6 @@ int ice_replay_vsi(struct ice_hw *hw, u16 vsi_handle);
 void ice_replay_post(struct ice_hw *hw);
 struct ice_q_ctx *
 ice_get_lan_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 q_handle);
-void ice_sbq_lock(struct ice_hw *hw);
-void ice_sbq_unlock(struct ice_hw *hw);
 int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flag);
 int
 ice_aq_cfg_cgu_err(struct ice_hw *hw, bool ena_event_report, bool ena_err_report,
@@ -355,12 +345,12 @@ ice_stat_update32(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw);
 void ice_print_rollback_msg(struct ice_hw *hw);
 bool ice_is_generic_mac(struct ice_hw *hw);
-bool ice_is_e822(const struct ice_hw *hw);
 bool ice_is_e810(const struct ice_hw *hw);
 bool ice_is_e810t(const struct ice_hw *hw);
-bool ice_is_e830(const struct ice_hw *hw);
-bool ice_is_e825c(const struct ice_hw *hw);
+bool ice_is_e822(const struct ice_hw *hw);
 bool ice_is_e823(const struct ice_hw *hw);
+bool ice_is_e825c(const struct ice_hw *hw);
+bool ice_is_e830(const struct ice_hw *hw);
 int
 ice_sched_query_elem(struct ice_hw *hw, u32 node_teid,
 		     struct ice_aqc_txsched_elem_data *buf);
@@ -378,6 +368,7 @@ ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
 		bool *value, struct ice_sq_cd *cd);
 bool ice_is_100m_speed_supported(struct ice_hw *hw);
 u16 ice_get_link_speed_based_on_phy_type(u64 phy_type_low, u64 phy_type_high);
+enum ice_eth56g_link_spd ice_phy_get_speed_eth56g(struct ice_link_status *li);
 int
 ice_aq_set_lldp_mib(struct ice_hw *hw, u8 mib_type, void *buf, u16 buf_size,
 		    struct ice_sq_cd *cd);
@@ -400,4 +391,15 @@ bool ice_is_fw_health_report_supported(struct ice_hw *hw);
 bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
 /* AQ API version for FW auto drop reports */
 bool ice_is_fw_auto_drop_supported(struct ice_hw *hw);
+
+static inline bool ice_is_primary(struct ice_hw *hw)
+{
+	return !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
+}
+
+static inline bool ice_is_dual(struct ice_hw *hw)
+{
+	return !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_DUAL_M);
+}
+void ice_init_lm_ops(struct ice_hw *hw);
 #endif /* _ICE_COMMON_H_ */

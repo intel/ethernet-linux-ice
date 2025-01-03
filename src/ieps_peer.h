@@ -10,7 +10,7 @@
 #include <linux/stddef.h>
 
 #define IEPS_VERSION_PEER_MAJOR    1
-#define IEPS_VERSION_PEER_MINOR    3
+#define IEPS_VERSION_PEER_MINOR    4
 
 struct ieps_peer_api_version {
 	__u8  major;
@@ -236,6 +236,24 @@ struct ieps_peer_intphy_reg_rw {
 	enum ieps_peer_sbq_dev_msg dest_dev;
 };
 
+struct ieps_peer_cpi_cmd {
+	u8 port;
+	u8 opcode;
+	u16 data;
+	bool set;
+};
+
+struct ieps_peer_cpi_resp {
+	u8 port;
+	u8 opcode;
+	u16 data;
+};
+
+struct ieps_peer_cpi_cmd_resp {
+	struct ieps_peer_cpi_cmd cmd;
+	struct ieps_peer_cpi_resp resp;
+};
+
 enum ieps_peer_cmd {
 	IEPS_PEER_CMD_VERSION_CHECK,
 	IEPS_PEER_CMD_I2C_READ,
@@ -257,7 +275,12 @@ enum ieps_peer_cmd {
 	/* DFX */
 	IEPS_PEER_CMD_INTPHY_REG_RW,
 
-	IEPS_PEER_CMD_SET_LM_CONFIG,
+	/* Link Management */
+	IEPS_PEER_CMD_SET_LESM,
+	IEPS_PEER_CMD_SET_LINK_MNG,
+
+	/* CPI Access */
+	IEPS_PEER_CMD_CPI_EXEC,
 
 	/* Must be last */
 	NUM_IEPS_PEER_CMD
@@ -266,6 +289,7 @@ enum ieps_peer_cmd {
 enum ieps_peer_status {
 	IEPS_PEER_SUCCESS,
 	IEPS_PEER_FW_ERROR,
+	IEPS_PEER_CPI_EXEC_ERROR,
 	IEPS_PEER_NO_MEMORY,
 	IEPS_PEER_INVALID_CMD,
 	IEPS_PEER_INVALID_ARG,

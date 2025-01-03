@@ -199,22 +199,7 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 	if (!vsi->q_vectors)
 		goto err_vectors;
 
-#ifdef HAVE_XDP_SUPPORT
-#ifdef HAVE_AF_XDP_ZC_SUPPORT
-	vsi->af_xdp_zc_qps = bitmap_zalloc(max_t(int, vsi->alloc_txq, vsi->alloc_rxq), GFP_KERNEL);
-	if (!vsi->af_xdp_zc_qps)
-		goto err_zc_qps;
-#endif /* HAVE_AF_XDP_ZC_SUPPORT */
-#endif /* HAVE_XDP_SUPPORT */
-
 	return 0;
-
-#ifdef HAVE_XDP_SUPPORT
-#ifdef HAVE_AF_XDP_ZC_SUPPORT
-err_zc_qps:
-	devm_kfree(dev, vsi->q_vectors);
-#endif /* HAVE_AF_XDP_ZC_SUPPORT */
-#endif /* HAVE_XDP_SUPPORT */
 err_vectors:
 	devm_kfree(dev, vsi->rxq_map);
 err_rxq_map:
@@ -461,14 +446,6 @@ static void ice_vsi_free_arrays(struct ice_vsi *vsi)
 
 	dev = ice_pf_to_dev(pf);
 
-#ifdef HAVE_XDP_SUPPORT
-#ifdef HAVE_AF_XDP_ZC_SUPPORT
-	if (vsi->af_xdp_zc_qps) {
-		bitmap_free(vsi->af_xdp_zc_qps);
-		vsi->af_xdp_zc_qps = NULL;
-	}
-#endif /* HAVE_AF_XDP_ZC_SUPPORT */
-#endif /* HAVE_XDP_SUPPORT */
 	/* free the ring and vector containers */
 	if (vsi->q_vectors) {
 		devm_kfree(dev, vsi->q_vectors);
@@ -1173,6 +1150,8 @@ void ice_vsi_put_qs(struct ice_vsi *vsi)
 
 	if (vsi->txq_map) {
 		for (i = 0; i < alloc_txq; i++) {
+			if (vsi->txq_map[i] == ICE_INVAL_Q_INDEX)
+				continue;
 			clear_bit(vsi->txq_map[i], pf->avail_txqs);
 			vsi->txq_map[i] = ICE_INVAL_Q_INDEX;
 		}
@@ -1180,6 +1159,8 @@ void ice_vsi_put_qs(struct ice_vsi *vsi)
 
 	if (vsi->rxq_map) {
 		for (i = 0; i < alloc_rxq; i++) {
+			if (vsi->rxq_map[i] == ICE_INVAL_Q_INDEX)
+				continue;
 			clear_bit(vsi->rxq_map[i], pf->avail_rxqs);
 			vsi->rxq_map[i] = ICE_INVAL_Q_INDEX;
 		}
@@ -1197,6 +1178,11 @@ void ice_vsi_put_qs(struct ice_vsi *vsi)
 bool ice_is_safe_mode(struct ice_pf *pf)
 {
 	return !test_bit(ICE_FLAG_ADV_FEATURES, pf->flags);
+}
+
+bool ice_is_rdma_ena(struct ice_pf *pf)
+{
+	return test_bit(ICE_FLAG_RDMA_ENA, pf->flags);
 }
 
 /**
@@ -3311,17 +3297,18 @@ static int ice_vsi_cfg_def(struct ice_vsi *vsi)
 		if (ret)
 			goto unroll_vector_base;
 
-		ice_vsi_map_rings_to_vectors(vsi);
-
-		vsi->stat_offsets_loaded = false;
-
 #ifdef HAVE_XDP_SUPPORT
 		if (ice_is_xdp_ena_vsi(vsi)) {
-			ret = ice_prepare_xdp_rings(vsi, vsi->xdp_prog);
+			ret = ice_prepare_xdp_rings(vsi, vsi->xdp_prog,
+						    ICE_XDP_CFG_PART);
 			if (ret)
 				goto unroll_vector_base;
 		}
 #endif /* HAVE_XDP_SUPPORT */
+
+		ice_vsi_map_rings_to_vectors(vsi);
+
+		vsi->stat_offsets_loaded = false;
 
 		/* ICE_VSI_CTRL does not need RSS so skip RSS processing */
 		if (vsi->type != ICE_VSI_CTRL)
@@ -3450,7 +3437,7 @@ void ice_vsi_decfg(struct ice_vsi *vsi)
 		/* return value check can be skipped here, it always returns
 		 * 0 if reset is in progress
 		 */
-		ice_destroy_xdp_rings(vsi);
+		ice_destroy_xdp_rings(vsi, ICE_XDP_CFG_PART);
 
 #endif /* HAVE_XDP_SUPPORT */
 	ice_vsi_clear_rings(vsi);
@@ -3515,6 +3502,12 @@ struct ice_vsi * ice_vsi_setup(struct ice_pf *pf,
 			ice_fltr_add_eth(vsi, ETH_P_PAUSE, ICE_FLTR_TX,
 					 ICE_DROP_PACKET);
 			ice_cfg_sw_lldp(vsi, true, true);
+#ifndef CONFIG_DCB
+			/* If DCB is not enabled on this device, add a rx filter
+			 * to steer LLDP packets to the PF_VSI
+			 */
+			ice_cfg_sw_lldp(vsi, false, true);
+#endif /* !CONFIG_DCB */
 		}
 
 	if (!vsi->agg_node)
@@ -4734,8 +4727,7 @@ int ice_set_link(struct ice_vsi *vsi, bool ena)
 	if (vsi->type != ICE_VSI_PF)
 		return -EINVAL;
 
-	status = ice_aq_set_link_restart_an(pi, ena, NULL,
-					    ICE_AQC_RESTART_AN_REFCLK_NOCHANGE);
+	status = hw->lm_ops->restart_an(pi, ena, NULL);
 
 	/* if link is owned by manageability, FW will return ICE_AQ_RC_EMODE.
 	 * this is not a fatal error, so print a warning message and return

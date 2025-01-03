@@ -65,19 +65,6 @@ enum eth56g_res_type {
 	NUM_ETH56G_PHY_RES
 };
 
-enum ice_eth56g_link_spd {
-	ICE_ETH56G_LNK_SPD_1G,
-	ICE_ETH56G_LNK_SPD_2_5G,
-	ICE_ETH56G_LNK_SPD_10G,
-	ICE_ETH56G_LNK_SPD_25G,
-	ICE_ETH56G_LNK_SPD_40G,
-	ICE_ETH56G_LNK_SPD_50G,
-	ICE_ETH56G_LNK_SPD_50G2,
-	ICE_ETH56G_LNK_SPD_100G,
-	ICE_ETH56G_LNK_SPD_100G2,
-	NUM_ICE_ETH56G_LNK_SPD /* Must be last */
-};
-
 #define ETH56G_MAX_QUAD	1
 
 /**
@@ -97,7 +84,6 @@ struct ice_phy_reg_info_eth56g {
  * struct ice_tspll_info_e82x
  * @pll_freq: Frequency of PLL that drives timer ticks in Hz
  * @nominal_incval: increment to generate nanoseconds in GLTSYN_TIME_L
- * @pps_delay: propagation delay of the PPS output signal
  *
  * Characteristic information for the various TIME_REF sources possible in the
  * E82X devices
@@ -105,7 +91,6 @@ struct ice_phy_reg_info_eth56g {
 struct ice_tspll_info_e82x {
 	u64 pll_freq;
 	u64 nominal_incval;
-	u8 pps_delay;
 };
 
 /**
@@ -214,13 +199,6 @@ struct ice_eth56g_mac_reg_cfg {
 extern
 const struct ice_eth56g_mac_reg_cfg eth56g_mac_cfg[NUM_ICE_ETH56G_LNK_SPD];
 
-#define E810C_QSFP_C827_0_HANDLE	2
-#define E810C_QSFP_C827_1_HANDLE	3
-enum ice_e810_c827_idx {
-	C827_0,
-	C827_1
-};
-
 enum ice_phy_rclk_pins {
 	ICE_RCLKA_PIN = 0,		/* SCL pin */
 	ICE_RCLKB_PIN,			/* SDA pin */
@@ -320,8 +298,8 @@ extern const struct ice_vernier_info_e82x e82x_vernier[NUM_ICE_PTP_LNK_SPD];
  */
 
 #define ICE_PTP_NOMINAL_INCVAL_E810	0x13b13b13bULL
-#define ICE_E810_OUT_PROP_DELAY_NS	1
-#define ICE_E825C_OUT_PROP_DELAY_NS	11
+#define ICE_E810_E830_SYNC_DELAY	0
+#define ICE_E825C_SYNC_DELAY		6
 
 /* Device agnostic functions */
 u8 ice_get_ptp_src_clock_index(struct ice_hw *hw);
@@ -350,10 +328,6 @@ int ice_read_phy_reg_e82x(struct ice_hw *hw, u8 port, u16 offset, u32 *val);
 int ice_read_quad_reg_e82x(struct ice_hw *hw, u8 quad, u16 offset, u32 *val);
 int ice_write_quad_reg_e82x(struct ice_hw *hw, u8 quad, u16 offset, u32 val);
 void ice_ptp_reset_ts_memory_quad_e82x(struct ice_hw *hw, u8 quad);
-static inline u64 ice_e82x_pps_delay(enum ice_tspll_freq time_ref)
-{
-	return e82x_tspll[time_ref].pps_delay;
-}
 
 /* E82X Vernier calibration functions */
 int ice_stop_phy_timer_e82x(struct ice_hw *hw, u8 port, bool soft_reset);
@@ -370,20 +344,25 @@ bool ice_is_pca9575_present(struct ice_hw *hw);
 int ice_ptp_read_sdp_ac(struct ice_hw *hw, __le16 *entries, uint *num_entries);
 int ice_ena_dis_clk_ref(struct ice_hw *hw, int phy,
 			enum ice_e825c_ref_clk clk, bool enable);
+int ice_cgu_get_pin_num(struct ice_hw *hw, bool input);
 bool ice_is_cgu_in_netlist(struct ice_hw *hw);
 const char *ice_cgu_state_to_name(enum dpll_lock_status state);
 const char *ice_cgu_get_pin_name(const struct ice_hw *hw, u8 pin, bool input);
+#if defined(CONFIG_DPLL)
 enum dpll_pin_type
 ice_cgu_get_pin_type(const struct ice_hw *hw, u8 pin, bool input);
 struct dpll_pin_frequency *
 ice_cgu_get_pin_freq_supp(const struct ice_hw *hw, u8 pin, bool input, u8 *num);
+#endif /* DPLL_SUPPORT && CONFIG_DPLL */
 int ice_get_cgu_state(struct ice_hw *hw, u8 dpll_idx,
 		      enum dpll_lock_status last_dpll_state, u8 *pin,
 		      u8 *ref_state, u8 *eec_mode, s64 *phase_offset,
 		      enum dpll_lock_status *dpll_state);
+#if defined(CONFIG_DPLL)
 int ice_get_cgu_rclk_pin_info(struct ice_hw *hw, u8 *base_idx, u8 *pin_num);
 int ice_cgu_get_output_pin_state_caps(struct ice_hw *hw, u8 pin_id,
 				      unsigned long *caps);
+#endif /* DPLL_SUPPORT && CONFIG_DPLL */
 int ice_get_dpll_ref_sw_status(struct ice_hw *hw, u8 dpll_num, u8 *los,
 			       u8 *scm, u8 *cfm, u8 *gst, u8 *pfm, u8 *esync);
 int
@@ -431,20 +410,6 @@ static inline u64 ice_ptp_get_pll_freq(const struct ice_hw *hw)
 	}
 }
 
-static inline u64 ice_prop_delay(const struct ice_hw *hw)
-{
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return ICE_E825C_OUT_PROP_DELAY_NS;
-	case ICE_PHY_E810:
-		return ICE_E810_OUT_PROP_DELAY_NS;
-	case ICE_PHY_E82X:
-		return ice_e82x_pps_delay(hw->ptp.tspll_freq);
-	default:
-		return 0;
-	}
-}
-
 static inline u64 ice_e82x_nominal_incval(enum ice_tspll_freq time_ref)
 {
 	return e82x_tspll[time_ref].nominal_incval;
@@ -471,17 +436,6 @@ static inline u64 ice_get_base_incval(const struct ice_hw *hw,
 		return 0;
 	}
 }
-
-static inline bool ice_is_primary(struct ice_hw *hw)
-{
-	return !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
-}
-
-static inline bool ice_is_dual(struct ice_hw *hw)
-{
-	return !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_DUAL_M);
-}
-
 /* PHY timer commands */
 #define SEL_CPK_SRC	8
 #define SEL_PHY_SRC	3
@@ -654,28 +608,36 @@ static inline bool ice_is_dual(struct ice_hw *hw)
 
 /* E810 timer command register */
 #define E810_ETH_GLTSYN_CMD		0x03000344
+
 /* E830 timer command register */
 #define E830_ETH_GLTSYN_CMD		0x00088814
+
+/* E810 PHC time register */
+#define E830_GLTSYN_TIME_L(_tmr_idx)	(0x0008A000 + 0x1000 * (_tmr_idx))
 
 /* Source timer incval macros */
 #define INCVAL_HIGH_M			0xFF
 
 /* PHY 40b registers macros */
 #define PHY_EXT_40B_LOW_M		GENMASK(31, 0)
-#define PHY_EXT_40B_HIGH_M		GENMASK(39, 32)
+#define PHY_EXT_40B_HIGH_M		GENMASK_ULL(39, 32)
 #define PHY_40B_LOW_M			GENMASK(7, 0)
-#define PHY_40B_HIGH_M			GENMASK(39, 8)
+#define PHY_40B_HIGH_M			GENMASK_ULL(39, 8)
 #define TS_VALID			BIT(0)
 
 #define BYTES_PER_IDX_ADDR_L_U		8
 #define BYTES_PER_IDX_ADDR_L		4
 
 /* Tx timestamp low latency read definitions */
-#define TS_LL_READ_RETRIES		200
-#define TS_LL_READ_TS_HIGH		GENMASK(23, 16)
-#define TS_LL_READ_TS_IDX		GENMASK(29, 24)
-#define TS_LL_READ_TS_INTR		BIT(30)
-#define TS_LL_READ_TS			BIT(31)
+#define ATQBAL_LL_TIMEOUT_US		2000
+#define ATQBAL_LL_PHY_TMR_CMD_M		GENMASK(7, 6)
+#define ATQBAL_LL_PHY_TMR_CMD_ADJ	0x1
+#define ATQBAL_LL_PHY_TMR_CMD_FREQ	0x2
+#define ATQBAL_LL_TS_HIGH		GENMASK(23, 16)
+#define ATQBAL_LL_PHY_TMR_IDX_M		BIT(24)
+#define ATQBAL_LL_TS_IDX		GENMASK(29, 24)
+#define ATQBAL_LL_TS_INTR_ENA		BIT(30)
+#define ATQBAL_LL_EXEC			BIT(31)
 
 /* Internal PHY timestamp address */
 #define TS_L(a, idx) ((a) + ((idx) * BYTES_PER_IDX_ADDR_L_U))
@@ -688,11 +650,6 @@ static inline bool ice_is_dual(struct ice_hw *hw)
 
 #define LOW_TX_MEMORY_BANK_START	0x03090000
 #define HIGH_TX_MEMORY_BANK_START	0x03090004
-
-#define E830_LOW_TX_MEMORY_BANK(slot, port) \
-				(E830_PRTTSYN_TXTIME_L(slot) + 0x8 * (port))
-#define E830_HIGH_TX_MEMORY_BANK(slot, port) \
-				(E830_PRTTSYN_TXTIME_H(slot) + 0x8 * (port))
 
 /* E810 SMA controller pin control */
 #define ICE_SMA1_DIR_EN		BIT(4)

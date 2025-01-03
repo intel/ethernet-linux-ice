@@ -10,6 +10,9 @@
 #include <linux/iopoll.h>
 #endif
 #include "ice_dpll.h"
+#if defined(CONFIG_X86)
+#include "asm/tsc.h"
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 
 static const char ice_pin_names[][64] = {
 	"SDP0",
@@ -21,28 +24,28 @@ static const char ice_pin_names[][64] = {
 };
 /* All descriptors' output/input pins are taken from HW specification */
 static const struct ice_ptp_pin_desc ice_pin_desc_e82x[] = {
-	/* name,      gpio */
-	{  TIME_SYNC, {  4, -1 }},
-	{  ONE_PPS,   { -1,  5 }},
+	/* name,        gpio,       delay */
+	{  TIME_SYNC, {  4, -1 }, { 0,  0 }},
+	{  ONE_PPS,   { -1,  5 }, { 0, 11 }},
 };
 
 static const struct ice_ptp_pin_desc ice_pin_desc_e825c[] = {
-	/* name,      gpio */
-	{  SDP0,      {  0,  0 }},
-	{  SDP1,      {  1,  1 }},
-	{  SDP2,      {  2,  2 }},
-	{  SDP3,      {  3,  3 }},
-	{  TIME_SYNC, {  4, -1 }},
-	{  ONE_PPS,   { -1,  5 }},
+	/* name,        gpio,       delay */
+	{  SDP0,      {  0,  0 }, { 15, 14 }},
+	{  SDP1,      {  1,  1 }, { 15, 14 }},
+	{  SDP2,      {  2,  2 }, { 15, 14 }},
+	{  SDP3,      {  3,  3 }, { 15, 14 }},
+	{  TIME_SYNC, {  4, -1 }, { 11,  0 }},
+	{  ONE_PPS,   { -1,  5 }, {  0,  9 }},
 };
 
 static const struct ice_ptp_pin_desc ice_pin_desc_e810[] = {
-	/* name,      gpio */
-	{  SDP0,      { 0,  0 }},
-	{  SDP1,      { 1,  1 }},
-	{  SDP2,      { 2,  2 }},
-	{  SDP3,      { 3,  3 }},
-	{  ONE_PPS,   { -1,  5 }},
+	/* name,        gpio,       delay */
+	{  SDP0,      {  0,  0 }, { 0, 1 }},
+	{  SDP1,      {  1,  1 }, { 0, 1 }},
+	{  SDP2,      {  2,  2 }, { 0, 1 }},
+	{  SDP3,      {  3,  3 }, { 0, 1 }},
+	{  ONE_PPS,   { -1,  5 }, { 0, 1 }},
 };
 
 static const char ice_pin_names_nvm[][64] = {
@@ -54,12 +57,12 @@ static const char ice_pin_names_nvm[][64] = {
 };
 
 static const struct ice_ptp_pin_desc ice_pin_desc_e810_sma[] = {
-	/* name, gpio */
-	{  GNSS, {  1, -1 }},
-	{  SMA1, {  1,  0 }},
-	{  UFL1, { -1,  0 }},
-	{  SMA2, {  3,  2 }},
-	{  UFL2, {  3, -1 }},
+	/* name,   gpio,       delay */
+	{  GNSS, {  1, -1 }, { 0, 1 }},
+	{  SMA1, {  1,  0 }, { 0, 1 }},
+	{  UFL1, { -1,  0 }, { 0, 1 }},
+	{  SMA2, {  3,  2 }, { 0, 1 }},
+	{  UFL2, {  3, -1 }, { 0, 1 }},
 };
 
 #define MAX_DPLL_NAME_LEN 4
@@ -96,14 +99,12 @@ struct dpll_attribute {
 static ssize_t synce_store(struct kobject *kobj,
 			   struct kobj_attribute *attr,
 			   const char *buf, size_t count);
-
 static ssize_t tx_clk_store(struct kobject *kobj,
 			    struct kobj_attribute *attr,
 			    const char *buf, size_t count);
 static ssize_t clock_1588_store(struct device *dev,
 				struct device_attribute *attr, const char *buf,
 				size_t len);
-
 static ssize_t pin_cfg_store(struct device *dev,
 			     struct device_attribute *attr,
 			     const char *buf, size_t len);
@@ -116,19 +117,15 @@ static ssize_t dpll_ref_sw_store(struct device *dev,
 static ssize_t pin_cfg_show(struct device *dev,
 			    struct device_attribute *attr,
 			    char *buf);
-
 static ssize_t dpll_offset_show(struct device *dev,
 				struct device_attribute *attr,
 				char *buf);
-
 static ssize_t dpll_name_show(struct device *dev,
 			      struct device_attribute *attr,
 			      char *buf);
-
 static ssize_t dpll_state_show(struct device *dev,
 			       struct device_attribute *attr,
 			       char *buf);
-
 static ssize_t dpll_ref_pin_show(struct device *dev,
 				 struct device_attribute *attr,
 				 char *buf);
@@ -138,7 +135,6 @@ static ssize_t ptp_802_3cx_store(struct kobject *kobj,
 static ssize_t ptp_802_3cx_show(struct kobject *kobj,
 				struct kobj_attribute *attr,
 				char *buf);
-
 static struct kobj_attribute synce_attribute = __ATTR_WO(synce);
 static DEVICE_ATTR_RW(pin_cfg);
 static struct kobj_attribute tx_clk_attribute = __ATTR_WO(tx_clk);
@@ -655,7 +651,75 @@ err:
 	return err;
 }
 
-#define ICE_REFCLK_USER_TO_AQ_IDX(x) ((x) + 1)
+/**
+ * ice_ptp_get_maxspeed - Get the max speed for given lport
+ * @hw: pointer to the HW struct
+ * @lport: logical port for which max speed is requested
+ * @max_speed: return max speed for input lport
+ *
+ * Return: 0 on success, negative on failure.
+ */
+static int ice_ptp_get_maxspeed(struct ice_hw *hw, u8 lport, u8 *max_speed)
+{
+	struct ice_aqc_get_port_options_elem options[ICE_AQC_PORT_OPT_MAX] = {};
+	bool active_valid = false, pending_valid = true;
+	u8 option_count = ICE_AQC_PORT_OPT_MAX;
+	u8 active_idx = 0, pending_idx = 0;
+	int status;
+
+	status = ice_aq_get_port_options(hw, options, &option_count, lport,
+					 true, &active_idx, &active_valid,
+					 &pending_idx, &pending_valid);
+
+	if (status)
+		return -EIO;
+	if (!active_valid)
+		return -EINVAL;
+
+	*max_speed = options[active_idx].max_lane_speed &
+			     ICE_AQC_PORT_OPT_MAX_LANE_M;
+
+	return 0;
+}
+
+/**
+ * ice_ptp_get_cpi_port_width - Convert port's speed to CPI lanes number
+ * @speed: max speed served by the port
+ *
+ * Return: port width settings (in CPI format).
+ */
+static u8 ice_ptp_get_cpi_port_width(u8 speed)
+{
+	switch (speed) {
+	case ICE_AQC_PORT_OPT_MAX_LANE_100G:
+		return CPI_OPCODE_PORT_MODE_FOUR_LANE;
+	case ICE_AQC_PORT_OPT_MAX_LANE_50G:
+		return CPI_OPCODE_PORT_MODE_TWO_LANE;
+	default:
+		return CPI_OPCODE_PORT_MODE_SINGLE_LANE;
+	}
+}
+
+/**
+ * ice_ptp_get_cpi_port_mode - Convert port's speed to CPI port mode
+ * @speed: max speed served by the port
+ *
+ * Return: port mode settings (in CPI format).
+ */
+static u8 ice_ptp_get_cpi_port_mode(u8 speed)
+{
+	switch (speed) {
+	case ICE_AQC_PORT_OPT_MAX_LANE_25G:
+		return CPI_OPCODE_PORT_MODE_25G_AUI;
+	case ICE_AQC_PORT_OPT_MAX_LANE_50G:
+		return CPI_OPCODE_PORT_MODE_50G_AUI_2;
+	case ICE_AQC_PORT_OPT_MAX_LANE_100G:
+		return CPI_OPCODE_PORT_MODE_100G_AUI_4;
+	case ICE_AQC_PORT_OPT_MAX_LANE_10G:
+	default:
+		return CPI_OPCODE_PORT_MODE_10G_SFI;
+	}
+}
 
 /**
  * ice_ptp_change_tx_clk - Change Tx reference clock
@@ -666,13 +730,12 @@ err:
  */
 static int ice_ptp_change_tx_clk(struct ice_pf *pf, enum ice_e825c_ref_clk clk)
 {
+	u8 port_width, max_speed, port_speed, port_num, port_lane, phy;
 	struct ice_ptp_port_owner *ptp_owner;
 	struct ice_port_info *port_info;
 	enum ice_e825c_ref_clk old_clk;
 	struct ice_pf *owner_pf;
-	u8 port_num;
 	int err;
-	u8 phy;
 
 	old_clk = pf->ptp.port.tx_clk;
 
@@ -685,6 +748,46 @@ static int ice_ptp_change_tx_clk(struct ice_pf *pf, enum ice_e825c_ref_clk clk)
 	owner_pf = ice_ptp_aux_dev_to_owner_pf(&pf->ptp.port.aux_dev);
 	ptp_owner = &owner_pf->ptp.ports_owner;
 
+	/* convert port num back to the lane num within the phy */
+	port_lane = port_num;
+	if (ice_is_dual(&pf->hw) && !ice_is_primary(&pf->hw))
+		port_lane -= ICE_PORTS_PER_QUAD;
+	port_lane = port_lane % ICE_PORTS_PER_QUAD;
+
+	err = ice_ptp_get_maxspeed(&pf->hw, port_lane, &max_speed);
+	if (err) {
+		dev_err(ice_hw_to_dev(&pf->hw),
+			"Failed to get port speed for port %d\n",
+			port_num);
+		return err;
+	}
+
+	/* needs to be stored as it's cleared after RESET CPI port cmd */
+	port_width = ice_ptp_get_cpi_port_width(max_speed);
+	port_speed = ice_ptp_get_cpi_port_mode(max_speed);
+
+	err = ice_cpi_reset_port(&pf->hw, phy, port_lane);
+	if (err) {
+		dev_err(ice_hw_to_dev(&pf->hw), "Failed to CPI reset port %d\n",
+			port_num);
+		return err;
+	}
+
+	err = ice_cpi_set_port_state(&pf->hw, phy, port_lane, false);
+	if (err) {
+		dev_err(ice_hw_to_dev(&pf->hw),	"Failed to set CPI port state for port %d\n",
+			port_num);
+		return err;
+	}
+
+	err = ice_cpi_set_port_mode(&pf->hw, phy, port_lane, port_width,
+				    port_speed);
+	if (err) {
+		dev_err(ice_hw_to_dev(&pf->hw), "Failed to set CPI port mode for port %d\n",
+			port_num);
+		return err;
+	}
+
 	/* Check if the TX clk is enabled for this PHY, if not - enable it */
 	if (!ptp_owner->tx_refclks[phy][clk]) {
 		err = ice_cpi_ena_dis_clk_ref(&pf->hw, phy, clk, true);
@@ -693,18 +796,24 @@ static int ice_ptp_change_tx_clk(struct ice_pf *pf, enum ice_e825c_ref_clk clk)
 				clk, phy);
 			return err;
 		}
-
 		err = ice_ptp_ena_peer_txclk(pf, clk);
 		if (err)
 			return err;
 	}
+
+	err = ice_cpi_select_clk_ref(&pf->hw, phy, port_lane, clk);
+	if (err) {
+		dev_err(ice_hw_to_dev(&pf->hw), "Failed to port select %u TX clock for the %u PHY\n",
+			clk, phy);
+		return err;
+	}
+
 	clear_bit(port_num, &ptp_owner->tx_refclks[phy][old_clk]);
 	set_bit(port_num, &ptp_owner->tx_refclks[phy][clk]);
 	pf->ptp.port.tx_clk = clk;
 
 	/* We are ready to switch to the new TX clk. */
-	err = ice_aq_set_link_restart_an(port_info, true, NULL,
-					 ICE_REFCLK_USER_TO_AQ_IDX(clk));
+	err = pf->hw.lm_ops->restart_an(port_info, true, NULL);
 	if (err) {
 		dev_err(ice_hw_to_dev(&pf->hw), "Failed to switch to %u TX clock for the %u PHY\n",
 			clk, phy);
@@ -1549,6 +1658,7 @@ static void ice_ptp_sysfs_release(struct ice_pf *pf)
 	}
 	if (ice_is_e825c(&pf->hw))
 		device_remove_file(dev, &dev_attr_clock_1588);
+
 	if (pf->ptp.phy_kobj) {
 		sysfs_remove_file(pf->ptp.phy_kobj, &synce_attribute.attr);
 		if (ice_is_e825c(&pf->hw))
@@ -1871,12 +1981,7 @@ u64 ice_ptp_read_src_clk_reg(struct ice_pf *pf,
 	ptp_read_system_prets(sts);
 
 	if (ice_is_e830(hw)) {
-		u64 clk_time;
-
-		if (tmr_idx == 0)
-			clk_time = rd64(hw, E830_GLTSYN_TIME_L_0_AL);
-		else
-			clk_time = rd64(hw, E830_GLTSYN_TIME_L_1_AL);
+		u64 clk_time = rd64(hw, E830_GLTSYN_TIME_L(tmr_idx));
 
 		/* Read the system timestamp post PHC read */
 		ptp_read_system_postts(sts);
@@ -2040,7 +2145,9 @@ ice_ptp_is_tx_tracker_up(struct ice_ptp_tx *tx)
  */
 void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 {
+	struct ice_e810_params *params;
 	struct ice_ptp_port *ptp_port;
+	unsigned long flags;
 	struct sk_buff *skb;
 	struct ice_pf *pf;
 
@@ -2049,6 +2156,7 @@ void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 
 	ptp_port = container_of(tx, struct ice_ptp_port, tx);
 	pf = ptp_port_to_pf(ptp_port);
+	params = &pf->hw.ptp.phy.e810;
 
 	/* Drop packets which have waited for more than 2 seconds */
 	if (time_is_before_jiffies(tx->tstamps[idx].start + 2 * HZ)) {
@@ -2068,11 +2176,17 @@ void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 			  tx->tstamps[idx].skb, idx);
 	}
 
+	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+
+	params->atqbal_flags |= ATQBAL_FLAGS_INTR_IN_PROGRESS;
+
 	/* Write TS index to read to the PF register so the FW can read it */
 	wr32(&pf->hw, PF_SB_ATQBAL,
-	     TS_LL_READ_TS_INTR | FIELD_PREP(TS_LL_READ_TS_IDX, idx) |
-	     TS_LL_READ_TS);
+	     ATQBAL_LL_TS_INTR_ENA | FIELD_PREP(ATQBAL_LL_TS_IDX, idx) |
+	     ATQBAL_LL_EXEC);
 	tx->last_ll_ts_idx_read = idx;
+
+	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
 }
 
 /**
@@ -2083,12 +2197,14 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 {
 	struct skb_shared_hwtstamps shhwtstamps = {};
 	u8 idx = tx->last_ll_ts_idx_read;
+	struct ice_e810_params *params;
 	struct ice_ptp_port *ptp_port;
 	u64 raw_tstamp, tstamp;
 	struct sk_buff *skb;
+	unsigned long flags;
 	struct device *dev;
 	struct ice_pf *pf;
-	u32 val;
+	u32 lo, hi;
 
 	if (!tx->init || tx->last_ll_ts_idx_read < 0)
 		return;
@@ -2096,26 +2212,39 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 	ptp_port = container_of(tx, struct ice_ptp_port, tx);
 	pf = ptp_port_to_pf(ptp_port);
 	dev = ice_pf_to_dev(pf);
+	params = &pf->hw.ptp.phy.e810;
 
 	if (ice_trace_enabled(tx_tstamp_fw_done)) {
 		ice_trace(tx_tstamp_fw_done, dev, tx, tx->tstamps[idx].skb,
 			  idx);
 	}
 
-	val = rd32(&pf->hw, PF_SB_ATQBAL);
+	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+
+	if (!(params->atqbal_flags & ATQBAL_FLAGS_INTR_IN_PROGRESS))
+		dev_dbg(dev, "%s: low latency interrupt request not in progress?\n",
+			__func__);
+
+	lo = rd32(&pf->hw, PF_SB_ATQBAL);
+	hi = rd32(&pf->hw, PF_SB_ATQBAH);
+
+	/* Wake up threads waiting on low latency interface */
+	params->atqbal_flags &= ~ATQBAL_FLAGS_INTR_IN_PROGRESS;
+
+	wake_up_locked(&params->atqbal_wq);
+
+	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
 
 	/* When the bit is cleared, the TS is ready in the register */
-	if (val & TS_LL_READ_TS) {
-		dev_dbg(dev, "Failed to get the Tx tstamp - FW not ready. Will retry");
+	if (lo & ATQBAL_LL_EXEC)
 		return;
-	}
 
 	/* High 8 bit value of the TS is on the bits 16:23 */
-	raw_tstamp = FIELD_GET(TS_LL_READ_TS_HIGH, val);
+	raw_tstamp = FIELD_GET(ATQBAL_LL_TS_HIGH, lo);
 	raw_tstamp <<= 32;
 
 	/* Read the low 32 bit value */
-	raw_tstamp |= (u64)rd32(&pf->hw, PF_SB_ATQBAH);
+	raw_tstamp |= (u64)hi;
 
 	/* Devices using this interface always verify the timestamp differs
 	 * relative to the last cached timestamp value.
@@ -2130,6 +2259,15 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 
 	if (!skb)
 		return;
+
+	/* Discard any timestamp value without the valid bit set */
+	if (!(raw_tstamp & ICE_PTP_TS_VALID)) {
+		if (ice_trace_enabled(tx_tstamp_invalid)) {
+			ice_trace(tx_tstamp_invalid, dev, tx, skb, idx);
+		}
+		dev_kfree_skb_any(skb);
+		return;
+	}
 
 	/* Extend the timestamp using cached PHC time */
 	tstamp = ice_ptp_extend_40b_ts(pf, raw_tstamp);
@@ -2639,10 +2777,7 @@ static int ice_ptp_init_tx(struct ice_pf *pf, struct ice_ptp_tx *tx, u8 port)
 	 * verify new timestamps against cached copy of the last read
 	 * timestamp.
 	 */
-	if (pf->hw.ptp.phy_model == ICE_PHY_E810)
-		tx->has_ready_bitmap = 0;
-	else
-		tx->has_ready_bitmap = 1;
+	tx->has_ready_bitmap = pf->hw.ptp.phy_model != ICE_PHY_E810;
 
 	return ice_ptp_alloc_tx_tracker(tx);
 }
@@ -3349,16 +3484,29 @@ void ice_ptp_extts_event(struct ice_pf *pf)
 	 * Event is defined in GLTSYN_EVNT_0 register
 	 */
 	for (chan = 0; chan < GLTSYN_EVNT_H_IDX_MAX; chan++) {
+		int pin_desc_idx;
+
 		/* Check if channel is enabled */
-		if (pf->ptp.ext_ts_irq & (1 << chan)) {
-			lo = rd32(hw, GLTSYN_EVNT_L(chan, tmr_idx));
-			hi = rd32(hw, GLTSYN_EVNT_H(chan, tmr_idx));
-			event.timestamp = (((u64)hi) << 32) | lo;
-			event.type = PTP_CLOCK_EXTTS;
-			event.index = chan;
-			pf->ptp.ext_ts_irq &= ~(1 << chan);
-			ptp_clock_event(pf->ptp.clock, &event);
+		if (!(pf->ptp.ext_ts_irq & (1 << chan)))
+			continue;
+
+		lo = rd32(hw, GLTSYN_EVNT_L(chan, tmr_idx));
+		hi = rd32(hw, GLTSYN_EVNT_H(chan, tmr_idx));
+		event.timestamp = (((u64)hi) << 32) | lo;
+
+		/* Add delay compensation */
+		pin_desc_idx = ice_ptp_find_pin_idx(pf, PTP_PF_EXTTS, chan);
+		if (pin_desc_idx >= 0) {
+			const struct ice_ptp_pin_desc *desc;
+
+			desc = &pf->ptp.ice_pin_desc[pin_desc_idx];
+			event.timestamp -= desc->delay[0];
 		}
+
+		event.type = PTP_CLOCK_EXTTS;
+		event.index = chan;
+		pf->ptp.ext_ts_irq &= ~(1 << chan);
+		ptp_clock_event(pf->ptp.clock, &event);
 	}
 }
 
@@ -3562,10 +3710,10 @@ static int ice_ptp_write_perout(struct ice_hw *hw, unsigned int chan,
 static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 			      int on)
 {
+	unsigned int gpio_pin, prop_delay;
 	u64 clk, period, start, phase;
 	struct ice_hw *hw = &pf->hw;
 	int pin_desc_idx;
-	uint gpio_pin;
 
 	if (rq->flags & ~PTP_PEROUT_PHASE)
 		return -EOPNOTSUPP;
@@ -3575,6 +3723,7 @@ static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 		return -EIO;
 
 	gpio_pin = pf->ptp.ice_pin_desc[pin_desc_idx].gpio[1];
+	prop_delay = pf->ptp.ice_pin_desc[pin_desc_idx].delay[1];
 	period = rq->period.sec * NSEC_PER_SEC + rq->period.nsec;
 
 	/* If we're disabling the output or period is 0, clear out CLKO and TGT
@@ -3587,6 +3736,11 @@ static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 	    period != NSEC_PER_SEC && hw->ptp.phy_model == ICE_PHY_E82X) {
 		dev_err(ice_pf_to_dev(pf), "1PPS pin supports only 1 s period\n");
 		return -EOPNOTSUPP;
+	}
+
+	if (period > U32_MAX) {
+		dev_err(ice_pf_to_dev(pf), "CLK Period larger than 2^32 nanoseconds is not supported\n");
+		return -EINVAL;
 	}
 
 	if (period & 0x1) {
@@ -3608,11 +3762,11 @@ static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 	 */
 	clk = ice_ptp_read_src_clk_reg(pf, NULL);
 	clk = ice_tspll_ticks2ns(hw, clk + NSEC_PER_MSEC * 500);
-	if (rq->flags & PTP_PEROUT_PHASE || start <= clk - ice_prop_delay(hw))
-		start = div64_u64(clk + period - 1, period) * period + phase;
+	if (rq->flags & PTP_PEROUT_PHASE || start <= clk - prop_delay)
+		start = roundup_u64(clk, period) + phase;
 
 	/* Compensate for propagation delay from the generator to the pin. */
-	start -= ice_prop_delay(hw);
+	start -= prop_delay;
 
 	return ice_ptp_write_perout(hw, rq->index, gpio_pin, start, period);
 }
@@ -4064,6 +4218,91 @@ static int ice_ptp_adjtime(struct ptp_clock_info *info, s64 delta)
 	return 0;
 }
 
+#if defined(CONFIG_X86)
+/**
+ * ice_ptp_get_phc_and_tsc - get PHC and TSC time
+ * @hw: Pointer to HW structure
+ * @phc: PHC time
+ * @tsc: TSC time
+ */
+static void ice_ptp_get_phc_and_tsc(struct ice_hw *hw, u64 *phc, u64 *tsc)
+{
+	u8 tmr_idx = ice_get_ptp_src_clock_index(hw);
+	u32 hi, lo, lo2;
+
+	prefetch(tsc);
+	smp_rmb();
+	*tsc = rdtsc();
+	lo = rd32(hw, GLTSYN_TIME_L(tmr_idx));
+	hi = rd32(hw, GLTSYN_TIME_H(tmr_idx));
+	lo2 = rd32(hw, GLTSYN_TIME_L(tmr_idx));
+
+	if (lo2 < lo) {
+		smp_rmb();
+		*tsc = rdtsc();
+		lo = rd32(hw, GLTSYN_TIME_L(tmr_idx));
+		hi = rd32(hw, GLTSYN_TIME_H(tmr_idx));
+	}
+
+	*phc = (u64)hi << 32 | lo;
+}
+
+/**
+ * ice_ptp_get_sw_cross_tstamp - get SW cross timestamp
+ * @pf: Board private structure
+ * @sw_cts: Software cross timestamp data
+ */
+int ice_ptp_get_sw_cross_tstamp(struct ice_pf *pf,
+				struct virtchnl_sw_cross_timestamp *sw_cts)
+{
+	struct ice_hw *hw = &pf->hw;
+
+	if (!ice_ptp_lock(hw))
+		return -EBUSY;
+	ice_ptp_get_phc_and_tsc(hw, &sw_cts->time, &sw_cts->aux_time);
+	ice_ptp_unlock(hw);
+	return 0;
+}
+
+/**
+ * ice_ptp_get_phc_freq_ratio - get PHC to TSC freq ratio
+ * @pf: Board private structure
+ * @ratio: PHC to TSC ratio data
+ */
+int ice_ptp_get_phc_freq_ratio(struct ice_pf *pf,
+			       struct virtchnl_phc_freq_ratio *ratio)
+{
+	u64 prev_phc_time, prev_cpu_time;
+	struct ice_hw *hw = &pf->hw;
+	unsigned int i;
+
+#define PHC_FREQ_RATIO_ITER		128
+#define	PHC_FREQ_RATIO_SCALE_BITS	32
+
+	if (!ice_ptp_lock(hw))
+		return -EBUSY;
+	ice_ptp_get_phc_and_tsc(hw, &ratio->phc_time, &ratio->cpu_time);
+	prev_phc_time = ratio->phc_time;
+	prev_cpu_time = ratio->cpu_time;
+
+	for (i = 0; i < PHC_FREQ_RATIO_ITER; i++) {
+		u64 cpu_diff, phc_diff;
+
+		ice_ptp_get_phc_and_tsc(hw, &ratio->phc_time, &ratio->cpu_time);
+
+		phc_diff = ratio->phc_time - prev_phc_time;
+		cpu_diff = ratio->cpu_time - prev_cpu_time;
+		prev_phc_time = ratio->phc_time;
+		prev_cpu_time = ratio->cpu_time;
+
+		ratio->scaled_ratio += phc_diff << PHC_FREQ_RATIO_SCALE_BITS /
+				       cpu_diff;
+	}
+	ice_ptp_unlock(hw);
+	return 0;
+}
+
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 #ifdef HAVE_PTP_CROSSTIMESTAMP
 #ifdef CONFIG_X86
 /**
@@ -4072,6 +4311,7 @@ static int ice_ptp_adjtime(struct ptp_clock_info *info, s64 delta)
  * @lock_busy: Bit in the semaphore lock indicating the lock is busy
  * @ctl_reg: The hardware register to request cross timestamp
  * @ctl_active: Bit in the control register to request cross timestamp
+ * @ctl_timeout: Bits in the control register to indicate HW timeout
  * @art_time_l: Lower 32-bits of ART system time
  * @art_time_h: Upper 32-bits of ART system time
  * @dev_time_l: Lower 32-bits of device time (per timer index)
@@ -4085,6 +4325,7 @@ struct ice_crosststamp_cfg {
 	/* Capture control register */
 	u32 ctl_reg;
 	u32 ctl_active;
+	u32 ctl_timeout;
 
 	/* Time storage */
 	u32 art_time_l;
@@ -4098,6 +4339,7 @@ static const struct ice_crosststamp_cfg ice_crosststamp_cfg_e82x = {
 	.lock_busy = PFHH_SEM_BUSY_M,
 	.ctl_reg = GLHH_ART_CTL,
 	.ctl_active = GLHH_ART_CTL_ACTIVE_M,
+	.ctl_timeout = GLHH_ART_CTL_TIME_OUT1_M | GLHH_ART_CTL_TIME_OUT2_M,
 	.art_time_l = GLHH_ART_TIME_L,
 	.art_time_h = GLHH_ART_TIME_H,
 	.dev_time_l[0] = GLTSYN_HHTIME_L(0),
@@ -4111,6 +4353,7 @@ static const struct ice_crosststamp_cfg ice_crosststamp_cfg_e830 = {
 	.lock_busy = E830_PFPTM_SEM_BUSY_M,
 	.ctl_reg = E830_GLPTM_ART_CTL,
 	.ctl_active = E830_GLPTM_ART_CTL_ACTIVE_M,
+	.ctl_timeout = E830_GLPTM_ART_CTL_TIME_OUT_M,
 	.art_time_l = E830_GLPTM_ART_TIME_L,
 	.art_time_h = E830_GLPTM_ART_TIME_H,
 	.dev_time_l[0] = E830_GLTSYN_PTMTIME_L(0),
@@ -4182,10 +4425,13 @@ static int ice_capture_crosststamp(ktime_t *device,
 	ctl |= cfg->ctl_active;
 	wr32(hw, cfg->ctl_reg, ctl);
 
-	/* Poll until hardware completes the capture */
+	/* Poll until hardware completes the capture or timeout occurs */
 	err = rd32_poll_timeout(hw, cfg->ctl_reg, ctl,
-				!(ctl & cfg->ctl_active),
+				!(ctl & cfg->ctl_active) ||
+				(ctl & cfg->ctl_timeout),
 				5, 20 * USEC_PER_MSEC);
+	if (ctl & cfg->ctl_timeout)
+		err = -ETIMEDOUT;
 	if (err)
 		goto err_timeout;
 
@@ -4237,6 +4483,7 @@ static int ice_ptp_getcrosststamp(struct ptp_clock_info *info,
 
 	switch (pf->hw.ptp.phy_model) {
 	case ICE_PHY_E82X:
+	case ICE_PHY_ETH56G:
 		ctx.cfg = &ice_crosststamp_cfg_e82x;
 		break;
 	case ICE_PHY_E830:
@@ -4400,11 +4647,7 @@ ice_ptp_rx_hwtstamp(struct ice_rx_ring *rx_ring,
  */
 static void ice_ptp_setup_pin_cfg(struct ice_pf *pf)
 {
-	uint extts_chans = 0;
-	uint po_chans = 0;
-	uint i;
-
-	for (i = 0; i < pf->ptp.info.n_pins; i++) {
+	for (unsigned int i = 0; i < pf->ptp.info.n_pins; i++) {
 		const struct ice_ptp_pin_desc *desc = &pf->ptp.ice_pin_desc[i];
 		struct ptp_pin_desc *pin = &pf->ptp.pin_desc[i];
 		const char *name = NULL;
@@ -4417,16 +4660,8 @@ static void ice_ptp_setup_pin_cfg(struct ice_pf *pf)
 			strscpy(pin->name, name, sizeof(pin->name));
 
 		pin->index = i;
-		if (desc->gpio[0] >= 0 && desc->gpio[1] < 0) {
-			pin->func = PTP_PF_EXTTS;
-			pin->chan = extts_chans++;
-		} else if (desc->gpio[1] >= 0 && desc->gpio[0] < 0) {
-			pin->func = PTP_PF_PEROUT;
-			pin->chan = po_chans++;
-		} else {
-			pin->func = PTP_PF_NONE;
-			pin->chan = 0;
-		}
+		pin->func = PTP_PF_NONE;
+		pin->chan = 0;
 	}
 
 	pf->ptp.info.pin_config = pf->ptp.pin_desc;
@@ -4628,7 +4863,9 @@ static void ice_ptp_set_funcs_e830(struct ice_pf *pf)
 #endif /* HAVE_PTP_CROSSTIMESTAMP */
 
 	/* Rest of the config is the same as base E810 */
-	ice_ptp_set_funcs_e810(pf);
+	pf->ptp.ice_pin_desc = ice_pin_desc_e810;
+	pf->ptp.info.n_pins = ICE_PIN_DESC_ARR_LEN(ice_pin_desc_e810);
+	ice_ptp_setup_pin_cfg(pf);
 }
 
 /**
@@ -4801,8 +5038,9 @@ irqreturn_t ice_ptp_ts_irq(struct ice_pf *pf)
 	struct ice_hw *hw = &pf->hw;
 
 	switch (hw->ptp.phy_model) {
+	case ICE_PHY_ETH56G:
+	case ICE_PHY_E82X:
 	case ICE_PHY_E830:
-		/* E830 can read timestamps in the top half using rd32() */
 		if (ice_ptp_process_ts(pf) == ICE_TX_TSTAMP_WORK_PENDING) {
 			/* Process outstanding Tx timestamps. If there
 			 * is more work, re-arm the interrupt to trigger again.
@@ -4812,38 +5050,35 @@ irqreturn_t ice_ptp_ts_irq(struct ice_pf *pf)
 		}
 		return IRQ_HANDLED;
 	case ICE_PHY_E810:
+	{
+		struct ice_ptp_tx *tx = &pf->ptp.port.tx;
+		unsigned long flags;
+		u8 idx;
+
+		if (!ice_pf_state_is_nominal(pf))
+			return IRQ_HANDLED;
+
 		/* E810 capable of low latency timestamping with interrupt can
 		 * request a single timestamp in the top half and wait for
 		 * a second LL TS interrupt from the FW when it's ready.
 		 */
-		if (hw->dev_caps.ts_dev_info.ts_ll_int_read) {
-			struct ice_ptp_tx *tx = &pf->ptp.port.tx;
-			unsigned long flags;
-			u8 idx;
-
-			if (!ice_pf_state_is_nominal(pf))
+		if (!hw->dev_caps.ts_dev_info.ts_ll_int_read) {
+			if (!ice_ptp_pf_handles_tx_interrupt(pf))
 				return IRQ_HANDLED;
 
-			spin_lock_irqsave(&tx->lock, flags);
-			idx = find_next_bit_wrap(tx->in_use, tx->len,
-						 tx->last_ll_ts_idx_read + 1);
-			if (idx != tx->len)
-				ice_ptp_req_tx_single_tstamp(tx, idx);
-			spin_unlock_irqrestore(&tx->lock, flags);
-
-			return IRQ_HANDLED;
+			set_bit(ICE_MISC_THREAD_TX_TSTAMP, pf->misc_thread);
+			return IRQ_WAKE_THREAD;
 		}
-		fallthrough; /* non-LL_TS E810 */
-	case ICE_PHY_ETH56G:
-	case ICE_PHY_E82X:
-		/* All other devices process timestamps in the bottom half due
-		 * to sleeping or polling.
-		 */
-		if (!ice_ptp_pf_handles_tx_interrupt(pf))
-			return IRQ_HANDLED;
 
-		set_bit(ICE_MISC_THREAD_TX_TSTAMP, pf->misc_thread);
-		return IRQ_WAKE_THREAD;
+		spin_lock_irqsave(&tx->lock, flags);
+		idx = find_next_bit_wrap(tx->in_use, tx->len,
+					 tx->last_ll_ts_idx_read + 1);
+		if (idx != tx->len)
+			ice_ptp_req_tx_single_tstamp(tx, idx);
+		spin_unlock_irqrestore(&tx->lock, flags);
+
+		return IRQ_HANDLED;
+	}
 	default:
 		dev_err(ice_pf_to_dev(pf), "Unknown PHY model, timestamping not supported\n");
 		return IRQ_HANDLED;
@@ -5151,7 +5386,7 @@ void ice_ptp_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	u32 val;
 
 	val = rd32(&pf->hw, PF_SB_REM_DEV_CTL);
-	wr32(&pf->hw, PF_SB_REM_DEV_CTL, val | BIT(phy_0_peer));
+	wr32(&pf->hw, PF_SB_REM_DEV_CTL, val | BIT(phy_0_peer) | BIT(cgu_peer));
 
 	if (ptp->state != ICE_PTP_RESETTING) {
 		if (ptp->state == ICE_PTP_READY) {
@@ -5212,7 +5447,7 @@ static struct ice_pf *
 ice_ptp_aux_dev_to_owner_pf(struct auxiliary_device *aux_dev)
 {
 	struct ice_ptp_port_owner *ports_owner;
-	struct auxiliary_driver *aux_drv;
+	const struct auxiliary_driver *aux_drv;
 	struct ice_ptp *owner_ptp;
 
 	if (!aux_dev->dev.driver)
@@ -5247,7 +5482,7 @@ static int ice_ptp_auxbus_probe(struct auxiliary_device *aux_dev,
 		 &owner_pf->ptp.ports_owner.ports);
 	mutex_unlock(&owner_pf->ptp.ports_owner.lock);
 
-	port_num = aux_pf->ptp.port.port_num;
+	port_num = aux_pf->hw.lane_num;
 	phy = port_num / aux_pf->hw.ptp.ports_per_phy;
 	/* clock ENET is enabled by default, mark it */
 	set_bit(port_num,
@@ -5655,7 +5890,7 @@ static int ice_ptp_create_auxbus_device(struct ice_pf *pf)
 	u32 id;
 
 	ptp = &pf->ptp;
-	id = ptp->port.port_num;
+	id = pf->hw.lane_num;
 	dev = ice_pf_to_dev(pf);
 
 	aux_dev = &ptp->port.aux_dev;
@@ -5733,62 +5968,6 @@ static void ice_ptp_init_tx_interrupt_mode(struct ice_pf *pf)
 }
 
 /**
- * ice_ptp_set_port_number - Set physical port number for a PF
- * @pf: Board private structure
- */
-static int ice_ptp_set_port_number(struct ice_pf *pf)
-{
-	struct ice_aqc_get_port_options_elem *options;
-	struct ice_hw *hw = &pf->hw;
-	uint lport = 0;
-	uint lane;
-
-	options = kcalloc(ICE_AQC_PORT_OPT_MAX, sizeof(*options), GFP_KERNEL);
-	if (!options)
-		return -ENOMEM;
-
-	for (lane = 0; lane < ICE_MAX_PORT_PER_PCI_DEV; lane++) {
-		u8 options_count = ICE_AQC_PORT_OPT_MAX;
-		u8 speed, active_idx, pending_idx;
-		bool active_valid, pending_valid;
-		int err;
-
-		err = ice_aq_get_port_options(hw, options, &options_count, lane,
-					      true, &active_idx, &active_valid,
-					      &pending_idx, &pending_valid);
-		if (err) {
-			dev_err(ice_pf_to_dev(pf), "Couldn't read port option for lane %d, err %d\n",
-				lane, err);
-
-			kfree(options);
-			return err;
-		}
-
-		speed = options[active_idx].max_lane_speed;
-
-#define ICE_AQC_PORT_OPT_MAX_LANE_NUM 8
-		/* If we don't get speed for this lane, it's unoccupied */
-		if (speed > ICE_AQC_PORT_OPT_MAX_LANE_NUM)
-			continue;
-
-		if (hw->pf_id == lport) {
-			kfree(options);
-			if (ice_is_e825c(hw)) {
-				if (ice_is_dual(hw) && !ice_is_primary(hw))
-					lane += ICE_PORTS_PER_QUAD;
-				hw->ptp.phy.eth56g.lane_num = lane;
-			}
-			pf->ptp.port.port_num = lane;
-			return 0;
-		}
-		lport++;
-	}
-
-	kfree(options);
-	return -EINVAL;
-}
-
-/**
  * ice_ptp_init - Initialize PTP hardware clock support
  * @pf: Board private structure
  *
@@ -5809,9 +5988,11 @@ void ice_ptp_init(struct ice_pf *pf)
 
 	ptp->state = ICE_PTP_INITIALIZING;
 
-	err = ice_ptp_set_port_number(pf);
-	if (err)
+	if (hw->lane_num < 0) {
+		err = hw->lane_num;
 		goto err;
+	}
+	ptp->port.port_num = hw->lane_num;
 
 	ice_ptp_init_hw(hw);
 

@@ -33,7 +33,6 @@ static const struct ice_cgu_pin_desc ice_e810t_sfp_cgu_inputs[] = {
 		ARRAY_SIZE(ice_cgu_pin_freq_common), ice_cgu_pin_freq_common },
 	{ "GNSS-1PPS",	  ZL_REF4P, DPLL_PIN_TYPE_GNSS,
 		ARRAY_SIZE(ice_cgu_pin_freq_common), ice_cgu_pin_freq_common },
-	{ "OCXO",	  ZL_REF4N, DPLL_PIN_TYPE_INT_OSCILLATOR, 0, },
 };
 
 static const struct ice_cgu_pin_desc ice_e810t_qsfp_cgu_inputs[] = {
@@ -55,7 +54,6 @@ static const struct ice_cgu_pin_desc ice_e810t_qsfp_cgu_inputs[] = {
 		ARRAY_SIZE(ice_cgu_pin_freq_common), ice_cgu_pin_freq_common },
 	{ "GNSS-1PPS",	  ZL_REF4P, DPLL_PIN_TYPE_GNSS,
 		ARRAY_SIZE(ice_cgu_pin_freq_common), ice_cgu_pin_freq_common },
-	{ "OCXO",	  ZL_REF4N, DPLL_PIN_TYPE_INT_OSCILLATOR, },
 };
 
 static const struct ice_cgu_pin_desc ice_e810t_sfp_cgu_outputs[] = {
@@ -430,14 +428,13 @@ static void ice_ptp_exec_tmr_cmd(struct ice_hw *hw)
 }
 
 /**
- * ice_ptp_zero_syn_dlay - Set synchronization delay to zero
+ * ice_ptp_cfg_sync_delay - Configure PHC to PHY synchronization delay
  * @hw: pointer to HW struct
- *
- * Zero E810 and E830 specific PTP hardware clock synchronization delay.
+ * @delay: delay between PHC and PHY SYNC command execution in nanoseconds
  */
-static void ice_ptp_zero_syn_dlay(struct ice_hw *hw)
+static void ice_ptp_cfg_sync_delay(struct ice_hw *hw, u32 delay)
 {
-	wr32(hw, GLTSYN_SYNC_DLAY, 0);
+	wr32(hw, GLTSYN_SYNC_DLAY, delay);
 	ice_flush(hw);
 }
 
@@ -445,6 +442,17 @@ static void ice_ptp_zero_syn_dlay(struct ice_hw *hw)
  *
  * The following functions operate on devices with the ETH 56G PHY.
  */
+
+/**
+ * ice_ptp_init_phc_e825c - Perform E825C specific PHC initialization
+ * @hw: pointer to HW struct
+ *
+ * Perform E825C-specific PTP hardware clock initialization steps.
+ */
+static void ice_ptp_init_phc_e825c(struct ice_hw *hw)
+{
+	ice_ptp_cfg_sync_delay(hw, ICE_E825C_SYNC_DELAY);
+}
 
 /**
  * ice_ptp_get_dest_dev_e825c - get destination PHY for given port number
@@ -457,7 +465,7 @@ static enum ice_sbq_msg_dev ice_ptp_get_dest_dev_e825c(struct ice_hw *hw,
 	u8 curr_phy, tgt_phy;
 
 	tgt_phy = port / hw->ptp.ports_per_phy;
-	curr_phy = hw->ptp.phy.eth56g.lane_num / hw->ptp.ports_per_phy;
+	curr_phy = hw->lane_num / hw->ptp.ports_per_phy;
 	/* In the driver, lanes 4..7 are in fact 0..3 on a second PHY.
 	 * On a single complex E825C, PHY 0 is always destination device phy_0
 	 * and PHY 1 is phy_0_peer.
@@ -1351,52 +1359,6 @@ static int ice_ptp_write_port_cmd_eth56g(struct ice_hw *hw, u8 port,
 }
 
 /**
- * ice_phy_get_speed_eth56g - Get link speed based on PHY link type
- * @li: pointer to link information struct
- */
-static enum ice_eth56g_link_spd
-ice_phy_get_speed_eth56g(struct ice_link_status *li)
-{
-	u16 speed = ice_get_link_speed_based_on_phy_type(li->phy_type_low,
-							 li->phy_type_high);
-
-	switch (speed) {
-	case ICE_AQ_LINK_SPEED_1000MB:
-		return ICE_ETH56G_LNK_SPD_1G;
-	case ICE_AQ_LINK_SPEED_2500MB:
-		return ICE_ETH56G_LNK_SPD_2_5G;
-	case ICE_AQ_LINK_SPEED_10GB:
-		return ICE_ETH56G_LNK_SPD_10G;
-	case ICE_AQ_LINK_SPEED_25GB:
-		return ICE_ETH56G_LNK_SPD_25G;
-	case ICE_AQ_LINK_SPEED_40GB:
-		return ICE_ETH56G_LNK_SPD_40G;
-	case ICE_AQ_LINK_SPEED_50GB:
-		switch (li->phy_type_low) {
-		case ICE_PHY_TYPE_LOW_50GBASE_CR_PAM4:
-		case ICE_PHY_TYPE_LOW_50GBASE_SR:
-		case ICE_PHY_TYPE_LOW_50GBASE_FR:
-		case ICE_PHY_TYPE_LOW_50GBASE_LR:
-		case ICE_PHY_TYPE_LOW_50GBASE_KR_PAM4:
-		case ICE_PHY_TYPE_LOW_50G_AUI1_AOC_ACC:
-		case ICE_PHY_TYPE_LOW_50G_AUI1:
-			return ICE_ETH56G_LNK_SPD_50G;
-		default:
-			return ICE_ETH56G_LNK_SPD_50G2;
-		}
-	case ICE_AQ_LINK_SPEED_100GB:
-		if (li->phy_type_high ||
-		    li->phy_type_low == ICE_PHY_TYPE_LOW_100GBASE_CR2_PAM4 ||
-		    li->phy_type_low == ICE_PHY_TYPE_LOW_100GBASE_SR2)
-			return ICE_ETH56G_LNK_SPD_100G2;
-		else
-			return ICE_ETH56G_LNK_SPD_100G;
-	default:
-		return ICE_ETH56G_LNK_SPD_1G;
-	}
-}
-
-/**
  * ice_phy_cfg_parpcs_eth56g - Configure TUs per PAR/PCS clock cycle
  * @hw: pointer to the HW struct
  * @port: port to configure
@@ -2134,9 +2096,9 @@ static void ice_ptp_init_phy_e825c(struct ice_hw *hw)
 	ptp->num_lports = params->num_phys * ptp->ports_per_phy;
 
 	val = rd32(hw, PF_SB_REM_DEV_CTL);
-	wr32(hw, PF_SB_REM_DEV_CTL, val | BIT(phy_0_peer));
+	wr32(hw, PF_SB_REM_DEV_CTL, val | BIT(phy_0_peer) | BIT(cgu_peer));
 
-	err = ice_read_phy_eth56g(hw, params->lane_num, PHY_REG_REVISION, &val);
+	err = ice_read_phy_eth56g(hw, hw->lane_num, PHY_REG_REVISION, &val);
 	if (err || val != PHY_REVISION_ETH56G)
 		ptp->phy_model = ICE_PHY_UNSUP;
 }
@@ -4243,33 +4205,45 @@ static int ice_write_phy_reg_e810(struct ice_hw *hw, u32 addr, u32 val)
 static int
 ice_read_phy_tstamp_ll_e810(struct ice_hw *hw, u8 idx, u8 *hi, u32 *lo)
 {
+	struct ice_e810_params *params = &hw->ptp.phy.e810;
+	unsigned long flags;
 	u32 val;
-	u8 i;
+	int err;
+
+	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+
+	/* Wait for any pending in-progress low latency interrupt */
+	err = wait_event_interruptible_locked_irq(params->atqbal_wq,
+						  !(params->atqbal_flags &
+						    ATQBAL_FLAGS_INTR_IN_PROGRESS));
+	if (err) {
+		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		return err;
+	}
 
 	/* Write TS index to read to the PF register so the FW can read it */
-	val = FIELD_PREP(TS_LL_READ_TS_IDX, idx) | TS_LL_READ_TS;
+	val = FIELD_PREP(ATQBAL_LL_TS_IDX, idx) | ATQBAL_LL_EXEC;
 	wr32(hw, PF_SB_ATQBAL, val);
 
 	/* Read the register repeatedly until the FW provides us the TS */
-	for (i = TS_LL_READ_RETRIES; i > 0; i--) {
-		val = rd32(hw, PF_SB_ATQBAL);
-
-		/* When the bit is cleared, the TS is ready in the register */
-		if (!FIELD_GET(TS_LL_READ_TS, val)) {
-			/* High 8 bit value of the TS is on the bits 16:23 */
-			*hi = FIELD_GET(TS_LL_READ_TS_HIGH, val);
-
-			/* Read the low 32 bit value and set the TS valid bit */
-			*lo = rd32(hw, PF_SB_ATQBAH) | TS_VALID;
-			return 0;
-		}
-
-		udelay(10);
+	err = rd32_poll_timeout_atomic(hw, PF_SB_ATQBAL, val,
+				       !FIELD_GET(ATQBAL_LL_EXEC, val),
+				       10, ATQBAL_LL_TIMEOUT_US);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to read PTP timestamp using low latency read\n");
+		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		return err;
 	}
 
-	/* FW failed to provide the TS in time */
-	ice_debug(hw, ICE_DBG_PTP, "Failed to read PTP timestamp using low latency read\n");
-	return -EBUSY;
+	/* High 8 bit value of the TS is on the bits 16:23 */
+	*hi = FIELD_GET(ATQBAL_LL_TS_HIGH, val);
+
+	/* Read the low 32 bit value and set the TS valid bit */
+	*lo = rd32(hw, PF_SB_ATQBAH) | TS_VALID;
+
+	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+
+	return 0;
 }
 
 /**
@@ -4402,7 +4376,7 @@ static int ice_ptp_init_phc_e810(struct ice_hw *hw)
 	u8 tmr_idx;
 	int err;
 
-	ice_ptp_zero_syn_dlay(hw);
+	ice_ptp_cfg_sync_delay(hw, ICE_E810_E830_SYNC_DELAY);
 
 	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 	err = ice_write_phy_reg_e810(hw, ETH_GLTSYN_ENA(tmr_idx),
@@ -4450,6 +4424,55 @@ static int ice_ptp_prep_phy_time_e810(struct ice_hw *hw, u32 time)
 }
 
 /**
+ * ice_ptp_prep_phy_adj_ll_e810 - Prep PHY ports for a time adjustment
+ * @hw: pointer to HW struct
+ * @adj: adjustment value to program
+ *
+ * Use the low latency firmware interface to program PHY time adjustment to
+ * all PHY ports.
+ *
+ * Return: 0 on success, -EBUSY on timeout
+ */
+static int ice_ptp_prep_phy_adj_ll_e810(struct ice_hw *hw, s32 adj)
+{
+	const u8 tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
+	struct ice_e810_params *params = &hw->ptp.phy.e810;
+	unsigned long flags;
+	u32 val;
+	int err;
+
+	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+
+	/* Wait for any pending in-progress low latency interrupt */
+	err = wait_event_interruptible_locked_irq(params->atqbal_wq,
+						  !(params->atqbal_flags &
+						    ATQBAL_FLAGS_INTR_IN_PROGRESS));
+	if (err) {
+		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		return err;
+	}
+
+	wr32(hw, PF_SB_ATQBAH, adj);
+	val = FIELD_PREP(ATQBAL_LL_PHY_TMR_CMD_M, ATQBAL_LL_PHY_TMR_CMD_ADJ) |
+	      FIELD_PREP(ATQBAL_LL_PHY_TMR_IDX_M, tmr_idx) | ATQBAL_LL_EXEC;
+	wr32(hw, PF_SB_ATQBAL, val);
+
+	/* Read the register repeatedly until the FW indicates completion */
+	err = rd32_poll_timeout_atomic(hw, PF_SB_ATQBAL, val,
+				       !FIELD_GET(ATQBAL_LL_EXEC, val),
+				       10, ATQBAL_LL_TIMEOUT_US);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer adjustment using low latency interface\n");
+		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		return err;
+	}
+
+	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+
+	return 0;
+}
+
+/**
  * ice_ptp_prep_phy_adj_e810 - Prep PHY port for a time adjustment
  * @hw: pointer to HW struct
  * @adj: adjustment value to program
@@ -4466,6 +4489,9 @@ static int ice_ptp_prep_phy_adj_e810(struct ice_hw *hw, s32 adj)
 {
 	u8 tmr_idx;
 	int err;
+
+	if (hw->dev_caps.ts_dev_info.ll_phy_tmr_update)
+		return ice_ptp_prep_phy_adj_ll_e810(hw, adj);
 
 	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 
@@ -4490,6 +4516,56 @@ static int ice_ptp_prep_phy_adj_e810(struct ice_hw *hw, s32 adj)
 }
 
 /**
+ * ice_ptp_prep_phy_incval_ll_e810 - Prep PHY ports increment value change
+ * @hw: pointer to HW struct
+ * @incval: The new 40bit increment value to prepare
+ *
+ * Use the low latency firmware interface to program PHY time increment value
+ * for all PHY ports.
+ *
+ * Return: 0 on success, -EBUSY on timeout
+ */
+static int ice_ptp_prep_phy_incval_ll_e810(struct ice_hw *hw, u64 incval)
+{
+	const u8 tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
+	struct ice_e810_params *params = &hw->ptp.phy.e810;
+	unsigned long flags;
+	u32 val;
+	int err;
+
+	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+
+	/* Wait for any pending in-progress low latency interrupt */
+	err = wait_event_interruptible_locked_irq(params->atqbal_wq,
+						  !(params->atqbal_flags &
+						    ATQBAL_FLAGS_INTR_IN_PROGRESS));
+	if (err) {
+		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		return err;
+	}
+
+	wr32(hw, PF_SB_ATQBAH, lower_32_bits(incval));
+	val = FIELD_PREP(ATQBAL_LL_PHY_TMR_CMD_M, ATQBAL_LL_PHY_TMR_CMD_FREQ) |
+	      FIELD_PREP(ATQBAL_LL_TS_HIGH, (u8)upper_32_bits(incval)) |
+	      FIELD_PREP(ATQBAL_LL_PHY_TMR_IDX_M, tmr_idx) | ATQBAL_LL_EXEC;
+	wr32(hw, PF_SB_ATQBAL, val);
+
+	/* Read the register repeatedly until the FW indicates completion */
+	err = rd32_poll_timeout_atomic(hw, PF_SB_ATQBAL, val,
+				       !FIELD_GET(ATQBAL_LL_EXEC, val),
+				       10, ATQBAL_LL_TIMEOUT_US);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer increment using low latency interface\n");
+		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		return err;
+	}
+
+	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+
+	return 0;
+}
+
+/**
  * ice_ptp_prep_phy_incval_e810 - Prep PHY port increment value change
  * @hw: pointer to HW struct
  * @incval: The new 40bit increment value to prepare
@@ -4503,6 +4579,9 @@ static int ice_ptp_prep_phy_incval_e810(struct ice_hw *hw, u64 incval)
 	u32 high, low;
 	u8 tmr_idx;
 	int err;
+
+	if (hw->dev_caps.ts_dev_info.ll_phy_tmr_update)
+		return ice_ptp_prep_phy_incval_ll_e810(hw, incval);
 
 	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 	low = lower_32_bits(incval);
@@ -4573,7 +4652,7 @@ ice_get_phy_tx_tstamp_ready_e810(struct ice_hw *hw, u8 port, u64 *tstamp_ready)
  */
 static int ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle)
 {
-	u8 node_part_number, idx, node_type_ctx_clk_mux, node_part_num_clk_mux;
+	u8 node_part_number, idx, node_part_num_clk_mux;
 	struct ice_aqc_get_link_topo_pin cmd_pin;
 	u16 node_handle, clock_mux_handle;
 	struct ice_aqc_get_link_topo cmd;
@@ -4590,15 +4669,11 @@ static int ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle)
 
 	memset(&cmd, 0, sizeof(cmd));
 	memset(&cmd_pin, 0, sizeof(cmd_pin));
-
-	node_type_ctx_clk_mux = (ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_MUX <<
-				 ICE_AQC_LINK_TOPO_NODE_TYPE_S);
-	node_type_ctx_clk_mux |= (ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL <<
-				  ICE_AQC_LINK_TOPO_NODE_CTX_S);
 	node_part_num_clk_mux = ICE_AQC_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX;
 
 	/* Look for CLOCK MUX handle in the netlist */
-	status = ice_find_netlist_node(hw, node_type_ctx_clk_mux,
+	status = ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_MUX,
+				       ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL,
 				       node_part_num_clk_mux,
 				       &clock_mux_handle);
 	if (status)
@@ -4869,6 +4944,8 @@ static void ice_ptp_init_phy_e810(struct ice_ptp_hw *ptp)
 	ptp->phy_model = ICE_PHY_E810;
 	ptp->num_lports = 8;
 	ptp->ports_per_phy = 4;
+
+	init_waitqueue_head(&ptp->phy.e810.atqbal_wq);
 }
 
 /* E830 functions
@@ -4883,10 +4960,9 @@ static void ice_ptp_init_phy_e810(struct ice_ptp_hw *ptp)
  *
  * Perform E830-specific PTP hardware clock initialization steps.
  */
-static int ice_ptp_init_phc_e830(struct ice_hw *hw)
+static void ice_ptp_init_phc_e830(struct ice_hw *hw)
 {
-	ice_ptp_zero_syn_dlay(hw);
-	return 0;
+	ice_ptp_cfg_sync_delay(hw, ICE_E810_E830_SYNC_DELAY);
 }
 
 /**
@@ -4897,6 +4973,8 @@ static int ice_ptp_init_phc_e830(struct ice_hw *hw)
  * Prepare the PHY port for a new increment value by programming the PHC
  * GLTSYN_INCVAL_L and GLTSYN_INCVAL_H registers. The actual change is
  * completed by FW automatically.
+ *
+ * Return: 0 on success
  */
 static int ice_ptp_write_direct_incval_e830(struct ice_hw *hw, u64 incval)
 {
@@ -4919,6 +4997,8 @@ static int ice_ptp_write_direct_incval_e830(struct ice_hw *hw, u64 incval)
  *
  * The time value is the upper 32 bits of the PHY timer, usually in units of
  * nominal nanoseconds.
+ *
+ * Return: 0 on success
  */
 static int ice_ptp_write_direct_phc_time_e830(struct ice_hw *hw, u64 time)
 {
@@ -4938,6 +5018,8 @@ static int ice_ptp_write_direct_phc_time_e830(struct ice_hw *hw, u64 time)
  *
  * Prepare the external PHYs connected to this device for a timer sync
  * command.
+ *
+ * Return: 0 on success, negative error code when PHY write failed
  */
 static int ice_ptp_port_cmd_e830(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
 {
@@ -4949,20 +5031,20 @@ static int ice_ptp_port_cmd_e830(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
 /**
  * ice_read_phy_tstamp_e830 - Read a PHY timestamp out of the external PHY
  * @hw: pointer to the HW struct
- * @lport: the lport to read from
  * @idx: the timestamp index to read
  * @tstamp: on return, the 40bit timestamp value
  *
  * Read a 40bit timestamp value out of the timestamp block of the external PHY
  * on the E830 device.
+ *
+ * Return: 0 on success
  */
-static int
-ice_read_phy_tstamp_e830(struct ice_hw *hw, u8 lport, u8 idx, u64 *tstamp)
+static int ice_read_phy_tstamp_e830(struct ice_hw *hw, u8 idx, u64 *tstamp)
 {
 	u32 hi, lo;
 
-	hi = rd32(hw, E830_HIGH_TX_MEMORY_BANK(idx, lport));
-	lo = rd32(hw, E830_LOW_TX_MEMORY_BANK(idx, lport));
+	hi = rd32(hw, E830_PRTTSYN_TXTIME_H(idx));
+	lo = rd32(hw, E830_PRTTSYN_TXTIME_L(idx));
 
 	/* For E830 devices, the timestamp is reported with the lower 32 bits
 	 * in the low register, and the upper 8 bits in the high register.
@@ -4979,6 +5061,7 @@ ice_read_phy_tstamp_e830(struct ice_hw *hw, u8 lport, u8 idx, u64 *tstamp)
  * @port: the PHY port to read
  * @tstamp_ready: contents of the Tx memory status register
  *
+ * Return: 0 on success
  */
 static int
 ice_get_phy_tx_tstamp_ready_e830(struct ice_hw *hw, u8 port, u64 *tstamp_ready)
@@ -5020,6 +5103,7 @@ static void ice_ptp_init_phy_e830(struct ice_ptp_hw *ptp)
 bool ice_is_cgu_in_netlist(struct ice_hw *hw)
 {
 	if (!ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL,
+				   ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL,
 				   ICE_AQC_GET_LINK_TOPO_NODE_NR_ZL30632_80032,
 				   NULL)) {
 		hw->ptp.cgu_part_number =
@@ -5027,6 +5111,7 @@ bool ice_is_cgu_in_netlist(struct ice_hw *hw)
 		return true;
 	} else if (!ice_find_netlist_node(hw,
 					  ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_CTRL,
+					  ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL,
 					  ICE_AQC_GET_LINK_TOPO_NODE_NR_SI5383_5384,
 					  NULL)) {
 		hw->ptp.cgu_part_number =
@@ -5146,6 +5231,25 @@ ice_cgu_get_pin_desc(const struct ice_hw *hw, bool input, int *size)
 }
 
 #if defined(CONFIG_DPLL)
+/**
+ * ice_cgu_get_pin_num - get pin description array size
+ * @hw: pointer to the hw struct
+ * @input: if request is done against input or output pins
+ *
+ * Return: size of pin description array for given hw.
+ */
+int ice_cgu_get_pin_num(struct ice_hw *hw, bool input)
+{
+	const struct ice_cgu_pin_desc *t;
+	int size;
+
+	t = ice_cgu_get_pin_desc(hw, input, &size);
+	if (t)
+		return size;
+
+	return 0;
+}
+
 /**
  * ice_cgu_get_pin_type - get pin's type
  * @hw: pointer to the hw struct
@@ -5912,7 +6016,7 @@ int ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp)
 	case ICE_PHY_ETH56G:
 		return ice_read_ptp_tstamp_eth56g(hw, block, idx, tstamp);
 	case ICE_PHY_E830:
-		return ice_read_phy_tstamp_e830(hw, block, idx, tstamp);
+		return ice_read_phy_tstamp_e830(hw, idx, tstamp);
 	case ICE_PHY_E810:
 		return ice_read_phy_tstamp_e810(hw, block, idx, tstamp);
 	case ICE_PHY_E82X:
@@ -5989,14 +6093,16 @@ int ice_ptp_init_phc(struct ice_hw *hw)
 	(void)rd32(hw, GLTSYN_STAT(src_idx));
 
 	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return 0;
-	case ICE_PHY_E82X:
-		return ice_ptp_init_phc_e82x(hw);
 	case ICE_PHY_E810:
 		return ice_ptp_init_phc_e810(hw);
+	case ICE_PHY_E82X:
+		return ice_ptp_init_phc_e82x(hw);
 	case ICE_PHY_E830:
-		return ice_ptp_init_phc_e830(hw);
+		ice_ptp_init_phc_e830(hw);
+		return 0;
+	case ICE_PHY_ETH56G:
+		ice_ptp_init_phc_e825c(hw);
+		return 0;
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -6016,18 +6122,18 @@ int ice_ptp_init_phc(struct ice_hw *hw)
 int ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready)
 {
 	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return ice_get_phy_tx_tstamp_ready_eth56g(hw, block,
-							  tstamp_ready);
-	case ICE_PHY_E830:
-		return ice_get_phy_tx_tstamp_ready_e830(hw, block,
-							tstamp_ready);
 	case ICE_PHY_E810:
 		return ice_get_phy_tx_tstamp_ready_e810(hw, block,
 							tstamp_ready);
 	case ICE_PHY_E82X:
 		return ice_get_phy_tx_tstamp_ready_e82x(hw, block,
 							tstamp_ready);
+	case ICE_PHY_E830:
+		return ice_get_phy_tx_tstamp_ready_e830(hw, block,
+							tstamp_ready);
+	case ICE_PHY_ETH56G:
+		return ice_get_phy_tx_tstamp_ready_eth56g(hw, block,
+							  tstamp_ready);
 		break;
 	default:
 		return -EOPNOTSUPP;

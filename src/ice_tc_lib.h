@@ -258,19 +258,18 @@ ice_tc_tun_get_type(struct net_device *tunnel_dev,
 		    struct flow_rule *rule);
 #endif /* HAVE_TCF_MIRRED_DEC || HAVE_TC_FLOW_RULE_INFRASTRUCTURE */
 int
-#ifdef HAVE_TC_INDIR_BLOCK
 ice_add_cls_flower(struct net_device *netdev, struct ice_vsi *vsi,
 		   struct flow_cls_offload *cls_flower);
-#else
-ice_add_cls_flower(struct net_device __always_unused *netdev,
-		   struct ice_vsi *vsi,
-		   struct tc_cls_flower_offload *cls_flower);
-#endif /* HAVE_TC_INDIR_BLOCK */
 int
 ice_del_cls_flower(struct ice_vsi *vsi, struct flow_cls_offload *cls_flower);
 void ice_replay_tc_fltrs(struct ice_pf *pf);
 int ice_rem_adv_rule_by_fltr(struct ice_hw *hw,
 			     const struct ice_tc_flower_fltr *fltr);
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
+
+static inline bool ice_is_forward_action(enum ice_sw_fwd_act_type fltr_act)
+{
+	return fltr_act == ICE_FWD_TO_VSI || fltr_act == ICE_FWD_TO_Q;
+}
 
 #endif /* _ICE_TC_LIB_H_ */

@@ -5,6 +5,9 @@
 #define _ICE_OSDEP_H_
 
 #include "kcompat.h"
+#ifdef NEED_CLEANUP_API
+#include "kcompat_cleanup.h"
+#endif
 #include <linux/types.h>
 #ifdef HAVE_INCLUDE_BITFIELD
 #include <linux/bitfield.h>
@@ -68,6 +71,22 @@ void __iomem *ice_get_hw_addr(struct ice_hw *hw, resource_size_t reg);
 
 #define rd32_poll_timeout(a, addr, val, cond, delay_us, timeout_us) \
 	read_poll_timeout(rd32, val, cond, delay_us, timeout_us, false, a, addr)
+#define rd32_poll_timeout_atomic(a, addr, val, cond, delay_us, timeout_us) \
+	read_poll_timeout_atomic(rd32, val, cond, delay_us, timeout_us, false, \
+				 a, addr)
+
+#define rd32_poll_timeout_atomic(a, addr, val, cond, delay_us, timeout_us) \
+	read_poll_timeout_atomic(rd32, val, cond, delay_us, timeout_us, false, \
+				 a, addr)
+#define vlock_rd32_poll_timeout(a, addr, val, cond, delay_us_sleepable,      \
+				delay_us_nonsleepable, timeout_us_sleepable, \
+				timeout_us_nonsleepable, vlock)              \
+	((vlock)->sleepable ?                                                \
+		rd32_poll_timeout(a, addr, val, cond, delay_us_sleepable,    \
+				  timeout_us_sleepable) :                    \
+		rd32_poll_timeout_atomic(a, addr, val, cond,                 \
+					 delay_us_nonsleepable,              \
+					 timeout_us_nonsleepable))
 
 #define ice_flush(a)		rd32((a), GLGEN_STAT)
 

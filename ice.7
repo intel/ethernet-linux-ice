@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "November 26, 2024" "" "Linux ice readme"
+.TH "ICE" "7" "December 09, 2024" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -104,6 +104,8 @@ Intel(R) Ethernet Connection E822\-L
 Intel(R) Ethernet Connection E823\-C
 .IP \(bu 2
 Intel(R) Ethernet Connection E823\-L
+.IP \(bu 2
+Intel(R) Ethernet Controller E830
 .UNINDENT
 .sp
 For information on how to identify your adapter, and for the latest Intel
@@ -113,24 +115,18 @@ network drivers, refer to the Intel Support website at
 .SS Configuring SR\-IOV for improved network security
 .sp
 In a virtualized environment, on Intel(R) Ethernet Network Adapters that
-support SR\-IOV or Intel(R) Scalable I/O Virtualization (Intel(R) Scalable IOV),
-the virtual function (VF) may be subject to malicious behavior.
+support SR\-IOV, the virtual function (VF) may be subject to malicious behavior.
 Software\-generated layer two frames, like IEEE 802.3x (link flow control), IEEE
 802.1Qbb (priority based flow\-control), and others of this type, are not
 expected and can throttle traffic between the host and the virtual switch,
 reducing performance. To resolve this issue, and to ensure isolation from
-unintended traffic streams, configure all SR\-IOV or Intel Scalable IOV enabled
+unintended traffic streams, configure all SR\-IOV enabled
 ports for VLAN tagging from the administrative interface on the PF. This
 configuration allows unexpected, and potentially malicious, frames to be
 dropped.
 .sp
-See the following sections later in this README for configuration instructions:
-.INDENT 0.0
-.IP \(bu 2
-\fI\%Configuring VLAN Tagging on SR\-IOV Enabled Adapter Ports\fP
-.IP \(bu 2
-\fI\%Intel(R) Scalable I/O Virtualization Support\fP
-.UNINDENT
+See \fI\%Configuring VLAN Tagging on SR\-IOV Enabled Adapter Ports\fP later in this README for configuration
+instructions.
 .SS Do not unload port driver if VF with active VM is bound to it
 .sp
 Do not unload a port\(aqs driver if a Virtual Function (VF) with an active Virtual
@@ -1911,6 +1907,10 @@ program two tcp4 filters with different matching fields.
 .sp
 The ice driver does not support matching on a subportion of a field, thus
 partial mask fields are not supported.
+.sp
+The IPv4 filter type will not match TCP, UDP or SCTP traffic. To match those
+types of traffic, create separate filters for TCP, UDP and SCTP as desired
+or use a different type of filtering.
 .UNINDENT
 .UNINDENT
 .SS Flex Byte Intel Ethernet Flow Director Filters
@@ -2275,139 +2275,6 @@ both devices have the same PF\-set properties.
 .sp
 Refer to \fI\%https://qemu.readthedocs.io/en/latest/devel/vfio\-migration.html\fP for
 more details.
-.SS Intel(R) Scalable I/O Virtualization Support
-.sp
-Intel(R) Scalable I/O Virtualization (Intel(R) Scalable IOV) allows you to
-share a physical device across multiple virtual machines and applications.
-Intel Scalable IOV provides your system the ability to share device resources
-with different address domains using different abstractions. For example,
-application processes may access a device using system calls and VMs may access
-a device through virtual device interfaces.
-.sp
-For more information, please refer to the Intel Scalable I/O Virtualization
-Technical Specification
-<\fI\%https://software.intel.com/sites/default/files/managed/cc/0e/intel\-scalable\-io\-virtualization\-technical\-specification.pdf\fP>
-(login required)
-.sp
-The VF driver will not block teaming/bonding/link aggregation, but this is not
-a supported feature. Do not expect failover or load balancing on the VF
-interface.
-.sp
-Intel Scalable IOV is not available in the kernel driver. Download and install
-the current ice driver to use this feature. Refer to the SUPPORT section for
-where to download the current driver.
-.sp
-Requirements:
-.INDENT 0.0
-.IP \(bu 2
-Your system platform must support Intel Scalable IOV
-.IP \(bu 2
-A network device based on an Intel(R) Ethernet 800 Series controller
-.IP \(bu 2
-The host operating system must be a Linux distro using kernel version
-5.12 \- 5.15
-.IP \(bu 2
-The guest operating system must be Linux
-.IP \(bu 2
-The guest iAVF driver must be version 4.5.0, or later
-.IP \(bu 2
-Your kernel needs to have VFIO, MDEV, and IOMMU APIs compatible with the
-current Intel Scalable IOV implementation for the ice driver. To check that,
-ensure that your target kernel headers are yielding non\-empty results for
-both of the following two grep commands:
-.INDENT 2.0
-.INDENT 3.5
-.sp
-.nf
-.ft C
-KSRC=\(dq/lib/modules/$(uname \-r)/source\(dq
-test \-d \(dq$KSRC\(dq || echo bad KSRC
-grep mdev_set_iommu_device \(dq$KSRC\(dq/include/linux/mdev.h
-grep IOMMU_DEV_FEAT_AUX \(dq$KSRC\(dq/include/linux/iommu.h
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
-.sp
-\fBNOTE:\fP
-.INDENT 2.0
-.INDENT 3.5
-.INDENT 0.0
-.IP \(bu 2
-The location of your target kernel headers varies and depends on
-your distribution.
-.IP \(bu 2
-Adjust the KSRC variable to the path of the target kernel headers.
-.UNINDENT
-.UNINDENT
-.UNINDENT
-.UNINDENT
-.SS Enabling Intel Scalable IOV
-.sp
-You can use Intel\(aqs Ethernet Port Configuration Tool (EPCT) to enable Intel
-Scalable IOV. If the EPCT tool is not available, you can also enable Intel
-Scalable IOV through your system\(aqs HII interface (if it has one). The
-recommended method is to use the EPCT tool.
-.sp
-To enable or disable Intel Scalable IOV using the EPCT tool, use one of these
-commands:
-.INDENT 0.0
-.INDENT 3.5
-.sp
-.nf
-.ft C
-epct \-nic=1 \-set \(aqsiov enable\(aq
-epct \-nic=1 \-set \(aqsiov disable\(aq
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
-.sp
-Where \fB\-nic=1\fP specifies the Intel Ethernet device. See the EPCT tool
-documentation for instructions on how to determine the NIC number of your
-device.
-.sp
-If the EPCT tool is not available, and your system has an HII interface, you
-can use the HII interface to enable/disable Intel Scalable IOV. Find the \(dqIntel
-Scalable IOV (Scalable IOV)\(dq setting and select your desired value.
-.SS Enabling Intel Scalable I/O Virtualization Virtual Devices
-.sp
-Use the following steps to enable Intel Scalable IOV virtual devices (VDEVs):
-.INDENT 0.0
-.IP 1. 3
-Create an mdev:
-.INDENT 3.0
-.INDENT 3.5
-.sp
-.nf
-.ft C
-echo \(dq83b8f4f2\-509f\-382f\-3c1e\-e6bfe0fa1001\(dq | sudo tee
-/sys/class/mdev_bus/0000:38:00.0/mdev_supported_types/ice\-ivdm/create
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
-.IP 2. 3
-Use qemu to launch a VM with four processors:
-.INDENT 3.0
-.INDENT 3.5
-.sp
-.nf
-.ft C
-sudo ./x86_64\-softmmu/qemu\-system\-x86_64 \e
-   \-enable\-kvm \e
-   \-m 1G \e
-   \-smp 4 \e
-   \-device
-   vfio\-pci,sysfsdev=/sys/bus/mdev/devices/83b8f4f2\-509f\-382f\-3c1e\-e6bfe0fa 1001 \e
-   \-drive file=../../img/test.qcow2 \e
-   \-nic user,hostfwd=tcp::5555\-:22 \e
-   \-monitor stdio
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
-.UNINDENT
 .SS Displaying VF Statistics on the PF
 .sp
 Use the following command to display the statistics for the PF and its VFs:
@@ -2752,7 +2619,8 @@ To restore functionality, you can manually reload the VF or VM or enable
 automatic VF resets.
 .IP \(bu 2
 When automatic VF resets are enabled, the PF driver will immediately reset
-the VF and reenable queues when it detects MDD events on the receive path.
+the VF and re\-enable queues when it detects MDD events on either the receive
+or transmit path.
 .IP \(bu 2
 If automatic VF resets are disabled, the PF will not automatically reset the
 VF when it detects MDD events.
@@ -2957,7 +2825,7 @@ Set the number of VFs on the PF to zero
 .INDENT 3.5
 .INDENT 0.0
 .IP \(bu 2
-ADQ, trusted VFs, L2 forwarding, and S\-IOV are not supported in switchdev
+ADQ, trusted VFs, and L2 forwarding are not supported in switchdev
 mode.
 .IP \(bu 2
 Switchdev mode is not persistent across reboots or driver reloads.
@@ -3647,13 +3515,13 @@ The ice driver supports limiting the transmit queue bit rate with the
 \fBtx_maxrate\fP sysfs entry. Use this entry to set a maximum bitrate in Mbps.
 A value of zero means no limiting.
 .sp
-Setting the bit rate for transmit queue 1 to 300 Mbps:
+For example, to set the bit rate for transmit queue 1 to 300 Mbps:
 .INDENT 0.0
 .INDENT 3.5
 .sp
 .nf
 .ft C
-echo 300 > /sys/class/<ethx>/queues/tx\-1/tx_maxrate
+echo 300 > /sys/class/net/<ethx>/queues/tx\-1/tx_maxrate
 .ft P
 .fi
 .UNINDENT
@@ -3665,7 +3533,7 @@ To remove the limit:
 .sp
 .nf
 .ft C
-echo 0 > /sys/class/<ethx>/queues/tx\-1/tx_maxrate
+echo 0 > /sys/class/net/<ethx>/queues/tx\-1/tx_maxrate
 .ft P
 .fi
 .UNINDENT
@@ -3970,6 +3838,119 @@ Intel(R) Ethernet Network Adapter E810\-XXV\-4T:
 Intel(R) Ethernet Network Adapter E810\-C\-Q2T:
 \fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP
 .UNINDENT
+.SS Earliest TxTime First (ETF) Offloads
+.sp
+Intel Ethernet 830 Series devices support Earliest TxTime First (ETF) offloads.
+ETF offloads enable precise packet transmission scheduling, which is crucial
+for time\-sensitive network applications that require strict timing control.
+The ice driver uses the \fBSO_TXTIME\fP socket option to schedule the
+transmission. Applications must set this option when sending packets to
+leverage the precise transmission timing provided by ETF offloads.
+.sp
+To enable and configure ETF qdisc offload on the queues:
+.INDENT 0.0
+.IP 1. 3
+Use the \fBmqprio\fP qdisc to classify packets into different traffic
+classes. For example:
+.INDENT 3.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+tc qdisc add dev <ethX> handle 100: parent root mqprio num_tc 3 \e
+  map 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 \e
+  queues 1@0 1@1 2@2 \e
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Replace \fB<ethX>\fP with the name of your network interface.
+.IP 2. 3
+Set ETF as the queueing discipline for your desired traffic class. For
+example, to set the ETF qdisc for traffic class number 0:
+.INDENT 3.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+tc qdisc replace dev <ethX> parent 100:1 etf \e
+  clockid CLOCK_TAI delta 300000 offload
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.UNINDENT
+.sp
+For a detailed explanation of the ETF qdisc and its options, see the tc\-etf
+man page.
+.SS Configuring Checksum Offloads
+.sp
+You can configure checksum offloads using ethtool.
+.sp
+To see the supported and configured checksum features for your device, run
+the following:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ethtool \-k <ethX>
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+To enable or disable Tx and Rx checksum offload features, run the following:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ethtool \-K <ethX> [tx|rx] [on|off]
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Intel Ethernet 830 Series devices support generic Tx and Rx checksums.
+.INDENT 0.0
+.IP \(bu 2
+To change generic Rx checksum offloads, use the above Rx checksum
+enable/disable command.
+.IP \(bu 2
+To change Tx generic checksum offloads, use the following:
+.INDENT 2.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ethtool \-K <ethX> tx\-checksum\-ip\-generic [on|off]
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.UNINDENT
+.sp
+\fBNOTE:\fP
+.INDENT 0.0
+.INDENT 3.5
+On Intel Ethernet 830 Series devices, the generic Tx checksum offload
+feature (tx\-checksum\-ip\-generic) cannot be enabled simultaneously with
+the following features:
+.INDENT 0.0
+.IP \(bu 2
+TCP Segmentation Offload (TSO), or
+.IP \(bu 2
+IP checksum offload (tx\-checksum\-ipv4 and tx\-checksum\-ipv6)
+.UNINDENT
+.sp
+Ensure that TSO and IP checksum offloads are disabled before enabling
+generic Tx checksum offloads.
+.UNINDENT
+.UNINDENT
+.sp
+For more details, please refer to the ethtool man page.
 .SS Tunnel/Overlay Stateless Offloads
 .sp
 Supported tunnels and overlays include VXLAN, GENEVE, and others depending on
@@ -5553,6 +5534,49 @@ echo 2048 > /sys/bus/pci/devices/<ethx>/rss_lut_pf_attr
 .fi
 .UNINDENT
 .UNINDENT
+.SS Internal Temperature Reporting
+.sp
+The ice driver support for monitoring the internal temperature of the chip.
+.sp
+Match the PCI address to identify the device\(aqs hwmon interface.
+For example use:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+tree /sys/class/hwmon/
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Might return:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+/sys/class/hwmon/
+├── <hwmonX> \-> ../../devices/pci0000:<bus>/<pci\-addresss\-id>/hwmon/hwmon0
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+The temperature data can be accessed through the sysfs interface:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+cat /sys/class/hwmon/<hwmonX>/temp1_input
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+The temperature value is reported in millidegrees Celsius.
 .SH KNOWN ISSUES/TROUBLESHOOTING
 .SS Receive Error counts may be higher than the actual packet error count
 .sp

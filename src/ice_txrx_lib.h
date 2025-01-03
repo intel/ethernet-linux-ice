@@ -42,8 +42,8 @@ ice_build_ctob(u64 td_cmd, u64 td_offset, unsigned int size, u64 td_tag)
 static inline __le32
 ice_build_tstamp_desc(u16 tx_desc, u32 tstamp)
 {
-	return cpu_to_le32((ICE_TXTIME_TX_DESC_IDX_M & tx_desc) |
-			   (ICE_TXTIME_STAMP_M & tstamp));
+	return cpu_to_le32(FIELD_PREP(ICE_TXTIME_TX_DESC_IDX_M, tx_desc) |
+			   FIELD_PREP(ICE_TXTIME_STAMP_M, tstamp));
 }
 
 /**

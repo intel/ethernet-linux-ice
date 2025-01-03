@@ -1966,7 +1966,7 @@ __ice_update_dim(u16 total_events, u64 packets, u64 bytes, struct dim *dim)
 	if (ktime_ms_delta(dim_sample.time, dim->start_sample.time) >= 1000)
 		dim->state = DIM_START_MEASURE;
 
-	net_dim(dim, dim_sample);
+	net_dim(dim, &dim_sample);
 }
 
 /**
@@ -2881,11 +2881,7 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 			u32 tstamp;
 
 			ts = ktime_to_timespec64(first->skb->tstamp);
-
-			/* 8us time stamp resolution to insert in 19bit
-			 * ts_desc field
-			 */
-			tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_8US;
+			tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_128NS;
 
 			ts_desc = ICE_TS_DESC(tstamp_ring,
 					      tstamp_ring->next_to_use);
@@ -2893,7 +2889,7 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 					ice_build_tstamp_desc(i, tstamp);
 
 			tstamp_ring->next_to_use++;
-			if (tstamp_ring->next_to_use == tx_ring->count)
+			if (tstamp_ring->next_to_use == tstamp_ring->count)
 				tstamp_ring->next_to_use = 0;
 
 			writel_relaxed(tstamp_ring->next_to_use,
@@ -3875,12 +3871,21 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring,
 		goto out_drop;
 
 	/* allow CONTROL frames egress from main VSI if FW LLDP disabled */
+	if (likely(!skb_mac_header_was_set(skb)))
+		skb_reset_mac_header(skb);
 	eth = (struct ethhdr *)skb_mac_header(skb);
+#if defined(CONFIG_DCB)
 	if (unlikely((skb->priority == TC_PRIO_CONTROL ||
 		      eth->h_proto == htons(ETH_P_LLDP)) &&
 		     (!(tx_ring->ch && tx_ring->ch->ch_vsi)) &&
 		     vsi->type == ICE_VSI_PF &&
 		     vsi->port_info->qos_cfg.is_sw_lldp))
+#else
+	if (unlikely((skb->priority == TC_PRIO_CONTROL ||
+		      eth->h_proto == htons(ETH_P_LLDP)) &&
+		     (!(tx_ring->ch && tx_ring->ch->ch_vsi)) &&
+		     vsi->type == ICE_VSI_PF))
+#endif
 		offload.cd_qw1 |= (u64)(ICE_TX_DESC_DTYPE_CTX |
 					ICE_TX_CTX_DESC_SWTCH_UPLINK <<
 					ICE_TXD_CTX_QW1_CMD_S);

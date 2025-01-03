@@ -100,13 +100,6 @@
 #endif /* 4.12.14-10 */
 
 /*****************************************************************************/
-#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(4,12,14,100))
-#else /* >= 4.12.14-100 */
-#undef HAVE_TCF_EXTS_TO_LIST
-#define HAVE_TCF_EXTS_FOR_EACH_ACTION
-#endif /* 4.12.14-100 */
-
-/*****************************************************************************/
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(4,12,14,111))
 #define NEED_IDA_ALLOC_MIN_MAX_RANGE_FREE
 #else /* >= 4.12.14-111 */
@@ -122,22 +115,10 @@
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(4,12,14,115))
 #else /* >= 4.12.14-115 */
 #define HAVE_NDO_SELECT_QUEUE_SB_DEV
-#define HAVE_TCF_MIRRED_DEV
-#define HAVE_TCF_BLOCK
-#define HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
-#define HAVE_TCF_BLOCK_CB_REGISTER_EXTACK
 #undef NEED_TC_SETUP_QDISC_MQPRIO
 #undef NEED_TC_CLS_CAN_OFFLOAD_AND_CHAIN0
-#undef NEED_NETDEV_TX_SENT_QUEUE
 #define HAVE_LINKMODE
 #endif /* 4.12.14-115 */
-
-/*****************************************************************************/
-/* SLES 15-SP1 base */
-#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(4,12,14,195))
-#else /* >= 4.12.14-195 */
-#undef NEED_NETDEV_TX_SENT_QUEUE
-#endif /* 4.12.14-195 */
 
 /*****************************************************************************/
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,8,2))

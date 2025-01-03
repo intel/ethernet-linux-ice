@@ -17,7 +17,7 @@
 #define ICE_VFIO_MIG_REGION_INFO_SZ (sizeof(struct vfio_device_migration_info))
 #define ICE_VFIO_MIG_REGION_DATA_SZ \
 	(struct_size((struct ice_vfio_pci_migration_data *)NULL, \
-		      dev_state, SZ_128K))
+		      dev_state, SZ_128K)) - (sizeof(struct ice_vfio_pci_regs))
 
 /* IAVF registers description */
 #define IAVF_VF_ARQBAH1 0x00006000 /* Reset: EMPR */

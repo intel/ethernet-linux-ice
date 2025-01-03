@@ -304,37 +304,31 @@ const struct ice_tspll_info_e82x e82x_tspll[NUM_ICE_TSPLL_FREQ] = {
 	[ICE_TSPLL_FREQ_25_000] = { /* 25 MHz */
 		.pll_freq = 823437500, /* 823.4375 MHz PLL */
 		.nominal_incval = 0x136e44fabULL,
-		.pps_delay = 11,
 	},
 
 	[ICE_TSPLL_FREQ_122_880] = { /* 122.88 MHz */
 		.pll_freq = 783360000, /* 783.36 MHz */
 		.nominal_incval = 0x146cc2177ULL,
-		.pps_delay = 12,
 	},
 
 	[ICE_TSPLL_FREQ_125_000] = { /* 125 MHz */
 		.pll_freq = 796875000, /* 796.875 MHz */
 		.nominal_incval = 0x141414141ULL,
-		.pps_delay = 12,
 	},
 
 	[ICE_TSPLL_FREQ_153_600] = { /* 153.6 MHz */
 		.pll_freq = 816000000, /* 816 MHz */
 		.nominal_incval = 0x139b9b9baULL,
-		.pps_delay = 12,
 	},
 
 	[ICE_TSPLL_FREQ_156_250] = { /* 156.25 */
 		.pll_freq = 830078125, /* 830.78125 MHz */
 		.nominal_incval = 0x134679aceULL,
-		.pps_delay = 11,
 	},
 
 	[ICE_TSPLL_FREQ_245_760] = { /* 245.76 MHz */
 		.pll_freq = 783360000, /* 783.36 MHz */
 		.nominal_incval = 0x146cc2177ULL,
-		.pps_delay = 12,
 	},
 };
 
@@ -427,8 +421,8 @@ const struct ice_vernier_info_e82x e82x_vernier[NUM_ICE_PTP_LNK_SPD] = {
 		.rx_pcs_clk = 644531250, /* 644.53125 MHz */
 		.tx_desk_rsgb_par = 644531250, /* 644.53125 MHz RS gearbox */
 		.rx_desk_rsgb_par = 644531250, /* 644.53125 MHz RS gearbox */
-		.tx_desk_rsgb_pcs = 644531250, /* 644.53125 MHz RS gearbox */
-		.rx_desk_rsgb_pcs = 644531250, /* 644.53125 MHz RS gearbox */
+		.tx_desk_rsgb_pcs = 390625000, /* 390.625 MHz RS gearbox */
+		.rx_desk_rsgb_pcs = 390625000, /* 390.625 MHz RS gearbox */
 		.tx_fixed_delay = 1620,
 		.pmd_adj_divisor = 206250000,
 		.rx_fixed_delay = 7775,

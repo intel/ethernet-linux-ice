@@ -428,6 +428,7 @@ static void ice_dump_pf_fdir(struct ice_pf *pf)
 		 hw->func_caps.fd_fltr_best_effort);
 }
 
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 /**
  * ice_dump_rclk_status - print the PHY recovered clock status
  * @pf: pointer to PF
@@ -481,6 +482,7 @@ static void ice_dump_rclk_status(struct ice_pf *pf)
 	}
 }
 
+#endif /* CONFIG_PTP_1588_CLOCK */
 /**
  * ice_vsi_dump_ctxt - print the passed in VSI context structure
  * @dev: Device used for dev_info prints
@@ -566,6 +568,7 @@ static void ice_vsi_dump_ctxt(struct device *dev, struct ice_vsi_ctx *ctxt)
 		 "enabled" : "disabled");
 }
 
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 #define ICE_E810T_NEVER_USE_PIN 0xff
 #define ZL_VER_MAJOR_SHIFT	24
 #define ZL_VER_MAJOR_MASK	ICE_M(0xff, ZL_VER_MAJOR_SHIFT)
@@ -776,6 +779,7 @@ static const struct file_operations ice_debugfs_cgu_fops = {
 	.open  = simple_open,
 	.read  = ice_debugfs_cgu_read,
 };
+#endif /* SYNCE_SUPPORT */
 
 /**
  * ice_fwlog_print_module_cfg - print current FW logging module configuration
@@ -1500,9 +1504,11 @@ ice_debugfs_command_write(struct file *file, const char __user *buf,
 				 pf->globr_count);
 			dev_info(dev, "emp reset count: %d\n", pf->empr_count);
 			dev_info(dev, "pf reset count: %d\n", pf->pfr_count);
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 		} else if ((!strncmp(argv[1], "rclk_status", 11))) {
 			if (ice_is_feature_supported(pf, ICE_F_PHY_RCLK))
 				ice_dump_rclk_status(pf);
+#endif /* CONFIG_PTP_1588_CLOCK */
 		}
 
 #ifdef CONFIG_DCB
@@ -1636,12 +1642,14 @@ void ice_debugfs_pf_init(struct ice_pf *pf)
 				 pf, &dump_cluster_id_fops))
 		goto create_failed;
 
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
 	/* Expose external CGU debugfs interface if CGU available*/
 	if (ice_is_feature_supported(pf, ICE_F_CGU)) {
 		if (!debugfs_create_file("cgu", 0400, pf->ice_debugfs_pf, pf,
 					 &ice_debugfs_cgu_fops))
 			goto create_failed;
 	}
+#endif /* CONFIG_PTP_1588_CLOCK */
 
 	ice_fwlog_init(&pf->hw);
 

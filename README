@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-November 26, 2024
+December 09, 2024
 
 
 Contents
@@ -84,6 +84,8 @@ The driver is compatible with devices based on the following:
 
 * Intel(R) Ethernet Connection E823-L
 
+* Intel(R) Ethernet Controller E830
+
 For information on how to identify your adapter, and for the latest
 Intel network drivers, refer to the Intel Support website at
 https://www.intel.com/support.
@@ -97,24 +99,18 @@ Configuring SR-IOV for improved network security
 ------------------------------------------------
 
 In a virtualized environment, on Intel(R) Ethernet Network Adapters
-that support SR-IOV or Intel(R) Scalable I/O Virtualization (Intel(R)
-Scalable IOV), the virtual function (VF) may be subject to malicious
-behavior. Software-generated layer two frames, like IEEE 802.3x (link
-flow control), IEEE 802.1Qbb (priority based flow-control), and others
-of this type, are not expected and can throttle traffic between the
-host and the virtual switch, reducing performance. To resolve this
-issue, and to ensure isolation from unintended traffic streams,
-configure all SR-IOV or Intel Scalable IOV enabled ports for VLAN
-tagging from the administrative interface on the PF. This
-configuration allows unexpected, and potentially malicious, frames to
-be dropped.
+that support SR-IOV, the virtual function (VF) may be subject to
+malicious behavior. Software-generated layer two frames, like IEEE
+802.3x (link flow control), IEEE 802.1Qbb (priority based flow-
+control), and others of this type, are not expected and can throttle
+traffic between the host and the virtual switch, reducing performance.
+To resolve this issue, and to ensure isolation from unintended traffic
+streams, configure all SR-IOV enabled ports for VLAN tagging from the
+administrative interface on the PF. This configuration allows
+unexpected, and potentially malicious, frames to be dropped.
 
-See the following sections later in this README for configuration
-instructions:
-
-* Configuring VLAN Tagging on SR-IOV Enabled Adapter Ports
-
-* Intel(R) Scalable I/O Virtualization Support
+See Configuring VLAN Tagging on SR-IOV Enabled Adapter Ports later in
+this README for configuration instructions.
 
 
 Do not unload port driver if VF with active VM is bound to it
@@ -1345,7 +1341,10 @@ Note:
   filters with the same fields, using different values, but, on one
   device, you may not program two tcp4 filters with different matching
   fields.The ice driver does not support matching on a subportion of a
-  field, thus partial mask fields are not supported.
+  field, thus partial mask fields are not supported.The IPv4 filter
+  type will not match TCP, UDP or SCTP traffic. To match those types
+  of traffic, create separate filters for TCP, UDP and SCTP as desired
+  or use a different type of filtering.
 
 
 Flex Byte Intel Ethernet Flow Director Filters
@@ -1567,111 +1566,6 @@ the VF for live migration to be re-enabled.
 
 Refer to https://qemu.readthedocs.io/en/latest/devel/vfio-
 migration.html for more details.
-
-
-Intel(R) Scalable I/O Virtualization Support
---------------------------------------------
-
-Intel(R) Scalable I/O Virtualization (Intel(R) Scalable IOV) allows
-you to share a physical device across multiple virtual machines and
-applications. Intel Scalable IOV provides your system the ability to
-share device resources with different address domains using different
-abstractions. For example, application processes may access a device
-using system calls and VMs may access a device through virtual device
-interfaces.
-
-For more information, please refer to the Intel Scalable I/O
-Virtualization Technical Specification
-<https://software.intel.com/sites/default/files/managed/cc/0e/intel-
-scalable-io-virtualization-technical-specification.pdf> (login
-required)
-
-The VF driver will not block teaming/bonding/link aggregation, but
-this is not a supported feature. Do not expect failover or load
-balancing on the VF interface.
-
-Intel Scalable IOV is not available in the kernel driver. Download and
-install the current ice driver to use this feature. Refer to the
-SUPPORT section for where to download the current driver.
-
-Requirements:
-
-* Your system platform must support Intel Scalable IOV
-
-* A network device based on an Intel(R) Ethernet 800 Series controller
-
-* The host operating system must be a Linux distro using kernel
-  version 5.12 - 5.15
-
-* The guest operating system must be Linux
-
-* The guest iAVF driver must be version 4.5.0, or later
-
-* Your kernel needs to have VFIO, MDEV, and IOMMU APIs compatible with
-  the current Intel Scalable IOV implementation for the ice driver. To
-  check that, ensure that your target kernel headers are yielding non-
-  empty results for both of the following two grep commands:
-
-     KSRC="/lib/modules/$(uname -r)/source"
-     test -d "$KSRC" || echo bad KSRC
-     grep mdev_set_iommu_device "$KSRC"/include/linux/mdev.h
-     grep IOMMU_DEV_FEAT_AUX "$KSRC"/include/linux/iommu.h
-
-  Note:
-
-    * The location of your target kernel headers varies and depends on
-      your distribution.
-
-    * Adjust the KSRC variable to the path of the target kernel
-      headers.
-
-
-Enabling Intel Scalable IOV
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-You can use Intel's Ethernet Port Configuration Tool (EPCT) to enable
-Intel Scalable IOV. If the EPCT tool is not available, you can also
-enable Intel Scalable IOV through your system's HII interface (if it
-has one). The recommended method is to use the EPCT tool.
-
-To enable or disable Intel Scalable IOV using the EPCT tool, use one
-of these commands:
-
-   epct -nic=1 -set 'siov enable'
-   epct -nic=1 -set 'siov disable'
-
-Where "-nic=1" specifies the Intel Ethernet device. See the EPCT tool
-documentation for instructions on how to determine the NIC number of
-your device.
-
-If the EPCT tool is not available, and your system has an HII
-interface, you can use the HII interface to enable/disable Intel
-Scalable IOV. Find the "Intel Scalable IOV (Scalable IOV)" setting and
-select your desired value.
-
-
-Enabling Intel Scalable I/O Virtualization Virtual Devices
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Use the following steps to enable Intel Scalable IOV virtual devices
-(VDEVs):
-
-1. Create an mdev:
-
-      echo "83b8f4f2-509f-382f-3c1e-e6bfe0fa1001" | sudo tee
-      /sys/class/mdev_bus/0000:38:00.0/mdev_supported_types/ice-ivdm/create
-
-2. Use qemu to launch a VM with four processors:
-
-      sudo ./x86_64-softmmu/qemu-system-x86_64 \
-         -enable-kvm \
-         -m 1G \
-         -smp 4 \
-         -device
-         vfio-pci,sysfsdev=/sys/bus/mdev/devices/83b8f4f2-509f-382f-3c1e-e6bfe0fa 1001 \
-         -drive file=../../img/test.qcow2 \
-         -nic user,hostfwd=tcp::5555-:22 \
-         -monitor stdio
 
 
 Displaying VF Statistics on the PF
@@ -1901,8 +1795,8 @@ messages in the PF's system log using the dmesg command.
   enable automatic VF resets.
 
 * When automatic VF resets are enabled, the PF driver will immediately
-  reset the VF and reenable queues when it detects MDD events on the
-  receive path.
+  reset the VF and re-enable queues when it detects MDD events on
+  either the receive or transmit path.
 
 * If automatic VF resets are disabled, the PF will not automatically
   reset the VF when it detects MDD events.
@@ -2048,8 +1942,8 @@ following before changing between switchdev and legacy mode:
 
 Note:
 
-  * ADQ, trusted VFs, L2 forwarding, and S-IOV are not supported in
-    switchdev mode.
+  * ADQ, trusted VFs, and L2 forwarding are not supported in switchdev
+    mode.
 
   * Switchdev mode is not persistent across reboots or driver reloads.
 
@@ -2538,13 +2432,13 @@ The ice driver supports limiting the transmit queue bit rate with the
 "tx_maxrate" sysfs entry. Use this entry to set a maximum bitrate in
 Mbps. A value of zero means no limiting.
 
-Setting the bit rate for transmit queue 1 to 300 Mbps:
+For example, to set the bit rate for transmit queue 1 to 300 Mbps:
 
-   echo 300 > /sys/class/<ethx>/queues/tx-1/tx_maxrate
+   echo 300 > /sys/class/net/<ethx>/queues/tx-1/tx_maxrate
 
 To remove the limit:
 
-   echo 0 > /sys/class/<ethx>/queues/tx-1/tx_maxrate
+   echo 0 > /sys/class/net/<ethx>/queues/tx-1/tx_maxrate
 
 
 NAPI
@@ -2770,6 +2664,78 @@ it for advanced configuration of this feature.
 
 * Intel(R) Ethernet Network Adapter E810-C-Q2T:
   https://cdrdv2.intel.com/v1/dl/getContent/722960
+
+
+Earliest TxTime First (ETF) Offloads
+------------------------------------
+
+Intel Ethernet 830 Series devices support Earliest TxTime First (ETF)
+offloads. ETF offloads enable precise packet transmission scheduling,
+which is crucial for time-sensitive network applications that require
+strict timing control. The ice driver uses the "SO_TXTIME" socket
+option to schedule the transmission. Applications must set this option
+when sending packets to leverage the precise transmission timing
+provided by ETF offloads.
+
+To enable and configure ETF qdisc offload on the queues:
+
+1. Use the "mqprio" qdisc to classify packets into different traffic
+   classes. For example:
+
+      tc qdisc add dev <ethX> handle 100: parent root mqprio num_tc 3 \
+        map 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 \
+        queues 1@0 1@1 2@2 \
+
+   Replace "<ethX>" with the name of your network interface.
+
+2. Set ETF as the queueing discipline for your desired traffic class.
+   For example, to set the ETF qdisc for traffic class number 0:
+
+      tc qdisc replace dev <ethX> parent 100:1 etf \
+        clockid CLOCK_TAI delta 300000 offload
+
+For a detailed explanation of the ETF qdisc and its options, see the
+tc-etf man page.
+
+
+Configuring Checksum Offloads
+-----------------------------
+
+You can configure checksum offloads using ethtool.
+
+To see the supported and configured checksum features for your device,
+run the following:
+
+   ethtool -k <ethX>
+
+To enable or disable Tx and Rx checksum offload features, run the
+following:
+
+   ethtool -K <ethX> [tx|rx] [on|off]
+
+Intel Ethernet 830 Series devices support generic Tx and Rx checksums.
+
+* To change generic Rx checksum offloads, use the above Rx checksum
+  enable/disable command.
+
+* To change Tx generic checksum offloads, use the following:
+
+     ethtool -K <ethX> tx-checksum-ip-generic [on|off]
+
+Note:
+
+  On Intel Ethernet 830 Series devices, the generic Tx checksum
+  offload feature (tx-checksum-ip-generic) cannot be enabled
+  simultaneously with the following features:
+
+  * TCP Segmentation Offload (TSO), or
+
+  * IP checksum offload (tx-checksum-ipv4 and tx-checksum-ipv6)
+
+  Ensure that TSO and IP checksum offloads are disabled before
+  enabling generic Tx checksum offloads.
+
+For more details, please refer to the ethtool man page.
 
 
 Tunnel/Overlay Stateless Offloads
@@ -3791,6 +3757,29 @@ To set a PF back to using its PF LUT:
    echo 0 > /sys/bus/pci/devices/<ethx>/sriov_drivers_autoprobe
    echo 64 > /sys/bus/pci/devices/<ethx>/rss_lut_vf_attr
    echo 2048 > /sys/bus/pci/devices/<ethx>/rss_lut_pf_attr
+
+
+Internal Temperature Reporting
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ice driver support for monitoring the internal temperature of the
+chip.
+
+Match the PCI address to identify the device's hwmon interface. For
+example use:
+
+   tree /sys/class/hwmon/
+
+Might return:
+
+   /sys/class/hwmon/
+   ├── <hwmonX> -> ../../devices/pci0000:<bus>/<pci-addresss-id>/hwmon/hwmon0
+
+The temperature data can be accessed through the sysfs interface:
+
+   cat /sys/class/hwmon/<hwmonX>/temp1_input
+
+The temperature value is reported in millidegrees Celsius.
 
 
 Known Issues/Troubleshooting

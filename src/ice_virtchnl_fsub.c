@@ -648,6 +648,13 @@ int ice_vc_flow_sub_fltr(struct ice_vf *vf, u8 *msg)
 		goto err_exit;
 	}
 
+	if (fltr->proto_hdrs.count >= VIRTCHNL_MAX_NUM_PROTO_HDRS) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		dev_dbg(dev, "Invalid protocol header count for VF %d\n",
+			vf->vf_id);
+		goto err_free_conf;
+	}
+
 	/**
 	 * reserve one more memory slot for ETH
 	 * which may consume 2 lookup items

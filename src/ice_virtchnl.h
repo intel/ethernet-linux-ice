@@ -107,6 +107,10 @@ struct ice_virtchnl_ops {
 	int (*dis_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);
 	int (*get_ptp_cap)(struct ice_vf *vf, u8 *msg);
 	int (*get_phc_time)(struct ice_vf *vf);
+#ifdef CONFIG_X86
+	int (*get_sw_cross_tstamp)(struct ice_vf *vf);
+	int (*get_phc_freq_ratio)(struct ice_vf *vf);
+#endif /* CONFIG_X86 */
 };
 
 /**

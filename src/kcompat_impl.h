@@ -422,7 +422,9 @@ struct devlink_flash_update_params {
 	const char *component;
 	u32 overwrite_mask;
 };
+#endif /* !HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
 
+#ifndef HAVE_DEVLINK_FLASH_UPDATE_PARAMS_OVERWRITE_MASK
 #ifndef DEVLINK_FLASH_OVERWRITE_SETTINGS
 #define DEVLINK_FLASH_OVERWRITE_SETTINGS BIT(0)
 #endif
@@ -430,7 +432,10 @@ struct devlink_flash_update_params {
 #ifndef DEVLINK_FLASH_OVERWRITE_IDENTIFIERS
 #define DEVLINK_FLASH_OVERWRITE_IDENTIFIERS BIT(1)
 #endif
-#endif /* !HAVE_DEVLINK_FLASH_UPDATE_PARAMS */
+
+#define DEVLINK_SUPPORT_FLASH_UPDATE_COMPONENT          BIT(0)
+#define DEVLINK_SUPPORT_FLASH_UPDATE_OVERWRITE_MASK     BIT(1)
+#endif /* HAVE_DEVLINK_FLASH_UPDATE_PARAMS_OVERWRITE_MASK */
 
 /* NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY
  *
@@ -644,6 +649,13 @@ _kc_devlink_resources_unregister(struct devlink *devlink)
 #endif /* NEED_DEVLINK_RESOURCES_UNREGISTER_NO_RESOURCE */
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 
+#ifdef NEED_DEVL_RESOURCE_REGISTER
+#define devl_resource_register devlink_resource_register
+#define devl_resources_unregister devlink_resources_unregister
+#define devl_resource_occ_get_register devlink_resource_occ_get_register
+#define devl_resource_occ_get_unregister devlink_resource_occ_get_unregister
+
+#endif /* NEED_DEVL_RESOURCE_REGISTER */
 #ifdef NEED_DEVLINK_TO_DEV
 /*
  * Commit 2131463 ("devlink: Reduce struct devlink exposure")
@@ -783,6 +795,84 @@ tc_cls_can_offload_and_chain0(const struct net_device *dev,
 #ifdef NEED_TC_SETUP_QDISC_MQPRIO
 #define TC_SETUP_QDISC_MQPRIO TC_SETUP_MQPRIO
 #endif /* NEED_TC_SETUP_QDISC_MQPRIO */
+
+#ifdef NEED_TCF_MIRRED_DEV
+/* NEED_TCF_MIRRED_DEV
+ *
+ * tcf_mirred_dev was introduced by upstream commit 9f8a739e72f1 ("act_mirred:
+ * get rid of tcfm_ifindex from struct tcf_mirred"), which replaced
+ * tcf_mirred_ifindex.
+ */
+#define tcf_mirred_dev(a) \
+	rtnl_dereference(to_mirred(a)->tcfm_dev)
+#endif /* NEED_TCF_MIRRED_DEV */
+
+#ifdef NEED_TCF_MIRRED_EGRESS_REDIRECT
+/* NEED_TCF_MIRRED_EGRESS_REDIRECT
+ *
+ * is_tcf_mirred_egress_redirect was added by upstream commit 5724b8b56947
+ * ("net/sched: tc_mirred: Rename public predicates 'is_tcf_mirred_redirect'
+ * and 'is_tcf_mirred_mirror'"), and is a simple rename of
+ * is_tcf_mirred_redirect.
+ */
+#define is_tcf_mirred_egress_redirect(a) is_tcf_mirred_redirect(a)
+#endif /* NEED_TCF_MIRRED_EGRESS_REDIRECT */
+
+#ifdef NEED_FLOW_BLOCK_BINDER_TYPE
+/* NEED_FLOW_BLOCK_BINDER_TYPE
+ *
+ * The TCF_BLOCK_BINDER_TYPE enumerations were renamed by commit 32f8c4093ac3
+ * ("net: flow_offload: rename TCF_BLOCK_BINDER_TYPE_* to
+ * FLOW_BLOCK_BINDER_TYPE_*")
+ */
+#define FLOW_BLOCK_BINDER_TYPE_UNSPEC TCF_BLOCK_BINDER_TYPE_UNSPEC
+#define FLOW_BLOCK_BINDER_TYPE_CLSACT_INGRESS \
+	TCF_BLOCK_BINDER_TYPE_CLSACT_INGRESS
+#define FLOW_BLOCK_BINDER_TYPE_CLSACT_EGRESS \
+	TCF_BLOCK_BINDER_TYPE_CLSACT_EGRESS
+#endif /* NEED_FLOW_BLOCK_BINDER_TYPE */
+
+#ifdef NEED_FLOW_BLOCK_BIND
+/* NEED_FLOW_BLOCK_BIND
+ *
+ * The TCF_BLOCK_BIND and TCF_BLOCK_UNBIND were renamed by commit 9c0e189ec988
+ * ("net: flow_offload: rename TC_BLOCK_{UN}BIND to FLOW_BLOCK_{UN}BIND")
+ */
+#define FLOW_BLOCK_BIND TC_BLOCK_BIND
+#define FLOW_BLOCK_UNBIND TC_BLOCK_UNBIND
+#endif /* NEED_FLOW_BLOCK_BIND */
+
+#ifdef NEED_FLOW_BLOCK_CB_SETUP_SIMPLE
+/* NEED_FLOW_BLOCK_CB_SETUP_SIMPLE
+ *
+ * flow_block_cb_setup_simple was introduced by commit 4e95bc268b91
+ * ("net: flow_offload: add flow_block_cb_setup_simple()") along with several
+ * related macros.
+ *
+ * These are only used by drivers if HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO is
+ * true.
+ */
+#define FLOW_CLS_REPLACE TC_CLSFLOWER_REPLACE
+#define FLOW_CLS_DESTROY TC_CLSFLOWER_DESTROY
+#define FLOW_CLS_STATS TC_CLSFLOWER_STATS
+#define FLOW_CLS_TMPLT_CREATE TC_CLSFLOWER_TMPLT_CREATE
+#define FLOW_CLS_TMPLT_DESTROY TC_CLSFLOWER_TMPLT_DESTROY
+
+#ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
+#include <net/pkt_cls.h>
+
+int _kc_flow_block_cb_setup_simple(struct flow_block_offload *f,
+				   struct list_head *driver_list,
+				   tc_setup_cb_t *cb,
+				   void *cb_ident, void *cb_priv,
+				   bool ingress_only);
+
+#define flow_block_cb_setup_simple(f, driver_list, cb, cb_ident, cb_priv, \
+				   ingress_only) \
+	_kc_flow_block_cb_setup_simple(f, driver_list, cb, cb_ident, cb_priv, \
+			       ingress_only)
+#endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
+#endif /* NEED_FLOW_BLOCK_CB_SETUP_SIMPLE */
 
 /* ART/TSC functions */
 #ifdef HAVE_PTP_CROSSTIMESTAMP
@@ -1118,6 +1208,31 @@ static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 }
 #endif /* NEED_ETH_HW_ADDR_SET */
 
+/* NEED_ETH_GET_HEADLEN_NET_DEVICE_ARG
+ *
+ *
+ * eth_get_headlen was modified by upstream commit
+ * 59753ce8b196 ("ethernet: constify eth_get_headlen()'s data argument")
+ * c43f1255b866 ("net: pass net_device argument to the eth_get_headlen")
+ *
+ * This allows core driver code to simply call eth_get_headlen with all
+ * 3 parameters, and have kcompat automatically drop it depending on what
+ * the kernel supports.
+
+ * For kernels older than 3.18, eth_get_headlen didn't exist.
+ */
+
+#ifdef NEED_ETH_GET_HEADLEN_NET_DEVICE_ARG
+static inline u32
+__kc_eth_get_headlen(const struct net_device __always_unused *dev,
+		void *data, unsigned int len)
+{
+	return eth_get_headlen(data, len);
+}
+
+#define eth_get_headlen(dev, data, len) __kc_eth_get_headlen(dev, data, len)
+#endif /* NEED_ETH_GET_HEADLEN_NET_DEVICE_ARG */
+
 #ifdef NEED_JIFFIES_64_TIME_IS_MACROS
 /* NEED_JIFFIES_64_TIME_IS_MACROS
  *
@@ -1265,6 +1380,24 @@ int _kc_pci_iov_vf_id(struct pci_dev *dev);
 #ifdef NEED_MUL_U64_U64_DIV_U64
 u64 mul_u64_u64_div_u64(u64 a, u64 mul, u64 div);
 #endif /* NEED_MUL_U64_U64_DIV_U64 */
+
+/* NEED_ROUNDUP_U64 and NEED_DIV_U64_ROUND_UP
+ *
+ * roundup_u64 and DIV_U64_FOUND_UP were introduced by commit 1d4ce389da2b
+ * ("ice: add and use roundup_u64 instead of open coding equivalent"). They
+ * are straight forward to re-implement here.
+ */
+#ifdef NEED_DIV_U64_ROUND_UP
+#define DIV_U64_ROUND_UP(ll, d)		\
+	({ u32 _tmp = (d); div_u64((ll) + _tmp - 1, _tmp); })
+#endif /* NEED_DIV_U64_ROUND_UP */
+
+#ifdef NEED_ROUNDUP_U64
+static inline u64 roundup_u64(u64 x, u32 y)
+{
+	return DIV_U64_ROUND_UP(x, y) * y;
+}
+#endif /* NEED_ROUNDUP_U64 */
 
 #ifndef HAVE_LINKMODE
 static inline void linkmode_set_bit(int nr, volatile unsigned long *addr)
@@ -2324,7 +2457,7 @@ static inline struct dentry *file_dentry(const struct file *file)
 }
 #endif /* NEED_FS_FILE_DENTRY */
 
-/* NEED_CLASS_CREATE_WITH_MODULE_PARAM
+/* NEED_CLASS_CREATE_WITHOUT_OWNER
  *
  * Upstream removed owner argument form helper macro class_create in
  * 1aaba11da9aa ("remove module * from class_create()")
@@ -2334,7 +2467,7 @@ static inline struct dentry *file_dentry(const struct file *file)
  *
  * class_create no longer has owner/module param as it was not used.
  */
-#ifdef NEED_CLASS_CREATE_WITH_MODULE_PARAM
+#ifdef NEED_CLASS_CREATE_WITHOUT_OWNER
 static inline struct class *_kc_class_create(const char *name)
 {
 	return class_create(THIS_MODULE, name);
@@ -2343,7 +2476,7 @@ static inline struct class *_kc_class_create(const char *name)
 #undef class_create
 #endif
 #define class_create _kc_class_create
-#endif /* NEED_CLASS_CREATE_WITH_MODULE_PARAM */
+#endif /* NEED_CLASS_CREATE_WITHOUT_OWNER */
 
 /* NEED_LOWER_16_BITS and NEED_UPPER_16_BITS
  *
@@ -2676,9 +2809,44 @@ static inline bool eth_type_vlan(__be16 ethertype)
 	} \
 	(cond) ? 0 : -ETIMEDOUT; \
 })
-#else
-#include <linux/iopoll.h>
+
 #endif /* NEED_READ_POLL_TIMEOUT */
+#ifdef NEED_READ_POLL_TIMEOUT_ATOMIC
+#define read_poll_timeout_atomic(op, val, cond, delay_us, timeout_us, \
+					delay_before_read, args...) \
+({ \
+	u64 __timeout_us = (timeout_us); \
+	s64 __left_ns = __timeout_us * NSEC_PER_USEC; \
+	unsigned long __delay_us = (delay_us); \
+	u64 __delay_ns = __delay_us * NSEC_PER_USEC; \
+	if (delay_before_read && __delay_us) { \
+		udelay(__delay_us); \
+		if (__timeout_us) \
+			__left_ns -= __delay_ns; \
+	} \
+	for (;;) { \
+		(val) = op(args); \
+		if (cond) \
+			break; \
+		if (__timeout_us && __left_ns < 0) { \
+			(val) = op(args); \
+			break; \
+		} \
+		if (__delay_us) { \
+			udelay(__delay_us); \
+			if (__timeout_us) \
+				__left_ns -= __delay_ns; \
+		} \
+		cpu_relax(); \
+		if (__timeout_us) \
+			__left_ns--; \
+	} \
+	(cond) ? 0 : -ETIMEDOUT; \
+})
+#endif /* NEED_READ_POLL_TIMEOUT_ATOMIC */
+#if !defined(NEED_READ_POLL_TIMEOUT) || !defined(NEED_READ_POLL_TIMEOUT_ATOMIC)
+#include <linux/iopoll.h>
+#endif /* !NEED_READ_POLL_TIMEOUT || !NEED_READ_POLL_TIMEOUT_ATOMIC */
 
 #ifndef HAVE_DPLL_LOCK_STATUS_ERROR
 /* Copied from include/uapi/linux/dpll.h to have common dpll status enums
@@ -2761,12 +2929,77 @@ bool ethtool_eee_use_linkmodes(const struct ethtool_keee *eee);
 
 void keee_to_eee(struct ethtool_eee *eee,
 		 const struct ethtool_keee *keee);
+
+#ifndef HAVE_MII_EEE_CAP1_MOD_LINKMODE
+#include <linux/mdio.h>
+#define _kc_linkmode_mod_bit(_nr, _addr, set) do {\
+		const int nr = _nr;		\
+		unsigned long  *addr = _addr;	\
+		if (set)			\
+			set_bit(nr, addr);	\
+		else				\
+			clear_bit(nr, addr);	\
+	} while (false)
+
+static inline void mii_eee_cap1_mod_linkmode_t(unsigned long *adv, u32 val)
+{
+	_kc_linkmode_mod_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT,
+			     adv, val & MDIO_EEE_100TX);
+	_kc_linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
+			     adv, val & MDIO_EEE_1000T);
+	_kc_linkmode_mod_bit(ETHTOOL_LINK_MODE_10000baseT_Full_BIT,
+			     adv, val & MDIO_EEE_10GT);
+	_kc_linkmode_mod_bit(ETHTOOL_LINK_MODE_1000baseKX_Full_BIT,
+			     adv, val & MDIO_EEE_1000KX);
+	_kc_linkmode_mod_bit(ETHTOOL_LINK_MODE_10000baseKX4_Full_BIT,
+			     adv, val & MDIO_EEE_10GKX4);
+	_kc_linkmode_mod_bit(ETHTOOL_LINK_MODE_10000baseKR_Full_BIT,
+			     adv, val & MDIO_EEE_10GKR);
+}
+
+static inline u32 linkmode_to_mii_eee_cap1_t(unsigned long *adv)
+{
+	u32 result = 0;
+
+	if (test_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, adv))
+		result |= MDIO_EEE_100TX;
+	if (test_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, adv))
+		result |= MDIO_EEE_1000T;
+	if (test_bit(ETHTOOL_LINK_MODE_10000baseT_Full_BIT, adv))
+		result |= MDIO_EEE_10GT;
+	if (test_bit(ETHTOOL_LINK_MODE_1000baseKX_Full_BIT, adv))
+		result |= MDIO_EEE_1000KX;
+	if (test_bit(ETHTOOL_LINK_MODE_10000baseKX4_Full_BIT, adv))
+		result |= MDIO_EEE_10GKX4;
+	if (test_bit(ETHTOOL_LINK_MODE_10000baseKR_Full_BIT, adv))
+		result |= MDIO_EEE_10GKR;
+
+	return result;
+}
+#endif /* !HAVE_MII_EEE_CAP1_MOD_LINKMODE */
 #endif /* !HAVE_ETHTOOL_KEEE */
 
 #ifdef HAVE_ASSIGN_STR_2_PARAMS
 #define _kc__assign_str(dst, src) __assign_str(dst, src)
 #else
 #define _kc__assign_str(dst, src) __assign_str(dst)
+#endif
+
+#if defined(NEED_DIM_END_SAMPLE_BY_POINTER) && defined(HAVE_CONFIG_DIMLIB)
+#include <linux/dim.h>
+
+/* Since commit 61bf0009a765 ("dim: pass dim_sample to net_dim() by reference")
+ * the net_dim function has accepted a const struct dim_sample * parameter
+ * instead of passing struct dim_sample by value.
+ */
+static inline void _kc_net_dim(struct dim *dim,
+			       const struct dim_sample *end_sample)
+{
+	if (end_sample)
+		net_dim(dim, *end_sample);
+}
+
+#define net_dim(_dim, _dim_sample) _kc_net_dim(_dim, _dim_sample)
 #endif
 
 #ifdef NEED_XSK_BUFF_DMA_SYNC_FOR_CPU_NO_POOL
@@ -2782,5 +3015,9 @@ _kc_xsk_buff_dma_sync_for_cpu(struct xdp_buff *xdp)
 #define xsk_buff_dma_sync_for_cpu(xdp) \
 	_kc_xsk_buff_dma_sync_for_cpu(xdp)
 #endif /* NEED_XSK_BUFF_DMA_SYNC_FOR_CPU_NO_POOL */
+
+#ifdef NEED_XDP_CONVERT_BUFF_TO_FRAME
+#define xdp_convert_buff_to_frame convert_to_xdp_frame
+#endif
 
 #endif /* _KCOMPAT_IMPL_H_ */

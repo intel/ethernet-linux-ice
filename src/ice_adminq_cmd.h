@@ -1582,8 +1582,6 @@ struct ice_aqc_restart_an {
 	u8 cmd_flags;
 #define ICE_AQC_RESTART_AN_LINK_RESTART	BIT(1)
 #define ICE_AQC_RESTART_AN_LINK_ENABLE	BIT(2)
-#define ICE_AQC_RESTART_AN_REFCLK_M	GENMASK(4, 3)
-#define ICE_AQC_RESTART_AN_REFCLK_NOCHANGE 0
 	u8 reserved2[13];
 };
 
@@ -1770,6 +1768,27 @@ struct ice_aqc_set_mac_lb {
 	u8 reserved[15];
 };
 
+/* The following command should not be used in normal operation
+ * Set PHY Debug command (direct 0x0622)
+ */
+struct ice_aqc_set_phy_debug {
+	u8 lport_num;
+	u8 lport_valid;
+#define ICE_AQ_PHY_DBG_PORT_NUM_VALID	BIT(0)
+	u8 phy_index;
+	u8 cmd_flags;
+#define ICE_AQ_PHY_DBG_RESET_TYPE_S	1
+#define ICE_AQ_PHY_DBG_RESET_TYPE_M	(0x3 << ICE_AQ_PHY_DBG_RESET_TYPE_S)
+#define ICE_AQ_PHY_DBG_RESET_NONE	0
+#define ICE_AQ_PHY_DBG_RESET_HARD	1
+#define ICE_AQ_PHY_DBG_RESET_SOFT	2
+#define ICE_AQ_PHY_DBG_DIS_LINK_MNG	BIT(3)
+#define ICE_AQ_PHY_DBG_DIS_ALL_LINK_MNG	BIT(4)
+#define ICE_AQ_PHY_DBG_LOAD_PHY_FW	BIT(5)
+#define ICE_AQ_PHY_DBG_KEEP_PHY_MNG_EN	BIT(6)
+	u8 reserved2[12];
+};
+
 /* Set PHY recovered clock output (direct 0x0630) */
 struct ice_aqc_set_phy_rec_clk_out {
 	u8 phy_output;
@@ -1934,7 +1953,7 @@ struct ice_aqc_dnl_equa_param {
 };
 
 struct ice_aqc_dnl_equa_respon {
-	/* Equalisation value can be -ve */
+	/* Equalisation value can be negative */
 	int val;
 	__le32 reserved[3];
 };
@@ -3521,6 +3540,8 @@ struct ice_aqc_event_cgu_err {
 	u8 rsvd[15];
 };
 
+#define ICE_AQC_GET_CGU_MAX_PHASE_ADJ  GENMASK(30, 0)
+
 /* Get CGU abilities command response data structure (indirect 0x0C61) */
 struct ice_aqc_get_cgu_abilities {
 	u8 num_inputs;
@@ -4105,6 +4126,7 @@ struct ice_aq_desc {
 		struct ice_aqc_fw_log fw_log;
 		struct ice_aqc_debug_dump_internals debug_dump;
 		struct ice_aqc_set_mac_lb set_mac_lb;
+		struct ice_aqc_set_phy_debug set_phy_debug;
 		struct ice_aqc_alloc_free_res_cmd sw_res_ctrl;
 		struct ice_aqc_get_res_alloc get_res;
 		struct ice_aqc_get_allocd_res_desc get_res_desc;
@@ -4292,6 +4314,7 @@ enum ice_adminq_opc {
 	ice_aqc_opc_get_link_status			= 0x0607,
 	ice_aqc_opc_set_event_mask			= 0x0613,
 	ice_aqc_opc_set_mac_lb				= 0x0620,
+	ice_aqc_opc_set_phy_debug			= 0x0622,
 	ice_aqc_opc_set_phy_rec_clk_out			= 0x0630,
 	ice_aqc_opc_get_phy_rec_clk_out			= 0x0631,
 	ice_aqc_opc_get_sensor_reading			= 0x0632,

@@ -2066,11 +2066,12 @@ ice_ntuple_set_input_set(struct ice_vsi *vsi, enum ice_block blk,
 			 struct ethtool_rx_flow_spec *fsp,
 			 struct ice_fdir_fltr *input)
 {
-	u16 dest_vsi, q_index = 0;
+	s16 q_index = ICE_FDIR_NO_QUEUE_IDX;
 	int flow_type, flow_mask;
 	u16 orig_q_index = 0;
 	struct ice_pf *pf;
 	struct ice_hw *hw;
+	u16 dest_vsi = 0;
 	u8 dest_ctl;
 
 	if (blk == ICE_BLK_FD)

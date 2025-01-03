@@ -1241,8 +1241,8 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto err;
 		}
-		if (tci->list[i].offset + tci->list[i].count
-						    > ICE_MAX_DFLT_QS_PER_VF) {
+		if ((u32)tci->list[i].offset + (u32)tci->list[i].count >
+		    (u32)ICE_MAX_DFLT_QS_PER_VF) {
 			dev_err(dev, "VF %d: Incorrect offset or count for TC %d\n",
 				vf->vf_id, i);
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;

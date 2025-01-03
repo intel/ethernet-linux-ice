@@ -500,6 +500,7 @@ static void ice_repr_set_tx_topology(struct ice_pf *pf)
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 	/* only export if RDMA and DCB disabled */
 	if (ice_is_aux_ena(pf) &&
+	    ice_is_rdma_ena(pf) &&
 	    ice_is_rdma_aux_loaded(pf))
 		return;
 	if (ice_is_dcb_active(pf))
