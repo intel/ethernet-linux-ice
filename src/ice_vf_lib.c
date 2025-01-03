@@ -9,6 +9,16 @@
 #include "ice_virtchnl_allowlist.h"
 #include "ice_vf_adq.h"
 
+#if defined(CONFIG_X86)
+static ssize_t sw_cross_timestamp_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t len);
+static ssize_t sw_cross_timestamp_show(struct device *dev,
+				       struct device_attribute *attr,
+				       char *buf);
+static DEVICE_ATTR_RW(sw_cross_timestamp);
+
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 /* Public functions which may be accessed by all driver files */
 
 /**
@@ -957,9 +967,20 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 		return 0;
 	}
 
+	/* Set lock if requested in flags, if lock not requested then assert
+	 * lock is already held by current thread using lockdep_assert_held
+	 */
+	if (flags & ICE_VF_RESET_LOCK)
+		mutex_lock(&vf->cfg_lock);
+	else
+		lockdep_assert_held(&vf->cfg_lock);
+
 	if (ice_is_vf_disabled(vf)) {
 		vsi = ice_get_vf_vsi(vf);
 		if (!vsi) {
+			if (flags & ICE_VF_RESET_LOCK)
+				mutex_unlock(&vf->cfg_lock);
+
 			dev_dbg(dev, "VF %d is already removed\n", vf->vf_id);
 			return -EINVAL;
 		}
@@ -968,15 +989,13 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 		if (ice_vsi_is_rx_queue_active(vsi))
 			ice_vsi_stop_all_rx_rings(vsi);
 
+		if (flags & ICE_VF_RESET_LOCK)
+			mutex_unlock(&vf->cfg_lock);
+
 		dev_dbg(dev, "VF is already disabled, there is no need for resetting it, telling VM, all is fine %d\n",
 			vf->vf_id);
 		return 0;
 	}
-
-	if (flags & ICE_VF_RESET_LOCK)
-		mutex_lock(&vf->cfg_lock);
-	else
-		lockdep_assert_held(&vf->cfg_lock);
 
 	/* Set VF disable bit state here, before triggering reset */
 	set_bit(ICE_VF_STATE_DIS, vf->vf_states);
@@ -1372,6 +1391,54 @@ static int ice_init_vf_transmit_lldp_sysfs(struct ice_vf *vf)
 	return device_create_file(&vf->vfdev->dev, &vf->transmit_lldp_attr);
 }
 
+#if defined(CONFIG_X86)
+/**
+ * sw_cross_timestamp_store - sysfs interface for enabling sw_cross_timestamp
+ * @dev: Device that owns the attribute
+ * @attr: sysfs device attribute
+ * @buf: String representing configuration
+ * @len: Length of the 'buf' string
+ *
+ * Return: number of bytes written on success, negative error code otherwise.
+ */
+static ssize_t sw_cross_timestamp_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t len)
+{
+	struct ice_vf *vf = ice_get_vf_by_dev(dev);
+	bool ena;
+
+	if (!vf)
+		return -ENOENT;
+
+	if (kstrtobool(buf, &ena))
+		return -EINVAL;
+
+	vf->sw_crosststamp_ena = ena;
+
+	return len;
+}
+
+/**
+ * sw_cross_timestamp_show - sysfs callback for reading sw_cross_timestamp file
+ * @dev: pointer to dev structure
+ * @attr: device attribute pointing sysfs file
+ * @buf: user buffer to fill with returned data
+ *
+ * Return: number of bytes written on success, negative error code otherwise.
+ */
+static ssize_t sw_cross_timestamp_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct ice_vf *vf = ice_get_vf_by_dev(dev);
+
+	if (!vf)
+		return -ENOENT;
+
+	return sysfs_emit(buf, "%u\n", vf->sw_crosststamp_ena);
+}
+
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 int ice_init_vf_sysfs(struct ice_vf *vf)
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
@@ -1394,6 +1461,12 @@ int ice_init_vf_sysfs(struct ice_vf *vf)
 		dev_err(dev, "could not init transmit_lldp sysfs entry, err: %d",
 			err);
 
+#if defined(CONFIG_X86)
+	if (vf->pf->hw.mac_type == ICE_MAC_E810)
+		device_create_file(&vf->vfdev->dev,
+				   &dev_attr_sw_cross_timestamp);
+
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 	return err;
 }
 
@@ -1671,6 +1744,14 @@ int ice_vf_rebuild_host_vlan_cfg(struct ice_vf *vf, struct ice_vsi *vsi)
 
 		err = vlan_ops->add_vlan(vsi, &vf->port_vlan_info);
 	} else {
+		/* clear possible previous port vlan config */
+		err = ice_vsi_clear_port_vlan(vsi);
+		if (err) {
+			ice_dev_err_errno(dev, err,
+					  "failed to clear port VLAN via VSI parameters for VF %u",
+					  vf->vf_id);
+			return err;
+		}
 		err = ice_vsi_add_vlan_zero(vsi);
 	}
 

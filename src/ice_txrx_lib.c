@@ -294,10 +294,12 @@ ice_process_skb_fields(struct ice_rx_ring *rx_ring,
 		ice_ptp_rx_hwtstamp(rx_ring, rx_desc, skb);
 
 #ifdef HAVE_NDO_DFWD_OPS
-	if (!netif_is_ice(rx_ring->netdev) &&
-	    !ice_is_port_repr_netdev(rx_ring->netdev))
-		macvlan_count_rx((const struct macvlan_dev *)netdev_priv(rx_ring->netdev),
-				 skb->len + ETH_HLEN, true, false);
+	if (netif_is_macvlan(rx_ring->netdev)) {
+		const struct macvlan_dev *vlan;
+
+		vlan = (const struct macvlan_dev *)netdev_priv(rx_ring->netdev);
+		macvlan_count_rx(vlan, skb->len + ETH_HLEN, true, false);
+	}
 #endif /* HAVE_NDO_DFWD_OPS */
 }
 

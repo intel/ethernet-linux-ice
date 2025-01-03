@@ -229,17 +229,9 @@ struct ice_serdes_equalization_to_ethtool {
 	int tx_equalization_pre2;
 };
 
-struct ice_fec_stats_to_ethtool {
-	u16 fec_corr_cnt_high;
-	u16 fec_corr_cnt_low;
-	u16 fec_uncorr_cnt_high;
-	u16 fec_uncorr_cnt_low;
-};
-
 struct ice_regdump_to_ethtool {
 	/* A multilane port can have max 4 serdes */
 	struct ice_serdes_equalization_to_ethtool equalization[4];
-	struct ice_fec_stats_to_ethtool stats;
 };
 
 /* Port topology from lport i.e.

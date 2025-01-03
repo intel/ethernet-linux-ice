@@ -208,6 +208,8 @@
 #define PRTDCB_GENC_PFCLDA_M			ICE_M(0xFFFF, 16)
 #define PRTDCB_GENS				0x00083020 /* Reset Source: CORER */
 #define PRTDCB_GENS_DCBX_STATUS_M		ICE_M(0x7, 0)
+#define PRTDCB_TDPUC				0x00040940 /* Reset Source: CORER */
+#define PRTDCB_TDPUC_MAX_TXFRAME_M		ICE_M(0xFFFF, 0)
 #define PRTDCB_TUP2TC				0x001D26C0 /* Reset Source: CORER */
 #define GL_PREEXT_L2_PMASK0(_i)			(0x0020F0FC + ((_i) * 4)) /* _i=0...2 */ /* Reset Source: CORER */
 #define GL_PREEXT_L2_PMASK1(_i)			(0x0020F108 + ((_i) * 4)) /* _i=0...2 */ /* Reset Source: CORER */
@@ -341,6 +343,7 @@
 #define PFINT_OICR_MAL_DETECT_M			BIT(19)
 #define PFINT_OICR_GRST_M			BIT(20)
 #define PFINT_OICR_PCI_EXCEPTION_M		BIT(21)
+#define PFINT_OICR_LINK_STAT_CHANGE_M		BIT(25)
 #define PFINT_OICR_HMC_ERR_M			BIT(26)
 #define PFINT_OICR_PE_PUSH_M			BIT(27)
 #define PFINT_OICR_PE_CRITERR_M			BIT(28)
@@ -566,6 +569,8 @@
 #define PRTRPB_RDPC				0x000AC260 /* Reset Source: CORER */
 #define GLHH_ART_CTL				0x000A41D4 /* Reset Source: POR */
 #define GLHH_ART_CTL_ACTIVE_M			BIT(0)
+#define GLHH_ART_CTL_TIME_OUT1_M		BIT(1)
+#define GLHH_ART_CTL_TIME_OUT2_M		BIT(2)
 #define GLHH_ART_TIME_H				0x000A41D8 /* Reset Source: POR */
 #define GLHH_ART_TIME_L				0x000A41DC /* Reset Source: POR */
 #define GLTSYN_AUX_IN_0(_i)			(0x000889D8 + ((_i) * 4)) /* _i=0...1 */ /* Reset Source: CORER */
@@ -727,12 +732,11 @@
 #define E830_PRTMAC_TS_TX_MEM_VALID_L		0x001E2000 /* Reset Source: GLOBR */
 #define E830_GLPTM_ART_CTL			0x00088B50 /* Reset Source: POR */
 #define E830_GLPTM_ART_CTL_ACTIVE_M		BIT(0)
+#define E830_GLPTM_ART_CTL_TIME_OUT_M		BIT(1)
 #define E830_GLPTM_ART_TIME_H			0x00088B54 /* Reset Source: POR */
 #define E830_GLPTM_ART_TIME_L			0x00088B58 /* Reset Source: POR */
 #define E830_GLTSYN_PTMTIME_H(_i)		(0x00088B48 + ((_i) * 4)) /* _i=0...1 */ /* Reset Source: CORER */
 #define E830_GLTSYN_PTMTIME_L(_i)		(0x00088B40 + ((_i) * 4)) /* _i=0...1 */ /* Reset Source: CORER */
-#define E830_GLTSYN_TIME_L_0_AL			0x0008A000 /* Reset Source: CORER */
-#define E830_GLTSYN_TIME_L_1_AL			0x0008B000 /* Reset Source: CORER */
 #define E830_PFPTM_SEM				0x00088B00 /* Reset Source: PFR */
 #define E830_PFPTM_SEM_BUSY_M			BIT(0)
 #endif /* !_ICE_HW_AUTOGEN_H_ */

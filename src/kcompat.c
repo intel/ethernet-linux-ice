@@ -1221,9 +1221,7 @@ void _kc_pcie_print_link_status(struct pci_dev *dev) {
 }
 #endif /* 4.17.0 */
 
-/*****************************************************************************/
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,3,0))
-#if (!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,2))))
+#ifdef NEED_FLOW_BLOCK_CB_SETUP_SIMPLE
 #ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
 int _kc_flow_block_cb_setup_simple(struct flow_block_offload *f,
 				   struct list_head __always_unused *driver_list,
@@ -1252,8 +1250,7 @@ int _kc_flow_block_cb_setup_simple(struct flow_block_offload *f,
 	}
 }
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
-#endif /* !RHEL >= 8.2 */
-#endif /* 5.3.0 */
+#endif /* NEED_FLOW_BLOCK_CB_SETUP_SIMPLE */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,7,0))

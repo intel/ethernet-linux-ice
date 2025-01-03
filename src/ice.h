@@ -450,6 +450,7 @@ enum ice_pf_state {
 	ICE_PHY_INIT_COMPLETE,
 	ICE_FD_VF_FLUSH_CTX,		/* set at FD Rx IRQ or timeout */
 	ICE_AUX_ERR_PENDING,
+	ICE_LINK_EVENT_PENDING,
 	ICE_STATE_NBITS		/* must be last */
 };
 
@@ -599,7 +600,6 @@ struct ice_vsi {
 	u8 xdp_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
 #endif /* HAVE_XDP_SUPPORT */
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
-	unsigned long *af_xdp_zc_qps;    /* tracks AF_XDP ZC enabled qps */
 #ifndef HAVE_AF_XDP_NETDEV_UMEM
 	struct xdp_umem **xsk_umems;
 	u16 num_xsk_umems_used;
@@ -1149,7 +1149,6 @@ struct ice_pf {
 #ifdef HAVE_HWMON_DEVICE_REGISTER_WITH_INFO
 	struct device *hwmon_dev;
 #endif
-	u8 ieps_lm_active : 1;
 };
 
 extern struct ice_pf *
@@ -1344,71 +1343,82 @@ static inline void ice_set_ring_xdp(struct ice_tx_ring *ring)
 #endif /* HAVE_XDP_SUPPORT */
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 /**
+ * ice_get_xp_from_qid - get ZC XSK buffer pool bound to a queue ID
+ * @vsi: pointer to VSI
+ * @qid: index of a queue to look at XSK buff pool presence
+ *
+ * Return: a pointer to xsk_buff_pool structure if there is a buffer pool
+ * attached and configured as zero-copy, NULL otherwise.
+ */
+#ifdef HAVE_NETDEV_BPF_XSK_POOL
+static inline struct xsk_buff_pool *ice_get_xp_from_qid(struct ice_vsi *vsi,
+							u16 qid)
+#else
+static inline struct xdp_umem *ice_get_xp_from_qid(struct ice_vsi *vsi,
+						   u16 qid)
+#endif /* HAVE_NETDEV_BPF_XSK_POOL */
+{
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
+	struct xdp_umem **umems = vsi->xsk_umems;
+#else
+#ifdef HAVE_NETDEV_BPF_XSK_POOL
+	struct xsk_buff_pool *pool;
+#else
+	struct xdp_umem *pool;
+#endif /* HAVE_NETDEV_BPF_XSK_POOL */
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
+
+	if (!ice_is_xdp_ena_vsi(vsi))
+		return NULL;
+
+#ifndef HAVE_AF_XDP_NETDEV_UMEM
+	if (qid >= vsi->num_xsk_umems || !umems || !umems[qid])
+		return NULL;
+
+	return umems[qid];
+#else
+	pool = xsk_get_pool_from_qid(vsi->netdev, qid);
+	return (pool && pool->dev) ? pool : NULL;
+#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
+}
+
+/**
  * ice_xsk_pool - get XSK buffer pool bound to a ring
  * @ring: Rx ring to use
  *
- * Returns a pointer to xdp_umem structure if there is a buffer pool present,
+ * Return: a pointer to xdp_umem structure if there is a buffer pool present,
  * NULL otherwise.
  */
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
 static inline struct xsk_buff_pool *ice_xsk_pool(struct ice_rx_ring *ring)
 #else
 static inline struct xdp_umem *ice_xsk_pool(struct ice_rx_ring *ring)
-#endif
+#endif /* HAVE_NETDEV_BPF_XSK_POOL */
 {
 	struct ice_vsi *vsi = ring->vsi;
-#ifndef HAVE_AF_XDP_NETDEV_UMEM
-	struct xdp_umem **umems = vsi->xsk_umems;
-#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 	u16 qid = ring->q_index;
 
-#ifndef HAVE_AF_XDP_NETDEV_UMEM
-	if (qid >= vsi->num_xsk_umems || !umems || !umems[qid] ||
-	    !ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
-		return NULL;
-
-	return umems[qid];
-#else
-	if (!ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
-		return NULL;
-
-	return xsk_get_pool_from_qid(vsi->netdev, qid);
-#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
+	return ice_get_xp_from_qid(vsi, qid);
 }
 
 /**
  * ice_tx_xsk_pool - get XSK buffer pool bound to a ring
  * @ring: Tx ring to use
  *
- * Returns a pointer to xdp_umem structure if there is a buffer pool present,
+ * Return: a pointer to xdp_umem structure if there is a buffer pool present,
  * NULL otherwise. Tx equivalent of ice_xsk_pool.
  */
 #ifdef HAVE_NETDEV_BPF_XSK_POOL
 static inline struct xsk_buff_pool *ice_tx_xsk_pool(struct ice_tx_ring *ring)
 #else
 static inline struct xdp_umem *ice_tx_xsk_pool(struct ice_tx_ring *ring)
-#endif
+#endif /* HAVE_NETDEV_BPF_XSK_POOL */
 {
 	struct ice_vsi *vsi = ring->vsi;
-#ifndef HAVE_AF_XDP_NETDEV_UMEM
-	struct xdp_umem **umems = vsi->xsk_umems;
-#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
 	u16 qid;
 
 	qid = ring->q_index - vsi->num_xdp_txq;
-
-#ifndef HAVE_AF_XDP_NETDEV_UMEM
-	if (qid >= vsi->num_xsk_umems || !umems || !umems[qid] ||
-	    !ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
-		return NULL;
-
-	return umems[qid];
-#else
-	if (!ice_is_xdp_ena_vsi(vsi) || !test_bit(qid, vsi->af_xdp_zc_qps))
-		return NULL;
-
-	return xsk_get_pool_from_qid(vsi->netdev, qid);
-#endif /* !HAVE_AF_XDP_NETDEV_UMEM */
+	return ice_get_xp_from_qid(vsi, qid);
 }
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 
@@ -1724,8 +1734,15 @@ struct ice_vsi *ice_lb_vsi_setup(struct ice_pf *pf, struct ice_port_info *pi);
 int ice_vsi_cfg_netdev_tc0(struct ice_vsi *vsi);
 #endif /* HAVE_NDO_DFWD_OPS */
 #ifdef HAVE_XDP_SUPPORT
-int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog);
-int ice_destroy_xdp_rings(struct ice_vsi *vsi);
+enum ice_xdp_cfg {
+	ICE_XDP_CFG_FULL,	/* Fully apply new config in .ndo_bpf() */
+	ICE_XDP_CFG_PART,	/* Save/use part of config in VSI rebuild */
+};
+
+int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog,
+			  enum ice_xdp_cfg cfg_type);
+int ice_destroy_xdp_rings(struct ice_vsi *vsi, enum ice_xdp_cfg cfg_type);
+void ice_map_xdp_rings(struct ice_vsi *vsi);
 #ifndef NO_NDO_XDP_FLUSH
 void ice_xdp_flush(struct net_device *dev);
 #endif /* NO_NDO_XDP_FLUSH */
@@ -1779,6 +1796,8 @@ static inline void ice_clear_rdma_cap(struct ice_pf *pf)
 #endif /* HAVE_NETDEV_UPPER_INFO */
 
 int ice_get_num_local_cpus(struct device *dev);
+int ice_link_event(struct ice_pf *pf, struct ice_port_info *pi, bool link_up,
+		   u16 link_speed);
 const char *ice_aq_str(enum ice_aq_err aq_err);
 bool ice_is_wol_supported(struct ice_hw *hw);
 
@@ -1838,6 +1857,7 @@ void ice_ch_vsi_update_ring_vecs(struct ice_vsi *vsi);
 int ice_open(struct net_device *netdev);
 int ice_open_internal(struct net_device *netdev);
 int ice_stop(struct net_device *netdev);
+int ice_phy_cfg(struct ice_vsi *vsi, bool link_en);
 void ice_service_task_schedule(struct ice_pf *pf);
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
 int ice_load(struct ice_pf *pf);

@@ -1359,7 +1359,8 @@ static void ice_lag_monitor_link(struct ice_lag *lag, void *ptr)
 	}
 
 	/* End of linking functionality */
-	if (info->linking || !ice_is_aux_ena(lag->pf))
+	if (info->linking || (!ice_is_aux_ena(lag->pf) ||
+			      !ice_is_rdma_ena(lag->pf)))
 		return;
 
 	cdev = ice_find_cdev_info_by_id(lag->pf, IIDC_RDMA_ID);

@@ -69,7 +69,7 @@ elif sys.version_info.major == 2:
             raise Exception(os.strerror(get_errno()))
 
 
-_VERSION_ = '2.1'
+_VERSION_ = '3.0'
 
 ## public API
 
@@ -2332,6 +2332,15 @@ class Inventory(object):
         "8086:1599", # Intel(R) Ethernet Controller E810-XXV for backplane
         "8086:159A", # Intel(R) Ethernet Controller E810-XXV for QSFP
         "8086:159B", # Intel(R) Ethernet Controller E810-XXV for SFP
+        "8086:12D1", # Intel(R) Ethernet Controller E830-CC for backplane
+        "8086:12D2", # Intel(R) Ethernet Controller E830-CC for QSFP
+        "8086:12D3", # Intel(R) Ethernet Controller E830-CC for SFP
+        "8086:12D5", # Intel(R) Ethernet Controller E830-C for backplane
+        "8086:12D8", # Intel(R) Ethernet Controller E830-C for QSFP
+        "8086:12DA", # Intel(R) Ethernet Controller E830-C for SFP
+        "8086:12DC", # Intel(R) Ethernet Controller E830-XXV for backplane
+        "8086:12DD", # Intel(R) Ethernet Controller E830-XXV for QSFP
+        "8086:12DE", # Intel(R) Ethernet Controller E830-XXV for SFP
         "8086:1889" # Intel(R) iavf 
     ]
     def __init__(self):
@@ -3718,7 +3727,7 @@ def _main():
             "SPDX-License-Identifier: BSD-3-Clause",
             "Copyright (c) 2022, Intel Corporation"
         ]
-    prolog.append("\nFor use with Intel Ethernet E810 Controllers and Network Adapters ONLY")
+    prolog.append("\nFor use with Intel Ethernet E810 and E830 Controllers and Network Adapters ONLY")
 
     for line in prolog: print(line)
 

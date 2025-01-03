@@ -11,4 +11,13 @@
 
 int ice_ieps_entry(struct iidc_core_dev_info *obj, void *arg);
 
+void ice_cdev_init_ieps_info(struct ice_hw *hw,
+			     enum iidc_ieps_nac_mode *nac_mode);
+void ice_ieps_handle_link_event(struct ice_hw *hw);
+enum ieps_peer_status ice_ieps_get_link_state_speed(struct ice_hw *hw,
+						    bool *link_up,
+						    u16 *link_speed);
+enum ieps_peer_status ice_ieps_exec_cpi(struct ice_hw *hw,
+					struct ieps_peer_cpi_cmd_resp *cpi);
+void ice_ieps_init_lm_ops(struct ice_hw *hw, bool en_fw_ops);
 #endif /* _ICE_IEPS_H_ */

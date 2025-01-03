@@ -82,7 +82,9 @@ ice-y := ice_main.o	\
 	 ice_parser_rt.o	\
 	ice_aux_support.o	\
 	 ice_lag.o		\
+	 ice_cpi.o 		\
 	 ice_ieps.o		\
+	 ice_ieps_lm.o		\
 	 ice_gnss.o		\
 	 ice_ethtool.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o devlink/ice_devlink_health.o ice_fw_update.o

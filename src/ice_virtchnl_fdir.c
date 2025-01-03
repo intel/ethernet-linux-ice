@@ -2978,6 +2978,7 @@ ice_vc_fdir_parse_action(struct ice_vf *vf,
 	struct virtchnl_filter_action_set *as = &fltr->rule_cfg.action_set;
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	struct ice_fdir_fltr *input = &conf->input;
+	struct ice_vsi *vsi;
 	u32 dest_num = 0;
 	u32 mark_num = 0;
 	int i;
@@ -2987,6 +2988,10 @@ ice_vc_fdir_parse_action(struct ice_vf *vf,
 			as->count, vf->vf_id);
 		return -EINVAL;
 	}
+
+	vsi = ice_get_vf_vsi(vf);
+	if (!vsi)
+		return -EINVAL;
 
 	for (i = 0; i < as->count; i++) {
 		struct virtchnl_filter_action *action = &as->actions[i];
@@ -3006,12 +3011,24 @@ ice_vc_fdir_parse_action(struct ice_vf *vf,
 			dest_num++;
 			input->dest_ctl =
 				ICE_FLTR_PRGM_DESC_DEST_DIRECT_PKT_QINDEX;
+			if (action->act_conf.queue.index >= vsi->num_rxq) {
+				dev_dbg(dev, "Invalid queue index %d for VF %d\n",
+					action->act_conf.queue.index,
+					vf->vf_id);
+				return -EINVAL;
+			}
 			input->q_index = action->act_conf.queue.index;
 			break;
 		case VIRTCHNL_ACTION_Q_REGION:
 			dest_num++;
 			input->dest_ctl =
 				ICE_FLTR_PRGM_DESC_DEST_DIRECT_PKT_QGROUP;
+			if (action->act_conf.queue.index >= vsi->num_rxq) {
+				dev_dbg(dev, "Invalid queue index %d for VF %d\n",
+					action->act_conf.queue.index,
+					vf->vf_id);
+				return -EINVAL;
+			}
 			input->q_index = action->act_conf.queue.index;
 			input->q_region = action->act_conf.queue.region;
 			break;

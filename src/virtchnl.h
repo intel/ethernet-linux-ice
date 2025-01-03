@@ -185,6 +185,8 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS = 68,
 	VIRTCHNL_OP_1588_PTP_SET_PIN_CFG = 69,
 	VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP = 70,
+	VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP = 71,
+	VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO = 72,
 	VIRTCHNL_OP_ENABLE_QUEUES_V2 = 107,
 	VIRTCHNL_OP_DISABLE_QUEUES_V2 = 108,
 	VIRTCHNL_OP_MAP_QUEUE_VECTOR = 111,
@@ -338,6 +340,10 @@ static inline const char *virtchnl_op_str(enum virtchnl_ops v_opcode)
 		return "VIRTCHNL_OP_1588_PTP_SET_PIN_CFG";
 	case VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP:
 		return "VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP";
+	case VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP:
+		return "VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP";
+	case VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO:
+		return "VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO";
 	case VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT:
 		return "VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT";
 	case VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT:
@@ -1923,7 +1929,7 @@ struct virtchnl_proto_hdrs {
 	 * 2 - from the second inner layer
 	 * ....
 	 */
-	int count;
+	u32 count;
 	/**
 	 * count must <=
 	 * VIRTCHNL_MAX_NUM_PROTO_HDRS + VIRTCHNL_MAX_NUM_PROTO_HDRS_W_MSK
@@ -1985,7 +1991,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(36, virtchnl_filter_action);
 
 struct virtchnl_filter_action_set {
 	/* action number must be less then VIRTCHNL_MAX_NUM_ACTIONS */
-	int count;
+	u32 count;
 	struct virtchnl_filter_action actions[VIRTCHNL_MAX_NUM_ACTIONS];
 };
 
@@ -2353,6 +2359,8 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_quanta_cfg);
  *   VIRTCHNL_OP_1588_PTP_GET_PIN_CFGS
  *   VIRTCHNL_OP_1588_PTP_SET_PIN_CFG
  *   VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP
+ *   VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP
+ *   VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO
  *   VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT
  *   VIRTCHNL_OP_SYNCE_SET_PHY_REC_CLK_OUT
  *   VIRTCHNL_OP_SYNCE_GET_CGU_REF_PRIO
@@ -2391,6 +2399,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_quanta_cfg);
 #define VIRTCHNL_1588_PTP_CAP_SYNCE		BIT(6)
 #define VIRTCHNL_1588_PTP_CAP_GNSS		BIT(7)
 #define VIRTCHNL_1588_PTP_CAP_HARDWARE_CLOCK_ID	BIT(8)
+#define VIRTCHNL_1588_PTP_CAP_SW_CROSS_TSTAMP	BIT(9)
 
 /**
  * struct virtchnl_phc_regs
@@ -2546,6 +2555,9 @@ enum virtchnl_ptp_tstamp_format {
  * VFs to make sure there is only one PTP clock registered in kernel for each
  * physical adapter.
  *
+ * VIRTCHNL_1588_PTP_CAP_SW_CROSS_TSTAMP indicates that VF has the capability to
+ * get SW cross timestamp (PHC time and TSC) and PHC to TSC ratio.
+ *
  * Note that in the future, additional capability flags may be added which
  * indicate additional extended support. All fields marked as reserved by this
  * header will be set to zero. VF implementations should verify this to ensure
@@ -2640,6 +2652,41 @@ struct virtchnl_phc_adj_freq {
 	u8 rsvd[8];
 };
 VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_phc_adj_freq);
+
+/**
+ * struct virtchnl_sw_cross_timestamp
+ * @time: PHC time in nanoseconds
+ * @aux_time: TSC based on rdtsc() call
+ *
+ * Sent with the VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP to request current PHC
+ * and TSC time.
+ */
+struct virtchnl_sw_cross_timestamp {
+	u64 time;
+	u64 aux_time;
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_sw_cross_timestamp);
+
+/**
+ * struct virtchnl_phc_freq_ratio
+ * @scaled_ratio: Scaled (multiplied by 2^32) clock frequency ratio between PHC
+ *                and TSC count
+ * @phc_time: PHC time in nanoseconds
+ * @cpu_time: TSC based on rdtsc() call
+ * @rsvd: Reserved for future extension
+ *
+ * Sent with the VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO to request
+ * current PHC time, TSC and PHC to TSC frequency ratio.
+ */
+struct virtchnl_phc_freq_ratio {
+	u64 scaled_ratio;
+	u64 phc_time;
+	u64 cpu_time;
+	u8 rsvd[8];
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(32, virtchnl_phc_freq_ratio);
 
 /**
  * struct virtchnl_phc_tx_stamp
@@ -3932,6 +3979,12 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		break;
 	case VIRTCHNL_OP_1588_PTP_EXT_TIMESTAMP:
 		valid_len = sizeof(struct virtchnl_phc_ext_tstamp);
+		break;
+	case VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP:
+		valid_len = sizeof(struct virtchnl_sw_cross_timestamp);
+		break;
+	case VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO:
+		valid_len = sizeof(struct virtchnl_phc_freq_ratio);
 		break;
 	case VIRTCHNL_OP_SYNCE_GET_PHY_REC_CLK_OUT:
 		valid_len = sizeof(struct virtchnl_synce_get_phy_rec_clk_out);

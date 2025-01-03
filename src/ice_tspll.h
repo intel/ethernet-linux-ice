@@ -80,7 +80,6 @@ struct ice_tspll_params_e825c {
 #define ICE_CGU_R23_R24_TIME_REF_SEL		BIT(31)
 #define ICE_CGU_R24_ETH56G_FBDIV_FRAC		GENMASK(31, 0)
 
-
 #define ICE_CGU_BW_TDC				0x31C
 #define ICE_CGU_BW_TDC_PLLLOCK_SEL		GENMASK(30, 29)
 

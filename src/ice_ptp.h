@@ -240,6 +240,7 @@ enum ice_ptp_pin_nvm {
  * struct ice_ptp_pin_desc - hardware pin description data
  * @name_idx: index of the name of pin in ice_pin_names
  * @gpio: the associated GPIO input and output pins
+ * @delay: input and output signal delays in nanoseconds
  *
  * Structure describing a PTP-capable GPIO pin that extends ptp_pin_desc array
  * for the device. Device families have separate sets of available pins with
@@ -248,6 +249,7 @@ enum ice_ptp_pin_nvm {
 struct ice_ptp_pin_desc {
 	int name_idx;
 	int gpio[2];
+	unsigned int delay[2];
 };
 
 /**
@@ -422,6 +424,12 @@ int ice_ptp_update_incval(struct ice_pf *pf, enum ice_tspll_freq tspll_freq,
 			  enum ice_src_tmr_mode src_tmr_mode);
 void ice_dpll_pin_idx_to_name(struct ice_pf *pf, u8 pin, char *pin_name);
 int ice_ptp_phy_restart(struct ice_pf *pf);
+#if defined(CONFIG_X86)
+int ice_ptp_get_sw_cross_tstamp(struct ice_pf *pf,
+				struct virtchnl_sw_cross_timestamp *sw_cts);
+int ice_ptp_get_phc_freq_ratio(struct ice_pf *pf,
+			       struct virtchnl_phc_freq_ratio *ratio);
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 int ice_ptp_clock_index(struct ice_pf *pf);
 #else /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
 static inline bool ice_is_ptp_supported(struct ice_pf *pf)
@@ -464,6 +472,22 @@ static inline void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 
 static inline void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx) { }
 
+#if defined(CONFIG_X86)
+static inline int
+ice_ptp_get_sw_cross_tstamp(struct ice_pf *pf,
+			    struct virtchnl_sw_cross_timestamp *sw_cts)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int
+ice_ptp_get_phc_freq_ratio(struct ice_pf *pf,
+			   struct virtchnl_phc_freq_ratio *ratio)
+{
+	return -EOPNOTSUPP;
+}
+
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 static inline void
 ice_ptp_rx_hwtstamp(struct ice_rx_ring *rx_ring,
 		    union ice_32b_rx_flex_desc *rx_desc, struct sk_buff *skb) { }
@@ -486,6 +510,11 @@ static inline void ice_ptp_link_change(struct ice_pf *pf, bool linkup)
 static inline int ice_ptp_clock_index(struct ice_pf *pf)
 {
 	return -1;
+}
+static inline void ice_dpll_pin_idx_to_name(struct ice_pf *pf,
+					    u8 pin, char *pin_name)
+{
+	snprintf(pin_name, MAX_PIN_NAME, "Pin %i", pin);
 }
 #endif /* IS_ENABLED(CONFIG_PTP_1588_CLOCK) */
 #endif /* _ICE_PTP_H_ */

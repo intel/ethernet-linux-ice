@@ -5820,7 +5820,9 @@ void ice_sched_replay_agg(struct ice_hw *hw)
 	mutex_lock(&pi->sched_lock);
 	list_for_each_entry(agg_info, &hw->agg_list, list_entry)
 		/* replay aggregator (re-create aggregator node) */
-		if (!bitmap_equal(agg_info->tc_bitmap, agg_info->replay_tc_bitmap, ICE_MAX_TRAFFIC_CLASS)) {
+		if (!bitmap_equal(agg_info->tc_bitmap,
+				  agg_info->replay_tc_bitmap,
+				  ICE_MAX_TRAFFIC_CLASS)) {
 			DECLARE_BITMAP(replay_bitmap,
 					   ICE_MAX_TRAFFIC_CLASS);
 			int status;

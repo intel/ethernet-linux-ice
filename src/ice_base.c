@@ -147,6 +147,7 @@ static int ice_vsi_alloc_q_vector(struct ice_vsi *vsi, u16 v_idx, u8 tc)
 
 skip_alloc:
 	q_vector->reg_idx = q_vector->irq.index;
+	q_vector->vf_reg_idx = q_vector->irq.index;
 
 	/* only set affinity_mask if the CPU is online */
 	if (cpu_online(v_idx))
@@ -423,7 +424,7 @@ ice_setup_txtime_ctx(struct ice_tx_ring *ring,
 	else
 		txtime_ctx->src_vsi = ice_get_hw_vsi_num(hw, vsi->idx);
 
-	txtime_ctx->ts_res = ICE_TXTIME_CTX_RESOLUTION_8US;
+	txtime_ctx->ts_res = ICE_TXTIME_CTX_RESOLUTION_128NS;
 	txtime_ctx->drbell_mode_32 = ICE_TXTIME_CTX_DRBELL_MODE_32;
 }
 
@@ -885,6 +886,11 @@ void ice_vsi_map_rings_to_vectors(struct ice_vsi *vsi)
 		}
 		rx_rings_rem -= rx_rings_per_v;
 	}
+#ifdef HAVE_XDP_SUPPORT
+
+	if (ice_is_xdp_ena_vsi(vsi))
+		ice_map_xdp_rings(vsi);
+#endif /* HAVE_XDP_SUPPORT */
 }
 
 /**

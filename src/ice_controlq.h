@@ -49,6 +49,7 @@ enum ice_ctl_q {
 
 /* Control Queue timeout settings - max delay 1s */
 #define ICE_CTL_Q_SQ_CMD_TIMEOUT	USEC_PER_SEC
+#define ICE_CTL_Q_SQ_CMD_TIMEOUT_SPIN	100
 #define ICE_CTL_Q_ADMIN_INIT_TIMEOUT	10    /* Count 10 times */
 #define ICE_CTL_Q_ADMIN_INIT_MSEC	100   /* Check every 100msec */
 
@@ -93,18 +94,94 @@ struct ice_rq_event_info {
 	u8 *msg_buf;
 };
 
+struct ice_var_lock {
+	bool sleepable : 1;
+	union {
+		struct mutex mlock; /* Sleepable lock. */
+		struct {
+			spinlock_t slock; /* Non-sleepable lock. */
+			unsigned long flags;
+		};
+	};
+};
+
+/**
+ * ice_vlock_init - Initialize ice_var_lock
+ * @vlock: pointer to the ice_var_lock structure
+ */
+static inline void ice_vlock_init(struct ice_var_lock *vlock, bool sleepable)
+{
+	vlock->sleepable = sleepable;
+	if (sleepable)
+		mutex_init(&vlock->mlock);
+	else
+		spin_lock_init(&vlock->slock);
+}
+
+/**
+ * ice_vlock_destroy - Destroy ice_var_lock
+ * @vlock: pointer to the ice_var_lock structure
+ */
+static inline void ice_vlock_destroy(struct ice_var_lock *vlock)
+{
+	if (vlock->sleepable)
+		mutex_destroy(&vlock->mlock);
+}
+
+/**
+ * ice_vlock_fsleep - Sleep using ice_var_lock
+ * @vlock: pointer to the ice_var_lock structure
+ * @msec_sleepable: time to sleep in milliseconds for sleepable
+ * @usec_nonsleepable: time to delay in microseconds for nonsleepable
+ */
+static inline void ice_vlock_fsleep(struct ice_var_lock *vlock,
+				    unsigned int msec_sleepable,
+				    unsigned int usec_nonsleepable)
+{
+	if (vlock->sleepable)
+		msleep(msec_sleepable);
+	else
+		udelay(usec_nonsleepable);
+}
+
+/**
+ * ice_vlock - Acquire ice_var_lock
+ * @vlock: pointer to the ice_var_lock structure
+ */
+static inline void ice_vlock(struct ice_var_lock *vlock)
+{
+	if (vlock->sleepable)
+		mutex_lock(&vlock->mlock);
+	else
+		spin_lock_irqsave(&vlock->slock, vlock->flags);
+}
+
+/**
+ * ice_vunlock - Release ice_var_lock
+ * @vlock: pointer to the ice_var_lock structure
+ */
+static inline void ice_vunlock(struct ice_var_lock *vlock)
+{
+	if (vlock->sleepable)
+		mutex_unlock(&vlock->mlock);
+	else
+		spin_unlock_irqrestore(&vlock->slock, vlock->flags);
+}
+
+DEFINE_GUARD(ice_var_lock, struct ice_var_lock *, ice_vlock(_T),
+	     ice_vunlock(_T))
+
 /* Control Queue information */
 struct ice_ctl_q_info {
 	enum ice_ctl_q qtype;
 	struct ice_ctl_q_ring rq;	/* receive queue */
 	struct ice_ctl_q_ring sq;	/* send queue */
-	u32 sq_cmd_timeout;		/* send queue cmd write back timeout */
 	u16 num_rq_entries;		/* receive queue depth */
 	u16 num_sq_entries;		/* send queue depth */
 	u16 rq_buf_size;		/* receive queue buffer size */
 	u16 sq_buf_size;		/* send queue buffer size */
 	enum ice_aq_err sq_last_status;	/* last status on send queue */
-	struct mutex sq_lock;		/* Send queue lock */
+	struct ice_var_lock sq_lock;	/* Send queue lock */
 	struct mutex rq_lock;		/* Receive queue lock */
 };
 

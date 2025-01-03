@@ -16,6 +16,7 @@
 #include "ice_sbq_cmd.h"
 #include "ice_vlan_mode.h"
 #include "ice_fwlog.h"
+#include <linux/wait.h>
 
 static inline bool ice_is_tc_ena(unsigned long bitmap, u8 tc)
 {
@@ -88,12 +89,12 @@ enum ice_aq_res_ids {
 	ICE_GLOBAL_CFG_LOCK_RES_ID
 };
 
-enum ice_rs_fec_stats_types {
-	ICE_RS_FEC_CORR_LOW,
-	ICE_RS_FEC_CORR_HIGH,
-	ICE_RS_FEC_UNCORR_LOW,
-	ICE_RS_FEC_UNCORR_HIGH,
-	ICE_RS_FEC_MAX
+enum ice_fec_stats_types {
+	ICE_FEC_CORR_LOW,
+	ICE_FEC_CORR_HIGH,
+	ICE_FEC_UNCORR_LOW,
+	ICE_FEC_UNCORR_HIGH,
+	ICE_FEC_MAX
 };
 
 /* FW update timeout definitions are in milliseconds */
@@ -778,6 +779,7 @@ struct ice_ts_func_info {
 #define ICE_TS_TMR1_ENA_M		BIT(26)
 #define ICE_TS_LL_TX_TS_READ_M		BIT(28)
 #define ICE_TS_LL_TX_TS_INT_READ_M	BIT(29)
+#define ICE_TS_LL_PHY_TMR_UPDATE_M	BIT(30)
 
 struct ice_ts_dev_info {
 	/* Device specific info */
@@ -791,6 +793,7 @@ struct ice_ts_dev_info {
 	u8 tmr1_ena : 1;
 	u8 ts_ll_read : 1;
 	u8 ts_ll_int_read : 1;
+	u8 ll_phy_tmr_update : 1;
 };
 
 #define ICE_NAC_TOPO_PRIMARY_M	BIT(0)
@@ -957,6 +960,8 @@ struct ice_bank_info {
 	u32 orom_size;				/* Size of OROM bank */
 	u32 netlist_ptr;			/* Pointer to 1st Netlist bank */
 	u32 netlist_size;			/* Size of Netlist bank */
+	u32 active_css_hdr_len;			/* Active CSS header length */
+	u32 inactive_css_hdr_len;		/* Inactive CSS header length */
 	enum ice_flash_bank nvm_bank;		/* Active NVM bank */
 	enum ice_flash_bank orom_bank;		/* Active OROM bank */
 	enum ice_flash_bank netlist_bank;	/* Active Netlist bank */
@@ -968,8 +973,8 @@ struct ice_flash_info {
 	struct ice_nvm_info nvm;	/* NVM version information */
 	struct ice_netlist_info netlist;/* Netlist version info */
 	struct ice_bank_info banks;	/* Flash Bank information */
-	u16 sr_words;			/* Shadow RAM size in words */
 	u32 flash_size;			/* Size of available flash in bytes */
+	u16 sr_words;			/* Shadow RAM size in words */
 	u8 blank_nvm_mode;		/* is NVM empty (no FW present) */
 };
 
@@ -1267,6 +1272,8 @@ struct ice_switch_info {
 	struct ice_sw_recipe *recp_list;
 	u16 prof_res_bm_init;
 	u16 max_used_prof_index;
+	u16 rule_cnt;
+	u8 recp_cnt;
 
 	DECLARE_BITMAP(prof_res_bm[ICE_MAX_NUM_PROFILES], ICE_MAX_FV_WORDS);
 };
@@ -1346,18 +1353,46 @@ struct ice_mbx_data {
 	u16 async_watermark_val;
 };
 
+#define E810C_QSFP_C827_0_HANDLE	2
+#define E810C_QSFP_C827_1_HANDLE	3
+enum ice_e810_c827_idx {
+	C827_0,
+	C827_1
+};
+
 #define ICE_PORTS_PER_QUAD	4
 #define ICE_GET_QUAD_NUM(port) ((port) / ICE_PORTS_PER_QUAD)
 
+#define ATQBAL_FLAGS_INTR_IN_PROGRESS	BIT(0)
+
+struct ice_e810_params {
+	/* The wait queue lock also protects the low latency interface */
+	wait_queue_head_t atqbal_wq;
+	unsigned int atqbal_flags;
+};
+
+enum ice_eth56g_link_spd {
+	ICE_ETH56G_LNK_SPD_1G,
+	ICE_ETH56G_LNK_SPD_2_5G,
+	ICE_ETH56G_LNK_SPD_10G,
+	ICE_ETH56G_LNK_SPD_25G,
+	ICE_ETH56G_LNK_SPD_40G,
+	ICE_ETH56G_LNK_SPD_50G,
+	ICE_ETH56G_LNK_SPD_50G2,
+	ICE_ETH56G_LNK_SPD_100G,
+	ICE_ETH56G_LNK_SPD_100G2,
+	NUM_ICE_ETH56G_LNK_SPD /* Must be last */
+};
+
 struct ice_eth56g_params {
 	u8 num_phys;
-	u8 lane_num;
 	bool onestep_ena;
 	bool sfd_ena;
 	u32 peer_delay;
 };
 
 union ice_phy_params {
+	struct ice_e810_params e810;
 	struct ice_eth56g_params eth56g;
 };
 
@@ -1390,6 +1425,21 @@ struct ice_ptp_hw {
 	struct ice_hw *primary_nac_hw;
 	u16 io_expander_handle;
 	u8 cgu_part_number;
+};
+
+struct ice_lm_ops {
+	int (*get_phy_caps)(struct ice_port_info *pi,
+			    bool qual_mods, u8 report_mode,
+			    struct ice_aqc_get_phy_caps_data *pcaps,
+			    struct ice_sq_cd *cd);
+	int (*set_phy_cfg)(struct ice_hw *hw, struct ice_port_info *pi,
+			   struct ice_aqc_set_phy_cfg_data *cfg,
+			   struct ice_sq_cd *cd);
+	int (*restart_an)(struct ice_port_info *pi, bool ena_link,
+			  struct ice_sq_cd *cd);
+	int (*get_link_info)(struct ice_port_info *pi, bool ena_lse,
+			     struct ice_link_status *link,
+			     struct ice_sq_cd *cd);
 };
 
 /* Port hardware description */
@@ -1484,6 +1534,7 @@ struct ice_hw {
 	u8 umac_shared;
 
 	struct ice_ptp_hw ptp;
+	s8 lane_num;
 
 	/* Active package version (currently active) */
 	struct ice_pkg_ver active_pkg_ver;
@@ -1544,6 +1595,13 @@ struct ice_hw {
 	u8 dvm_ena;
 
 	bool subscribable_recipes_supported;
+	struct ice_lm_ops *lm_ops;
+	/*  Used to pick curr_user_phy_cfg for all phy reconfig flows */
+	u8 ieps_lm_active : 1;
+	/* Used to pick CPI or AQ method for set/get phy cfg */
+	u8 ieps_cpi_lm : 1;
+	/* Used for Get phy caps when CPK FW based LM is disabled */
+	struct ice_aqc_get_phy_caps_data ieps_pcaps;
 };
 
 /* Statistics collected by each port, VSI, VEB, and S-channel */

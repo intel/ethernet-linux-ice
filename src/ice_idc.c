@@ -203,7 +203,7 @@ ice_alloc_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 	pf = pci_get_drvdata(cdev_info->pdev);
 	dev = ice_pf_to_dev(pf);
 
-	if (!ice_is_aux_ena(pf))
+	if (!ice_is_aux_ena(pf) || !ice_is_rdma_ena(pf))
 		return -EINVAL;
 
 	ice_for_each_traffic_class(i)
@@ -308,7 +308,7 @@ ice_alloc_rdma_multi_qsets(struct iidc_core_dev_info *cdev_info,
 	pf = pci_get_drvdata(cdev_info->pdev);
 	dev = ice_pf_to_dev(pf);
 
-	if (!ice_is_aux_ena(pf))
+	if (!ice_is_aux_ena(pf) || !ice_is_rdma_ena(pf))
 		return -EINVAL;
 
 	ice_for_each_traffic_class(i)
@@ -893,7 +893,12 @@ int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name)
 	 */
 	if (!ice_is_aux_ena(pf))
 		return 0;
+
+	if (cdev_info->cdev_info_id == IIDC_RDMA_ID &&
+	    !ice_is_rdma_ena(pf))
+		return 0;
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
+
 	if (pf->hw.port_info->is_custom_tx_enabled &&
 	    cdev_info->cdev_info_id == IIDC_RDMA_ID) {
 		dev_err(dev, "Cannot enable feature RDMA because HQoS HW offload mode is currently enabled\n");
@@ -1073,6 +1078,9 @@ int ice_init_aux_devices(struct ice_pf *pf)
 		 * will exist as long as the PF driver is loaded.  It will be
 		 * freed in the remove flow for the PF driver.
 		 */
+		if (ice_cdev_ids[i].id == IIDC_RDMA_ID && !ice_is_rdma_ena(pf))
+			continue;
+
 		cdev_info = kzalloc(sizeof(*cdev_info), GFP_KERNEL);
 		if (!cdev_info) {
 			ida_simple_remove(&ice_cdev_info_ida, pf->aux_idx);
@@ -1096,7 +1104,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 		switch (ice_cdev_ids[i].id) {
 
 		case IIDC_RDMA_ID:
-			if (!ice_is_aux_ena(pf)) {
+			if (!ice_is_rdma_ena(pf)) {
 				pf->cdev_infos[i] = NULL;
 				kfree(cdev_info);
 				continue;
@@ -1125,8 +1133,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 			cdev_info->msix_count = pf->msix.rdma;
 			break;
 		case IIDC_IEPS_ID:
-			cdev_info->nac_mode = pf->hw.dev_caps.nac_topo.mode &
-						IIDC_IEPS_NAC_MODE_M;
+			ice_cdev_init_ieps_info(&pf->hw, &cdev_info->nac_mode);
 			break;
 		default:
 			break;
@@ -1145,17 +1152,22 @@ bool ice_is_rdma_aux_loaded(struct ice_pf *pf)
 {
 	struct iidc_core_dev_info *rcdi;
 	struct iidc_auxiliary_drv *iadrv;
-	bool loaded;
+	bool loaded = false;
 
 	rcdi = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
 	if (!rcdi)
 		return false;
 
 	mutex_lock(&pf->adev_mutex);
+	if (!rcdi->adev)
+		goto err;
+
 	device_lock(&rcdi->adev->dev);
 	iadrv = ice_get_auxiliary_drv(rcdi);
 	loaded = iadrv ? true : false;
 	device_unlock(&rcdi->adev->dev);
+
+err:
 	mutex_unlock(&pf->adev_mutex);
 
 	dev_dbg(ice_pf_to_dev(pf), "RDMA Auxiliary Driver status: %s\n",

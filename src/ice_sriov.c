@@ -404,10 +404,9 @@ void ice_calc_vf_reg_idx(struct ice_vf *vf, struct ice_q_vector *q_vector,
 
 	pf = vf->pf;
 
+	/* always add one to account for the OICR being the first MSIX */
 	q_vector->vf_reg_idx = q_vector->v_idx + ICE_NONQ_VECS_VF;
 	q_vector->vf_reg_idx += vf->ch[tc].offset;
-
-	/* always add one to account for the OICR being the first MSIX */
 	q_vector->reg_idx = pf->sriov_base_vector + vf->num_msix * vf->vf_id +
 			    q_vector->vf_reg_idx;
 }

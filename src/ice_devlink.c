@@ -1104,20 +1104,22 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 	devlink_resource_size_params_init(&params, all, all, 1,
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
 	res_name = ICE_DEVL_RES_NAME_MSIX;
-	err = devlink_resource_register(devlink, res_name, all,
-					ICE_DEVL_RES_ID_MSIX,
-					DEVLINK_RESOURCE_ID_PARENT_TOP,
-					&params);
+
+#ifndef NEED_DEVL_RESOURCE_REGISTER
+	devl_lock(devlink);
+#endif /* !NEED_DEVL_RESOURCE_REGISTER */
+	err = devl_resource_register(devlink, res_name, all,
+				     ICE_DEVL_RES_ID_MSIX,
+				     DEVLINK_RESOURCE_ID_PARENT_TOP, &params);
 	if (err)
 		goto res_create_err;
 
 	devlink_resource_size_params_init(&params, req->misc, req->misc, 1,
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
 	res_name = ICE_DEVL_RES_NAME_MSIX_MISC;
-	err = devlink_resource_register(devlink, res_name, req->misc,
-					ICE_DEVL_RES_ID_MSIX_MISC,
-					ICE_DEVL_RES_ID_MSIX,
-					&params);
+	err = devl_resource_register(devlink, res_name, req->misc,
+				     ICE_DEVL_RES_ID_MSIX_MISC,
+				     ICE_DEVL_RES_ID_MSIX, &params);
 	if (err)
 		goto res_create_err;
 
@@ -1125,10 +1127,9 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 					  max_pf_msix, 1,
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
 	res_name = ICE_DEVL_RES_NAME_MSIX_ETH;
-	err = devlink_resource_register(devlink, res_name, req->eth,
-					ICE_DEVL_RES_ID_MSIX_ETH,
-					ICE_DEVL_RES_ID_MSIX,
-					&params);
+	err = devl_resource_register(devlink, res_name, req->eth,
+				     ICE_DEVL_RES_ID_MSIX_ETH,
+				     ICE_DEVL_RES_ID_MSIX, &params);
 	if (err)
 		goto res_create_err;
 
@@ -1138,10 +1139,9 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
 
 	res_name = ICE_DEVL_RES_NAME_MSIX_VF;
-	err = devlink_resource_register(devlink, res_name, req->vf,
-					ICE_DEVL_RES_ID_MSIX_VF,
-					ICE_DEVL_RES_ID_MSIX,
-					&params);
+	err = devl_resource_register(devlink, res_name, req->vf,
+				     ICE_DEVL_RES_ID_MSIX_VF,
+				     ICE_DEVL_RES_ID_MSIX, &params);
 	if (err)
 		goto res_create_err;
 
@@ -1150,35 +1150,34 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
 
 	res_name = ICE_DEVL_RES_NAME_MSIX_RDMA;
-	err = devlink_resource_register(devlink, res_name, req->rdma,
-					ICE_DEVL_RES_ID_MSIX_RDMA,
-					ICE_DEVL_RES_ID_MSIX,
-					&params);
+	err = devl_resource_register(devlink, res_name, req->rdma,
+				     ICE_DEVL_RES_ID_MSIX_RDMA,
+				     ICE_DEVL_RES_ID_MSIX, &params);
 	if (err)
 		goto res_create_err;
+	devl_resource_occ_get_register(devlink, ICE_DEVL_RES_ID_MSIX,
+				       ice_devlink_res_msix_occ_get, pf);
 
-	devlink_resource_occ_get_register(devlink,
-					  ICE_DEVL_RES_ID_MSIX,
-					  ice_devlink_res_msix_occ_get, pf);
+	devl_resource_occ_get_register(devlink, ICE_DEVL_RES_ID_MSIX_ETH,
+				       ice_devlink_res_msix_pf_occ_get, pf);
 
-	devlink_resource_occ_get_register(devlink,
-					  ICE_DEVL_RES_ID_MSIX_ETH,
-					  ice_devlink_res_msix_pf_occ_get, pf);
+	devl_resource_occ_get_register(devlink, ICE_DEVL_RES_ID_MSIX_VF,
+				       ice_devlink_res_msix_vf_occ_get, pf);
 
-	devlink_resource_occ_get_register(devlink,
-					  ICE_DEVL_RES_ID_MSIX_VF,
-					  ice_devlink_res_msix_vf_occ_get, pf);
-
-	devlink_resource_occ_get_register(devlink,
-					  ICE_DEVL_RES_ID_MSIX_RDMA,
-					  ice_devlink_res_msix_rdma_occ_get,
-					  pf);
+	devl_resource_occ_get_register(devlink, ICE_DEVL_RES_ID_MSIX_RDMA,
+				       ice_devlink_res_msix_rdma_occ_get, pf);
+#ifndef NEED_DEVL_RESOURCE_REGISTER
+	devl_unlock(devlink);
+#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 	return 0;
 
 res_create_err:
 	dev_err(dev, "Failed to register devlink resource: %s error: %pe\n",
 		res_name, ERR_PTR(err));
-	devlink_resources_unregister(devlink);
+	devl_resources_unregister(devlink);
+#ifndef NEED_DEVL_RESOURCE_REGISTER
+	devl_unlock(devlink);
+#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 
 	return err;
 }
@@ -1187,11 +1186,17 @@ void ice_devlink_unregister_resources(struct ice_pf *pf)
 {
 	struct devlink *devlink = priv_to_devlink(pf);
 
-	devlink_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX);
-	devlink_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_ETH);
-	devlink_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_VF);
-	devlink_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_RDMA);
-	devlink_resources_unregister(devlink);
+#ifndef NEED_DEVL_RESOURCE_REGISTER
+	devl_lock(devlink);
+#endif /* !NEED_DEVL_RESOURCE_REGISTER */
+	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX);
+	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_ETH);
+	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_VF);
+	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_RDMA);
+	devl_resources_unregister(devlink);
+#ifndef NEED_DEVL_RESOURCE_REGISTER
+	devl_unlock(devlink);
+#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 }
 
 /**
@@ -1724,6 +1729,7 @@ static bool ice_enable_custom_tx(struct ice_pf *pf)
 		return false;
 	}
 	if (ice_is_aux_ena(pf) &&
+	    ice_is_rdma_ena(pf) &&
 	    ice_is_rdma_aux_loaded(pf)) {
 		dev_err(dev,
 			"Hierarchical QoS configuration is not supported because RDMA is configured. Please disable these features and try again\n");
@@ -2575,7 +2581,9 @@ void ice_devlink_destroy_vf_port(struct ice_vf *vf)
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	devlink_port_type_clear(devlink_port);
 	devlink_port_unregister(devlink_port);
+#ifndef HAVE_DEVLINK_PORT_REGISTERED
 	devlink_port->devlink = NULL;
+#endif /* HAVE_DEVLINK_PORT_REGISTERED */
 }
 #endif /* HAVE_DEVLINK_PORT_ATTR_PCI_VF */
 

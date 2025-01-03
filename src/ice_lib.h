@@ -133,6 +133,7 @@ void ice_vsi_get_q_vector_q_base(struct ice_vsi *vsi, u16 vector_id, u16 *txq,
 int ice_vsi_cfg_mac_fltr(struct ice_vsi *vsi, const u8 *macaddr, bool set);
 bool ice_is_safe_mode(struct ice_pf *pf);
 bool ice_is_aux_ena(struct ice_pf *pf);
+bool ice_is_rdma_ena(struct ice_pf *pf);
 bool ice_is_vsi_dflt_vsi(struct ice_vsi *vsi);
 int ice_set_dflt_vsi(struct ice_vsi *vsi);
 int ice_clear_dflt_vsi(struct ice_vsi *vsi);

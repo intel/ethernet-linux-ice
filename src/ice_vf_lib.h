@@ -214,6 +214,9 @@ struct ice_vf {
 	u8 trusted:1;
 	u8 spoofchk:1;
 	u8 transmit_lldp:1;
+#if defined(CONFIG_X86)
+	u8 sw_crosststamp_ena : 1;	/* VF SW cross timestamp enabled */
+#endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
 #ifdef HAVE_NDO_SET_VF_LINK_STATE
 	u8 link_forced:1;
 	u8 link_up:1;			/* only valid if VF link is forced */

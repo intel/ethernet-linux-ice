@@ -6,11 +6,35 @@
 #include "ice.h"
 #include "ice_ieps.h"
 #include "ice_lib.h"
+#include "ice_cpi.h"
 
 static struct ieps_peer_api_version ice_ieps_version = {
 	.major    = IEPS_VERSION_PEER_MAJOR,
 	.minor    = IEPS_VERSION_PEER_MINOR,
 };
+
+/**
+ * ice_cdev_init_ieps_info - Convert NAC Topology to iidc_ieps_nac_mode enum
+ * @hw: pointer to the HW struct
+ * @nac_mode: ptr to iidc_ieps_nac_mode enum
+ */
+void ice_cdev_init_ieps_info(struct ice_hw *hw,
+			     enum iidc_ieps_nac_mode *nac_mode)
+{
+	if (hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_DUAL_M) {
+		/* GNR-D Dual NAC - Mode 2 */
+		if (hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M)
+			*nac_mode = IIDC_IEPS_NAC_MODE_2_PRIMARY;
+		else
+			*nac_mode = IIDC_IEPS_NAC_MODE_2_SECONDARY;
+	} else {
+		/* GNR-D Single NAC - Mode 1 */
+		if (hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M)
+			*nac_mode = IIDC_IEPS_NAC_MODE_1A;
+		else
+			*nac_mode = IIDC_IEPS_NAC_MODE_1B;
+	}
+}
 
 /**
  * ice_ieps_i2c_fill - Fill I2C read_write AQ command descriptor
@@ -427,8 +451,8 @@ ice_ieps_get_phy_caps(struct ice_pf *pf, u8 report_mode,
 
 	dev_dbg(ice_pf_to_dev(pf), "get phy_caps lport=%d\n",
 		hw->port_info->lport);
-	status = ice_aq_get_phy_caps(hw->port_info, false, report_mode,
-				     aq_pcaps, NULL);
+	status = hw->lm_ops->get_phy_caps(hw->port_info, false, report_mode,
+					  aq_pcaps, NULL);
 	if (status) {
 		dev_dbg(ice_pf_to_dev(pf), "ERROR: get_phy_caps ret=%d\n",
 			status);
@@ -479,7 +503,7 @@ ice_ieps_get_phy_status(struct ice_pf *pf, struct ieps_peer_phy_link_status *st)
 	if (!link)
 		return IEPS_PEER_NO_MEMORY;
 
-	status = ice_aq_get_link_info(hw->port_info, true, link, NULL);
+	status = hw->lm_ops->get_link_info(hw->port_info, true, link, NULL);
 	if (status) {
 		pstatus = IEPS_PEER_FW_ERROR;
 		goto err_exit;
@@ -523,8 +547,7 @@ ice_ieps_set_mode(struct ice_pf *pf, enum ieps_peer_port_mode *mode)
 	if (*mode == IEPS_PEER_PORT_MODE_UP)
 		ena_link = true;
 
-	status = ice_aq_set_link_restart_an(hw->port_info, ena_link, NULL,
-					    ICE_AQC_RESTART_AN_REFCLK_NOCHANGE);
+	status = hw->lm_ops->restart_an(hw->port_info, ena_link, NULL);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "ERROR: set_mode status=%d\n",
 			status);
@@ -587,7 +610,7 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 			u64 type_low = le64_to_cpu(phy_cfg->phy_type_low);
 
 			if (type_low & BIT_ULL(i)) {
-				*phy_type = i;
+				*phy_type = (enum ieps_peer_phy_type)i;
 				phy_type_found = true;
 
 				if (type_low & ~BIT_ULL(i))
@@ -606,7 +629,8 @@ ice_ieps_phy_type_decode(struct ice_pf *pf,
 			u64 type_high = le64_to_cpu(phy_cfg->phy_type_high);
 
 			if (type_high & BIT_ULL(i)) {
-				*phy_type = ICE_PHY_TYPE_LOW_MAX_INDEX + 1 + i;
+				*phy_type = (enum ieps_peer_phy_type)
+					(ICE_PHY_TYPE_LOW_MAX_INDEX + 1 + i);
 				phy_type_found = true;
 
 				if (type_high & ~BIT_ULL(i))
@@ -810,8 +834,9 @@ ice_ieps_set_get_attr(struct ice_pf *pf, bool op_set,
 	else
 		dev_dbg(ice_pf_to_dev(pf), "get_attr = %d\n", attr_data->attr);
 
-	status = ice_aq_get_phy_caps(hw->port_info, false,
-				     ICE_AQC_REPORT_ACTIVE_CFG, pcaps, NULL);
+	status = hw->lm_ops->get_phy_caps(hw->port_info, false,
+					  ICE_AQC_REPORT_ACTIVE_CFG,
+					  pcaps, NULL);
 	if (status) {
 		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_attr get_phy_caps status=%d\n",
 			status);
@@ -836,13 +861,13 @@ ice_ieps_set_get_attr(struct ice_pf *pf, bool op_set,
 		goto release_exit;
 	}
 
-	status = ice_aq_set_phy_cfg(hw, hw->port_info, phy_cfg, NULL);
+	status = hw->lm_ops->set_phy_cfg(hw, hw->port_info, phy_cfg, NULL);
 	if (status) {
 		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_phy_caps status=%d\n",
 			status);
 		pstatus = IEPS_PEER_FW_ERROR;
 	} else {
-		pf->ieps_lm_active = true;
+		hw->ieps_lm_active = true;
 	}
 
 release_exit:
@@ -893,12 +918,12 @@ ice_ieps_phy_reg_rw(struct ice_pf *pf, struct ieps_peer_intphy_reg_rw *rw)
 }
 
 /**
- * ice_ieps_set_lm_config - request FW to disable LESM
+ * ice_ieps_set_lesm - request FW to disable LESM
  * @pf: ptr to pf
  * @en_lesm: set true to enable LESM else disable LESM
  */
 static enum ieps_peer_status
-ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
+ice_ieps_set_lesm(struct ice_pf *pf, bool en_lesm)
 {
 	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
 	struct ice_aqc_set_phy_cfg_data *phy_cfg;
@@ -916,8 +941,9 @@ ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
 		return IEPS_PEER_NO_MEMORY;
 	}
 
-	status = ice_aq_get_phy_caps(hw->port_info, false,
-				     ICE_AQC_REPORT_ACTIVE_CFG, pcaps, NULL);
+	status = hw->lm_ops->get_phy_caps(hw->port_info, false,
+					  ICE_AQC_REPORT_ACTIVE_CFG,
+					  pcaps, NULL);
 	if (status) {
 		dev_dbg(ice_pf_to_dev(pf), "ERROR:get_phy_caps status=%d\n",
 			status);
@@ -937,13 +963,13 @@ ice_ieps_set_lm_config(struct ice_pf *pf, bool en_lesm)
 	else
 		phy_cfg->caps &= ~ICE_AQ_PHY_ENA_LESM;
 
-	status = ice_aq_set_phy_cfg(hw, hw->port_info, phy_cfg, NULL);
+	status = hw->lm_ops->set_phy_cfg(hw, hw->port_info, phy_cfg, NULL);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "ERROR: lm port config status=%d\n",
 			status);
 		pstatus = IEPS_PEER_FW_ERROR;
 	} else {
-		pf->ieps_lm_active = !en_lesm;
+		hw->ieps_lm_active = !en_lesm;
 	}
 
 release_exit:
@@ -951,6 +977,197 @@ release_exit:
 	kfree(phy_cfg);
 
 	return pstatus;
+}
+
+/**
+ * ice_ieps_set_link_mng - request FW to enable/disable LM
+ * @pf: ptr to pf
+ * @en_lm: set true to enable LESM else disable CPK FW Link
+ *         Management using set_phy_debug - 0x0622 AQ command interface
+ */
+static enum ieps_peer_status
+ice_ieps_set_link_mng(struct ice_pf *pf, bool en_lm)
+{
+	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
+	struct ice_hw *hw = &pf->hw;
+	u8 cmd_flags = 0;
+	u32 oicr_ena;
+	int err;
+
+	oicr_ena = rd32(hw, PFINT_OICR_ENA);
+
+	if (!en_lm) {
+		/* Store phy caps for CPI-based LM operation */
+		err = hw->lm_ops->get_phy_caps(hw->port_info, false,
+					       ICE_AQC_REPORT_TOPO_CAP_NO_MEDIA,
+					       &hw->ieps_pcaps, NULL);
+		if (err) {
+			dev_dbg(ice_pf_to_dev(pf), "ERROR: get_phy_caps err=%d\n",
+				err);
+			pstatus = IEPS_PEER_FW_ERROR;
+			goto err_exit;
+		}
+
+		cmd_flags = ICE_AQ_PHY_DBG_DIS_LINK_MNG;
+		/* Enable MAC Link Interrupt */
+		oicr_ena |= PFINT_OICR_LINK_STAT_CHANGE_M;
+	} else {
+		/* Disable MAC Link Interrupt */
+		oicr_ena &= ~PFINT_OICR_LINK_STAT_CHANGE_M;
+	}
+
+	err = ice_aq_set_phy_debug(hw, hw->port_info->lport,
+				   cmd_flags, 0x0, NULL);
+	if (err) {
+		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_link_mng err=%d\n", err);
+		pstatus = IEPS_PEER_FW_ERROR;
+		goto err_exit;
+	} else {
+		hw->ieps_lm_active = true;
+		hw->ieps_cpi_lm = true;
+	}
+
+	/* Write other cause of interrupt register */
+	wr32(hw, PFINT_OICR_ENA, oicr_ena);
+
+	/* Re-initialized lm_ops */
+	ice_ieps_init_lm_ops(hw, en_lm);
+
+err_exit:
+	return pstatus;
+}
+
+/**
+ * ice_ieps_exec_cpi - execute CPI command
+ * @hw: ptr to hw
+ * @cpi: ptr to ieps peer cpi_cmd_resp structure
+ */
+enum ieps_peer_status
+ice_ieps_exec_cpi(struct ice_hw *hw, struct ieps_peer_cpi_cmd_resp *cpi)
+{
+	u8 phy = ICE_GET_QUAD_NUM(hw->lane_num);
+	struct ice_cpi_resp cpi_resp = {};
+	struct ice_cpi_cmd cpi_cmd = {
+		.port = cpi->cmd.port,
+		.opcode = cpi->cmd.opcode,
+		.data = cpi->cmd.data,
+		.set = cpi->cmd.set,
+	};
+	int status;
+
+	/* Overwrite the cpi port value for Mode 1A - 8 port setup
+	 * as Lane 4 to 7 is mapped to Quad 1 - PCS Port 0 to 7
+	 */
+	if (!ice_is_dual(hw) && hw->lane_num >= ICE_PORTS_PER_QUAD)
+		cpi_cmd.port = hw->lane_num - ICE_PORTS_PER_QUAD;
+
+	status = ice_cpi_exec(hw, phy, &cpi_cmd, &cpi_resp);
+	if (status) {
+		dev_dbg(ice_hw_to_dev(hw), "ERROR: CPI exec failed: opc=0x%x data=0x%x\n",
+			cpi_cmd.opcode, cpi_cmd.data);
+		return IEPS_PEER_CPI_EXEC_ERROR;
+	}
+
+	cpi->resp.port = cpi_resp.port;
+	cpi->resp.opcode = cpi_resp.opcode;
+	cpi->resp.data = cpi_resp.data;
+
+	return IEPS_PEER_SUCCESS;
+}
+
+#define PRTMAC_LINKSTA	0x001E47A0
+
+/**
+ * ice_ieps_cpi_get_phy_status - Retrieve link status
+ * @hw: ptr to hw
+ * @link_state: ptr to link_state boolean variable to store the results
+ *
+ * Retrieve link status using CPK MAC link status register and PHY MNG
+ * CPI Port state opcode
+ */
+static enum ieps_peer_status
+ice_ieps_cpi_get_phy_status(struct ice_hw *hw, bool *link_state)
+{
+	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
+	bool rx_ready = false, mac_link_up = false;
+	struct ieps_peer_cpi_cmd_resp cpi = {};
+	u32 val;
+
+#define MAC_LINK_UP	BIT(30)
+
+	/* Read MAC Link status register */
+	val = rd32(hw, PRTMAC_LINKSTA);
+	mac_link_up = FIELD_GET(MAC_LINK_UP, val);
+
+	/* Read PHY Rx Ready bit using CPI */
+	cpi.cmd.opcode = CPI_OPCODE_PORT_STATE;
+	cpi.cmd.set = false;
+	cpi.cmd.port = hw->bus.func;
+
+	pstatus = ice_ieps_exec_cpi(hw, &cpi);
+	if (pstatus) {
+		dev_dbg(ice_hw_to_dev(hw),
+			"ERROR: CPI get port mode failed: opc=0x%x data=0x%x\n",
+			cpi.cmd.opcode, cpi.cmd.data);
+		return pstatus;
+	}
+
+	/* Declare link status as UP only when MAC and PHY both are UP */
+	rx_ready = FIELD_GET(CPI_OPCODE_PORT_STATE_RX_READY, cpi.resp.data);
+
+	*link_state = rx_ready && mac_link_up;
+
+	return pstatus;
+}
+
+/**
+ * ice_ieps_get_link_state_speed - Retrieve link state and speed
+ * @hw: ptr to hw
+ * @link_up: ptr to link_up boolean variable to store the results
+ * @link_speed: ptr to link_speed boolean variable to store the results
+ */
+enum ieps_peer_status
+ice_ieps_get_link_state_speed(struct ice_hw *hw, bool *link_up, u16 *link_speed)
+{
+	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
+	u16 speed;
+	u32 val;
+
+#define MAC_LINK_SPEED_M	GENMASK(29, 26)
+
+	pstatus = ice_ieps_cpi_get_phy_status(hw, link_up);
+	if (pstatus) {
+		dev_dbg(ice_hw_to_dev(hw), "ERROR: get phy_status failed\n");
+		return pstatus;
+	}
+
+	/* Read MAC MAC_LINK_SPEED */
+	val = rd32(hw, PRTMAC_LINKSTA);
+	speed = FIELD_GET(MAC_LINK_SPEED_M, val);
+
+	*link_speed = link_up ? BIT(speed) : 0;
+
+	return pstatus;
+}
+
+/**
+ * ice_ieps_handle_link_event - handle link event
+ * @hw: pointer to the HW struct
+ */
+void ice_ieps_handle_link_event(struct ice_hw *hw)
+{
+	struct ice_pf *pf = container_of(hw, struct ice_pf, hw);
+	u16 link_speed;
+	bool link_up;
+	int err;
+
+	err = ice_ieps_get_link_state_speed(hw, &link_up, &link_speed);
+	if (err)
+		dev_dbg(ice_pf_to_dev(pf), "ERROR: Failed to get link state_speed");
+
+	err  = ice_link_event(pf, pf->hw.port_info, link_up, link_speed);
+	if (err)
+		dev_dbg(ice_pf_to_dev(pf), "ERROR: Could not process link event");
 }
 
 /**
@@ -1028,8 +1245,15 @@ int ice_ieps_entry(struct iidc_core_dev_info *obj, void *vptr_arg)
 		return ice_ieps_phy_reg_rw(pf,
 				(struct ieps_peer_intphy_reg_rw *)vptr);
 
-	case IEPS_PEER_CMD_SET_LM_CONFIG:
-		return ice_ieps_set_lm_config(pf, *(bool *)vptr);
+	case IEPS_PEER_CMD_SET_LESM:
+		return ice_ieps_set_lesm(pf, *(bool *)vptr);
+
+	case IEPS_PEER_CMD_SET_LINK_MNG:
+		return ice_ieps_set_link_mng(pf, *(bool *)vptr);
+
+	case IEPS_PEER_CMD_CPI_EXEC:
+		return ice_ieps_exec_cpi(&pf->hw,
+				(struct ieps_peer_cpi_cmd_resp *)vptr);
 
 	default:
 		return IEPS_PEER_INVALID_CMD;

@@ -356,6 +356,53 @@ DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_invalid);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_stale);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_dropped);
 
+DECLARE_EVENT_CLASS(ice_switch_stats_template,
+		    TP_PROTO(struct ice_switch_info *sw_info,
+			     struct ice_bus_info *bus),
+		    TP_ARGS(sw_info, bus),
+		    TP_STRUCT__entry(__field(u16, rule_cnt)
+				     __field(u8, recp_cnt)
+				     __field(u16, domain_num)
+				     __field(u16, device)
+				     __field(u8, func)
+				     __field(u8, bus_num)),
+		    TP_fast_assign(__entry->rule_cnt = sw_info->rule_cnt;
+				   __entry->recp_cnt = sw_info->recp_cnt;
+				   __entry->domain_num = bus->domain_num;
+				   __entry->device = bus->device;
+				   __entry->func = bus->func;
+				   __entry->bus_num = bus->bus_num;
+				   ),
+		    TP_printk("%04x:%02x:%02x.%d: rules=%u recipes=%u",
+			      __entry->domain_num,
+			      __entry->bus_num,
+			      __entry->device,
+			      __entry->func,
+			      __entry->rule_cnt,
+			      __entry->recp_cnt)
+);
+
+DEFINE_EVENT(ice_switch_stats_template,
+	     ice_aq_sw_rules,
+	     TP_PROTO(struct ice_switch_info *sw_info,
+		      struct ice_bus_info *bus),
+	     TP_ARGS(sw_info, bus)
+);
+
+DEFINE_EVENT(ice_switch_stats_template,
+	     ice_alloc_recipe,
+	     TP_PROTO(struct ice_switch_info *sw_info,
+		      struct ice_bus_info *bus),
+	     TP_ARGS(sw_info, bus)
+);
+
+DEFINE_EVENT(ice_switch_stats_template,
+	     ice_free_recipe_res,
+	     TP_PROTO(struct ice_switch_info *sw_info,
+		      struct ice_bus_info *bus),
+	     TP_ARGS(sw_info, bus)
+);
+
 /* End tracepoints */
 
 #endif /* _ICE_TRACE_H_ */
