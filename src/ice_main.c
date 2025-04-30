@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include "ice.h"
+#include "kcompat_sigil.h"
+#include "kcompat_generated_defs.h"
 
 #include <linux/crash_dump.h>
 #include "ice_base.h"
@@ -30,10 +32,10 @@
 #include "ice_ieps.h"
 
 #define DRV_VERSION_MAJOR 1
-#define DRV_VERSION_MINOR 16
-#define DRV_VERSION_BUILD 3
+#define DRV_VERSION_MINOR 17
+#define DRV_VERSION_BUILD 2
 
-#define DRV_VERSION	"1.16.3"
+#define DRV_VERSION	"1.17.2"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -43,7 +45,7 @@
 
 const char ice_drv_ver[] = DRV_VERSION DRV_VERSION_EXTRA;
 static const char ice_driver_string[] = DRV_SUMMARY;
-static const char ice_copyright[] = "Copyright (C) 2018-2024 Intel Corporation";
+static const char ice_copyright[] = "Copyright (C) 2018-2025 Intel Corporation";
 
 /* DDP Package file located in firmware search paths (e.g. /lib/firmware/) */
 #if UTS_UBUNTU_RELEASE_ABI
@@ -2096,6 +2098,42 @@ static void ice_check_link_cfg_err(struct ice_pf *pf, u8 link_cfg_err)
 	ice_check_phy_fw_load(pf, link_cfg_err);
 }
 
+static int ice_ieps_handle_link_change(struct ice_pf *pf, bool link_up)
+{
+	struct iidc_event *iev;
+
+	iev = kzalloc(sizeof(*iev), GFP_KERNEL);
+	if (!iev)
+		return -ENOMEM;
+
+	set_bit(IIDC_EVENT_LINK_CHNG, iev->type);
+	iev->info.link_up = link_up;
+	ice_send_event_to_auxs(pf, iev);
+	kfree(iev);
+
+	return 0;
+}
+
+static void ice_handle_link_change(struct ice_vsi *vsi, bool link_up,
+				   u16 link_speed)
+{
+	struct ice_pf *pf = vsi->back;
+
+	ice_ptp_link_change(pf, link_up);
+
+	if ((ice_is_dcb_active(pf)) &&
+	    /* Need to check if number of TC > 1 or any PFC enabled */
+	    (test_bit(ICE_FLAG_DCB_ENA, pf->flags) ||
+	     pf->hw.port_info->qos_cfg.local_dcbx_cfg.pfc.pfcena))
+		ice_dcb_rebuild(pf);
+	else if (link_up)
+		ice_set_dflt_mib(pf);
+	ice_vsi_link_event(vsi, link_up);
+	ice_print_link_msg(vsi, link_up);
+
+	ice_vc_notify_link_state(pf);
+}
+
 /**
  * ice_link_event - process the link event
  * @pf: PF that the link event is associated with
@@ -2109,11 +2147,10 @@ int ice_link_event(struct ice_pf *pf, struct ice_port_info *pi, bool link_up,
 		   u16 link_speed)
 {
 	struct device *dev = ice_pf_to_dev(pf);
+	u16 old_link_speed, new_link_speed;
 	struct ice_phy_info *phy_info;
-	struct iidc_event *iev;
+	bool old_link, new_link;
 	struct ice_vsi *vsi;
-	u16 old_link_speed;
-	bool old_link;
 	int status;
 
 	phy_info = &pi->phy;
@@ -2133,20 +2170,9 @@ int ice_link_event(struct ice_pf *pf, struct ice_port_info *pi, bool link_up,
 
 	ice_check_link_cfg_err(pf, pi->phy.link_info.link_cfg_err);
 
-	/* Check if the link state is up after updating link info, and treat
-	 * this event as an UP event since the link is actually UP now.
-	 */
-	if (phy_info->link_info.link_info & ICE_AQ_LINK_UP)
-		link_up = true;
-
-	iev = kzalloc(sizeof(*iev), GFP_KERNEL);
-	if (!iev)
-		return -ENOMEM;
-
-	set_bit(IIDC_EVENT_LINK_CHNG, iev->type);
-	iev->info.link_up = link_up;
-	ice_send_event_to_auxs(pf, iev);
-	kfree(iev);
+	status = ice_ieps_handle_link_change(pf, link_up);
+	if (status)
+		return status;
 
 	vsi = ice_get_main_vsi(pf);
 	if (!vsi || !vsi->port_info)
@@ -2159,23 +2185,22 @@ int ice_link_event(struct ice_pf *pf, struct ice_port_info *pi, bool link_up,
 		ice_set_link(vsi, false);
 	}
 
-	/* if the old link up/down and speed is the same as the new */
-	if (link_up == old_link && link_speed == old_link_speed)
-		return 0;
+	/* change from link event and previous link state */
+	if (link_up != old_link || link_speed != old_link_speed)
+		ice_handle_link_change(vsi, link_up, link_speed);
 
-	ice_ptp_link_change(pf, link_up);
+	new_link = phy_info->link_info.link_info & ICE_AQ_LINK_UP;
+	new_link_speed = phy_info->link_info.link_speed;
 
-	/* Need to check if number of TC > 1 or any PFC enabled */
-	if (test_bit(ICE_FLAG_DCB_ENA, pf->flags) ||
-	    pf->hw.port_info->qos_cfg.local_dcbx_cfg.pfc.pfcena)
-		ice_dcb_rebuild(pf);
-	else
-		if (link_up)
-			ice_set_dflt_mib(pf);
-	ice_vsi_link_event(vsi, link_up);
-	ice_print_link_msg(vsi, link_up);
+	/* change from link event and link update */
+	if (link_up != new_link || link_speed != new_link_speed) {
+		status = ice_ieps_handle_link_change(pf, new_link);
+		if (status)
+			return status;
 
-	ice_vc_notify_link_state(pf);
+		ice_handle_link_change(vsi, new_link, new_link_speed);
+	}
+
 	return 0;
 }
 
@@ -4756,7 +4781,7 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 	}
 
 	if ((oicr & PFINT_OICR_LINK_STAT_CHANGE_M) &&
-	    ice_is_e825c(&pf->hw) && hw->ieps_cpi_lm) {
+	    pf->hw.mac_type == ICE_MAC_GENERIC_3K_E825 && hw->ieps_cpi_lm) {
 		ena_mask &= ~PFINT_OICR_LINK_STAT_CHANGE_M;
 		set_bit(ICE_LINK_EVENT_PENDING, pf->state);
 	}
@@ -6049,6 +6074,8 @@ static char *ice_get_opt_fw_name(struct ice_pf *pf)
  * ice_request_fw - Device initialization routine
  * @pf: pointer to the PF instance
  * @firmware: double pointer to firmware struct
+ *
+ * Return: zero when successful, negative values otherwise.
  */
 static int ice_request_fw(struct ice_pf *pf, const struct firmware **firmware)
 {
@@ -6148,6 +6175,8 @@ ice_config_health_events(struct ice_pf *pf, bool enable)
  * ice_init_tx_topology - performs Tx topology initialization
  * @hw: pointer to the hardware structure
  * @firmware: pointer to firmware structure
+ *
+ * Return: zero when init was successful, negative values otherwise.
  */
 static int
 ice_init_tx_topology(struct ice_hw *hw, const struct firmware *firmware)
@@ -6155,37 +6184,25 @@ ice_init_tx_topology(struct ice_hw *hw, const struct firmware *firmware)
 	u8 num_tx_sched_layers = hw->num_tx_sched_layers;
 	struct ice_pf *pf = hw->back;
 	struct device *dev;
-	u8 *buf_copy;
 	int err;
 
 	dev = ice_pf_to_dev(pf);
-	/* ice_cfg_tx_topo buf argument is not a constant,
-	 * so we have to make a copy
-	 */
-	buf_copy = kmemdup(firmware->data, firmware->size, GFP_KERNEL);
-
-	err = ice_cfg_tx_topo(hw, buf_copy, firmware->size);
+	err = ice_cfg_tx_topo(hw, firmware->data, firmware->size);
 	if (!err) {
-		if (hw->num_tx_sched_layers > num_tx_sched_layers)
-			dev_info(dev, "Transmit balancing feature disabled\n");
-		else
-			dev_info(dev, "Transmit balancing feature enabled\n");
+		dev_info(dev, "Tx scheduling layers switching feature %s\n",
+			 str_enabled_disabled(hw->num_tx_sched_layers <=
+					      num_tx_sched_layers));
+
 		/* if there was a change in topology ice_cfg_tx_topo triggered
 		 * a CORER and we need to re-init hw
 		 */
 		ice_deinit_hw(hw);
 		err = ice_init_hw(hw);
 
-		/* in this case we're not allowing safe mode */
-		kfree(buf_copy);
-
 		return err;
-
 	} else if (err == -EIO) {
-		dev_info(dev, "DDP package does not support transmit balancing feature - please update to the latest DDP package and try again\n");
+		dev_info(dev, "DDP package does not support Tx scheduling layers switching feature - please update to the latest DDP package and try again\n");
 	}
-
-	kfree(buf_copy);
 
 	return 0;
 }
@@ -6225,6 +6242,8 @@ static void ice_init_supported_rxdids(struct ice_hw *hw, struct ice_pf *pf)
  *
  * This function loads DDP file from the disk, then initializes Tx
  * topology. At the end DDP package is loaded on the card.
+ *
+ * Return: zero when init was successful, negative values otherwise.
  */
 static int ice_init_ddp_config(struct ice_hw *hw, struct ice_pf *pf)
 {
@@ -6233,12 +6252,14 @@ static int ice_init_ddp_config(struct ice_hw *hw, struct ice_pf *pf)
 	int err;
 
 	err = ice_request_fw(pf, &firmware);
-	if (err)
+	if (err) {
+		dev_err(dev, "Fail during requesting FW: %d\n", err);
 		return err;
+	}
 
 	err = ice_init_tx_topology(hw, firmware);
 	if (err) {
-		dev_err(dev, "ice_init_hw during change of tx topology failed: %d\n",
+		dev_err(dev, "Fail during initialization of Tx topology: %d\n",
 			err);
 		release_firmware(firmware);
 		return err;
@@ -6536,7 +6557,7 @@ static int ice_wait_for_fw(struct ice_hw *hw, u32 timeout)
 	if (timeout == 0)
 		return 0;
 
-	if (ice_is_e830(hw))
+	if (hw->mac_type == ICE_MAC_E830)
 		return ice_wait_fw_load(hw, timeout);
 
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
@@ -6582,13 +6603,13 @@ static int ice_init_dev(struct ice_pf *pf)
 
 	ice_init_feature_support(pf);
 
-	ice_init_ddp_config(hw, pf);
+	err = ice_init_ddp_config(hw, pf);
 
 	/* if ice_init_ddp_config fails, ICE_FLAG_ADV_FEATURES bit won't be
 	 * set in pf->state, which will cause ice_is_safe_mode to return
 	 * true
 	 */
-	if (ice_is_safe_mode(pf)) {
+	if (err || ice_is_safe_mode(pf)) {
 		/* we already got function/device capabilities but these don't
 		 * reflect what the driver needs to do in safe mode. Instead of
 		 * adding conditional logic everywhere to ignore these
@@ -6688,7 +6709,7 @@ static int ice_init_features(struct ice_pf *pf)
 #if IS_ENABLED(CONFIG_DPLL)
 	if ((ice_is_feature_supported(pf, ICE_F_CGU) ||
 	     ice_is_feature_supported(pf, ICE_F_PHY_RCLK)) &&
-	     !ice_is_e825c(&pf->hw))
+	     pf->hw.mac_type == ICE_MAC_E810)
 		ice_dpll_init(pf);
 #endif /* IS_ENABLED(CONFIG_DPLL) */
 	if (ice_init_fdir(pf))
@@ -6953,16 +6974,14 @@ static void ice_dealloc_vsis(struct ice_pf *pf)
 
 static int ice_init_devlink(struct ice_pf *pf)
 {
-#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
+#ifndef HAVE_DEVLINK_PARAMS_PUBLISH
 	struct devlink *devlink = priv_to_devlink(pf);
-#endif  /* CONFIG_NET_DEVLINK */
 	bool need_register = true;
 #endif /* !HAVE_DEVLINK_PARAMS_PUBLISH */
 	int err;
 
 #ifndef HAVE_DEVLINK_PARAMS_PUBLISH
-#if IS_ENABLED(CONFIG_NET_DEVLINK)
 	/* for old kernels, prior to auto-publish of devlink params, API has
 	 * required a call to devlink_register() prior to registering params.
 	 * API has changed to be the other way around at the same moment that
@@ -6976,7 +6995,6 @@ static int ice_init_devlink(struct ice_pf *pf)
 		ice_devlink_register(pf);
 		need_register = false;
 	}
-#endif  /* CONFIG_NET_DEVLINK */
 #else
 	ice_devlink_register(pf);
 #endif /* !HAVE_DEVLINK_PARAMS_PUBLISH */
@@ -6990,18 +7008,19 @@ static int ice_init_devlink(struct ice_pf *pf)
 		return err;
 
 	ice_devlink_init_regions(pf);
-	ice_health_init(pf);
 #ifndef HAVE_DEVLINK_PARAMS_PUBLISH
 	if (need_register)
 		ice_devlink_register(pf);
 #endif /* !HAVE_DEVLINK_PARAMS_PUBLISH */
+	ice_health_init(pf);
+#endif  /* CONFIG_NET_DEVLINK */
 	return 0;
 }
 
 static void ice_deinit_devlink(struct ice_pf *pf)
 {
-	ice_devlink_unregister(pf);
 	ice_health_deinit(pf);
+	ice_devlink_unregister(pf);
 	ice_devlink_destroy_regions(pf);
 	ice_devlink_unregister_resources(pf);
 	ice_devlink_unregister_params(pf);
@@ -7017,7 +7036,7 @@ static int ice_init(struct ice_pf *pf)
 		return err;
 
 #ifdef HAVE_STRUCT_PCI_DEV_PTM_ENABLED
-	if (ice_is_e830(&pf->hw)) {
+	if (pf->hw.mac_type == ICE_MAC_E830) {
 		err = pci_enable_ptm(pf->pdev, NULL);
 		if (err)
 			dev_dbg(dev, "PCIe PTM not supported by PCIe bus/controller\n");
@@ -7104,6 +7123,13 @@ int ice_load(struct ice_pf *pf)
 	if (err)
 		return err;
 
+	if (pf->hw.fwlog_cfg.options & ICE_FWLOG_OPTION_IS_REGISTERED) {
+		err = ice_fwlog_register(&pf->hw);
+		if (err)
+			pf->hw.fwlog_cfg.options &=
+				~ICE_FWLOG_OPTION_IS_REGISTERED;
+	}
+
 	vsi = ice_get_main_vsi(pf);
 
 	vsi->flags |= ICE_VSI_FLAG_INIT;
@@ -7170,6 +7196,7 @@ static int
 ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 {
 	struct device *dev = &pdev->dev;
+	$(SWITCH_MODE, ,struct ice_adapter *adapter;)
 	struct ice_pf *pf;
 	struct ice_hw *hw;
 	int err;
@@ -7200,6 +7227,11 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	pf = ice_allocate_pf(dev);
 	if (!pf)
 		return -ENOMEM;
+
+	adapter = ice_adapter_get(pdev);
+	if (IS_ERR(adapter))
+		return PTR_ERR(adapter);
+	pf->adapter = adapter;
 
 	/* set up for high or low DMA */
 	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
@@ -7259,9 +7291,13 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (err)
 		goto err_init;
 
+	devl_lock(priv_to_devlink(pf));
+
 	err = ice_init_devlink(pf);
 	if (err)
 		goto err_init_devlink;
+
+	devl_unlock(priv_to_devlink(pf));
 
 	err = ice_init_eth(pf);
 	if (err)
@@ -7283,14 +7319,15 @@ err_init_peer:
 err_init_eth:
 	ice_deinit_devlink(pf);
 err_init_devlink:
+	devl_unlock(priv_to_devlink(pf));
 	ice_deinit(pf);
 err_init:
 	ice_unmap_all_hw_addr(pf);
 #ifdef HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING
 	pci_disable_pcie_error_reporting(pdev);
 #endif /* HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING */
-	pci_disable_device(pdev);
 err_dma:
+	ice_adapter_put(pdev);
 	return err;
 }
 
@@ -7413,8 +7450,8 @@ static void ice_remove(struct pci_dev *pdev)
 #ifdef HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING
 	pci_disable_pcie_error_reporting(pdev);
 #endif /* HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING */
-	pci_disable_device(pdev);
 
+	ice_adapter_put(pdev);
 }
 
 /**
@@ -8133,7 +8170,7 @@ ice_set_tx_maxrate(struct net_device *netdev, int queue_index, u32 maxrate)
 }
 #endif /* HAVE_NDO_SET_TX_MAXRATE */
 
-#ifdef HAVE_NDO_FDB_ADD_NOTIFIED
+
 /**
  * ice_fdb_add - add an entry to the hardware database
  * @ndm: the input from the stack
@@ -8147,24 +8184,11 @@ ice_set_tx_maxrate(struct net_device *netdev, int queue_index, u32 maxrate)
  */
 static int
 ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-	    struct net_device *dev, const unsigned char *addr, u16 vid,
-	    u16 flags, bool *notified,
-	    struct netlink_ext_ack __always_unused *extack)
-#elif defined(HAVE_NDO_FDB_ADD_EXTACK)
-static int
-ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-	    struct net_device *dev, const unsigned char *addr, u16 vid,
-	    u16 flags, struct netlink_ext_ack __always_unused *extack)
-#elif defined(HAVE_NDO_FDB_ADD_VID)
-static int
-ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-	    struct net_device *dev, const unsigned char *addr, u16 vid,
-	    u16 flags)
-#else
-static int
-ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
-	    struct net_device *dev, const unsigned char *addr, u16 flags)
-#endif /* HAVE_NDO_FDB_ADD_VID */
+	    struct net_device *dev, const unsigned char *addr,
+	    $_(HAVE_NDO_FDB_ADD_VID, u16 vid)
+	    u16 flags
+	    _$(HAVE_NDO_FDB_ADD_NOTIFIED, bool *notified)
+	    _$(HAVE_NDO_FDB_ADD_EXTACK, struct netlink_ext_ack __always_unused *extack))
 {
 	int err;
 
@@ -8193,8 +8217,6 @@ ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
 	return err;
 }
 
-#ifdef HAVE_NDO_FDB_ADD_NOTIFIED
-
 /**
  * ice_fdb_del - delete an entry from the hardware database
  * @ndm: the input from the stack
@@ -8207,24 +8229,10 @@ ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
  */
 static int
 ice_fdb_del(struct ndmsg *ndm, __always_unused struct nlattr *tb[],
-	    struct net_device *dev, const unsigned char *addr,
-	    __always_unused u16 vid, bool *notified,
-	    struct netlink_ext_ack *extack)
-#elif defined(HAVE_NDO_FDB_DEL_EXTACK)
-static int
-ice_fdb_del(struct ndmsg *ndm, __always_unused struct nlattr *tb[],
-	    struct net_device *dev, const unsigned char *addr,
-	    __always_unused u16 vid, struct netlink_ext_ack *extack)
-#elif defined(HAVE_NDO_FDB_ADD_VID)
-static int
-ice_fdb_del(struct ndmsg *ndm, __always_unused struct nlattr *tb[],
-	    struct net_device *dev, const unsigned char *addr,
-	    __always_unused u16 vid)
-#else
-static int
-ice_fdb_del(struct ndmsg *ndm, __always_unused struct nlattr *tb[],
-	    struct net_device *dev, const unsigned char *addr)
-#endif
+	    struct net_device *dev, const unsigned char *addr
+	    _$(HAVE_NDO_FDB_ADD_VID, u16 __always_unused vid)
+	    _$(HAVE_NDO_FDB_DEL_NOTIFIED, bool *notified)
+	    _$(HAVE_NDO_FDB_DEL_EXTACK, struct netlink_ext_ack __always_unused *extack))
 {
 	int err;
 
@@ -8282,7 +8290,7 @@ set_tc_queue_err:
  * @netdev: Main net device to configure
  * @vdev: MACVLAN subordinate device
  */
-static void *
+static $(ICE_TDD, const) void *
 ice_fwd_add_macvlan(struct net_device *netdev, struct net_device *vdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
@@ -8837,10 +8845,12 @@ ice_set_vlan_filtering_features(struct ice_vsi *vsi, netdev_features_t features)
 	int err = 0;
 
 	/* support Single VLAN Mode (SVM) and Double VLAN Mode (DVM) by checking
-	 * if either bit is set
+	 * if either bit is set. In switchdev mode Rx filtering should never be
+	 * enabled.
 	 */
-	if (features &
-	    (NETIF_F_HW_VLAN_CTAG_FILTER | NETIF_F_HW_VLAN_STAG_FILTER))
+	if ((features &
+	     (NETIF_F_HW_VLAN_CTAG_FILTER | NETIF_F_HW_VLAN_STAG_FILTER)) &&
+	     !ice_is_eswitch_mode_switchdev(vsi->back))
 		err = vlan_ops->ena_rx_filtering(vsi);
 	else
 		err = vlan_ops->dis_rx_filtering(vsi);
@@ -9746,7 +9756,8 @@ int ice_down(struct ice_vsi *vsi)
 	ice_napi_disable_all(vsi);
 
 	ice_for_each_txq(vsi, i) {
-		if (vsi->tx_rings[i]->flags & ICE_TX_FLAGS_TXTIME)
+		if (vsi->tstamp_rings &&
+		    (vsi->tx_rings[i]->flags & ICE_TX_FLAGS_TXTIME))
 			ice_clean_tx_ring(vsi->tx_rings[i],
 					  vsi->tstamp_rings[i]);
 		else
@@ -10136,6 +10147,13 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (err) {
 		dev_err(dev, "control queues init failed %d\n", err);
 		goto err_init_ctrlq;
+	}
+
+	if (hw->fwlog_cfg.options & ICE_FWLOG_OPTION_IS_REGISTERED) {
+		err = ice_fwlog_register(hw);
+		if (err)
+			hw->fwlog_cfg.options &=
+				~ICE_FWLOG_OPTION_IS_REGISTERED;
 	}
 
 	/* if DDP was previously loaded successfully */
@@ -12260,9 +12278,84 @@ exit:
 
 #ifdef HAVE_TC_ETF_QOPT_OFFLOAD
 /**
- * ice_offload_txtime - set earliest time first
+ * ice_is_txtime_ena - check if TxTime is enabled
+ * @vsi: VSI to check
+ *
+ * Returns true if TxTime is enabled on any Tx queue, else false.
+ */
+static bool ice_is_txtime_ena(struct ice_vsi *vsi)
+{
+	int i;
+
+	ice_for_each_txq(vsi, i)
+		if (vsi->tx_rings[i]->flags & ICE_TX_FLAGS_TXTIME)
+			return true;
+
+	return false;
+}
+
+/**
+ * ice_vsi_cfg_txtime - configure TxTime for the VSI
+ * @vsi: VSI to reconfigure
+ * @enable: enable or disable TxTime
+ * @queue: Tx queue to configure TxTime on
+ *
+ * Returns 0 on success, negative value on failure.
+ */
+static int ice_vsi_cfg_txtime(struct ice_vsi *vsi, bool enable,
+			      int queue)
+{
+	bool if_running = netif_running(vsi->netdev);
+	struct ice_pf *pf = vsi->back;
+	int err, timeout = 50;
+
+	while (test_and_set_bit(ICE_CFG_BUSY, vsi->back->state)) {
+		timeout--;
+		if (!timeout)
+			return -EBUSY;
+		usleep_range(1000, 2000);
+	}
+
+	/* If rnnning, close and open VSI to clear and reconfigure all rings. */
+	if (if_running)
+		ice_vsi_close(vsi);
+
+	/* Enable or disable PF TxTime flag which is checked during VSI rebuild
+	 * for allocating the timestamp rings.
+	 */
+	if (enable)
+		set_bit(ICE_FLAG_TXPP, pf->flags);
+	else
+		clear_bit(ICE_FLAG_TXPP, pf->flags);
+
+	/* Rebuild VSI to allocate or free timestamp rings */
+	err = ice_vsi_rebuild(vsi, ICE_VSI_FLAG_NO_INIT);
+	if (err)
+		goto rebuild_err;
+
+	if (enable)
+		vsi->tx_rings[queue]->flags |= ICE_TX_FLAGS_TXTIME;
+
+	if (!if_running)
+		goto done;
+
+	ice_pf_dcb_recfg(pf);
+	ice_vsi_open(vsi);
+	goto done;
+
+rebuild_err:
+	dev_err(ice_pf_to_dev(pf), "Unhandled error during VSI rebuild. Unload and reload the driver.\n");
+done:
+	clear_bit(ICE_CFG_BUSY, vsi->back->state);
+	return err;
+}
+
+/**
+ * ice_offload_txtime - set earliest TxTime first
  * @netdev: network interface device structure
  * @qopt_off: etf queue option offload from the skb to set
+ *
+ * Returns 0 on success, negative value on failure.
  */
 static int ice_offload_txtime(struct net_device *netdev,
 			      void *qopt_off)
@@ -12276,49 +12369,45 @@ static int ice_offload_txtime(struct net_device *netdev,
 	struct ice_tx_ring *tx_ring;
 	int err;
 
+	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
+		return 0;
+
 	if (!ice_is_feature_supported(pf, ICE_F_TXPP))
 		return -EOPNOTSUPP;
 
-	if (!qopt_off)
-		return -EINVAL;
-
 	qopt = qopt_off;
-	if (qopt->queue < 0 || qopt->queue > vsi->num_txq)
+	if (!qopt_off || qopt->queue < 0 || qopt->queue >= vsi->num_txq)
 		return -EINVAL;
 
 	tx_ring = vsi->tx_rings[qopt->queue];
 
-	err = ice_aq_ena_dis_txtimeq(hw, qopt->queue, 1, qopt->enable,
-				     &txtime_pg, NULL);
-	if (err) {
-		dev_err(ice_pf_to_dev(pf), "%s Tx Time failed on queue: %i\n",
-			qopt->enable ? "enable" : "disable", tx_ring->q_index);
-		return err;
-	}
+	/* Enable or disable TxTime on the specified Tx queue. */
+	if (qopt->enable)
+		tx_ring->flags |= ICE_TX_FLAGS_TXTIME;
+	else
+		tx_ring->flags &= ~ICE_TX_FLAGS_TXTIME;
 
-	dev_dbg(ice_pf_to_dev(pf), "%s Tx Time on queue: %i\n",
-		qopt->enable ? "enable" : "disable", tx_ring->q_index);
-
-	if (qopt->enable) {
-		/* If queues are already allocated set the flag */
-		if (tx_ring) {
-			u32 val = rd32(hw, E830_GLTXTIME_TS_CFG);
-
-			wr32(hw, E830_GLTXTIME_TS_CFG,
-			     (val | E830_GLTXTIME_TS_CFG_TXTIME_ENABLE_M));
-			tx_ring->flags |= ICE_TX_FLAGS_TXTIME;
-		}
-	} else {
-		/* If queues are already allocated clear the flag */
-		if (tx_ring) {
-			u32 val = rd32(hw, E830_GLTXTIME_TS_CFG);
-
-			wr32(hw, E830_GLTXTIME_TS_CFG,
-			     (val & ~E830_GLTXTIME_TS_CFG_TXTIME_ENABLE_M));
-			tx_ring->flags &= ~ICE_TX_FLAGS_TXTIME;
+	/* When TxTime is first enabled on any Tx queue or is disabled on all
+	 * Tx queues, then configure TxTime to allocate or free resources.
+	 */
+	if (!test_bit(ICE_FLAG_TXPP, pf->flags) || !ice_is_txtime_ena(vsi)) {
+		err = ice_vsi_cfg_txtime(vsi, qopt->enable, qopt->queue);
+		if (err)
+			return err;
+	} else if (netif_running(netdev)) {
+		/* If queues are allocated and configured (running), then enable
+		 * or disable TxTime on the specified queue.
+		 */
+		err = ice_aq_ena_dis_txtimeq(hw, qopt->queue, 1, qopt->enable,
+					     &txtime_pg, NULL);
+		if (err) {
+			netdev_err(netdev, "Failed to %s TxTime\n",
+				   qopt->enable ? "enable" : "disable");
+			return err;
 		}
 	}
-
+	netdev_info(netdev, "%s TxTime on queue: %i\n",
+		    qopt->enable ? "enable" : "disable", qopt->queue);
 	return 0;
 }
 #endif /* HAVE_TC_ETF_QOPT_OFFLOAD */

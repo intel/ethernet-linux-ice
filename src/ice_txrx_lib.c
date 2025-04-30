@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice_txrx_lib.h"
 #include "ice_eswitch.h"
@@ -213,6 +213,8 @@ ice_rx_csum(struct ice_rx_ring *ring, struct sk_buff *skb,
 
 	if (ipv4 && (rx_status0 & BIT(ICE_RX_FLEX_DESC_STATUS0_XSUM_EIPE_S))) {
 		ring->vsi->back->hw_rx_eipe_error++;
+		if (ring->vsi->back->hw.mac_type == ICE_MAC_E830)
+			goto checksum_fail;
 		return;
 	}
 

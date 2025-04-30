@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_LAN_TX_RX_H_
 #define _ICE_LAN_TX_RX_H_
@@ -1153,6 +1153,8 @@ struct ice_ts_desc {
 #define ICE_TXTIME_MAX_QUEUE		2047
 #define ICE_SET_TXTIME_MAX_Q_AMOUNT	127
 #define ICE_OP_TXTIME_MAX_Q_AMOUNT	2047
+#define ICE_TXTIME_FETCH_TS_DESC_DFLT	8
+#define ICE_TXTIME_FETCH_PROFILE_CNT	16
 
 /* Tx Time queue context data
  *
@@ -1182,6 +1184,7 @@ struct ice_txtime_ctx {
 #define ICE_TXTIME_CTX_RESOLUTION_128NS 7
 	u8 ts_round_type;
 	u8 ts_pacing_slot;
+#define ICE_TXTIME_CTX_FETCH_PROF_ID_0 0
 	u8 merging_ena;
 	u8 ts_fetch_prof_id;
 	u8 ts_fetch_cache_line_aln_thld;

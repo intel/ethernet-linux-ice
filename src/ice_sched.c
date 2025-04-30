@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 #include <net/devlink.h>
@@ -1221,7 +1221,7 @@ u8 ice_sched_get_qgrp_layer(struct ice_hw *hw)
  *
  * This function returns the current VSI layer number
  */
-static u8 ice_sched_get_vsi_layer(struct ice_hw *hw)
+u8 ice_sched_get_vsi_layer(struct ice_hw *hw)
 {
 	/* Num Layers       VSI layer
 	 *     9               6
@@ -1243,7 +1243,7 @@ static u8 ice_sched_get_vsi_layer(struct ice_hw *hw)
  *
  * This function returns the current aggregator layer number
  */
-static u8 ice_sched_get_agg_layer(struct ice_hw *hw)
+u8 ice_sched_get_agg_layer(struct ice_hw *hw)
 {
 	/* Num Layers       aggregator layer
 	 *     9               4
@@ -1252,7 +1252,8 @@ static u8 ice_sched_get_agg_layer(struct ice_hw *hw)
 	/* calculate the aggregator layer based on number of layers. */
 	if (hw->num_tx_sched_layers == ICE_SCHED_9_LAYERS)
 		return hw->num_tx_sched_layers - ICE_AGG_LAYER_OFFSET;
-	return hw->sw_entry_point_layer;
+	else
+		return hw->sw_entry_point_layer;
 }
 
 /**

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2018-2024 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 
 # When the make command line has the goal 'all' or no goal specified (i.e.
 # when compiling the driver) a sub-make of the kernel's Makefile includes
@@ -44,6 +44,7 @@ subdir-ccflags-y += -I$(src)
 obj-m += ice.o
 
 ice-y := ice_main.o	\
+	ice_adapter.o	\
 	 ice_controlq.o	\
 	 ice_common.o	\
 	 ice_nvm.o	\
@@ -87,7 +88,7 @@ ice-y := ice_main.o	\
 	 ice_ieps_lm.o		\
 	 ice_gnss.o		\
 	 ice_ethtool.o
-ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o devlink/ice_devlink_health.o ice_fw_update.o
+ice-$(CONFIG_NET_DEVLINK:m=y) += ice_devlink.o devlink/health.o ice_fw_update.o
 ice-$(CONFIG_NET_DEVLINK:m=y) += ice_eswitch.o ice_repr.o
 ice-y += ice_aux_support.o
 ice-y += ice_idc.o
@@ -136,6 +137,10 @@ endif
 
 ifeq (${CONFIG_SUSE_KERNEL}, y)
 ice-y += kcompat_gnss.o
+endif
+
+ifeq ($(shell grep HAVE_XARRAY_API $(src)/kcompat_generated_defs.h),)
+ice-y += kcompat_xarray.o
 endif
 
 ifneq ($(shell grep HAVE_LMV1_SUPPORT $(src)/kcompat_generated_defs.h),)

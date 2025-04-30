@@ -1,10 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_SCHED_H_
 #define _ICE_SCHED_H_
 
 #include "ice_common.h"
+
+/**
+ * DOC: ice_sched.h
+ *
+ * This header file stores everything that is needed for broadly understood
+ * scheduler. It consists of defines related to layers, structures related to
+ * aggregator, functions declarations and others.
+ */
 
 #define SCHED_NODE_NAME_MAX_LEN 32
 
@@ -263,6 +271,8 @@ ice_sched_cfg_sibl_node_prio(struct ice_port_info *pi,
 int
 ice_cfg_tc_node_bw_alloc(struct ice_port_info *pi, u8 tc,
 			 enum ice_rl_type rl_type, u8 bw_alloc);
+u8 ice_sched_get_agg_layer(struct ice_hw *hw);
+u8 ice_sched_get_vsi_layer(struct ice_hw *hw);
 int ice_cfg_rl_burst_size(struct ice_hw *hw, u32 bytes);
 void ice_sched_replay_agg_vsi_preinit(struct ice_hw *hw);
 void ice_sched_replay_agg(struct ice_hw *hw);

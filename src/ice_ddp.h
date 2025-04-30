@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_DDP_H_
 #define _ICE_DDP_H_
@@ -377,7 +377,7 @@ struct ice_pkg_enum {
 	u32 buf_idx;
 
 	u32 type;
-	struct ice_buf_hdr *buf;
+	const struct ice_buf_hdr *buf;
 	u32 sect_idx;
 	void *sect;
 	u32 sect_type;
@@ -437,8 +437,6 @@ ice_acquire_global_cfg_lock(struct ice_hw *hw,
 			    enum ice_aq_res_access_type access);
 
 struct ice_buf_table *ice_find_buf_table(struct ice_seg *ice_seg);
-struct ice_buf_hdr *
-ice_pkg_enum_buf(struct ice_seg *ice_seg, struct ice_pkg_enum *state);
 bool
 ice_pkg_advance_sect(struct ice_seg *ice_seg, struct ice_pkg_enum *state);
 void *
@@ -461,6 +459,6 @@ ice_pkg_buf_alloc_single_section(struct ice_hw *hw, u32 type, u16 size,
 struct ice_buf *ice_pkg_buf(struct ice_buf_build *bld);
 void ice_pkg_buf_free(struct ice_hw *hw, struct ice_buf_build *bld);
 
-int ice_cfg_tx_topo(struct ice_hw *hw, u8 *buf, u32 len);
+int ice_cfg_tx_topo(struct ice_hw *hw, const void *buf, u32 len);
 
 #endif /* _ICE_DDP_H_ */

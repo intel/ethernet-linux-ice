@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2018-2024 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 
 # to be sourced
 
@@ -238,7 +238,7 @@ function gen() {
 		shift 3
 
 		if [ -z ${UNIFDEF_MODE:+1} ]; then
-			found_fmt="#define %s\n"
+			found_fmt="#define %s 1\n"
 			missing_fmt=""
 		else
 			found_fmt="-D%s\n"
@@ -342,7 +342,7 @@ function gen() {
 				found_fmt="-D%s\n"
 				missing_fmt="-U%s\n"
 			} else {
-				found_fmt="#define %s\n"
+				found_fmt="#define %s 1\n"
 				missing_fmt=""
 			}
 

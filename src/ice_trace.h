@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #if !IS_ENABLED(CONFIG_TRACEPOINTS) || defined(__CHECKER__)
 #if !defined(_ICE_TRACE_H_)

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver IEPS extensions */
 
@@ -76,6 +76,9 @@ static int ice_ieps_cpi_set_phy_cfg(struct ice_hw *hw,
 				    struct ice_aqc_set_phy_cfg_data *cfg,
 				    struct ice_sq_cd *cd)
 {
+	int status = 0;
+	bool ena_link;
+
 	if (!cfg)
 		return -EINVAL;
 
@@ -98,7 +101,18 @@ static int ice_ieps_cpi_set_phy_cfg(struct ice_hw *hw,
 
 	pi->phy.curr_user_phy_cfg = *cfg;
 
-	return 0;
+	/* Restart Auto-negotiation if AUTO_LINK_UPDT Bit is set */
+	if (cfg->caps & ICE_AQ_PHY_ENA_AUTO_LINK_UPDT) {
+		ena_link = !!(cfg->caps & ICE_AQC_PHY_EN_LINK);
+
+		status = hw->lm_ops->restart_an(hw->port_info, ena_link, NULL,
+						ICE_AQC_RESTART_AN_REFCLK_NOCHANGE);
+		if (status)
+			dev_dbg(ice_hw_to_dev(hw), "ERROR: restart_an status=%d\n",
+				status);
+	}
+
+	return status;
 }
 
 /**
@@ -147,6 +161,13 @@ static int ice_ieps_cpi_get_link_info(struct ice_port_info *pi, bool ena_lse,
 
 	li->link_speed = link_speed;
 	li->max_frame_size = max_frame_size;
+
+	/* Return success if the link is not up. Negotiated FEC is not
+	 * applicable when the link is in down state and the CPI
+	 * opcode returns an error as port disabled.
+	 */
+	if (!(li->link_info & ICE_AQ_LINK_UP))
+		return 0;
 
 	/* Update FEC info */
 	cpi.cmd.opcode = CPI_OPCODE_NEG_MODE;
@@ -336,12 +357,45 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		phy_type_low, phy_type_high);
 
 	switch (phy_type_low) {
+	case ICE_PHY_TYPE_LOW_100M_SGMII:
+		port_cfg->port_width = CPI_OPCODE_PORT_MODE_SINGLE_LANE;
+		port_cfg->port_mode = CPI_OPCODE_PORT_MODE_SGMII;
+		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE0;
+		port_cfg->cu_rate = CPI_OPCODE_CURATE0_100M_SGMII;
+		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_SFI;
+		port_cfg->cu_fec = ICE_AQC_PHY_FEC_DIS;
+		return IEPS_PEER_SUCCESS;
+
+	case ICE_PHY_TYPE_LOW_1000BASE_SX:
+	case ICE_PHY_TYPE_LOW_1000BASE_LX:
+		port_cfg->port_width = CPI_OPCODE_PORT_MODE_SINGLE_LANE;
+		port_cfg->port_mode = CPI_OPCODE_PORT_MODE_1000_BASE_X;
+		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_SFI;
+		port_cfg->cu_fec = ICE_AQC_PHY_FEC_DIS;
+		return IEPS_PEER_SUCCESS;
+
+	case ICE_PHY_TYPE_LOW_1G_SGMII:
+		port_cfg->port_width = CPI_OPCODE_PORT_MODE_SINGLE_LANE;
+		port_cfg->port_mode = CPI_OPCODE_PORT_MODE_SGMII;
+		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE0;
+		port_cfg->cu_rate = CPI_OPCODE_CURATE0_1G_SGMII;
+		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_SFI;
+		port_cfg->cu_fec = ICE_AQC_PHY_FEC_DIS;
+		return IEPS_PEER_SUCCESS;
+
 	case ICE_PHY_TYPE_LOW_1000BASE_KX:
 		port_cfg->port_width = CPI_OPCODE_PORT_MODE_SINGLE_LANE;
 		port_cfg->port_mode = CPI_OPCODE_PORT_MODE_AN73;
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE0;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE0_1000BASE_KX;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
+		port_cfg->cu_fec = ICE_AQC_PHY_FEC_DIS;
+		return IEPS_PEER_SUCCESS;
+
+	case ICE_PHY_TYPE_LOW_2500BASE_X:
+		port_cfg->port_width = CPI_OPCODE_PORT_MODE_SINGLE_LANE;
+		port_cfg->port_mode = CPI_OPCODE_PORT_MODE_2500_BASE_X;
+		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_SFI;
 		port_cfg->cu_fec = ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
@@ -380,9 +434,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE0;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE0_10GBASE_KR;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_10G_KR_40G_KR4_EN |
-				   ICE_AQC_PHY_FEC_10G_KR_40G_KR4_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_25GBASE_SR:
@@ -390,8 +441,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->port_width = CPI_OPCODE_PORT_MODE_SINGLE_LANE;
 		port_cfg->port_mode = CPI_OPCODE_PORT_MODE_25G_AUI;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_SFI;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_25G_RS_528_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_25G_AUI_AOC_ACC:
@@ -399,10 +448,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->port_width = CPI_OPCODE_PORT_MODE_SINGLE_LANE;
 		port_cfg->port_mode = CPI_OPCODE_PORT_MODE_25G_AUI;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_SFI;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_25G_KR_REQ |
-				   ICE_AQC_PHY_FEC_25G_KR_CLAUSE74_EN |
-				   ICE_AQC_PHY_FEC_25G_RS_528_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_25GBASE_KR:
@@ -412,10 +457,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE1;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE1_25GBASE_CR_KR;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_25G_KR_REQ |
-				   ICE_AQC_PHY_FEC_25G_KR_CLAUSE74_EN |
-				   ICE_AQC_PHY_FEC_25G_RS_528_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_25GBASE_KR_S:
@@ -425,8 +466,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE1;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE1_25GBASE_CR_KR_S;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_25G_KR_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_25GBASE_CR1:
@@ -435,10 +474,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE1;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE1_25GBASE_CR1;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_25G_KR_REQ |
-				   ICE_AQC_PHY_FEC_25G_KR_CLAUSE74_EN |
-				   ICE_AQC_PHY_FEC_25G_RS_528_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_25GBASE_KR1:
@@ -447,10 +482,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE1;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE1_25GBASE_KR1;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_25G_KR_REQ |
-				   ICE_AQC_PHY_FEC_25G_KR_CLAUSE74_EN |
-				   ICE_AQC_PHY_FEC_25G_RS_528_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_40GBASE_KR4:
@@ -459,9 +490,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE0;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE0_40GBASE_KR4;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_10G_KR_40G_KR4_EN |
-				   ICE_AQC_PHY_FEC_10G_KR_40G_KR4_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_40GBASE_CR4:
@@ -470,9 +498,6 @@ ice_ieps_cpi_get_port_cfg(struct ice_hw *hw,
 		port_cfg->cu_rate_opc = CPI_OPCODE_CURATE0;
 		port_cfg->cu_rate = CPI_OPCODE_CURATE0_40GBASE_CR4;
 		port_cfg->pmd_mode = CPI_OPCODE_PMD_CONTROL_TRAINING;
-		port_cfg->cu_fec = ICE_AQC_PHY_FEC_10G_KR_40G_KR4_EN |
-				   ICE_AQC_PHY_FEC_10G_KR_40G_KR4_REQ |
-				   ICE_AQC_PHY_FEC_DIS;
 		return IEPS_PEER_SUCCESS;
 
 	case ICE_PHY_TYPE_LOW_50G_LAUI2_AOC_ACC:
@@ -597,8 +622,10 @@ static enum ieps_peer_status
 ice_ieps_cpi_cfg_port_pmd_mode(struct ice_hw *hw, u8 pcs_port,
 			       struct ice_ieps_cpi_port_cfg *port_cfg)
 {
+	struct ice_port_info *pi = hw->port_info;
 	struct ieps_peer_cpi_cmd_resp cpi = {};
 	enum ieps_peer_status pstatus;
+	u8 low_power_ctrl_an;
 
 	if (!port_cfg) {
 		dev_dbg(ice_hw_to_dev(hw), "ERROR: port_cfg is NULL\n");
@@ -613,6 +640,14 @@ ice_ieps_cpi_cfg_port_pmd_mode(struct ice_hw *hw, u8 pcs_port,
 				  port_cfg->port_width) |
 		       FIELD_PREP(CPI_OPCODE_PORT_MODE_PORT_MODE_M,
 				  port_cfg->port_mode);
+
+	low_power_ctrl_an = pi->phy.curr_user_phy_cfg.low_power_ctrl_an;
+	if ((port_cfg->port_mode == CPI_OPCODE_PORT_MODE_1000_BASE_X ||
+	     port_cfg->port_mode == CPI_OPCODE_PORT_MODE_SGMII) &&
+	     low_power_ctrl_an & ICE_AQC_PHY_AN_EN_CLAUSE37)
+		cpi.cmd.data |= CPI_OPCODE_PORT_NEG_FORCED |
+				CPI_OPCODE_PORT_AN37;
+
 	pstatus = ice_ieps_exec_cpi(hw, &cpi);
 	if (pstatus) {
 		dev_dbg(ice_hw_to_dev(hw), "ERROR: cpi set port mode failed\n");
@@ -624,6 +659,12 @@ ice_ieps_cpi_cfg_port_pmd_mode(struct ice_hw *hw, u8 pcs_port,
 	cpi.cmd.port = pcs_port;
 	cpi.cmd.set = true;
 	cpi.cmd.data = port_cfg->pmd_mode;
+
+	if (port_cfg->port_mode == CPI_OPCODE_PORT_MODE_SGMII ||
+	    port_cfg->port_mode == CPI_OPCODE_PORT_MODE_1000_BASE_X ||
+	    port_cfg->port_mode == CPI_OPCODE_PORT_MODE_2500_BASE_X)
+		cpi.cmd.data |= CPI_OPCODE_PMD_DIS_DSP_ADAPTATION;
+
 	pstatus = ice_ieps_exec_cpi(hw, &cpi);
 	if (pstatus) {
 		dev_dbg(ice_hw_to_dev(hw), "ERROR: cpi set pmd mode failed\n");
@@ -711,17 +752,17 @@ ice_ieps_cpi_cfg_port_cufec(struct ice_hw *hw, u8 pcs_port,
 		return IEPS_PEER_INVALID_ARG;
 	}
 
-	/* Enable supported FEC option based on phy_type */
-	phy_fec_cap = port_cfg->cu_fec;
-	port_cfg->cu_fec &= pi->phy.curr_user_phy_cfg.link_fec_opt;
-
-	if (!(phy_fec_cap & ICE_AQC_PHY_FEC_DIS) && !port_cfg->cu_fec) {
-		dev_err(ice_hw_to_dev(hw), "ERROR: invalid FEC ops\n");
-		return IEPS_PEER_INVALID_FEC_OPT;
-	}
+	/* Configure default FEC setting if only one FEC option is supported
+	 * on the phy type. If the PHY type supports multiple FEC options,
+	 * the FEC configuration will be set based on the user's input.
+	 */
+	if (port_cfg->cu_fec)
+		phy_fec_cap = port_cfg->cu_fec;
+	else
+		phy_fec_cap = pi->phy.curr_user_phy_cfg.link_fec_opt;
 
 	for (i = 0; i < CPI_MAX_FEC_OPTIONS; i++) {
-		if ((port_cfg->cu_fec >> i) & 1) {
+		if ((phy_fec_cap >> i) & 1) {
 			switch (BIT(i)) {
 			case ICE_AQC_PHY_FEC_10G_KR_40G_KR4_EN:
 				cpi.cmd.data |= CPI_OPCODE_CUFEC0_10GCL74CAP;
@@ -730,7 +771,10 @@ ice_ieps_cpi_cfg_port_cufec(struct ice_hw *hw, u8 pcs_port,
 				cpi.cmd.data |= CPI_OPCODE_CUFEC0_10GCL74REQ;
 				break;
 			case ICE_AQC_PHY_FEC_25G_RS_528_REQ:
-				cpi.cmd.data |= CPI_OPCODE_CUFEC0_CL91REQ;
+				cpi.cmd.data |= (port_cfg->port_mode ==
+						 CPI_OPCODE_PORT_MODE_25G_AUI) ?
+						 CPI_OPCODE_CUFEC0_CL108REQ :
+						 CPI_OPCODE_CUFEC0_CL91REQ;
 				break;
 			case ICE_AQC_PHY_FEC_25G_KR_REQ:
 				cpi.cmd.data |= CPI_OPCODE_CUFEC0_25GCL74REQ;
@@ -759,8 +803,8 @@ ice_ieps_cpi_cfg_port_cufec(struct ice_hw *hw, u8 pcs_port,
 		dev_dbg(ice_hw_to_dev(hw), "ERROR: cpi set FEC option failed\n");
 
 	/* Store active FEC Clause on successful FEC configuration */
-	if (port_cfg->cu_fec)
-		pi->phy.curr_user_phy_cfg.link_fec_opt = port_cfg->cu_fec;
+	if (phy_fec_cap)
+		pi->phy.curr_user_phy_cfg.link_fec_opt = phy_fec_cap;
 	else
 		pi->phy.curr_user_phy_cfg.link_fec_opt = ICE_AQC_PHY_FEC_DIS;
 
@@ -818,7 +862,8 @@ ice_ieps_cpi_setup_link(struct ice_hw *hw, bool ena_link)
 	}
 
 	/* Configure AN73 control and CURATE */
-	if (port_cfg.pmd_mode == CPI_OPCODE_PMD_CONTROL_TRAINING) {
+	if (port_cfg.pmd_mode == CPI_OPCODE_PMD_CONTROL_TRAINING ||
+	    port_cfg.port_mode == CPI_OPCODE_PORT_MODE_SGMII) {
 		pstatus = ice_ieps_cpi_cfg_port_curate_an73(hw, pcs_port,
 							    &port_cfg);
 		if (pstatus) {
@@ -850,6 +895,7 @@ ice_ieps_cpi_setup_link(struct ice_hw *hw, bool ena_link)
  * @pi: pointer to the port information structure
  * @ena_link: if true: enable link, if false: disable link
  * @cd: pointer to command details structure or NULL
+ * @refclk: the new TX reference clock, 0 if no change
  *
  * Sets up the link and restarts the Auto-Negotiation over the link.
  *
@@ -857,7 +903,7 @@ ice_ieps_cpi_setup_link(struct ice_hw *hw, bool ena_link)
  */
 static int
 ice_ieps_cpi_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
-				 struct ice_sq_cd *cd)
+				 struct ice_sq_cd *cd, u8 refclk)
 {
 	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
 	struct ice_hw *hw = pi->hw;

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _KCOMPAT_CLEANUP_H_
@@ -373,5 +373,9 @@ DEFINE_LOCK_GUARD_1(write_lock_irqsave, rwlock_t,
 #include <linux/rcupdate.h>
 
 DEFINE_LOCK_GUARD_0(rcu, rcu_read_lock(), rcu_read_unlock())
+
+#include <linux/devlink.h>
+
+DEFINE_GUARD(devl, struct devlink *, devl_lock(_T), devl_unlock(_T));
 
 #endif /* _KCOMPAT_CLENAUP_H_ */

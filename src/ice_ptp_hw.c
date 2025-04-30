@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice_type.h"
 #include "ice_common.h"
@@ -342,9 +342,9 @@ static u32 ice_ptp_tmr_cmd_to_port_reg(struct ice_hw *hw,
 	/* Certain hardware families share the same register values for the
 	 * port register and source timer register.
 	 */
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E810:
-	case ICE_PHY_E830:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
+	case ICE_MAC_E830:
 		return ice_ptp_tmr_cmd_to_src_reg(hw, cmd) & TS_CMD_MASK_E810;
 	default:
 		break;
@@ -389,12 +389,13 @@ static u32 ice_ptp_tmr_cmd_to_port_reg(struct ice_hw *hw,
  */
 void ice_ptp_src_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
 {
+	struct ice_pf *pf = container_of(hw, struct ice_pf, hw);
 	u32 cmd_val = ice_ptp_tmr_cmd_to_src_reg(hw, cmd);
 
-	if (hw->ptp.primary_nac_hw)
-		wr32(hw->ptp.primary_nac_hw, GLTSYN_CMD, cmd_val);
-	else
-		wr32(hw, GLTSYN_CMD, cmd_val);
+	if (!ice_is_primary(hw))
+		hw = ice_get_primary_hw(pf);
+
+	wr32(hw, GLTSYN_CMD, cmd_val);
 }
 
 /**
@@ -407,23 +408,27 @@ void ice_ptp_src_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
  */
 static void ice_ptp_exec_tmr_cmd(struct ice_hw *hw)
 {
-	/* Flush SBQ by reading address 0 on PHY 0 */
+	struct ice_pf *pf = container_of(hw, struct ice_pf, hw);
 	struct ice_sbq_msg_input msg = {
 		.dest_dev = phy_0,
 		.opcode = ice_sbq_msg_rd
 	};
 
+	/* Flush SBQ by reading address 0 on PHY 0 */
 	ice_sbq_rw_reg(hw, &msg, ICE_AQ_FLAG_RD);
-	if (hw->ptp.phy_model == ICE_PHY_ETH56G && ice_is_dual(hw)) {
+
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825 && ice_is_dual(hw)) {
 		/* Flush also the peer SBQ */
 		msg.dest_dev = phy_0_peer;
 		ice_sbq_rw_reg(hw, &msg, ICE_AQ_FLAG_RD);
 	}
 
-	if (hw->ptp.primary_nac_hw)
-		wr32(hw->ptp.primary_nac_hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
-	else
-		wr32(hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
+	if (!ice_is_primary(hw))
+		hw = ice_get_primary_hw(pf);
+
+	spin_lock(&pf->adapter->ptp_gltsyn_time_lock);
+	wr32(hw, GLTSYN_CMD_SYNC, SYNC_EXEC_CMD);
+	spin_unlock(&pf->adapter->ptp_gltsyn_time_lock);
 	ice_flush(hw);
 }
 
@@ -1779,6 +1784,7 @@ int ice_phy_cfg_intr_eth56g(struct ice_hw *hw, u8 port, bool ena, u8 threshold)
 static int ice_read_phy_and_phc_time_eth56g(struct ice_hw *hw, u8 port,
 					    u64 *phy_time, u64 *phc_time)
 {
+	struct ice_pf *pf = container_of(hw, struct ice_pf, hw);
 	u64 tx_time, rx_time;
 	u32 zo, lo;
 	u8 tmr_idx;
@@ -1798,12 +1804,12 @@ static int ice_read_phy_and_phc_time_eth56g(struct ice_hw *hw, u8 port,
 	ice_ptp_exec_tmr_cmd(hw);
 
 	/* Read the captured PHC time from the shadow time registers */
-	if (hw->ptp.primary_nac_hw) {
-		zo = rd32(hw->ptp.primary_nac_hw, GLTSYN_SHTIME_0(tmr_idx));
-		lo = rd32(hw->ptp.primary_nac_hw, GLTSYN_SHTIME_L(tmr_idx));
-	} else {
+	if (ice_is_primary(hw)) {
 		zo = rd32(hw, GLTSYN_SHTIME_0(tmr_idx));
 		lo = rd32(hw, GLTSYN_SHTIME_L(tmr_idx));
+	} else {
+		zo = rd32(ice_get_primary_hw(pf), GLTSYN_SHTIME_0(tmr_idx));
+		lo = rd32(ice_get_primary_hw(pf), GLTSYN_SHTIME_L(tmr_idx));
 	}
 	*phc_time = (u64)lo << 32 | zo;
 
@@ -1930,6 +1936,7 @@ int ice_stop_phy_timer_eth56g(struct ice_hw *hw, u8 port, bool soft_reset)
  */
 int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port)
 {
+	struct ice_pf *pf = container_of(hw, struct ice_pf, hw);
 	u32 lo, hi;
 	u64 incval;
 	u8 tmr_idx;
@@ -1955,12 +1962,12 @@ int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port)
 	if (err)
 		return err;
 
-	if (hw->ptp.primary_nac_hw) {
-		lo = rd32(hw->ptp.primary_nac_hw, GLTSYN_INCVAL_L(tmr_idx));
-		hi = rd32(hw->ptp.primary_nac_hw, GLTSYN_INCVAL_H(tmr_idx));
-	} else {
+	if (ice_is_primary(hw)) {
 		lo = rd32(hw, GLTSYN_INCVAL_L(tmr_idx));
 		hi = rd32(hw, GLTSYN_INCVAL_H(tmr_idx));
+	} else {
+		lo = rd32(ice_get_primary_hw(pf), GLTSYN_INCVAL_L(tmr_idx));
+		hi = rd32(ice_get_primary_hw(pf), GLTSYN_INCVAL_H(tmr_idx));
 	}
 	incval = (u64)hi << 32 | lo;
 
@@ -2084,9 +2091,7 @@ static void ice_ptp_init_phy_e825c(struct ice_hw *hw)
 	struct ice_ptp_hw *ptp = &hw->ptp;
 	struct ice_eth56g_params *params;
 	u32 val;
-	int err;
 
-	ptp->phy_model = ICE_PHY_ETH56G;
 	params = &ptp->phy.eth56g;
 	params->onestep_ena = false;
 	params->peer_delay = 0;
@@ -2097,10 +2102,6 @@ static void ice_ptp_init_phy_e825c(struct ice_hw *hw)
 
 	val = rd32(hw, PF_SB_REM_DEV_CTL);
 	wr32(hw, PF_SB_REM_DEV_CTL, val | BIT(phy_0_peer) | BIT(cgu_peer));
-
-	err = ice_read_phy_eth56g(hw, hw->lane_num, PHY_REG_REVISION, &val);
-	if (err || val != PHY_REVISION_ETH56G)
-		ptp->phy_model = ICE_PHY_UNSUP;
 }
 
 /* E82X family functions
@@ -4121,7 +4122,6 @@ int ice_phy_cfg_intr_e82x(struct ice_hw *hw, u8 quad, bool ena, u8 threshold)
  */
 static void ice_ptp_init_phy_e82x(struct ice_ptp_hw *ptp)
 {
-	ptp->phy_model = ICE_PHY_E82X;
 	ptp->num_lports = 8;
 	ptp->ports_per_phy = 8;
 }
@@ -4206,18 +4206,17 @@ static int
 ice_read_phy_tstamp_ll_e810(struct ice_hw *hw, u8 idx, u8 *hi, u32 *lo)
 {
 	struct ice_e810_params *params = &hw->ptp.phy.e810;
-	unsigned long flags;
 	u32 val;
 	int err;
 
-	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+	spin_lock_irq(&params->atqbal_wq.lock);
 
 	/* Wait for any pending in-progress low latency interrupt */
 	err = wait_event_interruptible_locked_irq(params->atqbal_wq,
 						  !(params->atqbal_flags &
 						    ATQBAL_FLAGS_INTR_IN_PROGRESS));
 	if (err) {
-		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		spin_unlock_irq(&params->atqbal_wq.lock);
 		return err;
 	}
 
@@ -4231,7 +4230,7 @@ ice_read_phy_tstamp_ll_e810(struct ice_hw *hw, u8 idx, u8 *hi, u32 *lo)
 				       10, ATQBAL_LL_TIMEOUT_US);
 	if (err) {
 		ice_debug(hw, ICE_DBG_PTP, "Failed to read PTP timestamp using low latency read\n");
-		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		spin_unlock_irq(&params->atqbal_wq.lock);
 		return err;
 	}
 
@@ -4241,7 +4240,7 @@ ice_read_phy_tstamp_ll_e810(struct ice_hw *hw, u8 idx, u8 *hi, u32 *lo)
 	/* Read the low 32 bit value and set the TS valid bit */
 	*lo = rd32(hw, PF_SB_ATQBAH) | TS_VALID;
 
-	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+	spin_unlock_irq(&params->atqbal_wq.lock);
 
 	return 0;
 }
@@ -4437,18 +4436,17 @@ static int ice_ptp_prep_phy_adj_ll_e810(struct ice_hw *hw, s32 adj)
 {
 	const u8 tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 	struct ice_e810_params *params = &hw->ptp.phy.e810;
-	unsigned long flags;
 	u32 val;
 	int err;
 
-	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+	spin_lock_irq(&params->atqbal_wq.lock);
 
 	/* Wait for any pending in-progress low latency interrupt */
 	err = wait_event_interruptible_locked_irq(params->atqbal_wq,
 						  !(params->atqbal_flags &
 						    ATQBAL_FLAGS_INTR_IN_PROGRESS));
 	if (err) {
-		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		spin_unlock_irq(&params->atqbal_wq.lock);
 		return err;
 	}
 
@@ -4463,11 +4461,11 @@ static int ice_ptp_prep_phy_adj_ll_e810(struct ice_hw *hw, s32 adj)
 				       10, ATQBAL_LL_TIMEOUT_US);
 	if (err) {
 		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer adjustment using low latency interface\n");
-		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		spin_unlock_irq(&params->atqbal_wq.lock);
 		return err;
 	}
 
-	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+	spin_unlock_irq(&params->atqbal_wq.lock);
 
 	return 0;
 }
@@ -4529,18 +4527,17 @@ static int ice_ptp_prep_phy_incval_ll_e810(struct ice_hw *hw, u64 incval)
 {
 	const u8 tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 	struct ice_e810_params *params = &hw->ptp.phy.e810;
-	unsigned long flags;
 	u32 val;
 	int err;
 
-	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
+	spin_lock_irq(&params->atqbal_wq.lock);
 
 	/* Wait for any pending in-progress low latency interrupt */
 	err = wait_event_interruptible_locked_irq(params->atqbal_wq,
 						  !(params->atqbal_flags &
 						    ATQBAL_FLAGS_INTR_IN_PROGRESS));
 	if (err) {
-		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		spin_unlock_irq(&params->atqbal_wq.lock);
 		return err;
 	}
 
@@ -4556,11 +4553,11 @@ static int ice_ptp_prep_phy_incval_ll_e810(struct ice_hw *hw, u64 incval)
 				       10, ATQBAL_LL_TIMEOUT_US);
 	if (err) {
 		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer increment using low latency interface\n");
-		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		spin_unlock_irq(&params->atqbal_wq.lock);
 		return err;
 	}
 
-	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+	spin_unlock_irq(&params->atqbal_wq.lock);
 
 	return 0;
 }
@@ -4640,160 +4637,6 @@ ice_get_phy_tx_tstamp_ready_e810(struct ice_hw *hw, u8 port, u64 *tstamp_ready)
  * The following functions operate specifically on E810 hardware and are used
  * to access the extended GPIOs available.
  */
-
-/**
- * ice_get_pca9575_handle
- * @hw: pointer to the hw struct
- * @pca9575_handle: GPIO controller's handle
- *
- * Find and return the GPIO controller's handle by checking what drives clock
- * mux pin. When found - the value will be cached in the hw structure and
- * following calls will return cached value.
- */
-static int ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle)
-{
-	u8 node_part_number, idx, node_part_num_clk_mux;
-	struct ice_aqc_get_link_topo_pin cmd_pin;
-	u16 node_handle, clock_mux_handle;
-	struct ice_aqc_get_link_topo cmd;
-	int status;
-
-	if (!hw || !pca9575_handle)
-		return -EINVAL;
-
-	/* If handle was read previously return cached value */
-	if (hw->ptp.io_expander_handle) {
-		*pca9575_handle = hw->ptp.io_expander_handle;
-		return 0;
-	}
-
-	memset(&cmd, 0, sizeof(cmd));
-	memset(&cmd_pin, 0, sizeof(cmd_pin));
-	node_part_num_clk_mux = ICE_AQC_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX;
-
-	/* Look for CLOCK MUX handle in the netlist */
-	status = ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_MUX,
-				       ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL,
-				       node_part_num_clk_mux,
-				       &clock_mux_handle);
-	if (status)
-		return -EOPNOTSUPP;
-
-	/* Take CLOCK MUX GPIO pin */
-	cmd_pin.input_io_params = (ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_GPIO <<
-				   ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_S);
-	cmd_pin.input_io_params |= (ICE_AQC_LINK_TOPO_IO_FUNC_CLK_IN <<
-				    ICE_AQC_LINK_TOPO_INPUT_IO_FUNC_S);
-	cmd_pin.addr.handle = cpu_to_le16(clock_mux_handle);
-	cmd_pin.addr.topo_params.node_type_ctx =
-		(ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_MUX <<
-		 ICE_AQC_LINK_TOPO_NODE_TYPE_S);
-	cmd_pin.addr.topo_params.node_type_ctx |=
-		(ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED <<
-		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
-
-	status = ice_aq_get_netlist_node_pin(hw, &cmd_pin, &node_handle);
-	if (status)
-		return -EOPNOTSUPP;
-
-	/* Check what is driving the pin */
-	cmd.addr.topo_params.node_type_ctx =
-		(ICE_AQC_LINK_TOPO_NODE_TYPE_GPIO_CTRL <<
-		 ICE_AQC_LINK_TOPO_NODE_TYPE_S);
-	cmd.addr.topo_params.node_type_ctx |=
-		(ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL <<
-		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
-	cmd.addr.handle = cpu_to_le16(node_handle);
-
-#define SW_PCA9575_SFP_TOPO_IDX		2
-#define SW_PCA9575_QSFP_TOPO_IDX	1
-
-	/* Check if the SW IO expander controlling SMA exists in the netlist. */
-	if (hw->device_id == ICE_DEV_ID_E810C_SFP)
-		idx = SW_PCA9575_SFP_TOPO_IDX;
-	else if (hw->device_id == ICE_DEV_ID_E810C_QSFP)
-		idx = SW_PCA9575_QSFP_TOPO_IDX;
-	else
-		return -EOPNOTSUPP;
-
-	cmd.addr.topo_params.index = idx;
-	status = ice_aq_get_netlist_node(hw, &cmd, &node_part_number,
-					 &node_handle);
-	if (status)
-		return -EOPNOTSUPP;
-
-	/* Verify if PCA9575 drives the pin */
-	if (node_part_number != ICE_AQC_GET_LINK_TOPO_NODE_NR_PCA9575)
-		return -EOPNOTSUPP;
-
-	/* If present save the handle and return it */
-	hw->ptp.io_expander_handle = node_handle;
-	*pca9575_handle = hw->ptp.io_expander_handle;
-
-	return 0;
-}
-
-/**
- * ice_read_sma_ctrl
- * @hw: pointer to the hw struct
- * @data: pointer to data to be read from the GPIO controller
- *
- * Read the SMA controller state. Only bits 3-7 in data are valid.
- */
-int ice_read_sma_ctrl(struct ice_hw *hw, u8 *data)
-{
-	int status;
-	u16 handle;
-	u8 i;
-
-	status = ice_get_pca9575_handle(hw, &handle);
-	if (status)
-		return status;
-
-	*data = 0;
-
-	for (i = ICE_SMA_MIN_BIT; i <= ICE_SMA_MAX_BIT; i++) {
-		bool pin;
-
-		status = ice_aq_get_gpio(hw, handle, i + ICE_PCA9575_P1_OFFSET,
-					 &pin, NULL);
-		if (status)
-			break;
-		*data |= (u8)(!pin) << i;
-	}
-
-	return status;
-}
-
-/**
- * ice_write_sma_ctrl
- * @hw: pointer to the hw struct
- * @data: data to be written to the GPIO controller
- *
- * Write the data to the SMA controller. Only bits 3-7 in data are valid.
- */
-int ice_write_sma_ctrl(struct ice_hw *hw, u8 data)
-{
-	int status;
-	u16 handle;
-	u8 i;
-
-	status = ice_get_pca9575_handle(hw, &handle);
-	if (status)
-		return status;
-
-	for (i = ICE_SMA_MIN_BIT; i <= ICE_SMA_MAX_BIT; i++) {
-		bool pin;
-
-		pin = !(data & (1 << i));
-		status = ice_aq_set_gpio(hw, handle, i + ICE_PCA9575_P1_OFFSET,
-					 pin, NULL);
-		if (status)
-			break;
-	}
-
-	return status;
-}
 
 /**
  * ice_read_pca9575_reg
@@ -4941,7 +4784,6 @@ exit:
  */
 static void ice_ptp_init_phy_e810(struct ice_ptp_hw *ptp)
 {
-	ptp->phy_model = ICE_PHY_E810;
 	ptp->num_lports = 8;
 	ptp->ports_per_phy = 4;
 
@@ -5079,7 +4921,6 @@ ice_get_phy_tx_tstamp_ready_e830(struct ice_hw *hw, u8 port, u64 *tstamp_ready)
  */
 static void ice_ptp_init_phy_e830(struct ice_ptp_hw *ptp)
 {
-	ptp->phy_model = ICE_PHY_E830;
 	ptp->num_lports = 8;
 	ptp->ports_per_phy = 4;
 }
@@ -5691,16 +5532,22 @@ void ice_ptp_init_hw(struct ice_hw *hw)
 {
 	struct ice_ptp_hw *ptp = &hw->ptp;
 
-	if (ice_is_e822(hw) || ice_is_e823(hw))
-		ice_ptp_init_phy_e82x(ptp);
-	else if (ice_is_e810(hw))
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		ice_ptp_init_phy_e810(ptp);
-	else if (ice_is_e830(hw))
+		break;
+	case ICE_MAC_E830:
 		ice_ptp_init_phy_e830(ptp);
-	else if (ice_is_e825c(hw))
+		break;
+	case ICE_MAC_GENERIC:
+		ice_ptp_init_phy_e82x(ptp);
+		break;
+	case ICE_MAC_GENERIC_3K_E825:
 		ice_ptp_init_phy_e825c(hw);
-	else
-		ptp->phy_model = ICE_PHY_UNSUP;
+		break;
+	default:
+		return;
+	}
 }
 
 /**
@@ -5716,11 +5563,11 @@ void ice_ptp_init_hw(struct ice_hw *hw)
 static int ice_ptp_write_port_cmd(struct ice_hw *hw, u8 port,
 				  enum ice_ptp_tmr_cmd cmd)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return ice_ptp_write_port_cmd_eth56g(hw, port, cmd);
-	case ICE_PHY_E82X:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC:
 		return ice_ptp_write_port_cmd_e82x(hw, port, cmd);
+	case ICE_MAC_GENERIC_3K_E825:
+		return ice_ptp_write_port_cmd_eth56g(hw, port, cmd);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -5772,11 +5619,11 @@ static int ice_ptp_port_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
 	u32 port;
 
 	/* PHY models which can program all ports simultaneously */
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E830:
-		return ice_ptp_port_cmd_e830(hw, cmd);
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		return ice_ptp_port_cmd_e810(hw, cmd);
+	case ICE_MAC_E830:
+		return ice_ptp_port_cmd_e830(hw, cmd);
 	default:
 		break;
 	}
@@ -5848,7 +5695,7 @@ int ice_ptp_init_time(struct ice_hw *hw, u64 time)
 
 	/* Source timers */
 	/* For E830 we don't need to use shadow registers, its automatic */
-	if (hw->ptp.phy_model == ICE_PHY_E830)
+	if (hw->mac_type == ICE_MAC_E830)
 		return ice_ptp_write_direct_phc_time_e830(hw, time);
 
 	wr32(hw, GLTSYN_SHTIME_L(tmr_idx), lower_32_bits(time));
@@ -5857,16 +5704,16 @@ int ice_ptp_init_time(struct ice_hw *hw, u64 time)
 
 	/* PHY Clks */
 	/* Fill Rx and Tx ports and send msg to PHY */
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		err = ice_ptp_prep_phy_time_eth56g(hw,
-						   (u32)(time & 0xFFFFFFFF));
-		break;
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		err = ice_ptp_prep_phy_time_e810(hw, (u32)(time & 0xFFFFFFFF));
 		break;
-	case ICE_PHY_E82X:
+	case ICE_MAC_GENERIC:
 		err = ice_ptp_prep_phy_time_e82x(hw, (u32)(time & 0xFFFFFFFF));
+		break;
+	case ICE_MAC_GENERIC_3K_E825:
+		err = ice_ptp_prep_phy_time_eth56g(hw,
+						   (u32)(time & 0xFFFFFFFF));
 		break;
 	default:
 		err = -EOPNOTSUPP;
@@ -5900,22 +5747,22 @@ int ice_ptp_write_incval(struct ice_hw *hw, u64 incval)
 	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 
 	/* For E830 we don't need to use shadow registers, its automatic */
-	if (hw->ptp.phy_model == ICE_PHY_E830)
+	if (hw->mac_type == ICE_MAC_E830)
 		return ice_ptp_write_direct_incval_e830(hw, incval);
 
 	/* Shadow Adjust */
 	wr32(hw, GLTSYN_SHADJ_L(tmr_idx), lower_32_bits(incval));
 	wr32(hw, GLTSYN_SHADJ_H(tmr_idx), upper_32_bits(incval));
 
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		err = ice_ptp_prep_phy_incval_eth56g(hw, incval);
-		break;
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		err = ice_ptp_prep_phy_incval_e810(hw, incval);
 		break;
-	case ICE_PHY_E82X:
+	case ICE_MAC_GENERIC:
 		err = ice_ptp_prep_phy_incval_e82x(hw, incval);
+		break;
+	case ICE_MAC_GENERIC_3K_E825:
+		err = ice_ptp_prep_phy_incval_eth56g(hw, incval);
 		break;
 	default:
 		err = -EOPNOTSUPP;
@@ -5976,18 +5823,18 @@ int ice_ptp_adj_clock(struct ice_hw *hw, s32 adj)
 	wr32(hw, GLTSYN_SHADJ_L(tmr_idx), 0);
 	wr32(hw, GLTSYN_SHADJ_H(tmr_idx), adj);
 
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		err = ice_ptp_prep_phy_adj_eth56g(hw, adj);
-		break;
-	case ICE_PHY_E830:
-		/* E830 sync PHYs automatically after setting GLTSYN_SHADJ */
-		return 0;
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		err = ice_ptp_prep_phy_adj_e810(hw, adj);
 		break;
-	case ICE_PHY_E82X:
+	case ICE_MAC_E830:
+		/* E830 sync PHYs automatically after setting GLTSYN_SHADJ */
+		return 0;
+	case ICE_MAC_GENERIC:
 		err = ice_ptp_prep_phy_adj_e82x(hw, adj);
+		break;
+	case ICE_MAC_GENERIC_3K_E825:
+		err = ice_ptp_prep_phy_adj_eth56g(hw, adj);
 		break;
 	default:
 		err = -EOPNOTSUPP;
@@ -6012,15 +5859,15 @@ int ice_ptp_adj_clock(struct ice_hw *hw, s32 adj)
  */
 int ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return ice_read_ptp_tstamp_eth56g(hw, block, idx, tstamp);
-	case ICE_PHY_E830:
+	switch (hw->mac_type) {
+	case ICE_MAC_E830:
 		return ice_read_phy_tstamp_e830(hw, idx, tstamp);
-	case ICE_PHY_E810:
+	case ICE_MAC_E810:
 		return ice_read_phy_tstamp_e810(hw, block, idx, tstamp);
-	case ICE_PHY_E82X:
+	case ICE_MAC_GENERIC:
 		return ice_read_phy_tstamp_e82x(hw, block, idx, tstamp);
+	case ICE_MAC_GENERIC_3K_E825:
+		return ice_read_ptp_tstamp_eth56g(hw, block, idx, tstamp);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -6044,13 +5891,13 @@ int ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp)
  */
 int ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return ice_clear_ptp_tstamp_eth56g(hw, block, idx);
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		return ice_clear_phy_tstamp_e810(hw, block, idx);
-	case ICE_PHY_E82X:
+	case ICE_MAC_GENERIC:
 		return ice_clear_phy_tstamp_e82x(hw, block, idx);
+	case ICE_MAC_GENERIC_3K_E825:
+		return ice_clear_ptp_tstamp_eth56g(hw, block, idx);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -6062,15 +5909,14 @@ int ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx)
  */
 void ice_ptp_reset_ts_memory(struct ice_hw *hw)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		ice_ptp_reset_ts_memory_eth56g(hw);
-		break;
-	case ICE_PHY_E82X:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC:
 		ice_ptp_reset_ts_memory_e82x(hw);
 		break;
-	case ICE_PHY_E810:
-	case ICE_PHY_E830:
+	case ICE_MAC_GENERIC_3K_E825:
+		ice_ptp_reset_ts_memory_eth56g(hw);
+		break;
+	case ICE_MAC_E810:
 	default:
 		return;
 	}
@@ -6092,15 +5938,15 @@ int ice_ptp_init_phc(struct ice_hw *hw)
 	/* Clear event status indications for auxiliary pins */
 	(void)rd32(hw, GLTSYN_STAT(src_idx));
 
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		return ice_ptp_init_phc_e810(hw);
-	case ICE_PHY_E82X:
-		return ice_ptp_init_phc_e82x(hw);
-	case ICE_PHY_E830:
+	case ICE_MAC_E830:
 		ice_ptp_init_phc_e830(hw);
 		return 0;
-	case ICE_PHY_ETH56G:
+	case ICE_MAC_GENERIC:
+		return ice_ptp_init_phc_e82x(hw);
+	case ICE_MAC_GENERIC_3K_E825:
 		ice_ptp_init_phc_e825c(hw);
 		return 0;
 	default:
@@ -6121,17 +5967,17 @@ int ice_ptp_init_phc(struct ice_hw *hw)
  */
 int ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
 		return ice_get_phy_tx_tstamp_ready_e810(hw, block,
 							tstamp_ready);
-	case ICE_PHY_E82X:
-		return ice_get_phy_tx_tstamp_ready_e82x(hw, block,
-							tstamp_ready);
-	case ICE_PHY_E830:
+	case ICE_MAC_E830:
 		return ice_get_phy_tx_tstamp_ready_e830(hw, block,
 							tstamp_ready);
-	case ICE_PHY_ETH56G:
+	case ICE_MAC_GENERIC:
+		return ice_get_phy_tx_tstamp_ready_e82x(hw, block,
+							tstamp_ready);
+	case ICE_MAC_GENERIC_3K_E825:
 		return ice_get_phy_tx_tstamp_ready_eth56g(hw, block,
 							  tstamp_ready);
 		break;
@@ -6152,8 +5998,8 @@ int ice_ptp_config_sfd(struct ice_hw *hw, bool sfd_ena)
 {
 	u8 port = hw->port_info->lport;
 
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC_3K_E825:
 		return ice_ptp_config_sfd_eth56g(hw, port, sfd_ena);
 	default:
 		return -EOPNOTSUPP;
@@ -6167,10 +6013,11 @@ int ice_ptp_config_sfd(struct ice_hw *hw, bool sfd_ena)
  *
  * Checks whether DPLL's input pin can be configured to ref-sync pairing mode.
  */
-bool refsync_pin_id_valid(const struct ice_hw *hw, u8 id)
+bool refsync_pin_id_valid(struct ice_hw *hw, u8 id)
 {
 	/* refsync is allowed only on pins 1 or 5 for E810T */
-	if (ice_is_e810t(hw) && id != 1 && id != 5)
+	if (ice_is_pf_c827(hw) && id != 1 &&
+	    id != 5)
 		return false;
 
 	return true;

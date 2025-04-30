@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_COMMON_H_
 #define _ICE_COMMON_H_
@@ -8,6 +8,7 @@
 #include <linux/bitfield.h>
 #endif /* HAVE_INCLUDE_BITFIELD */
 
+#include "ice.h"
 #include "ice_type.h"
 #include "ice_adminq_cmd.h"
 #include "ice_nvm.h"
@@ -345,15 +346,12 @@ ice_stat_update32(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw);
 void ice_print_rollback_msg(struct ice_hw *hw);
 bool ice_is_generic_mac(struct ice_hw *hw);
-bool ice_is_e810(const struct ice_hw *hw);
-bool ice_is_e810t(const struct ice_hw *hw);
-bool ice_is_e822(const struct ice_hw *hw);
-bool ice_is_e823(const struct ice_hw *hw);
-bool ice_is_e825c(const struct ice_hw *hw);
-bool ice_is_e830(const struct ice_hw *hw);
 int
 ice_sched_query_elem(struct ice_hw *hw, u32 node_teid,
 		     struct ice_aqc_txsched_elem_data *buf);
+int ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle);
+int ice_read_sma_ctrl(struct ice_hw *hw, u8 *data);
+int ice_write_sma_ctrl(struct ice_hw *hw, u8 data);
 int
 ice_aq_set_driver_param(struct ice_hw *hw, enum ice_aqc_driver_params idx,
 			u32 value, struct ice_sq_cd *cd);
@@ -391,15 +389,6 @@ bool ice_is_fw_health_report_supported(struct ice_hw *hw);
 bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
 /* AQ API version for FW auto drop reports */
 bool ice_is_fw_auto_drop_supported(struct ice_hw *hw);
-
-static inline bool ice_is_primary(struct ice_hw *hw)
-{
-	return !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
-}
-
-static inline bool ice_is_dual(struct ice_hw *hw)
-{
-	return !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_DUAL_M);
-}
 void ice_init_lm_ops(struct ice_hw *hw);
+
 #endif /* _ICE_COMMON_H_ */

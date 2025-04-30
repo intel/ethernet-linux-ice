@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include <linux/fs.h>
 #include <linux/debugfs.h>
@@ -441,7 +441,7 @@ static void ice_dump_rclk_status(struct ice_pf *pf)
 	u8 phy, phy_pin, pin;
 	int phy_pins;
 
-	if (ice_is_e810(&pf->hw))
+	if (pf->hw.mac_type == ICE_MAC_E810)
 		phy_pins = ICE_E810_RCLK_PINS_NUM;
 	else
 		/* E822-based devices have only one RCLK pin */
@@ -455,7 +455,7 @@ static void ice_dump_rclk_status(struct ice_pf *pf)
 					       &flags, NULL))
 			return;
 
-		if (ice_is_e810(&pf->hw)) {
+		if (pf->hw.mac_type == ICE_MAC_E810) {
 			int status = ice_get_pf_c827_idx(&pf->hw, &phy);
 
 			if (status) {

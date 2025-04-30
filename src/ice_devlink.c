@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -434,8 +434,8 @@ enum ice_devlink_param_id {
 	ICE_DEVLINK_PARAM_ID_BASE = DEVLINK_PARAM_GENERIC_ID_MAX,
 	ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV,
 	ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV,
-	ICE_DEVLINK_PARAM_ID_TX_BALANCE,
 	ICE_DEVLINK_PARAM_ID_TX_LOOPBACK,
+	ICE_DEVLINK_PARAM_ID_TX_SCHED_LAYERS,
 };
 
 /**
@@ -626,46 +626,17 @@ ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_para
 }
 
 /**
- * ice_get_tx_topo_user_sel - Read user's choice from flash
- * @pf: pointer to pf structure
- * @txbalance_ena: value read from flash will be saved here
- *
- * Reads user's preference for Tx Scheduler Topology Tree from PFA TLV.
- *
- * Returns zero when read was successful, negative values otherwise.
- */
-static int ice_get_tx_topo_user_sel(struct ice_pf *pf, bool *txbalance_ena)
-{
-	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
-	struct ice_hw *hw = &pf->hw;
-	int status;
-
-	status = ice_acquire_nvm(hw, ICE_RES_READ);
-	if (status)
-		return status;
-
-	status = ice_aq_read_nvm(hw, ICE_AQC_NVM_TX_TOPO_MOD_ID, 0,
-				 sizeof(usr_sel), &usr_sel, true, true, NULL);
-	ice_release_nvm(hw);
-
-	*txbalance_ena = usr_sel.data & ICE_AQC_NVM_TX_TOPO_USER_SEL;
-
-	return status;
-}
-
-/**
  * ice_update_tx_topo_user_sel - Save user's preference in flash
  * @pf: pointer to pf structure
- * @txbalance_ena: value to be saved in flash
+ * @layers: value to be saved in flash
  *
- * When txbalance_ena is set to true it means user's preference is to use
- * five layer Tx Scheduler Topology Tree, when it is set to false then it is
- * nine layer. This choice should be stored in PFA TLV field and should be
- * picked up by driver, next time during init.
+ * Variable "layers" defines user's preference about number of layers in Tx
+ * Scheduler Topology Tree. This choice should be stored in PFA TLV field
+ * and be picked up by driver, next time during init.
  *
- * Returns zero when save was successful, negative values otherwise.
+ * Return: zero when save was successful, negative values otherwise.
  */
-static int ice_update_tx_topo_user_sel(struct ice_pf *pf, bool txbalance_ena)
+static int ice_update_tx_topo_user_sel(struct ice_pf *pf, int layers)
 {
 	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
 	struct ice_hw *hw = &pf->hw;
@@ -680,7 +651,7 @@ static int ice_update_tx_topo_user_sel(struct ice_pf *pf, bool txbalance_ena)
 	if (err)
 		goto exit_release_res;
 
-	if (txbalance_ena)
+	if (layers == ICE_SCHED_5_LAYERS)
 		usr_sel.data |= ICE_AQC_NVM_TX_TOPO_USER_SEL;
 	else
 		usr_sel.data &= ~ICE_AQC_NVM_TX_TOPO_USER_SEL;
@@ -688,9 +659,6 @@ static int ice_update_tx_topo_user_sel(struct ice_pf *pf, bool txbalance_ena)
 	err = ice_write_one_nvm_block(pf, ICE_AQC_NVM_TX_TOPO_MOD_ID, 2,
 				      sizeof(usr_sel.data), &usr_sel.data,
 				      true, NULL, NULL);
-	if (err)
-		err = -EIO;
-
 exit_release_res:
 	ice_release_nvm(hw);
 
@@ -698,62 +666,88 @@ exit_release_res:
 }
 
 /**
- * ice_devlink_txbalance_get - Get txbalance parameter
+ * ice_devlink_tx_sched_layers_get - Get tx_scheduling_layers parameter
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to store the parameter value
  *
- * Returns zero on success and negative value on failure.
+ * Reads user's preference for Tx Scheduler Topology Tree from PFA TLV.
+ *
+ * Return: zero on success and negative value on failure.
  */
-static int ice_devlink_txbalance_get(struct devlink *devlink, u32 id,
-				     struct devlink_param_gset_ctx *ctx)
+static int ice_devlink_tx_sched_layers_get(struct devlink *devlink,
+					   u32 __always_unused id,
+					   struct devlink_param_gset_ctx *ctx)
 {
+	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
 	struct ice_pf *pf = devlink_priv(devlink);
-	struct device *dev = ice_pf_to_dev(pf);
-	int status;
+	struct ice_hw *hw = &pf->hw;
+	int err;
 
-	status = ice_get_tx_topo_user_sel(pf, &ctx->val.vbool);
-	if (status) {
-		dev_warn(dev, "Failed to read Tx Scheduler Tree - User Selection data from flash\n");
-		return -EIO;
-	}
+	err = ice_acquire_nvm(hw, ICE_RES_READ);
+	if (err)
+		return err;
 
-	return 0;
+	err = ice_aq_read_nvm(hw, ICE_AQC_NVM_TX_TOPO_MOD_ID, 0,
+			      sizeof(usr_sel), &usr_sel, true, true, NULL);
+	if (err)
+		goto exit_release_res;
+
+	if (usr_sel.data & ICE_AQC_NVM_TX_TOPO_USER_SEL)
+		ctx->val.vu8 = ICE_SCHED_5_LAYERS;
+	else
+		ctx->val.vu8 = ICE_SCHED_9_LAYERS;
+
+exit_release_res:
+	ice_release_nvm(hw);
+
+	return err;
 }
 
 #ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
 /**
- * ice_devlink_txbalance_set - Set txbalance parameter
+ * ice_devlink_tx_sched_layers_set - Set tx_scheduling_layers parameter
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to get the parameter value
  * @extack: netlink extended ACK structure
  *
- * Returns zero on success and negative value on failure.
+ * Return: zero on success and negative value on failure.
  */
-static int ice_devlink_txbalance_set(struct devlink *devlink, u32 id,
-				     struct devlink_param_gset_ctx *ctx,
-				     struct netlink_ext_ack *extack)
+static int ice_devlink_tx_sched_layers_set(struct devlink *devlink,
+					   u32 __always_unused id,
+					   struct devlink_param_gset_ctx *ctx,
+					   struct netlink_ext_ack *extack)
 #else
-static int ice_devlink_txbalance_set(struct devlink *devlink, u32 id,
-				     struct devlink_param_gset_ctx *ctx)
+static int ice_devlink_tx_sched_layers_set(struct devlink *devlink,
+					   u32 __always_unused id,
+					   struct devlink_param_gset_ctx *ctx)
 #endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	struct ice_pf *pf = devlink_priv(devlink);
+#ifndef HAVE_DEVLINK_PARAMS_SET_EXTACK
 	struct device *dev = ice_pf_to_dev(pf);
-	int status;
+#endif /* !HAVE_DEVLINK_PARAMS_SET_EXTACK */
+	int err;
 
-	status = ice_update_tx_topo_user_sel(pf, ctx->val.vbool);
-	if (status)
-		return -EIO;
+	err = ice_update_tx_topo_user_sel(pf, ctx->val.vu8);
+	if (err)
+		return err;
 
-	dev_warn(dev, "Transmit balancing setting has been changed on this device. You must reboot the system for the change to take effect");
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
+	NL_SET_ERR_MSG_MOD(extack,
+			   "Tx scheduling layers have been changed on this device. You must do the PCI slot powercycle for the change to take effect.");
+#else
+	dev_err(dev,
+		"Tx scheduling layers have been changed on this device. You must do the PCI slot powercycle for the change to take effect.");
+#endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 
 	return 0;
 }
 
 /**
- * ice_devlink_txbalance_validate - Validate passed txbalance parameter value
+ * ice_devlink_tx_sched_layers_validate - Validate passed txbalance parameter
+ *                                        value
  * @devlink: unused pointer to devlink instance
  * @id: the parameter ID to validate
  * @val: value to validate
@@ -765,9 +759,10 @@ static int ice_devlink_txbalance_set(struct devlink *devlink, u32 id,
  * Returns zero when passed parameter value is supported. Negative value on
  * error.
  */
-static int ice_devlink_txbalance_validate(struct devlink *devlink, u32 id,
-					  union devlink_param_value val,
-					  struct netlink_ext_ack *extack)
+static int ice_devlink_tx_sched_layers_validate(struct devlink *devlink,
+						u32 __always_unused id,
+						union devlink_param_value val,
+						struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_hw *hw = &pf->hw;
@@ -918,13 +913,6 @@ static const struct devlink_param ice_devlink_params[] = {
 			     ice_devlink_minsrev_get,
 			     ice_devlink_minsrev_set,
 			     ice_devlink_minsrev_validate),
-	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_TX_BALANCE,
-			     "txbalancing",
-			     DEVLINK_PARAM_TYPE_BOOL,
-			     BIT(DEVLINK_PARAM_CMODE_PERMANENT),
-			     ice_devlink_txbalance_get,
-			     ice_devlink_txbalance_set,
-			     ice_devlink_txbalance_validate),
 	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_TX_LOOPBACK,
 			     "loopback",
 			     DEVLINK_PARAM_TYPE_STRING,
@@ -932,6 +920,16 @@ static const struct devlink_param ice_devlink_params[] = {
 			     ice_devlink_loopback_get,
 			     ice_devlink_loopback_set,
 			     ice_devlink_loopback_validate),
+};
+
+static const struct devlink_param ice_dvl_sched_params[] = {
+	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_TX_SCHED_LAYERS,
+			     "tx_scheduling_layers",
+			     DEVLINK_PARAM_TYPE_U8,
+			     BIT(DEVLINK_PARAM_CMODE_PERMANENT),
+			     ice_devlink_tx_sched_layers_get,
+			     ice_devlink_tx_sched_layers_set,
+			     ice_devlink_tx_sched_layers_validate),
 };
 #endif /* HAVE_DEVLINK_PARAMS */
 
@@ -1105,9 +1103,6 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 					  DEVLINK_RESOURCE_UNIT_ENTRY);
 	res_name = ICE_DEVL_RES_NAME_MSIX;
 
-#ifndef NEED_DEVL_RESOURCE_REGISTER
-	devl_lock(devlink);
-#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 	err = devl_resource_register(devlink, res_name, all,
 				     ICE_DEVL_RES_ID_MSIX,
 				     DEVLINK_RESOURCE_ID_PARENT_TOP, &params);
@@ -1166,18 +1161,12 @@ int ice_devlink_register_resources(struct ice_pf *pf)
 
 	devl_resource_occ_get_register(devlink, ICE_DEVL_RES_ID_MSIX_RDMA,
 				       ice_devlink_res_msix_rdma_occ_get, pf);
-#ifndef NEED_DEVL_RESOURCE_REGISTER
-	devl_unlock(devlink);
-#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 	return 0;
 
 res_create_err:
 	dev_err(dev, "Failed to register devlink resource: %s error: %pe\n",
 		res_name, ERR_PTR(err));
 	devl_resources_unregister(devlink);
-#ifndef NEED_DEVL_RESOURCE_REGISTER
-	devl_unlock(devlink);
-#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 
 	return err;
 }
@@ -1186,17 +1175,11 @@ void ice_devlink_unregister_resources(struct ice_pf *pf)
 {
 	struct devlink *devlink = priv_to_devlink(pf);
 
-#ifndef NEED_DEVL_RESOURCE_REGISTER
-	devl_lock(devlink);
-#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX);
 	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_ETH);
 	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_VF);
 	devl_resource_occ_get_unregister(devlink, ICE_DEVL_RES_ID_MSIX_RDMA);
 	devl_resources_unregister(devlink);
-#ifndef NEED_DEVL_RESOURCE_REGISTER
-	devl_unlock(devlink);
-#endif /* !NEED_DEVL_RESOURCE_REGISTER */
 }
 
 /**
@@ -2310,8 +2293,8 @@ void ice_devlink_register(struct ice_pf *pf)
 #ifdef HAVE_DEVLINK_REGISTER_SETS_DEV
 	devlink_register(devlink, ice_pf_to_dev(pf));
 #else
-	devlink_register(devlink);
-#endif
+	devl_register(devlink);
+#endif /* HAVE_DEVLINK_REGISTER_SETS_DEV */
 
 #ifdef HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT
 #ifndef HAVE_DEVLINK_SET_FEATURES
@@ -2340,7 +2323,7 @@ void ice_devlink_unregister(struct ice_pf *pf)
 #endif /* !HAVE_DEVLINK_SET_FEATURES */
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 
-	devlink_unregister(devlink);
+	devl_unregister(devlink);
 }
 
 /**
@@ -2354,15 +2337,22 @@ int ice_devlink_register_params(struct ice_pf *pf)
 #ifdef HAVE_DEVLINK_PARAMS
 	struct devlink *devlink = priv_to_devlink(pf);
 	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
 	int err;
 
-	err = devlink_params_register(devlink, ice_devlink_params,
-				      ARRAY_SIZE(ice_devlink_params));
+	err = devl_params_register(devlink, ice_devlink_params,
+				   ARRAY_SIZE(ice_devlink_params));
 	if (err) {
 		ice_dev_err_errno(dev, err,
 				  "devlink params registration failed");
 		return err;
 	}
+
+	if (hw->func_caps.common_cap.tx_sched_topo_comp_mode_en)
+		err = devl_params_register(devlink, ice_dvl_sched_params,
+					   ARRAY_SIZE(ice_dvl_sched_params));
+	if (err)
+		return err;
 
 #ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 	devlink_params_publish(priv_to_devlink(pf));
@@ -2382,13 +2372,18 @@ void ice_devlink_unregister_params(struct ice_pf *pf)
 {
 #ifdef HAVE_DEVLINK_PARAMS
 	struct devlink *devlink = priv_to_devlink(pf);
+	struct ice_hw *hw = &pf->hw;
 
 #ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 	devlink_params_unpublish(priv_to_devlink(pf));
 #endif /* HAVE_DEVLINK_PARAMS_PUBLISH */
 
-	devlink_params_unregister(devlink, ice_devlink_params,
-				  ARRAY_SIZE(ice_devlink_params));
+	devl_params_unregister(devlink, ice_devlink_params,
+			       ARRAY_SIZE(ice_devlink_params));
+
+	if (hw->func_caps.common_cap.tx_sched_topo_comp_mode_en)
+		devl_params_unregister(devlink, ice_dvl_sched_params,
+				       ARRAY_SIZE(ice_dvl_sched_params));
 #endif /* HAVE_DEVLINK_PARAMS */
 }
 
@@ -2486,10 +2481,10 @@ int ice_devlink_create_pf_port(struct ice_pf *pf)
 	devlink = priv_to_devlink(pf);
 
 #ifdef HAVE_DEVLINK_PORT_OPS
-	err = devlink_port_register_with_ops(devlink, devlink_port, vsi->idx,
-					     &ice_devlink_port_ops);
+	err = devl_port_register_with_ops(devlink, devlink_port, vsi->idx,
+					  &ice_devlink_port_ops);
 #else
-	err = devlink_port_register(devlink, devlink_port, vsi->idx);
+	err = devl_port_register(devlink, devlink_port, vsi->idx);
 #endif
 	if (err) {
 		ice_dev_err_errno(dev, err,
@@ -2514,7 +2509,7 @@ void ice_devlink_destroy_pf_port(struct ice_pf *pf)
 	devlink_port = &pf->devlink_port;
 
 	devlink_port_type_clear(devlink_port);
-	devlink_port_unregister(devlink_port);
+	devl_port_unregister(devlink_port);
 }
 
 #ifdef HAVE_DEVLINK_PORT_ATTR_PCI_VF
@@ -2553,7 +2548,7 @@ int ice_devlink_create_vf_port(struct ice_vf *vf)
 	devlink_port_attrs_set(devlink_port, &attrs);
 	devlink = priv_to_devlink(pf);
 
-	err = devlink_port_register(devlink, devlink_port, vsi->idx);
+	err = devl_port_register(devlink, devlink_port, vsi->idx);
 	if (err) {
 		ice_dev_err_errno(dev, err,
 				  "Failed to create devlink port for VF %d",
@@ -2580,7 +2575,7 @@ void ice_devlink_destroy_vf_port(struct ice_vf *vf)
 	devl_rate_leaf_destroy(devlink_port);
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 	devlink_port_type_clear(devlink_port);
-	devlink_port_unregister(devlink_port);
+	devl_port_unregister(devlink_port);
 #ifndef HAVE_DEVLINK_PORT_REGISTERED
 	devlink_port->devlink = NULL;
 #endif /* HAVE_DEVLINK_PORT_REGISTERED */
@@ -2835,8 +2830,8 @@ void ice_devlink_init_regions(struct ice_pf *pf)
 	u64 nvm_size, sram_size;
 
 	nvm_size = pf->hw.flash.flash_size;
-	pf->nvm_region = devlink_region_create(devlink, &ice_nvm_region_ops, 1,
-					       nvm_size);
+	pf->nvm_region = devl_region_create(devlink, &ice_nvm_region_ops, 1,
+					    nvm_size);
 	if (IS_ERR(pf->nvm_region)) {
 		ice_dev_err_errno(dev, PTR_ERR(pf->nvm_region),
 				  "failed to create NVM devlink region");
@@ -2844,17 +2839,17 @@ void ice_devlink_init_regions(struct ice_pf *pf)
 	}
 
 	sram_size = pf->hw.flash.sr_words * 2u;
-	pf->sram_region = devlink_region_create(devlink, &ice_sram_region_ops,
-						1, sram_size);
+	pf->sram_region = devl_region_create(devlink, &ice_sram_region_ops, 1,
+					     sram_size);
 	if (IS_ERR(pf->sram_region)) {
 		dev_err(dev, "failed to create shadow-ram devlink region, err %ld\n",
 			PTR_ERR(pf->sram_region));
 		pf->sram_region = NULL;
 	}
 
-	pf->devcaps_region = devlink_region_create(devlink,
-						   &ice_devcaps_region_ops, 10,
-						   ICE_AQ_MAX_BUF_LEN);
+	pf->devcaps_region = devl_region_create(devlink,
+						&ice_devcaps_region_ops, 10,
+						ICE_AQ_MAX_BUF_LEN);
 	if (IS_ERR(pf->devcaps_region)) {
 		ice_dev_err_errno(dev, PTR_ERR(pf->devcaps_region),
 				  "failed to create device-caps devlink region");
@@ -2871,13 +2866,13 @@ void ice_devlink_init_regions(struct ice_pf *pf)
 void ice_devlink_destroy_regions(struct ice_pf *pf)
 {
 	if (pf->nvm_region)
-		devlink_region_destroy(pf->nvm_region);
+		devl_region_destroy(pf->nvm_region);
 
 	if (pf->sram_region)
-		devlink_region_destroy(pf->sram_region);
+		devl_region_destroy(pf->sram_region);
 
 	if (pf->devcaps_region)
-		devlink_region_destroy(pf->devcaps_region);
+		devl_region_destroy(pf->devcaps_region);
 }
 #endif /* HAVE_DEVLINK_REGIONS */
 
@@ -3361,27 +3356,27 @@ int ice_devlink_tc_params_register(struct ice_vsi *vsi)
 
 	if (vsi->all_numtc > 1) {
 		vsi->num_tc_devlink_params = vsi->all_numtc - 1;
-		err = devlink_params_register(devlink,
-					      ice_devlink_inline_fd_params,
-					      vsi->num_tc_devlink_params);
+		err = devl_params_register(devlink,
+					   ice_devlink_inline_fd_params,
+					   vsi->num_tc_devlink_params);
 		if (err) {
 			ice_dev_err_errno(dev, err,
 					  "devlink inline_fd params registration failed");
 			return err;
 		}
 
-		err = devlink_params_register(devlink,
-					      ice_devlink_qps_per_poller_params,
-					      vsi->num_tc_devlink_params);
+		err = devl_params_register(devlink,
+					   ice_devlink_qps_per_poller_params,
+					   vsi->num_tc_devlink_params);
 		if (err) {
 			ice_dev_err_errno(dev, err,
 					  "devlink qps_per_poller params registration failed");
 			return err;
 		}
 
-		err = devlink_params_register(devlink,
-					      ice_devlink_poller_timeout_params,
-					      vsi->num_tc_devlink_params);
+		err = devl_params_register(devlink,
+					   ice_devlink_poller_timeout_params,
+					   vsi->num_tc_devlink_params);
 		if (err) {
 			ice_dev_err_errno(dev, err,
 					  "devlink poller_timeout params registration failed");
@@ -3400,14 +3395,14 @@ void ice_devlink_tc_params_unregister(struct ice_vsi *vsi)
 	struct devlink *devlink = priv_to_devlink(vsi->back);
 
 	if (vsi->num_tc_devlink_params) {
-		devlink_params_unregister(devlink, ice_devlink_inline_fd_params,
-					  vsi->num_tc_devlink_params);
-		devlink_params_unregister(devlink,
-					  ice_devlink_qps_per_poller_params,
-					  vsi->num_tc_devlink_params);
-		devlink_params_unregister(devlink,
-					  ice_devlink_poller_timeout_params,
-					  vsi->num_tc_devlink_params);
+		devl_params_unregister(devlink, ice_devlink_inline_fd_params,
+				       vsi->num_tc_devlink_params);
+		devl_params_unregister(devlink,
+				       ice_devlink_qps_per_poller_params,
+				       vsi->num_tc_devlink_params);
+		devl_params_unregister(devlink,
+				       ice_devlink_poller_timeout_params,
+				       vsi->num_tc_devlink_params);
 		vsi->num_tc_devlink_params = 0;
 	}
 }

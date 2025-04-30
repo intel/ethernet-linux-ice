@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_PTP_HW_H_
 #define _ICE_PTP_HW_H_
@@ -315,7 +315,7 @@ int ice_read_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx, u64 *tstamp);
 int ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx);
 void ice_ptp_reset_ts_memory(struct ice_hw *hw);
 int ice_ptp_init_phc(struct ice_hw *hw);
-bool refsync_pin_id_valid(const struct ice_hw *hw, u8 id);
+bool refsync_pin_id_valid(struct ice_hw *hw, u8 id);
 int ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready);
 int ice_ptp_one_port_cmd(struct ice_hw *hw, u8 configured_port,
 			 enum ice_ptp_tmr_cmd configured_cmd);
@@ -338,8 +338,6 @@ int ice_phy_cfg_intr_e82x(struct ice_hw *hw, u8 quad, bool ena, u8 threshold);
 
 int ice_read_pca9575_reg(struct ice_hw *hw, u8 offset, u8 *data);
 int ice_write_pca9575_reg(struct ice_hw *hw, u8 offset, u8 data);
-int ice_read_sma_ctrl(struct ice_hw *hw, u8 *data);
-int ice_write_sma_ctrl(struct ice_hw *hw, u8 data);
 bool ice_is_pca9575_present(struct ice_hw *hw);
 int ice_ptp_read_sdp_ac(struct ice_hw *hw, __le16 *entries, uint *num_entries);
 int ice_ena_dis_clk_ref(struct ice_hw *hw, int phy,
@@ -388,8 +386,7 @@ int ice_phy_cfg_ptp_1step_eth56g(struct ice_hw *hw, u8 port);
 
 void ice_ptp_init_hw(struct ice_hw *hw);
 
-#define ICE_E810_PLL_FREQ	812500000
-#define ICE_E825C_PLL_FREQ	800000000
+#define ICE_E825_PLL_FREQ	800000000
 
 static inline u64 ice_e82x_pll_freq(enum ice_tspll_freq time_ref)
 {
@@ -398,13 +395,11 @@ static inline u64 ice_e82x_pll_freq(enum ice_tspll_freq time_ref)
 
 static inline u64 ice_ptp_get_pll_freq(const struct ice_hw *hw)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return ICE_E825C_PLL_FREQ;
-	case ICE_PHY_E810:
-		return ICE_E810_PLL_FREQ;
-	case ICE_PHY_E82X:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC:
 		return ice_e82x_pll_freq(hw->ptp.tspll_freq);
+	case ICE_MAC_GENERIC_3K_E825:
+		return ICE_E825_PLL_FREQ;
 	default:
 		return 0;
 	}
@@ -418,13 +413,11 @@ static inline u64 ice_e82x_nominal_incval(enum ice_tspll_freq time_ref)
 static inline u64 ice_get_base_incval(const struct ice_hw *hw,
 				      enum ice_src_tmr_mode src_tmr_mode)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_ETH56G:
-		return ICE_ETH56G_NOMINAL_INCVAL;
-	case ICE_PHY_E830:
-	case ICE_PHY_E810:
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
+	case ICE_MAC_E830:
 		return ICE_PTP_NOMINAL_INCVAL_E810;
-	case ICE_PHY_E82X:
+	case ICE_MAC_GENERIC:
 		if (src_tmr_mode == ICE_SRC_TMR_MODE_NANOSECONDS &&
 		    hw->ptp.tspll_freq < NUM_ICE_TSPLL_FREQ)
 			return ice_e82x_nominal_incval(hw->ptp.tspll_freq);
@@ -432,6 +425,8 @@ static inline u64 ice_get_base_incval(const struct ice_hw *hw,
 			return LOCKED_INCVAL_E82X;
 
 		break;
+	case ICE_MAC_GENERIC_3K_E825:
+		return ICE_ETH56G_NOMINAL_INCVAL;
 	default:
 		return 0;
 	}
@@ -651,21 +646,6 @@ static inline u64 ice_get_base_incval(const struct ice_hw *hw,
 #define LOW_TX_MEMORY_BANK_START	0x03090000
 #define HIGH_TX_MEMORY_BANK_START	0x03090004
 
-/* E810 SMA controller pin control */
-#define ICE_SMA1_DIR_EN		BIT(4)
-#define ICE_SMA1_TX_EN		BIT(5)
-#define ICE_SMA2_UFL2_RX_DIS	BIT(3)
-#define ICE_SMA2_DIR_EN		BIT(6)
-#define ICE_SMA2_TX_EN		BIT(7)
-
-#define ICE_SMA1_MASK		(ICE_SMA1_DIR_EN | ICE_SMA1_TX_EN)
-#define ICE_SMA2_MASK		(ICE_SMA2_UFL2_RX_DIS | ICE_SMA2_DIR_EN | \
-				 ICE_SMA2_TX_EN)
-#define ICE_ALL_SMA_MASK	(ICE_SMA1_MASK | ICE_SMA2_MASK)
-
-#define ICE_SMA_MIN_BIT		3
-#define ICE_SMA_MAX_BIT		7
-#define ICE_PCA9575_P1_OFFSET	8
 
 /* PCA9575 IO controller registers */
 #define ICE_PCA9575_P0_IN	0x0
@@ -750,8 +730,6 @@ static inline u64 ice_get_base_incval(const struct ice_hw *hw,
 #define PHY_REG_DESKEW_0_RLEVEL_FRAC_W	3
 #define PHY_REG_DESKEW_0_VALID		GENMASK(10, 10)
 
-#define PHY_REG_REVISION		0x85000
-#define PHY_REVISION_ETH56G		0x10200
 #define PHY_VENDOR_TXLANE_THRESH	0x2000C
 
 #define PHY_MAC_TSU_CONFIG		0x40

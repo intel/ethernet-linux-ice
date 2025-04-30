@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_H_
 #define _ICE_H_
 
 #include "kcompat.h"
+
 #ifdef HAVE_INCLUDE_BITFIELD
 #include <linux/bitfield.h>
 #endif /* HAVE_INCLUDE_BITFIELD */
@@ -59,7 +60,7 @@
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #include <net/devlink.h>
 #endif /* CONFIG_NET_DEVLINK */
-#include "devlink/ice_devlink_health.h"
+#include "devlink/health.h"
 #ifdef HAVE_CONFIG_DIMLIB
 #include <linux/dim.h>
 #else
@@ -137,12 +138,13 @@
 #include "ice_eswitch.h"
 #include "ice_vsi_vlan_ops.h"
 #include "ice_gnss.h"
+#include "ice_irq.h"
 #if IS_ENABLED(CONFIG_DPLL)
 #include "ice_dpll.h"
 #endif
 #include "ice_migration.h"
 #include "ice_migration_private.h"
-#include "ice_irq.h"
+#include "ice_adapter.h"
 
 extern const char ice_drv_ver[];
 #define ICE_BAR0			0
@@ -153,7 +155,11 @@ extern const char ice_drv_ver[];
 #endif /* CONFIG_DEBUG_FS */
 #define ICE_REQ_DESC_MULTIPLE	32
 #define ICE_MIN_NUM_DESC	64
-#define ICE_MAX_NUM_DESC	8160
+#define ICE_MAX_NUM_DESC_E810	8160
+#define ICE_MAX_NUM_DESC_E830	8096
+#define ICE_MAX_NUM_DESC_BY_MAC(hw) ((hw)->mac_type == ICE_MAC_E830 ? \
+				     ICE_MAX_NUM_DESC_E830 : \
+				     ICE_MAX_NUM_DESC_E810)
 #define ICE_DFLT_MIN_RX_DESC	512
 #define ICE_DFLT_NUM_TX_DESC	256
 #ifdef CONFIG_ICE_USE_SKB
@@ -591,7 +597,6 @@ struct ice_vsi {
 	u16 req_rxq;			 /* User requested Rx queues */
 	u16 num_rx_desc;
 	u16 num_tx_desc;
-	u16 *tstampq_map;		 /* index in pf->avail_tstampqs */
 	struct ice_tc_cfg tc_cfg;
 #ifdef HAVE_XDP_SUPPORT
 	struct bpf_prog *xdp_prog;
@@ -873,6 +878,9 @@ enum ice_pf_flags {
 	ICE_FLAG_LINK_LENIENT_MODE_ENA,
 	ICE_FLAG_ESWITCH_CAPABLE,
 	ICE_FLAG_DPLL_MONITOR,
+#ifdef BLOCK_DPLL_FREERUN
+	ICE_FLAG_BLOCK_DPLL_FREERUN,
+#endif /* BLOCK_DPLL_FREERUN */
 	ICE_FLAG_GNSS,			/* GNSS successfully initialized */
 #if IS_ENABLED(CONFIG_DPLL)
 	ICE_FLAG_DPLL,			/* SyncE/PTP dplls initialized */
@@ -946,6 +954,8 @@ struct ice_msix {
 
 struct ice_pf {
 	struct pci_dev *pdev;
+	struct ice_adapter *adapter;
+
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 #ifdef HAVE_DEVLINK_REGIONS
 	struct devlink_region *nvm_region;
@@ -1145,6 +1155,10 @@ struct ice_pf {
 	enum dpll_lock_status ptp_dpll_state;
 	u8 ptp_ref_pin;
 	s64 ptp_dpll_phase_offset;
+#if defined(BLOCK_DPLL_FREERUN)
+	bool past_ptp_lock;
+	bool past_synce_lock;
+#endif /* NOT_FOR_UPSTREAM && BLOCK_DPLL_FREERUN */
 	u8 n_quanta_prof_used;
 #ifdef HAVE_HWMON_DEVICE_REGISTER_WITH_INFO
 	struct device *hwmon_dev;
@@ -1867,13 +1881,31 @@ int
 ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
 int ice_init_acl(struct ice_pf *pf);
 
-static inline bool
-ice_pf_src_tmr_owned(struct ice_pf *pf)
+static inline bool ice_is_dual(struct ice_hw *hw)
 {
-	if (ice_is_e825c(&pf->hw))
-		return !!pf->hw.func_caps.ts_func_info.src_tmr_owned &&
-		       ice_is_primary(&pf->hw);
-	else
-		return !!pf->hw.func_caps.ts_func_info.src_tmr_owned;
+	return hw->mac_type == ICE_MAC_GENERIC_3K_E825 &&
+	       !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_DUAL_M);
 }
+
+static inline bool ice_is_primary(struct ice_hw *hw)
+{
+	return hw->mac_type != ICE_MAC_GENERIC_3K_E825 ||
+	       !ice_is_dual(hw) ||
+	       !!(hw->dev_caps.nac_topo.mode & ICE_NAC_TOPO_PRIMARY_M);
+}
+
+static inline bool ice_pf_src_tmr_owned(struct ice_pf *pf)
+{
+	return !!pf->hw.func_caps.ts_func_info.src_tmr_owned &&
+	       ice_is_primary(&pf->hw);
+}
+
+static inline struct ice_hw *ice_get_primary_hw(struct ice_pf *pf)
+{
+	if (!pf->adapter->ctrl_pf)
+		return &pf->hw;
+	else
+		return &pf->adapter->ctrl_pf->hw;
+}
+
 #endif /* _ICE_H_ */

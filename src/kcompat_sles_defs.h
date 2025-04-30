@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _KCOMPAT_SLES_DEFS_H_
 #define _KCOMPAT_SLES_DEFS_H_
@@ -124,8 +124,6 @@
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,8,2))
 #else /* >= 5.3.8-2 */
 #undef NEED_FLOW_INDR_BLOCK_CB_REGISTER
-#undef NEED_SKB_FRAG_OFF
-#undef NEED_SKB_FRAG_OFF_ADD
 #define HAVE_FLOW_INDR_BLOCK_LOCK
 #endif /* 5.3.8-2 */
 
@@ -137,15 +135,8 @@
 /*****************************************************************************/
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,18,34))
 #else /* >= 5.3.18-34 */
-#undef NEED_DEVLINK_REGION_CREATE_OPS
 #undef NEED_DEVLINK_PORT_ATTRS_SET_STRUCT
 #endif /* 5.3.18-34 */
-
-/*****************************************************************************/
-#if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,18,38))
-#else /* >= 5.3.18-38 */
-#undef NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY
-#endif /* 5.3.18-38 */
 
 /*****************************************************************************/
 #if (SLE_KERNEL_CODE < SLE_KERNEL_VERSION(5,3,18,41))

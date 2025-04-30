@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_PTP_H_
 #define _ICE_PTP_H_
@@ -157,7 +157,7 @@ struct ice_ptp_tx {
  * ready for PTP functionality. It is used to track the port initialization
  * and determine when the port's PHY offset is valid.
  *
- * @list_member: list member structure of auxiliary device
+ * @list_node: list member structure
  * @tx: Tx timestamp tracking for this port
  * @aux_dev: auxiliary device associated with this port
  * @ov_work: delayed work task for tracking when PHY offset is valid
@@ -169,9 +169,8 @@ struct ice_ptp_tx {
  * @tx_clk_prev: previously set Tx reference clock source
  */
 struct ice_ptp_port {
-	struct list_head list_member;
+	struct list_head list_node;
 	struct ice_ptp_tx tx;
-	struct auxiliary_device aux_dev;
 	struct kthread_delayed_work ov_work;
 	struct mutex ps_lock; /* protects overall PTP PHY start procedure */
 	bool link_up;
@@ -229,9 +228,6 @@ enum ice_ptp_pin_nvm {
 
 /* Pin definitions for PTP */
 #define ICE_N_PINS_MAX			6
-#define ICE_SMA_PINS_NUM		4
-#define ICE_PIN_DESC_ARR_LEN(_arr)	(sizeof(_arr) / \
-					 sizeof(struct ice_ptp_pin_desc))
 #define MAX_PIN_NAME			15
 #define	ICE_PTP_PIN_FREQ_1HZ		1
 #define	ICE_PTP_PIN_FREQ_10MHZ		10000000
@@ -253,36 +249,14 @@ struct ice_ptp_pin_desc {
 };
 
 /**
- * struct ice_ptp_port_owner - data used to handle the PTP clock owner info
- *
- * This structure contains data necessary for the PTP clock owner to correctly
- * handle the timestamping feature for all attached ports.
- *
- * @aux_driver: the structure carring the auxiliary driver information
- * @ports: list of ports handled by this port owner
- * @lock: protect access to ports list
- * @tx_refclks: bitmaps table to store the information about TX reference clocks
- * @kworker: kwork thread for handling periodic work
- * @work: delayed work function for periodic tasks
- */
-struct ice_ptp_port_owner {
-	struct auxiliary_driver aux_driver;
-	struct list_head ports;
-	struct mutex lock;
-#define ICE_E825_MAX_PHYS 2
-	unsigned long tx_refclks[ICE_E825_MAX_PHYS][ICE_REF_CLK_MAX];
-	struct kthread_worker *kworker;
-	struct kthread_delayed_work work;
-};
-
-/**
  * struct ice_ptp - data used for integrating with CONFIG_PTP_1588_CLOCK
  * @state: current state of PTP state machine
  * @tx_interrupt_mode: the TX interrupt mode for the PHC device
  * @port: data for the PHY port initialization procedure
- * @ports_owner: data for the auxiliary driver owner
+ * @work: delayed work function for periodic tasks
  * @cached_phc_time: a cached copy of the PHC time for timestamp extension
  * @cached_phc_jiffies: jiffies when cached_phc_time was last updated
+ * @kworker: kwork thread for handling periodic work
  * @ext_ts_irq: the external timestamp IRQ in use
  * @pin_desc: structure defining pins
  * @ice_pin_desc: internal structure describing pin relations
@@ -292,6 +266,7 @@ struct ice_ptp_port_owner {
  * @clock: pointer to registered PTP clock device
  * @tstamp_config: hardware timestamping configuration
  * @phy_kobj: pointer to phy sysfs object
+ * @tx_refclks: bitmaps table to store the information about TX reference clocks
  * @reset_time: kernel time after clock stop on reset
  * @tx_hwtstamp_skipped: number of Tx time stamp requests skipped
  * @tx_hwtstamp_timeouts: number of Tx skbs discarded with no time stamp
@@ -304,9 +279,10 @@ struct ice_ptp {
 	enum ice_ptp_state state;
 	enum ice_ptp_tx_interrupt tx_interrupt_mode;
 	struct ice_ptp_port port;
-	struct ice_ptp_port_owner ports_owner;
+	struct kthread_delayed_work work;
 	u64 cached_phc_time;
 	unsigned long cached_phc_jiffies;
+	struct kthread_worker *kworker;
 	u8 ext_ts_irq;
 	u8 first_pin_idx;
 	struct ptp_pin_desc pin_desc[ICE_N_PINS_MAX];
@@ -317,7 +293,8 @@ struct ice_ptp {
 	struct ptp_clock *clock;
 	struct hwtstamp_config tstamp_config;
 	struct kobject *phy_kobj;
-	struct kobject *ptp_802_3cx_kobj;
+#define ICE_E825_MAX_PHYS 2
+	unsigned long tx_refclks[ICE_E825_MAX_PHYS][ICE_REF_CLK_MAX];
 	u64 reset_time;
 	u32 tx_hwtstamp_skipped;
 	u32 tx_hwtstamp_timeouts;

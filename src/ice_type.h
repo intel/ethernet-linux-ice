@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_TYPE_H_
 #define _ICE_TYPE_H_
@@ -17,6 +17,7 @@
 #include "ice_vlan_mode.h"
 #include "ice_fwlog.h"
 #include <linux/wait.h>
+#include <uapi/linux/ptp_clock.h>
 
 static inline bool ice_is_tc_ena(unsigned long bitmap, u8 tc)
 {
@@ -171,6 +172,34 @@ enum ice_media_type {
 	ICE_MEDIA_AUI,
 };
 
+#define ICE_VALUE_UP_TO_63_MASK			0x3F
+#define ICE_VALUE_HIGHER_THAN_63_SHIFT		6
+
+/* Extended Specification Compliance Codes shared between SFF-8472
+ * (SFP/SFP+/SFP28) and SFF-8636 (QSFP/QSFP+/QSFP28).
+ */
+
+#define ICE_ECC_LOW_100G_AOC_BER_5		BIT_ULL(1)
+#define ICE_ECC_LOW_100G_AOC_BER_12		BIT_ULL(24)
+#define ICE_ECC_LOW_GAUI_AOC_BER_10		BIT_ULL(49)
+#define ICE_ECC_LOW_GAUI_AOC_BER_26		BIT_ULL(51)
+#define ICE_ECC_HIGH_GAUI_AOC			BIT_ULL(7)
+
+#define ICE_ECC_LOW_100G_ACC_BER_5		BIT_ULL(8)
+#define ICE_ECC_LOW_100G_ACC_BER_12		BIT_ULL(25)
+#define ICE_ECC_LOW_GAUI_ACC_BER_10		BIT_ULL(48)
+#define ICE_ECC_LOW_GAUI_ACC_BER_26		BIT_ULL(50)
+
+#define ICE_ECC_LOW_AOC  (ICE_ECC_LOW_100G_AOC_BER_5 | \
+			  ICE_ECC_LOW_100G_AOC_BER_12 | \
+			  ICE_ECC_LOW_GAUI_AOC_BER_10 | \
+			  ICE_ECC_LOW_GAUI_AOC_BER_26)
+
+#define ICE_ECC_LOW_ACC  (ICE_ECC_LOW_100G_ACC_BER_5 | \
+			  ICE_ECC_LOW_100G_ACC_BER_12 | \
+			  ICE_ECC_LOW_GAUI_ACC_BER_10 | \
+			  ICE_ECC_LOW_GAUI_ACC_BER_26)
+
 #define ICE_MEDIA_BASET_PHY_TYPE_LOW_M	(ICE_PHY_TYPE_LOW_100BASE_TX | \
 					 ICE_PHY_TYPE_LOW_1000BASE_T | \
 					 ICE_PHY_TYPE_LOW_2500BASE_T | \
@@ -320,6 +349,7 @@ struct ice_phy_info {
 	u64 phy_type_low;
 	u64 phy_type_high;
 	enum ice_media_type media_type;
+	u8 extended_compliance_code;
 	u8 get_link_info;
 	/* Please refer to struct ice_aqc_get_link_status_data to get
 	 * detail of enable bit in curr_user_speed_req
@@ -1363,6 +1393,29 @@ enum ice_e810_c827_idx {
 #define ICE_PORTS_PER_QUAD	4
 #define ICE_GET_QUAD_NUM(port) ((port) / ICE_PORTS_PER_QUAD)
 
+/* SMA controller pin control. */
+#define ICE_SMA1_DIR_EN		BIT(4)
+#define ICE_SMA1_TX_EN		BIT(5)
+#define ICE_SMA2_UFL2_RX_DIS	BIT(3)
+#define ICE_SMA2_DIR_EN		BIT(6)
+#define ICE_SMA2_TX_EN		BIT(7)
+
+#define ICE_SMA1_MASK		(ICE_SMA1_DIR_EN | ICE_SMA1_TX_EN)
+#define ICE_SMA2_MASK		(ICE_SMA2_UFL2_RX_DIS | ICE_SMA2_DIR_EN | \
+				 ICE_SMA2_TX_EN)
+#define ICE_ALL_SMA_MASK	(ICE_SMA1_MASK | ICE_SMA2_MASK)
+
+#define ICE_SMA_MIN_BIT		3
+#define ICE_SMA_MAX_BIT		7
+#define ICE_PCA9575_P1_OFFSET	8
+enum ice_sma_pins {
+	SMA_SMA1 = 0,
+	SMA_UFL1,
+	SMA_SMA2,
+	SMA_UFL2,
+	ICE_SMA_PINS_NUM
+};
+
 #define ATQBAL_FLAGS_INTR_IN_PROGRESS	BIT(0)
 
 struct ice_e810_params {
@@ -1396,15 +1449,6 @@ union ice_phy_params {
 	struct ice_eth56g_params eth56g;
 };
 
-/* PHY model */
-enum ice_phy_model {
-	ICE_PHY_UNSUP = -1,
-	ICE_PHY_E82X = 1,
-	ICE_PHY_ETH56G,
-	ICE_PHY_E810,
-	ICE_PHY_E830,
-};
-
 /* Global Link Topology */
 enum ice_global_link_topo {
 	ICE_LINK_TOPO_UP_TO_2_LINKS,
@@ -1414,15 +1458,14 @@ enum ice_global_link_topo {
 };
 
 struct ice_ptp_hw {
-	enum ice_phy_model phy_model;
 	union ice_phy_params phy;
 	u8 num_lports;
 	u8 ports_per_phy;
 	enum ice_src_tmr_mode src_tmr_mode;
 	enum ice_tspll_freq tspll_freq;
+	enum ptp_pin_function sma_cfg[ICE_SMA_PINS_NUM];
 	enum ice_clk_src clk_src;
 	u32 tspll_lock_retries;
-	struct ice_hw *primary_nac_hw;
 	u16 io_expander_handle;
 	u8 cgu_part_number;
 };
@@ -1436,7 +1479,7 @@ struct ice_lm_ops {
 			   struct ice_aqc_set_phy_cfg_data *cfg,
 			   struct ice_sq_cd *cd);
 	int (*restart_an)(struct ice_port_info *pi, bool ena_link,
-			  struct ice_sq_cd *cd);
+			  struct ice_sq_cd *cd, u8 refclk);
 	int (*get_link_info)(struct ice_port_info *pi, bool ena_lse,
 			     struct ice_link_status *link,
 			     struct ice_sq_cd *cd);

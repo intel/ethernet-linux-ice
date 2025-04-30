@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice_common.h"
 #include "ice_sched.h"
@@ -204,133 +204,7 @@ static int ice_set_mac_type(struct ice_hw *hw)
 bool ice_is_generic_mac(struct ice_hw *hw)
 {
 	return (hw->mac_type == ICE_MAC_GENERIC ||
-		hw->mac_type == ICE_MAC_GENERIC_3K ||
 		hw->mac_type == ICE_MAC_GENERIC_3K_E825);
-}
-
-/**
- * ice_is_e810
- * @hw: pointer to the hardware structure
- *
- * Return: true if the device is E810 based, false if not.
- */
-bool ice_is_e810(const struct ice_hw *hw)
-{
-	return hw->mac_type == ICE_MAC_E810;
-}
-
-/**
- * ice_is_e810t
- * @hw: pointer to the hardware structure
- *
- * Return: true if the device is E810T based, false if not.
- */
-bool ice_is_e810t(const struct ice_hw *hw)
-{
-	switch (hw->device_id) {
-	case ICE_DEV_ID_E810C_SFP:
-		switch (hw->subsystem_device_id) {
-		case ICE_SUBDEV_ID_E810T:
-		case ICE_SUBDEV_ID_E810T2:
-		case ICE_SUBDEV_ID_E810T3:
-		case ICE_SUBDEV_ID_E810T4:
-		case ICE_SUBDEV_ID_E810T6:
-		case ICE_SUBDEV_ID_E810T7:
-			return true;
-		}
-		break;
-	case ICE_DEV_ID_E810C_QSFP:
-		switch (hw->subsystem_device_id) {
-		case ICE_SUBDEV_ID_E810T2:
-		case ICE_SUBDEV_ID_E810T3:
-		case ICE_SUBDEV_ID_E810T5:
-			return true;
-		}
-		break;
-	default:
-		break;
-	}
-
-	return false;
-}
-
-/**
- * ice_is_e822
- * @hw: pointer to the hardware structure
- *
- * Return: true if the device is E822 based, false if not.
- */
-bool ice_is_e822(const struct ice_hw *hw)
-{
-	switch (hw->device_id) {
-	case ICE_DEV_ID_E822C_BACKPLANE:
-	case ICE_DEV_ID_E822C_QSFP:
-	case ICE_DEV_ID_E822C_SFP:
-	case ICE_DEV_ID_E822C_10G_BASE_T:
-	case ICE_DEV_ID_E822C_SGMII:
-	case ICE_DEV_ID_E822L_BACKPLANE:
-	case ICE_DEV_ID_E822L_SFP:
-	case ICE_DEV_ID_E822L_10G_BASE_T:
-	case ICE_DEV_ID_E822L_SGMII:
-		return true;
-	default:
-		return false;
-	}
-}
-
-/**
- * ice_is_e823
- * @hw: pointer to the hardware structure
- *
- * Return: true if the device is E823-L or E823-C based, false if not.
- */
-bool ice_is_e823(const struct ice_hw *hw)
-{
-	switch (hw->device_id) {
-	case ICE_DEV_ID_E823L_BACKPLANE:
-	case ICE_DEV_ID_E823L_SFP:
-	case ICE_DEV_ID_E823L_10G_BASE_T:
-	case ICE_DEV_ID_E823L_1GBE:
-	case ICE_DEV_ID_E823L_QSFP:
-	case ICE_DEV_ID_E823C_BACKPLANE:
-	case ICE_DEV_ID_E823C_QSFP:
-	case ICE_DEV_ID_E823C_SFP:
-	case ICE_DEV_ID_E823C_10G_BASE_T:
-	case ICE_DEV_ID_E823C_SGMII:
-		return true;
-	default:
-		return false;
-	}
-}
-
-/**
- * ice_is_e825c
- * @hw: pointer to the hardware structure
- *
- * Return: true if the device is E825-C based, false if not.
- */
-bool ice_is_e825c(const struct ice_hw *hw)
-{
-	switch (hw->device_id) {
-	case ICE_DEV_ID_E825C_BACKPLANE:
-	case ICE_DEV_ID_E825C_QSFP:
-	case ICE_DEV_ID_E825C_SFP:
-	case ICE_DEV_ID_E825C_SGMII:
-		return true;
-	default:
-		return false;
-	}
-}
-
-/**
- * ice_is_e830
- * @hw: pointer to the hardware structure
- *
- * Return: true if the device is E830 based, false if not.
- */
-bool ice_is_e830(const struct ice_hw *hw)
-{
-	return hw->mac_type == ICE_MAC_E830;
 }
 
 /**
@@ -444,10 +318,17 @@ static void ice_set_media_type(struct ice_port_info *pi)
 {
 	enum ice_media_type *media_type;
 	u64 phy_type_high, phy_type_low;
+	u64 ecc_flag_low, ecc_flag_high;
+	u8 extended_compliance_code;
 
+	extended_compliance_code = pi->phy.extended_compliance_code;
 	phy_type_high = pi->phy.phy_type_high;
 	phy_type_low = pi->phy.phy_type_low;
 	media_type = &pi->phy.media_type;
+	ecc_flag_low = BIT_ULL(extended_compliance_code &
+			ICE_VALUE_UP_TO_63_MASK);
+	ecc_flag_high = BIT_ULL(extended_compliance_code >>
+			ICE_VALUE_HIGHER_THAN_63_SHIFT);
 
 	/* if no media, then media type is NONE */
 	if (!(pi->phy.link_info.link_info & ICE_AQ_MEDIA_AVAILABLE))
@@ -469,7 +350,11 @@ static void ice_set_media_type(struct ice_port_info *pi)
 		 ((phy_type_low & ICE_MEDIA_OPT_PHY_TYPE_LOW_M ||
 		   phy_type_high & ICE_MEDIA_OPT_PHY_TYPE_HIGH_M) &&
 		  (phy_type_low & ICE_MEDIA_C2M_PHY_TYPE_LOW_M ||
-		   phy_type_high & ICE_MEDIA_C2M_PHY_TYPE_HIGH_M)))
+		   phy_type_high & ICE_MEDIA_C2M_PHY_TYPE_HIGH_M)) ||
+		 ((phy_type_low & ICE_MEDIA_C2M_PHY_TYPE_LOW_M ||
+		   phy_type_high & ICE_MEDIA_C2M_PHY_TYPE_HIGH_M) &&
+		  (ecc_flag_low & ICE_ECC_LOW_AOC ||
+		   ecc_flag_high & ICE_ECC_HIGH_GAUI_AOC)))
 		*media_type = ICE_MEDIA_FIBER;
 	/* else if PHY types are only DA, or DA and C2C, then media type DA */
 	else if (ice_phy_maps_to_media(phy_type_low, phy_type_high,
@@ -580,6 +465,8 @@ ice_aq_get_phy_caps(struct ice_port_info *pi, bool qual_mods, u8 report_mode,
 	if (!status && report_mode == ICE_AQC_REPORT_TOPO_CAP_MEDIA) {
 		pi->phy.phy_type_low = le64_to_cpu(pcaps->phy_type_low);
 		pi->phy.phy_type_high = le64_to_cpu(pcaps->phy_type_high);
+		pi->phy.extended_compliance_code =
+			pcaps->extended_compliance_code;
 		memcpy(pi->phy.link_info.module_type, &pcaps->module_type,
 		       sizeof(pi->phy.link_info.module_type));
 		ice_set_media_type(pi);
@@ -1042,9 +929,18 @@ void ice_set_umac_shared(struct ice_hw *hw)
  */
 static int ice_get_phy_lane_number(struct ice_hw *hw)
 {
-	struct ice_aqc_get_port_options_elem *options __free(kfree);
+	struct ice_aqc_get_port_options_elem *options __free(kfree) = NULL;
 	unsigned int lport = 0;
 	unsigned int lane;
+
+	/* E82X does not have sequential IDs, lane number is PF ID.
+	 * For E825 device, the exception is the variant with external
+	 * PHY (0x579F), in which there is a linear pf_d -> lane number
+	 * mapping preserved.
+	 */
+	if (hw->mac_type == ICE_MAC_GENERIC ||
+	    hw->device_id == ICE_DEV_ID_E825C_SGMII)
+		return hw->pf_id;
 
 	options = kcalloc(ICE_AQC_PORT_OPT_MAX, sizeof(*options), GFP_KERNEL);
 	if (!options)
@@ -3089,7 +2985,7 @@ ice_parse_1588_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_p,
 
 	info->clk_src = ((number & ICE_TS_CLK_SRC_M) != 0);
 	clk_freq = FIELD_GET(ICE_TS_CLK_FREQ_M, number);
-	if (ice_is_e825c(hw)) {
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825) {
 		info->clk_src = ICE_CLK_SRC_TCXO;
 		clk_freq = ICE_TSPLL_FREQ_156_250;
 	}
@@ -3992,6 +3888,7 @@ bool ice_is_100m_speed_supported(struct ice_hw *hw)
 	case ICE_DEV_ID_E822L_SGMII:
 	case ICE_DEV_ID_E823L_1GBE:
 	case ICE_DEV_ID_E823C_SGMII:
+	case ICE_DEV_ID_E825C_SGMII:
 		return true;
 	default:
 		return false;
@@ -4732,12 +4629,13 @@ int ice_get_link_status(struct ice_port_info *pi, bool *link_up)
  * @pi: pointer to the port information structure
  * @ena_link: if true: enable link, if false: disable link
  * @cd: pointer to command details structure or NULL
+ * @refclk: the new TX reference clock, 0 if no change
  *
  * Sets up the link and restarts the Auto-Negotiation over the link.
  */
 static int
 ice_aq_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
-			   struct ice_sq_cd *cd)
+			   struct ice_sq_cd *cd, u8 refclk)
 {
 	int status = -EIO;
 	struct ice_aqc_restart_an *cmd;
@@ -4753,6 +4651,8 @@ ice_aq_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
 		cmd->cmd_flags |= ICE_AQC_RESTART_AN_LINK_ENABLE;
 	else
 		cmd->cmd_flags &= ~ICE_AQC_RESTART_AN_LINK_ENABLE;
+
+	cmd->cmd_flags |= FIELD_PREP(ICE_AQC_RESTART_AN_REFCLK_M, refclk);
 
 	status = ice_aq_send_cmd(pi->hw, &desc, NULL, 0, cd);
 	if (status)
@@ -7647,6 +7547,160 @@ ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
 }
 
 /**
+ * ice_get_pca9575_handle
+ * @hw: pointer to the hw struct
+ * @pca9575_handle: GPIO controller's handle
+ *
+ * Find and return the GPIO controller's handle by checking what drives clock
+ * mux pin. When found - the value will be cached in the hw structure and
+ * following calls will return cached value.
+ */
+int ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle)
+{
+	u8 node_part_number, idx, node_part_num_clk_mux;
+	struct ice_aqc_get_link_topo_pin cmd_pin;
+	u16 node_handle, clock_mux_handle;
+	struct ice_aqc_get_link_topo cmd;
+	int status;
+
+	if (!hw || !pca9575_handle)
+		return -EINVAL;
+
+	/* If handle was read previously return cached value */
+	if (hw->ptp.io_expander_handle) {
+		*pca9575_handle = hw->ptp.io_expander_handle;
+		return 0;
+	}
+
+	memset(&cmd, 0, sizeof(cmd));
+	memset(&cmd_pin, 0, sizeof(cmd_pin));
+	node_part_num_clk_mux = ICE_AQC_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX;
+
+	/* Look for CLOCK MUX handle in the netlist */
+	status = ice_find_netlist_node(hw, ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_MUX,
+				       ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL,
+				       node_part_num_clk_mux,
+				       &clock_mux_handle);
+	if (status)
+		return -EOPNOTSUPP;
+
+	/* Take CLOCK MUX GPIO pin */
+	cmd_pin.input_io_params = (ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_GPIO <<
+				   ICE_AQC_LINK_TOPO_INPUT_IO_TYPE_S);
+	cmd_pin.input_io_params |= (ICE_AQC_LINK_TOPO_IO_FUNC_CLK_IN <<
+				    ICE_AQC_LINK_TOPO_INPUT_IO_FUNC_S);
+	cmd_pin.addr.handle = cpu_to_le16(clock_mux_handle);
+	cmd_pin.addr.topo_params.node_type_ctx =
+		(ICE_AQC_LINK_TOPO_NODE_TYPE_CLK_MUX <<
+		 ICE_AQC_LINK_TOPO_NODE_TYPE_S);
+	cmd_pin.addr.topo_params.node_type_ctx |=
+		(ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED <<
+		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
+
+	status = ice_aq_get_netlist_node_pin(hw, &cmd_pin, &node_handle);
+	if (status)
+		return -EOPNOTSUPP;
+
+	/* Check what is driving the pin */
+	cmd.addr.topo_params.node_type_ctx =
+		(ICE_AQC_LINK_TOPO_NODE_TYPE_GPIO_CTRL <<
+		 ICE_AQC_LINK_TOPO_NODE_TYPE_S);
+	cmd.addr.topo_params.node_type_ctx |=
+		(ICE_AQC_LINK_TOPO_NODE_CTX_GLOBAL <<
+		 ICE_AQC_LINK_TOPO_NODE_CTX_S);
+	cmd.addr.handle = cpu_to_le16(node_handle);
+
+#define SW_PCA9575_SFP_TOPO_IDX		2
+#define SW_PCA9575_QSFP_TOPO_IDX	1
+
+	/* Check if the SW IO expander controlling SMA exists in the netlist. */
+	if (hw->device_id == ICE_DEV_ID_E810C_SFP)
+		idx = SW_PCA9575_SFP_TOPO_IDX;
+	else if (hw->device_id == ICE_DEV_ID_E810C_QSFP)
+		idx = SW_PCA9575_QSFP_TOPO_IDX;
+	else
+		return -EOPNOTSUPP;
+
+	cmd.addr.topo_params.index = idx;
+	status = ice_aq_get_netlist_node(hw, &cmd, &node_part_number,
+					 &node_handle);
+	if (status)
+		return -EOPNOTSUPP;
+
+	/* Verify if PCA9575 drives the pin */
+	if (node_part_number != ICE_AQC_GET_LINK_TOPO_NODE_NR_PCA9575)
+		return -EOPNOTSUPP;
+
+	/* If present save the handle and return it */
+	hw->ptp.io_expander_handle = node_handle;
+	*pca9575_handle = hw->ptp.io_expander_handle;
+
+	return 0;
+}
+
+/**
+ * ice_read_sma_ctrl
+ * @hw: pointer to the hw struct
+ * @data: pointer to data to be read from the GPIO controller
+ *
+ * Read the SMA controller state. Only bits 3-7 in data are valid.
+ */
+int ice_read_sma_ctrl(struct ice_hw *hw, u8 *data)
+{
+	int status;
+	u16 handle;
+	u8 i;
+
+	status = ice_get_pca9575_handle(hw, &handle);
+	if (status)
+		return status;
+
+	*data = 0;
+
+	for (i = ICE_SMA_MIN_BIT; i <= ICE_SMA_MAX_BIT; i++) {
+		bool pin;
+
+		status = ice_aq_get_gpio(hw, handle, i + ICE_PCA9575_P1_OFFSET,
+					 &pin, NULL);
+		if (status)
+			break;
+		*data |= (u8)(!pin) << i;
+	}
+
+	return status;
+}
+
+/**
+ * ice_write_sma_ctrl
+ * @hw: pointer to the hw struct
+ * @data: data to be written to the GPIO controller
+ *
+ * Write the data to the SMA controller. Only bits 3-7 in data are valid.
+ */
+int ice_write_sma_ctrl(struct ice_hw *hw, u8 data)
+{
+	int status;
+	u16 handle;
+	u8 i;
+
+	status = ice_get_pca9575_handle(hw, &handle);
+	if (status)
+		return status;
+
+	for (i = ICE_SMA_MIN_BIT; i <= ICE_SMA_MAX_BIT; i++) {
+		bool pin;
+
+		pin = !(data & (1 << i));
+		status = ice_aq_set_gpio(hw, handle, i + ICE_PCA9575_P1_OFFSET,
+					 pin, NULL);
+		if (status)
+			break;
+	}
+
+	return status;
+}
+
+/**
  * ice_aq_set_driver_param - Set driver parameter to share via firmware
  * @hw: pointer to the HW struct
  * @idx: parameter index to set
@@ -8231,7 +8285,7 @@ u32 ice_get_link_speed(u16 index)
  */
 bool ice_fw_supports_fec_dis_auto(struct ice_hw *hw)
 {
-	if (ice_is_e830(hw))
+	if (hw->mac_type == ICE_MAC_E830)
 		return true;
 
 	return ice_is_fw_min_ver(hw, ICE_FW_VER_BRANCH_E810,

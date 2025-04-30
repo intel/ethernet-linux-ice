@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* ethtool support for ice */
 
@@ -275,6 +275,9 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 	ICE_PRIV_FLAG("legacy-rx", ICE_FLAG_LEGACY_RX),
 	/* Flag enable/disable monitoring DPLL Admin Queue error events */
 	ICE_PRIV_FLAG("dpll_monitor", ICE_FLAG_DPLL_MONITOR),
+#if defined(BLOCK_DPLL_FREERUN)
+	ICE_PRIV_FLAG("block-dpll-freerun", ICE_FLAG_BLOCK_DPLL_FREERUN),
+#endif /* NOT_FOR_UPSTREAM && BLOCK_DPLL_FREERUN */
 	ICE_PRIV_FLAG("allow-no-fec-modules-in-auto",
 		      ICE_FLAG_ALLOW_FEC_DIS_AUTO),
 };
@@ -567,86 +570,61 @@ static int ice_get_port_topology(struct ice_hw *hw, u8 lport,
  * @hw: pointer to the HW struct
  * @serdes_num: represents the serdes number
  * @ptr: structure to read all serdes parameter for given serdes
- * returns all serdes equalisation parameter supported per serdes number
+ *
+ * Return: all serdes equalization parameter supported per serdes number
  */
 static int ice_get_tx_rx_equa(struct ice_hw *hw, u8 serdes_num,
 			      struct ice_serdes_equalization_to_ethtool *ptr)
 {
+	static const int tx = ICE_AQC_OP_CODE_TX_EQU;
+	static const int rx = ICE_AQC_OP_CODE_RX_EQU;
+	struct {
+		int data_in;
+		int opcode;
+		int *out;
+	} aq_params[] = {
+		{ ICE_AQC_TX_EQU_PRE1, tx, &ptr->tx_equ_pre1 },
+		{ ICE_AQC_TX_EQU_PRE3, tx, &ptr->tx_equ_pre3 },
+		{ ICE_AQC_TX_EQU_ATTEN, tx, &ptr->tx_equ_atten },
+		{ ICE_AQC_TX_EQU_POST1, tx, &ptr->tx_equ_post1 },
+		{ ICE_AQC_TX_EQU_PRE2, tx, &ptr->tx_equ_pre2 },
+		{ ICE_AQC_RX_EQU_PRE2, rx, &ptr->rx_equ_pre2 },
+		{ ICE_AQC_RX_EQU_PRE1, rx, &ptr->rx_equ_pre1 },
+		{ ICE_AQC_RX_EQU_POST1, rx, &ptr->rx_equ_post1 },
+		{ ICE_AQC_RX_EQU_BFLF, rx, &ptr->rx_equ_bflf },
+		{ ICE_AQC_RX_EQU_BFHF, rx, &ptr->rx_equ_bfhf },
+		{ ICE_AQC_RX_EQU_CTLE_GAINHF, rx, &ptr->rx_equ_ctle_gainhf },
+		{ ICE_AQC_RX_EQU_CTLE_GAINLF, rx, &ptr->rx_equ_ctle_gainlf },
+		{ ICE_AQC_RX_EQU_CTLE_GAINDC, rx, &ptr->rx_equ_ctle_gaindc },
+		{ ICE_AQC_RX_EQU_CTLE_BW, rx, &ptr->rx_equ_ctle_bw },
+		{ ICE_AQC_RX_EQU_DFE_GAIN, rx, &ptr->rx_equ_dfe_gain },
+		{ ICE_AQC_RX_EQU_DFE_GAIN2, rx, &ptr->rx_equ_dfe_gain_2 },
+		{ ICE_AQC_RX_EQU_DFE_2, rx, &ptr->rx_equ_dfe_2 },
+		{ ICE_AQC_RX_EQU_DFE_3, rx, &ptr->rx_equ_dfe_3 },
+		{ ICE_AQC_RX_EQU_DFE_4, rx, &ptr->rx_equ_dfe_4 },
+		{ ICE_AQC_RX_EQU_DFE_5, rx, &ptr->rx_equ_dfe_5 },
+		{ ICE_AQC_RX_EQU_DFE_6, rx, &ptr->rx_equ_dfe_6 },
+		{ ICE_AQC_RX_EQU_DFE_7, rx, &ptr->rx_equ_dfe_7 },
+		{ ICE_AQC_RX_EQU_DFE_8, rx, &ptr->rx_equ_dfe_8 },
+		{ ICE_AQC_RX_EQU_DFE_9, rx, &ptr->rx_equ_dfe_9 },
+		{ ICE_AQC_RX_EQU_DFE_10, rx, &ptr->rx_equ_dfe_10 },
+		{ ICE_AQC_RX_EQU_DFE_11, rx, &ptr->rx_equ_dfe_11 },
+		{ ICE_AQC_RX_EQU_DFE_12, rx, &ptr->rx_equ_dfe_12 },
+	};
 	int err;
 
-	if (!ptr)
-		return -EOPNOTSUPP;
+	for (int i = 0; i < ARRAY_SIZE(aq_params); i++) {
+		err = ice_aq_get_phy_equalization(hw, aq_params[i].data_in,
+						  aq_params[i].opcode,
+						  serdes_num, aq_params[i].out);
+		if (err)
+			break;
+	}
 
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_PRE1,
-					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
-					  &ptr->tx_equalization_pre1);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_PRE3,
-					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
-					  &ptr->tx_equalization_pre3);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_ATTEN,
-					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
-					  &ptr->tx_equalization_atten);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_POST1,
-					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
-					  &ptr->tx_equalization_post1);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_TX_EQU_PRE2,
-					  ICE_AQC_OP_CODE_TX_EQU, serdes_num,
-					  &ptr->tx_equalization_pre2);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_PRE2,
-					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
-					  &ptr->rx_equalization_pre2);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_PRE1,
-					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
-					  &ptr->rx_equalization_pre1);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_POST1,
-					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
-					  &ptr->rx_equalization_post1);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_BFLF,
-					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
-					  &ptr->rx_equalization_bflf);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_BFHF,
-					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
-					  &ptr->rx_equalization_bfhf);
-	if (err)
-		return err;
-
-	err = ice_aq_get_phy_equalization(hw, ICE_AQC_RX_EQU_DRATE,
-					  ICE_AQC_OP_CODE_RX_EQU, serdes_num,
-					  &ptr->rx_equalization_drate);
-	if (err)
-		return err;
-
-	return 0;
+	return err;
 }
 
-#ifdef HAVE_GET_FEC_STATS_OPS
+#ifdef HAVE_ETHTOOL_GET_FEC_STATS_OPS
 /**
  * ice_get_port_fec_stats - returns FEC correctable, uncorrectable stats per
  *                          pcsquad, pcsport
@@ -669,27 +647,23 @@ static int ice_get_port_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
 
 	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_FEC_CORR_LOW,
 				   &fec_corr_low_val);
-
 	if (err)
 		return err;
 
 	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port, ICE_FEC_CORR_HIGH,
 				   &fec_corr_high_val);
-
 	if (err)
 		return err;
 
 	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
 				   ICE_FEC_UNCORR_LOW,
 				   &fec_uncorr_low_val);
-
 	if (err)
 		return err;
 
 	err = ice_aq_get_fec_stats(hw, pcs_quad, pcs_port,
 				   ICE_FEC_UNCORR_HIGH,
 				   &fec_uncorr_high_val);
-
 	if (err)
 		return err;
 
@@ -697,7 +671,6 @@ static int ice_get_port_fec_stats(struct ice_hw *hw, u16 pcs_quad, u16 pcs_port,
 					     fec_corr_low_val;
 	fec_stats->uncorrectable_blocks.total = (fec_uncorr_high_val << 16) +
 						 fec_uncorr_low_val;
-
 	return 0;
 }
 
@@ -739,7 +712,7 @@ static void ice_get_fec_stats(struct net_device *netdev,
 		netdev_info(netdev, "FEC stats get failed Lport %d Err %d\n",
 			    pi->lport, err);
 }
-#endif /* HAVE_GET_FEC_STATS_OPS */
+#endif /* HAVE_ETHTOOL_GET_FEC_STATS_OPS */
 
 /**
  * ice_get_extended_regs - returns FEC correctable, uncorrectable stats per
@@ -2759,7 +2732,12 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			goto ethtool_exit;
 		}
 	}
-
+#if defined(BLOCK_DPLL_FREERUN)
+	if (test_bit(ICE_FLAG_BLOCK_DPLL_FREERUN, change_flags)) {
+		pf->past_synce_lock = false;
+		pf->past_ptp_lock = false;
+	}
+#endif /* NOT_FOR_UPSTREAM && BLOCK_DPLL_FREERUN */
 	if (test_bit(ICE_FLAG_ALLOW_FEC_DIS_AUTO, change_flags)) {
 		enum ice_fec_mode fec = ICE_FEC_AUTO;
 
@@ -3502,11 +3480,25 @@ ice_ksettings_find_adv_link_speed(const struct ethtool_link_ksettings *ks)
 	    ethtool_link_ksettings_test_link_mode(ks, advertising,
 						  50000baseKR2_Full))
 		adv_link_speed |= ICE_AQ_LINK_SPEED_50GB;
+#ifdef HAVE_ETHTOOL_200G_BITS
+	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  50000baseCR_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  50000baseKR_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  50000baseSR_Full))
+		adv_link_speed |= ICE_AQ_LINK_SPEED_50GB;
+#endif /* HAVE_ETHTOOL_200G_BITS */
 #endif /* HAVE_ETHTOOL_50G_BITS */
 #ifdef HAVE_ETHTOOL_NEW_50G_BITS
 	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
 						  50000baseSR2_Full))
 		adv_link_speed |= ICE_AQ_LINK_SPEED_50GB;
+#ifdef HAVE_ETHTOOL_200G_BITS
+	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  50000baseLR_ER_FR_Full))
+		adv_link_speed |= ICE_AQ_LINK_SPEED_50GB;
+#endif /* HAVE_ETHTOOL_200G_BITS */
 #endif /* HAVE_ETHTOOL_NEW_50G_BITS */
 #ifdef HAVE_ETHTOOL_100G_BITS
 	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
@@ -3577,14 +3569,14 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 			if (!ethtool_link_ksettings_test_link_mode(ks,
 								   supported,
 								   Autoneg) &&
-			    !ice_is_e822(p->hw)) {
+			    p->hw->mac_type != ICE_MAC_GENERIC) {
 				netdev_info(netdev, "Autoneg not supported on this phy.\n");
 				err = -EINVAL;
 			} else {
 				/* Autoneg is allowed to change */
 
 				/* Set AN_EN_CLAUSE37 to 1 to enable AN on E822 devices.*/
-				if (ice_is_e822(p->hw))
+				if (p->hw->mac_type == ICE_MAC_GENERIC)
 					config->low_power_ctrl_an |= ICE_AQC_PHY_AN_EN_CLAUSE37;
 				config->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 				*autoneg_changed = 1;
@@ -3601,7 +3593,7 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 			if (ethtool_link_ksettings_test_link_mode(ks,
 								  supported,
 								  Autoneg) &&
-			    !ice_is_e822(p->hw)) {
+			    p->hw->mac_type != ICE_MAC_GENERIC) {
 				netdev_info(netdev, "Autoneg cannot be disabled on this phy\n");
 				err = -EINVAL;
 			} else {
@@ -3613,7 +3605,7 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 				 * high to propagate the changes, otherwise manual link down/up
 				 * would be required to have the change reflected in HW.
 				 */
-				if (ice_is_e822(p->hw)) {
+				if (p->hw->mac_type == ICE_MAC_GENERIC) {
 					config->low_power_ctrl_an &= ~ICE_AQC_PHY_AN_EN_CLAUSE37;
 					config->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 				}
@@ -4736,9 +4728,11 @@ ice_get_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
+	struct ice_hw *hw;
 
-	ring->rx_max_pending = ICE_MAX_NUM_DESC;
-	ring->tx_max_pending = ICE_MAX_NUM_DESC;
+	hw = &vsi->back->hw;
+	ring->rx_max_pending = ICE_MAX_NUM_DESC_BY_MAC(hw);
+	ring->tx_max_pending = ICE_MAX_NUM_DESC_BY_MAC(hw);
 	ring->rx_pending = vsi->rx_rings[0]->count;
 	ring->tx_pending = vsi->tx_rings[0]->count;
 
@@ -4761,6 +4755,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 #endif /* HAVE_ETHTOOL_EXTENDED_RINGPARAMS */
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_tx_ring *tstamp_rings = NULL;
 #ifdef HAVE_XDP_SUPPORT
 	struct ice_tx_ring *xdp_rings = NULL;
 #endif /* HAVE_XDP_SUPPORT */
@@ -4769,15 +4764,16 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_pf *pf = vsi->back;
 	int i, timeout = 50, err = 0;
+	struct ice_hw *hw = &pf->hw;
 	u16 new_rx_cnt, new_tx_cnt;
 
-	if (ring->tx_pending > ICE_MAX_NUM_DESC ||
+	if (ring->tx_pending > ICE_MAX_NUM_DESC_BY_MAC(hw) ||
 	    ring->tx_pending < ICE_MIN_NUM_DESC ||
-	    ring->rx_pending > ICE_MAX_NUM_DESC ||
+	    ring->rx_pending > ICE_MAX_NUM_DESC_BY_MAC(hw) ||
 	    ring->rx_pending < ICE_MIN_NUM_DESC) {
 		netdev_err(netdev, "Descriptors requested (Tx: %d / Rx: %d) out of range [%d-%d] (increment %d)\n",
 			   ring->tx_pending, ring->rx_pending,
-			   ICE_MIN_NUM_DESC, ICE_MAX_NUM_DESC,
+			   ICE_MIN_NUM_DESC, ICE_MAX_NUM_DESC_BY_MAC(hw),
 			   ICE_REQ_DESC_MULTIPLE);
 		return -EINVAL;
 	}
@@ -4816,8 +4812,16 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 
 	/* set for the next time the netdev is started */
 	if (!netif_running(vsi->netdev)) {
-		ice_for_each_txq(vsi, i)
+		ice_for_each_txq(vsi, i) {
 			vsi->tx_rings[i]->count = new_tx_cnt;
+			/* Change all tstamp_rings to match Tx rings */
+			if (test_bit(ICE_FLAG_TXPP, pf->flags)) {
+				u16 cnt = ice_calc_ts_ring_count(&pf->hw,
+								 new_tx_cnt);
+
+				vsi->tstamp_rings[i]->count = cnt;
+			}
+		}
 		ice_for_each_rxq(vsi, i)
 			vsi->rx_rings[i]->count = new_rx_cnt;
 #ifdef HAVE_XDP_SUPPORT
@@ -4844,6 +4848,12 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		goto done;
 	}
 
+	tstamp_rings = kcalloc(vsi->num_txq, sizeof(*tstamp_rings), GFP_KERNEL);
+	if (!tstamp_rings) {
+		err = -ENOMEM;
+		goto done;
+	}
+
 	ice_for_each_txq(vsi, i) {
 		/* clone ring and setup updated count */
 		tx_rings[i] = *vsi->tx_rings[i];
@@ -4851,12 +4861,30 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		tx_rings[i].desc = NULL;
 		tx_rings[i].tx_buf = NULL;
 		tx_rings[i].tx_tstamps = &pf->ptp.port.tx;
+		if (test_bit(ICE_FLAG_TXPP, pf->flags)) {
+			u16 cnt = ice_calc_ts_ring_count(&pf->hw,
+							 new_tx_cnt);
+
+			tstamp_rings[i] = *vsi->tstamp_rings[i];
+			tstamp_rings[i].count = cnt;
+			tstamp_rings[i].desc = NULL;
+			tstamp_rings[i].tx_buf = NULL;
+		}
+
 		err = ice_setup_tx_ring(&tx_rings[i]);
+		if (test_bit(ICE_FLAG_TXPP, pf->flags))
+			err |= ice_setup_tstamp_ring(&tstamp_rings[i]);
 		if (err) {
 			while (i--)
-				ice_clean_tx_ring(&tx_rings[i], NULL);
+				if (test_bit(ICE_FLAG_TXPP, pf->flags))
+					ice_clean_tx_ring(&tx_rings[i],
+							  &tstamp_rings[i]);
+				else
+					ice_clean_tx_ring(&tx_rings[i], NULL);
 			kfree(tx_rings);
 			tx_rings = NULL;
+			kfree(tstamp_rings);
+			tstamp_rings = NULL;
 			goto done;
 		}
 	}
@@ -4949,17 +4977,20 @@ process_link:
 
 		if (tx_rings) {
 			ice_for_each_txq(vsi, i) {
-				if (vsi->tx_rings[i]->flags &
-				    ICE_TX_FLAGS_TXTIME)
+				if (test_bit(ICE_FLAG_TXPP, pf->flags))
 					ice_free_tx_ring(vsi->tx_rings[i],
 							 vsi->tstamp_rings[i]);
 				else
 					ice_free_tx_ring(vsi->tx_rings[i],
 							 NULL);
 				*vsi->tx_rings[i] = tx_rings[i];
+				if (test_bit(ICE_FLAG_TXPP, pf->flags))
+					*vsi->tstamp_rings[i] = tstamp_rings[i];
 			}
 			kfree(tx_rings);
 			tx_rings = NULL;
+			kfree(tstamp_rings);
+			tstamp_rings = NULL;
 		}
 
 		if (rx_rings) {
@@ -5010,6 +5041,7 @@ done:
 #ifdef HAVE_XDP_SUPPORT
 	kfree(xdp_rings);
 #endif /* HAVE_XDP_SUPPORT */
+	kfree(tstamp_rings);
 	kfree(tx_rings);
 	clear_bit(ICE_CFG_BUSY, pf->state);
 	return err;
@@ -6525,9 +6557,9 @@ static const struct ethtool_ops ice_ethtool_ops = {
 	.get_settings		= ice_get_settings,
 	.set_settings		= ice_set_settings,
 #endif /* ETHTOOL_GLINKSETTINGS */
-#ifdef HAVE_GET_FEC_STATS_OPS
+#ifdef HAVE_ETHTOOL_GET_FEC_STATS_OPS
 	.get_fec_stats		= ice_get_fec_stats,
-#endif /* HAVE_GET_FEC_STATS_OPS */
+#endif /* HAVE_ETHTOOL_GET_FEC_STATS_OPS */
 	.get_drvinfo		= ice_get_drvinfo,
 	.get_regs_len		= ice_get_regs_len,
 	.get_regs		= ice_get_regs,

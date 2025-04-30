@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_base.h"
@@ -2216,19 +2216,27 @@ ice_vc_fdir_parse_raw(struct ice_vf *vf,
 {
 	struct ice_parser_result rslt;
 	struct ice_pf *pf = vf->pf;
+	u16 pkt_len, udp_port = 0;
 	struct ice_parser *psr;
 	u8 *pkt_buf, *msk_buf;
-	int status = -ENOMEM;
+	int err = -ENOMEM;
 	struct ice_hw *hw;
-	u16 udp_port = 0;
 
-	pkt_buf = kzalloc(proto->raw.pkt_len, GFP_KERNEL);
-	msk_buf = kzalloc(proto->raw.pkt_len, GFP_KERNEL);
+	if (!proto->raw.pkt_len)
+		return -EINVAL;
+
+	pkt_len = proto->raw.pkt_len;
+
+	if (!pkt_len || pkt_len > VIRTCHNL_MAX_SIZE_RAW_PACKET)
+		return -EINVAL;
+
+	pkt_buf = kzalloc(pkt_len, GFP_KERNEL);
+	msk_buf = kzalloc(pkt_len, GFP_KERNEL);
 	if (!pkt_buf || !msk_buf)
 		goto err_pkt_msk_buf_alloc;
 
-	memcpy(pkt_buf, proto->raw.spec, proto->raw.pkt_len);
-	memcpy(msk_buf, proto->raw.mask, proto->raw.pkt_len);
+	memcpy(pkt_buf, proto->raw.spec, pkt_len);
+	memcpy(msk_buf, proto->raw.mask, pkt_len);
 
 	hw = &pf->hw;
 	/* Get raw profile info via Parser Lib */
@@ -2237,7 +2245,7 @@ ice_vc_fdir_parse_raw(struct ice_vf *vf,
 	ice_parser_dvm_set(psr, ice_is_dvm_ena(hw));
 	if (ice_get_open_tunnel_port(hw, TNL_VXLAN, &udp_port))
 		ice_parser_vxlan_tunnel_set(psr, udp_port, true);
-	if (ice_parser_run(psr, pkt_buf, proto->raw.pkt_len, &rslt))
+	if (ice_parser_run(psr, pkt_buf, pkt_len, &rslt))
 		goto err_parser_process;
 	ice_parser_destroy(psr);
 
@@ -2245,14 +2253,14 @@ ice_vc_fdir_parse_raw(struct ice_vf *vf,
 	if (!conf->prof)
 		goto err_conf_prof_alloc;
 
-	status = ice_parser_profile_init(&rslt, pkt_buf, msk_buf,
-					 proto->raw.pkt_len, ICE_BLK_FD, true,
-					 conf->prof);
-	if (status)
+	err = ice_parser_profile_init(&rslt, pkt_buf, msk_buf,
+				      pkt_len, ICE_BLK_FD, true,
+				      conf->prof);
+	if (err)
 		goto err_parser_profile_init;
 
 	/* Store raw flow info into @conf */
-	conf->pkt_len = proto->raw.pkt_len;
+	conf->pkt_len = pkt_len;
 	conf->pkt_buf = pkt_buf;
 	kfree(msk_buf);
 
@@ -2268,7 +2276,7 @@ err_parser_process:
 err_pkt_msk_buf_alloc:
 	kfree(msk_buf);
 	kfree(pkt_buf);
-	return status;
+	return err;
 }
 
 /**

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_BASE_H_
 #define _ICE_BASE_H_
@@ -19,6 +19,7 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 		struct ice_tx_ring *tstamp_ring,
 		struct ice_aqc_add_tx_qgrp *qg_buf,
 		struct ice_aqc_set_txtime_qgrp *txtime_qg_buf);
+u16 ice_calc_ts_ring_count(struct ice_hw *hw, u16 tx_desc_count);
 void ice_cfg_itr(struct ice_hw *hw, struct ice_q_vector *q_vector);
 void
 ice_cfg_txq_interrupt(struct ice_vsi *vsi, u16 txq, u16 msix_idx, u16 itr_idx);
