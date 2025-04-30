@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice_ddp.h"
 #include "ice_type.h"
@@ -133,9 +133,9 @@ ice_aq_update_pkg(struct ice_hw *hw, struct ice_buf_hdr *pkg_buf, u16 buf_size,
  * success it returns a pointer to the segment header, otherwise it will
  * return NULL.
  */
-static struct ice_generic_seg_hdr *
+static const struct ice_generic_seg_hdr *
 ice_find_seg_in_pkg(struct ice_hw *hw, u32 seg_type,
-		    struct ice_pkg_hdr *pkg_hdr)
+		    const struct ice_pkg_hdr *pkg_hdr)
 {
 	u32 i;
 
@@ -146,10 +146,9 @@ ice_find_seg_in_pkg(struct ice_hw *hw, u32 seg_type,
 
 	/* Search all package segments for the requested segment type */
 	for (i = 0; i < le32_to_cpu(pkg_hdr->seg_count); i++) {
-		struct ice_generic_seg_hdr *seg;
+		const struct ice_generic_seg_hdr *seg;
 
-		seg = (struct ice_generic_seg_hdr *)
-			((u8 *)pkg_hdr + le32_to_cpu(pkg_hdr->seg_offset[i]));
+		seg = (void *)pkg_hdr + le32_to_cpu(pkg_hdr->seg_offset[i]);
 
 		if (le32_to_cpu(seg->seg_type) == seg_type)
 			return seg;
@@ -1008,7 +1007,7 @@ ice_find_label_value(struct ice_seg *ice_seg, char const *name, u32 type,
  * Verifies various attributes of the package file, including length, format
  * version, and the requirement of at least one segment.
  */
-static enum ice_ddp_state ice_verify_pkg(struct ice_pkg_hdr *pkg, u32 len)
+static enum ice_ddp_state ice_verify_pkg(const struct ice_pkg_hdr *pkg, u32 len)
 {
 	u32 seg_count;
 	u32 i;
@@ -1034,13 +1033,13 @@ static enum ice_ddp_state ice_verify_pkg(struct ice_pkg_hdr *pkg, u32 len)
 	/* all segments must fit within length */
 	for (i = 0; i < seg_count; i++) {
 		u32 off = le32_to_cpu(pkg->seg_offset[i]);
-		struct ice_generic_seg_hdr *seg;
+		const struct ice_generic_seg_hdr *seg;
 
 		/* segment header must fit */
 		if (len < off + sizeof(*seg))
 			return ICE_DDP_PKG_INVALID_FILE;
 
-		seg = (struct ice_generic_seg_hdr *)((u8 *)pkg + off);
+		seg = (void *)pkg + off;
 
 		/* segment body must fit */
 		if (len < off + le32_to_cpu(seg->seg_size))
@@ -2003,13 +2002,13 @@ struct ice_buf_table *ice_find_buf_table(struct ice_seg *ice_seg)
  *
  * This helper function validates a buffer's header.
  */
-static struct ice_buf_hdr *ice_pkg_val_buf(struct ice_buf *buf)
+static const struct ice_buf_hdr *ice_pkg_val_buf(const struct ice_buf *buf)
 {
-	struct ice_buf_hdr *hdr;
+	const struct ice_buf_hdr *hdr;
 	u16 section_count;
 	u16 data_end;
 
-	hdr = (struct ice_buf_hdr *)buf->buf;
+	hdr = (const struct ice_buf_hdr *)buf->buf;
 	/* verify data */
 	section_count = le16_to_cpu(hdr->section_count);
 	if (section_count < ICE_MIN_S_COUNT || section_count > ICE_MAX_S_COUNT)
@@ -2034,8 +2033,8 @@ static struct ice_buf_hdr *ice_pkg_val_buf(struct ice_buf *buf)
  * unexpected value has been detected (for example an invalid section count or
  * an invalid buffer end value).
  */
-struct ice_buf_hdr *
-ice_pkg_enum_buf(struct ice_seg *ice_seg, struct ice_pkg_enum *state)
+static const struct ice_buf_hdr *ice_pkg_enum_buf(struct ice_seg *ice_seg,
+						  struct ice_pkg_enum *state)
 {
 	if (ice_seg) {
 		state->buf_table = ice_find_buf_table(ice_seg);
@@ -2398,15 +2397,15 @@ void ice_release_change_lock(struct ice_hw *hw)
 }
 
 /**
- * ice_get_set_tx_topo - get or set tx topology
+ * ice_get_set_tx_topo - get or set Tx topology
  * @hw: pointer to the HW struct
- * @buf: pointer to tx topology buffer
+ * @buf: pointer to Tx topology buffer
  * @buf_size: buffer size
  * @cd: pointer to command details structure or NULL
  * @flags: pointer to descriptor flags
  * @set: 0-get, 1-set topology
  *
- * The function will get or set tx topology
+ * Return: zero when set was successful, negative values otherwise.
  */
 static int
 ice_get_set_tx_topo(struct ice_hw *hw, u8 *buf, u16 buf_size,
@@ -2430,7 +2429,8 @@ ice_get_set_tx_topo(struct ice_hw *hw, u8 *buf, u16 buf_size,
 		ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_tx_topo);
 		cmd->get_flags = ICE_AQC_TX_TOPO_GET_RAM;
 
-		if (!ice_is_e825c(hw) && !ice_is_e830(hw))
+		if (hw->mac_type == ICE_MAC_E810 ||
+		    hw->mac_type == ICE_MAC_GENERIC)
 			desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 	}
 
@@ -2445,25 +2445,29 @@ ice_get_set_tx_topo(struct ice_hw *hw, u8 *buf, u16 buf_size,
 }
 
 /**
- * ice_cfg_tx_topo - Initialize new tx topology if available
+ * ice_cfg_tx_topo - Initialize new Tx topology if available
  * @hw: pointer to the HW struct
  * @buf: pointer to Tx topology buffer
  * @len: buffer size
  *
  * The function will apply the new Tx topology from the package buffer
  * if available.
+ *
+ * Return: zero when update was successful, negative values otherwise.
  */
-int ice_cfg_tx_topo(struct ice_hw *hw, u8 *buf, u32 len)
+int ice_cfg_tx_topo(struct ice_hw *hw, const void *buf, u32 len)
 {
-	u8 *current_topo, *new_topo = NULL;
-	struct ice_run_time_cfg_seg *seg;
-	struct ice_buf_hdr *section;
-	struct ice_pkg_hdr *pkg_hdr;
+	u8 *new_topo = NULL, *topo __free(kfree) = NULL;
+	const struct ice_run_time_cfg_seg *seg;
+	const struct ice_buf_hdr *section;
+	const struct ice_pkg_hdr *pkg_hdr;
 	enum ice_ddp_state state;
-	u16 i, size = 0, offset;
+	u16 offset, size = 0;
 	u32 reg = 0;
 	int status;
 	u8 flags;
+
+	static_assert(ICE_PKG_BUF_SIZE == ICE_AQ_MAX_BUF_LEN);
 
 	if (!buf || !len)
 		return -EINVAL;
@@ -2474,15 +2478,13 @@ int ice_cfg_tx_topo(struct ice_hw *hw, u8 *buf, u32 len)
 		return -EOPNOTSUPP;
 	}
 
-	current_topo = devm_kzalloc(ice_hw_to_dev(hw), ICE_AQ_MAX_BUF_LEN,
-				    GFP_KERNEL);
-	if (!current_topo)
+	topo = kzalloc(ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
+	if (!topo)
 		return -ENOMEM;
 
-	/* get the current Tx topology */
-	status = ice_get_set_tx_topo(hw, current_topo, ICE_AQ_MAX_BUF_LEN, NULL,
-				     &flags, false);
-	devm_kfree(ice_hw_to_dev(hw), current_topo);
+	/* Get the current Tx topology flags */
+	status = ice_get_set_tx_topo(hw, topo, ICE_AQ_MAX_BUF_LEN, NULL, &flags,
+				     false);
 
 	if (status) {
 		ice_debug(hw, ICE_DBG_INIT, "Get current topology is failed\n");
@@ -2491,47 +2493,44 @@ int ice_cfg_tx_topo(struct ice_hw *hw, u8 *buf, u32 len)
 
 	/* Is default topology already applied ? */
 	if (!(flags & ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW) &&
-	    hw->num_tx_sched_layers == 9) {
-		ice_debug(hw, ICE_DBG_INIT, "Loaded default topology\n");
-		/* Already default topology is loaded */
+	    hw->num_tx_sched_layers == ICE_SCHED_9_LAYERS) {
+		ice_debug(hw, ICE_DBG_INIT, "Default topology already applied\n");
 		return -EEXIST;
 	}
 
 	/* Is new topology already applied ? */
 	if ((flags & ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW) &&
-	    hw->num_tx_sched_layers == 5) {
-		ice_debug(hw, ICE_DBG_INIT, "Loaded new topology\n");
-		/* Already new topology is loaded */
+	    hw->num_tx_sched_layers == ICE_SCHED_5_LAYERS) {
+		ice_debug(hw, ICE_DBG_INIT, "New topology already applied\n");
 		return -EEXIST;
 	}
 
-	/* Is set topology issued already ? */
+	/* Setting topology already issued? */
 	if (flags & ICE_AQC_TX_TOPO_FLAGS_ISSUED) {
-		ice_debug(hw, ICE_DBG_INIT, "Update tx topology was done by another PF\n");
+		ice_debug(hw, ICE_DBG_INIT, "Update Tx topology was done by another PF\n");
 		/* add a small delay before exiting */
-		for (i = 0; i < 20; i++)
-			msleep(100);
+		msleep(2000);
 		return -EEXIST;
 	}
 
 	/* Change the topology from new to default (5 to 9) */
 	if (!(flags & ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW) &&
-	    hw->num_tx_sched_layers == 5) {
+	    hw->num_tx_sched_layers == ICE_SCHED_5_LAYERS) {
 		ice_debug(hw, ICE_DBG_INIT, "Change topology from 5 to 9 layers\n");
 		goto update_topo;
 	}
 
-	pkg_hdr = (struct ice_pkg_hdr *)buf;
+	pkg_hdr = buf;
 	state = ice_verify_pkg(pkg_hdr, len);
 	if (state) {
-		ice_debug(hw, ICE_DBG_INIT, "failed to verify pkg (err: %d)\n",
+		ice_debug(hw, ICE_DBG_INIT, "Failed to verify pkg (err: %d)\n",
 			  state);
 		return -EIO;
 	}
 
-	/* find run time configuration segment */
-	seg = (struct ice_run_time_cfg_seg *)
-		ice_find_seg_in_pkg(hw, SEGMENT_TYPE_ICE_RUN_TIME_CFG, pkg_hdr);
+	/* Find runtime configuration segment */
+	seg = (const struct ice_run_time_cfg_seg *)
+	      ice_find_seg_in_pkg(hw, SEGMENT_TYPE_ICE_RUN_TIME_CFG, pkg_hdr);
 	if (!seg) {
 		ice_debug(hw, ICE_DBG_INIT, "5 layer topology segment is missing\n");
 		return -EIO;
@@ -2544,7 +2543,6 @@ int ice_cfg_tx_topo(struct ice_hw *hw, u8 *buf, u32 len)
 	}
 
 	section = ice_pkg_val_buf(seg->buf_table.buf_array);
-
 	if (!section || le32_to_cpu(section->section_entry[0].type) !=
 		ICE_SID_TX_5_LAYER_TOPO) {
 		ice_debug(hw, ICE_DBG_INIT, "5 layer topology section type is wrong\n");
@@ -2558,17 +2556,18 @@ int ice_cfg_tx_topo(struct ice_hw *hw, u8 *buf, u32 len)
 		return -EIO;
 	}
 
-	/* make sure the section fits in the buffer */
+	/* Make sure the section fits in the buffer */
 	if (offset + size > ICE_PKG_BUF_SIZE) {
 		ice_debug(hw, ICE_DBG_INIT, "5 layer topology buffer > 4K\n");
 		return -EIO;
 	}
 
-	/* Get the new topology buffer */
-	new_topo = ((u8 *)section) + offset;
+	/* Get the new topology buffer, reuse current topo copy mem */
+	new_topo = topo;
+	memcpy(new_topo, (u8 *)section + offset, size);
 
 update_topo:
-	/* acquire global lock to make sure that set topology issued
+	/* Acquire global lock to make sure that set topology issued
 	 * by one PF
 	 */
 	status = ice_acquire_res(hw, ICE_GLOBAL_CFG_LOCK_RES_ID, ICE_RES_WRITE,
@@ -2578,28 +2577,28 @@ update_topo:
 		return status;
 	}
 
-	/* check reset was triggered already or not */
+	/* Check if reset was triggered already. */
 	reg = rd32(hw, GLGEN_RSTAT);
 	if (reg & GLGEN_RSTAT_DEVSTATE_M) {
-		/* Reset is in progress, re-init the hw again */
-		ice_debug(hw, ICE_DBG_INIT, "Reset is in progress. layer topology might be applied already\n");
+		/* Reset is in progress, re-init the HW again */
+		ice_debug(hw, ICE_DBG_INIT, "Reset is in progress. Layer topology might be applied already\n");
 		ice_check_reset(hw);
 		return 0;
 	}
 
-	/* set new topology */
+	/* Set new topology */
 	status = ice_get_set_tx_topo(hw, new_topo, size, NULL, NULL, true);
 	if (status) {
-		ice_debug(hw, ICE_DBG_INIT, "Set tx topology is failed\n");
+		ice_debug(hw, ICE_DBG_INIT, "Failed setting Tx topology\n");
 		return status;
 	}
 
-	/* new topology is updated, delay 1 second before issuing the CORRER */
-	for (i = 0; i < 10; i++)
-		msleep(100);
+	/* New topology is updated, delay 1 second before issuing the CORER */
+	msleep(1000);
 	ice_reset(hw, ICE_RESET_CORER);
 	/* CORER will clear the global lock, so no explicit call
 	 * required for release
 	 */
+
 	return 0;
 }

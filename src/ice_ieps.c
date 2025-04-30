@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver IEPS extensions */
 
@@ -547,7 +547,8 @@ ice_ieps_set_mode(struct ice_pf *pf, enum ieps_peer_port_mode *mode)
 	if (*mode == IEPS_PEER_PORT_MODE_UP)
 		ena_link = true;
 
-	status = hw->lm_ops->restart_an(hw->port_info, ena_link, NULL);
+	status = hw->lm_ops->restart_an(hw->port_info, ena_link, NULL,
+					ICE_AQC_RESTART_AN_REFCLK_NOCHANGE);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "ERROR: set_mode status=%d\n",
 			status);
@@ -990,10 +991,12 @@ ice_ieps_set_link_mng(struct ice_pf *pf, bool en_lm)
 {
 	enum ieps_peer_status pstatus = IEPS_PEER_SUCCESS;
 	struct ice_hw *hw = &pf->hw;
+	struct ice_port_info *pi;
 	u8 cmd_flags = 0;
 	u32 oicr_ena;
 	int err;
 
+	pi = hw->port_info;
 	oicr_ena = rd32(hw, PFINT_OICR_ENA);
 
 	if (!en_lm) {
@@ -1022,9 +1025,19 @@ ice_ieps_set_link_mng(struct ice_pf *pf, bool en_lm)
 		dev_dbg(ice_pf_to_dev(pf), "ERROR: set_link_mng err=%d\n", err);
 		pstatus = IEPS_PEER_FW_ERROR;
 		goto err_exit;
-	} else {
+	}
+
+	if (!en_lm) {
+		/* FW based LM is Disabled */
 		hw->ieps_lm_active = true;
 		hw->ieps_cpi_lm = true;
+		pi->phy.curr_user_phy_cfg.link_fec_opt = ICE_AQC_PHY_FEC_DIS;
+		pi->phy.curr_user_phy_cfg.low_power_ctrl_an &=
+						~ICE_AQC_PHY_AN_EN_CLAUSE37;
+	} else {
+		/* FW based LM is Enabled */
+		hw->ieps_lm_active = false;
+		hw->ieps_cpi_lm = false;
 	}
 
 	/* Write other cause of interrupt register */

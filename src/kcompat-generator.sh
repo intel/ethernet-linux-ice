@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2018-2024 Intel Corporation
+# Copyright (C) 2018-2025 Intel Corporation
 
 set -Eeuo pipefail
 
@@ -123,11 +123,19 @@ function gen-devlink() {
 	gen HAVE_DEVL_PORT_REG_WITH_OPS_AND_UNREG if fun devl_port_register_with_ops in "$dh"
 	gen NEED_DEVLINK_FLASH_UPDATE_STATUS_NOTIFY if fun devlink_flash_update_status_notify absent in "$dh"
 	gen NEED_DEVLINK_FLASH_UPDATE_TIMEOUT_NOTIFY if fun devlink_flash_update_timeout_notify absent in "$dh"
+	gen NEED_DEVLINK_FMSG_DUMP_SKB if fun devlink_fmsg_dump_skb absent in "$dh"
+	gen NEED_DEVLINK_FMSG_PUT if macro devlink_fmsg_put absent in "$dh"
 	gen NEED_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER if fun devlink_health_reporter_create matches auto_recover in "$dh"
 	gen NEED_DEVLINK_REGION_CREATE_OPS if fun devlink_region_create lacks 'struct devlink_region_ops \\*ops' in "$dh"
 	gen NEED_DEVLINK_RESOURCES_UNREGISTER_NO_RESOURCE if fun devlink_resources_unregister matches 'struct devlink_resource \\*' in "$dh"
 	gen NEED_DEVLINK_TO_DEV if fun devlink_to_dev absent in "$dh"
 	gen NEED_DEVLINK_UNLOCKED_RESOURCE if fun devl_resource_size_get absent in "$dh"
+	gen NEED_DEVL_HEALTH_REPORTER_CREATE if fun devl_health_reporter_create absent in "$dh"
+	gen NEED_DEVL_LOCK if fun devl_lock absent in "$dh"
+	gen NEED_DEVL_PARAMS_REGISTER if fun devl_params_register absent in "$dh"
+	gen NEED_DEVL_PORT_REGISTER if fun devl_port_register absent in "$dh"
+	gen NEED_DEVL_REGION_CREATE if fun devl_region_create absent in "$dh"
+	gen NEED_DEVL_REGISTER if fun devl_register absent in "$dh"
 	gen NEED_DEVL_RESOURCE_REGISTER if fun devl_resource_register absent in "$dh"
 
 	gen HAVE_DEVLINK_PORT_FLAVOUR_PCI_SF if enum devlink_port_flavour matches DEVLINK_PORT_FLAVOUR_PCI_SF in include/uapi/linux/devlink.h
@@ -156,6 +164,7 @@ function gen-ethtool() {
 	gen HAVE_ETHTOOL_GET_FEC_STATS_OPS if struct ethtool_ops matches '\\*get_fec_stats' in "$eth"
 	gen HAVE_ETHTOOL_KEEE if struct ethtool_keee in "$eth"
 	gen HAVE_ETHTOOL_KERNEL_TS_INFO if struct kernel_ethtool_ts_info in "$eth"
+	gen HAVE_ETHTOOL_PUTS if fun ethtool_puts in "$eth"
 	gen HAVE_ETHTOOL_RXFH_PARAM if struct ethtool_rxfh_param in "$eth"
 	gen NEED_ETHTOOL_SPRINTF if fun ethtool_sprintf absent in "$eth"
 	gen HAVE_ETHTOOL_FLOW_RSS if macro FLOW_RSS in "$ueth"
@@ -179,6 +188,7 @@ function gen-flow-dissector() {
 	tmh='include/net/tc_act/tc_mirred.h'
 
 	gen HAVE_FLOW_DISSECTOR_KEY_PPPOE if enum flow_dissector_key_id matches FLOW_DISSECTOR_KEY_PPPOE in "$fdh" "$fkh"
+	gen HAVE_FLOW_DISSECTOR_ICMP_ID if enum flow_dissector_key_icmp matches id in "$fdh"
 
 	gen HAVE_FLOW_BLOCK_API if fun flow_block_cb_priv in "$foh"
 
@@ -258,6 +268,17 @@ function gen-mdio() {
 	gen HAVE_MII_EEE_CAP1_MOD_LINKMODE if fun mii_eee_cap1_mod_linkmode_t in "$mdioh"
 }
 
+function gen-mm() {
+	slabh='include/linux/slab.h'
+
+	gen NEED_KREALLOC_ARRAY if fun krealloc_array absent in "$slabh"
+
+	HAVE_KMEM_CACHE_ALLOC_LRU=0
+	check macro kmem_cache_alloc_lru in "$slabh" && HAVE_KMEM_CACHE_ALLOC_LRU=1
+	check  fun  kmem_cache_alloc_lru in "$slabh" && HAVE_KMEM_CACHE_ALLOC_LRU=1
+	gen NEED_KMEM_CACHE_ALLOC_LRU if string "$HAVE_KMEM_CACHE_ALLOC_LRU" equals 0
+}
+
 function gen-netdevice() {
 	ndh='include/linux/netdevice.h'
 	gen HAVE_NDO_BRIDGE_SETLINK_EXTACK if method ndo_bridge_setlink of net_device_ops matches 'struct netlink_ext_ack \\*extack' in "$ndh"
@@ -265,13 +286,16 @@ function gen-netdevice() {
 	gen HAVE_NDO_EXTENDED_SET_TX_MAXRATE if method ndo_set_tx_maxrate of net_device_ops_extended in "$ndh"
 	gen HAVE_NDO_FDB_ADD_EXTACK if method ndo_fdb_add of net_device_ops matches 'struct netlink_ext_ack \\*extack' in "$ndh"
 	gen HAVE_NDO_FDB_ADD_NOTIFIED if method ndo_fdb_add of net_device_ops matches 'bool \\*notified' in "$ndh"
-	gen HAVE_NDO_FDB_ADD_VID if method ndo_fdb_del of net_device_ops matches 'u16 vid' in "$ndh"
+	gen HAVE_NDO_FDB_ADD_VID if method ndo_fdb_add of net_device_ops matches 'u16 vid' in "$ndh"
 	gen HAVE_NDO_FDB_DEL_EXTACK if method ndo_fdb_del of net_device_ops matches 'struct netlink_ext_ack \\*extack' in "$ndh"
+	gen HAVE_NDO_FDB_DEL_NOTIFIED if method ndo_fdb_del of net_device_ops matches 'bool \\*notified' in "$ndh"
 	gen HAVE_NDO_GET_DEVLINK_PORT if method ndo_get_devlink_port of net_device_ops in "$ndh"
 	gen HAVE_NDO_SETUP_TC_CHAIN_INDEX if method ndo_setup_tc of net_device_ops matches 'u32 chain_index' in "$ndh"
 	gen HAVE_NDO_SETUP_TC_REMOVE_TC_TO_NETDEV if method '(ndo_setup_tc|ndo_setup_tc_rh)' of '(net_device_ops|netdevice_ops_extended)' matches 'void \\*type_data' in "$ndh"
 	gen HAVE_NDO_UDP_TUNNEL_CALLBACK if method ndo_udp_tunnel_add of net_device_ops in "$ndh"
 	gen HAVE_NETDEV_EXTENDED_MIN_MAX_MTU if struct net_device_extended matches min_mtu in "$ndh"
+	gen HAVE_NETDEV_FCOE_MTU if struct net_device matches fcoe_mtu in "$ndh"
+	gen HAVE_NETDEV_IRQ_AFFINITY_AND_ARFS if struct net_device matches irq_affinity_auto in "$ndh"
 	gen HAVE_NETDEV_MIN_MAX_MTU if struct net_device matches min_mtu in "$ndh"
 	gen HAVE_NETIF_SET_TSO_MAX if fun netif_set_tso_max_size in "$ndh"
 	gen HAVE_RHEL7_NETDEV_OPS_EXT_NDO_SETUP_TC if method ndo_setup_tc_rh of net_device_ops_extended in "$ndh"
@@ -282,16 +306,34 @@ function gen-netdevice() {
 	gen NEED_XDP_FEATURES if enum netdev_xdp_act absent in include/uapi/linux/netdev.h
 }
 
+function gen-netif() {
+	gen HAVE_GENEVE_TYPE if fun netif_is_geneve in include/net/geneve.h
+	gen HAVE_GRETAP_TYPE if fun netif_is_gretap in include/net/gre.h
+	gen HAVE_GTP_SUPPORT if fun netif_is_gtp in include/net/gtp.h
+	gen HAVE_VXLAN_TYPE if fun netif_is_vxlan in include/net/vxlan.h
+}
+
+function gen-packing() {
+	lph='include/linux/packing.h'
+	HAVE_PACK_FIELDS=0
+	if config_has CONFIG_PACKING && check macro pack_fields in "$lph" ; then
+		HAVE_PACK_FIELDS=1
+	fi
+	gen HAVE_PACK_FIELDS if string "$HAVE_PACK_FIELDS" equals 1
+}
+
 function gen-pci() {
 	pcih='include/linux/pci.h'
 	gen HAVE_PCI_MSIX_ALLOC_IRQ_AT if fun pci_msix_alloc_irq_at in "$pcih"
 	gen HAVE_PCI_MSIX_CAN_ALLOC_DYN if fun pci_msix_can_alloc_dyn in "$pcih"
 	gen HAVE_PCI_MSIX_FREE_IRQ if fun pci_msix_free_irq in "$pcih"
 	gen HAVE_PER_VF_MSIX_SYSFS if method sriov_set_msix_vec_count of pci_driver in "$pcih"
+	gen HAVE_STRUCT_PCI_DEV_PTM_CAP if struct pci_dev matches ptm_cap in "$pcih"
 	gen HAVE_STRUCT_PCI_DEV_PTM_ENABLED if struct pci_dev matches ptm_enabled in "$pcih"
 	gen NEED_PCIE_FLR if fun pcie_flr absent in "$pcih"
 	gen NEED_PCIE_FLR_RETVAL if fun pcie_flr lacks 'int pcie_flr' in "$pcih"
 	gen NEED_PCIE_PTM_ENABLED if fun pcie_ptm_enabled absent in "$pcih"
+	gen NEED_PCI_DISABLE_PTM if fun pci_disable_ptm absent in "$pcih"
 	gen NEED_PCI_ENABLE_PTM if fun pci_enable_ptm absent in "$pcih"
 }
 
@@ -299,6 +341,7 @@ function gen-ptp() {
 	classifyh='include/linux/ptp_classify.h'
 	clockh='include/linux/ptp_clock_kernel.h'
 	uapih='include/uapi/linux/ptp_clock.h'
+	gen HAVE_PTP_CSID_X86_ART if enum clocksource_ids matches CSID_X86_ART in include/linux/clocksource_ids.h
 	gen NEED_PTP_CLASSIFY_RAW if fun ptp_classify_raw absent in "$classifyh"
 	gen NEED_PTP_PARSE_HEADER if fun ptp_parse_header absent in "$classifyh"
 	gen HAVE_PTP_CANCEL_WORKER_SYNC if fun ptp_cancel_worker_sync in "$clockh"
@@ -317,7 +360,8 @@ function gen-ptp() {
 	   check fun arch_timer_wrap_counter in include/clocksource/arm_arch_timer.h ; then
 		HAVE_CROSS_TSTAMP=1
 	elif config_has CONFIG_X86 &&
-	     check fun convert_art_ns_to_tsc in arch/x86/include/asm/tsc.h ; then
+	     (check fun convert_art_ns_to_tsc in arch/x86/include/asm/tsc.h ||
+	      check enum clocksource_ids matches CSID_X86_ART in include/linux/clocksource_ids.h) ; then
 		HAVE_CROSS_TSTAMP=1
 	else
 		HAVE_CROSS_TSTAMP=0
@@ -365,6 +409,7 @@ function gen-other() {
 	gen NEED_DEBUGFS_LOOKUP if fun debugfs_lookup absent in include/linux/debugfs.h
 	gen NEED_DEBUGFS_LOOKUP_AND_REMOVE if fun debugfs_lookup_and_remove absent in include/linux/debugfs.h
 	gen NEED_DIM_END_SAMPLE_BY_POINTER if fun net_dim matches 'struct dim_sample end_sample' in include/linux/dim.h
+	gen NEED_ETH_GET_HEADLEN if fun eth_get_headlen absent in include/linux/etherdevice.h
 	gen NEED_ETH_GET_HEADLEN_NET_DEVICE_ARG if fun eth_get_headlen lacks 'struct net_device \\*' in include/linux/etherdevice.h
 	gen NEED_ETH_HW_ADDR_SET if fun eth_hw_addr_set absent in include/linux/etherdevice.h
 	gen NEED_FIND_NEXT_BIT_WRAP if fun find_next_bit_wrap absent in include/linux/find.h
@@ -402,6 +447,7 @@ function gen-other() {
 	gen NEED_DEV_PM_DOMAIN_ATTACH if fun dev_pm_domain_attach absent in include/linux/pm_domain.h include/linux/pm.h
 	gen NEED_DEV_PM_DOMAIN_DETACH if fun dev_pm_domain_detach absent in include/linux/pm_domain.h include/linux/pm.h
 	gen NEED_RADIX_TREE_EMPTY if fun radix_tree_empty absent in include/linux/radix-tree.h
+	gen HAVE_LINUX_REFCOUNT_HEADER if fun refcount_inc in include/linux/refcount.h
 	gen NEED_SCHED_PARAM if struct sched_param absent in include/linux/sched.h
 	gen NEED_SET_SCHED_FIFO if fun sched_set_fifo absent in include/linux/sched.h
 	gen NEED_RT_H if macro MAX_RT_PRIO absent in include/linux/sched/prio.h
@@ -411,8 +457,10 @@ function gen-other() {
 	gen NEED_NAPI_BUILD_SKB if fun napi_build_skb absent in include/linux/skbuff.h
 	gen NEED_SKB_FRAG_OFF if fun skb_frag_off absent in include/linux/skbuff.h
 	gen NEED_SKB_FRAG_OFF_ADD if fun skb_frag_off_add absent in include/linux/skbuff.h
-	gen NEED_KREALLOC_ARRAY if fun krealloc_array absent in include/linux/slab.h
 	gen NEED_SYSFS_MATCH_STRING if macro sysfs_match_string absent in include/linux/string.h
+	gen HAVE_STRING_CHOICES_H if fun str_enabled_disabled in include/linux/string_choices.h
+	gen NEED_STR_ENABLED_DISABLED if fun str_enabled_disabled absent in include/linux/string_choices.h include/linux/string_helpers.h
+	gen HAVE_STRING_HELPERS_H if enum string_size_units in include/linux/string_helpers.h
 	gen NEED_SYSFS_EMIT if fun sysfs_emit absent in include/linux/sysfs.h
 	gen HAVE_TRACE_ENABLED_SUPPORT if implementation of macro __DECLARE_TRACE matches 'trace_##name##_enabled' in include/linux/tracepoint.h
 	gen HAVE_TTY_OP_WRITE_SIZE_T if method write of tty_operations matches size_t in include/linux/tty_driver.h
@@ -420,7 +468,7 @@ function gen-other() {
 	gen HAVE_U64_STATS_FETCH_RETRY_IRQ if fun u64_stats_fetch_retry_irq in "$ush"
 	gen NEED_U64_STATS_READ if fun u64_stats_read absent in "$ush"
 	gen NEED_U64_STATS_SET if fun u64_stats_set absent in "$ush"
-	gen HAVE_XARRAY_API if struct xarray in include/linux/xarray.h
+	gen HAVE_XARRAY_API if macro DEFINE_XARRAY in include/linux/xarray.h
 	gen HAVE_TC_FLOWER_ENC if enum flow_dissector_key_id matches FLOW_DISSECTOR_KEY_ENC_CONTROL in include/net/flow_dissector.h
 	gen HAVE_TC_FLOWER_VLAN_IN_TAGS if enum flow_dissector_key_id matches FLOW_DISSECTOR_KEY_VLANID in include/net/flow_dissector.h
 	gen HAVE_NET_RPS_H if macro RPS_NO_FILTER in include/net/rps.h
@@ -433,6 +481,18 @@ function gen-other() {
 		HAVE_LINUX_UNALIGNED=1
 	fi
 	gen HAVE_LINUX_UNALIGNED_HEADER if string "${HAVE_LINUX_UNALIGNED}" equals 1
+
+	HAVE_LINUX_BITS=0
+	if [ -n "$(filter-out-bad-files include/linux/bits.h)" ]; then
+		HAVE_LINUX_BITS=1
+	fi
+	gen HAVE_LINUX_BITS_HEADER if string "${HAVE_LINUX_BITS}" equals 1
+
+	HAVE_LINUX_REFCOUNT_TYPES=0
+	if [ -n "$(filter-out-bad-files include/linux/refcount_types.h)" ]; then
+		HAVE_LINUX_REFCOUNT_TYPES=1
+	fi
+	gen HAVE_LINUX_REFCOUNT_TYPES_HEADER if string "${HAVE_LINUX_REFCOUNT_TYPES}" equals 1
 }
 
 # all the generations, extracted from main() to keep normal code and various
@@ -457,6 +517,9 @@ function gen-all() {
 	gen-gnss
 	gen-mdev
 	gen-mdio
+	gen-mm
+	gen-netif
+	gen-packing
 	gen-pci
 	gen-ptp
 	gen-stddef

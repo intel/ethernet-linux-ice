@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include <linux/device.h>
 #include <linux/module.h>
@@ -17,7 +17,7 @@
 #define ICE_VFIO_MIG_REGION_INFO_SZ (sizeof(struct vfio_device_migration_info))
 #define ICE_VFIO_MIG_REGION_DATA_SZ \
 	(struct_size((struct ice_vfio_pci_migration_data *)NULL, \
-		      dev_state, SZ_128K)) - (sizeof(struct ice_vfio_pci_regs))
+		      dev_state, SZ_128K))
 
 /* IAVF registers description */
 #define IAVF_VF_ARQBAH1 0x00006000 /* Reset: EMPR */
@@ -213,7 +213,8 @@ ice_vfio_pci_save_state(struct ice_vfio_pci_core_device *ice_vdev)
 	ice_vfio_pci_save_regs(ice_vdev, &ice_vdev->mig_data->regs);
 	ret = ice_migration_save_devstate(ice_vdev->vf_handle,
 					  ice_vdev->mig_data->dev_state,
-					  ICE_VFIO_MIG_REGION_DATA_SZ);
+					  ICE_VFIO_MIG_REGION_DATA_SZ -
+					  sizeof(struct ice_vfio_pci_regs));
 	ice_vdev->mig_info.pending_bytes = ICE_VFIO_MIG_REGION_DATA_SZ;
 	return ret;
 }

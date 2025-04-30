@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _KCOMPAT_STD_DEFS_H_
 #define _KCOMPAT_STD_DEFS_H_
@@ -105,7 +105,6 @@
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,20,0))
 #else /* >= 4.20.0 */
-#define HAVE_VXLAN_TYPE
 #define HAVE_LINKMODE
 #endif /* 4.20.0 */
 
@@ -113,8 +112,6 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0))
 #define NEED_INDIRECT_CALL_WRAPPER_MACROS
 #else /* >= 5.0.0 */
-#define HAVE_GRETAP_TYPE
-#define HAVE_GENEVE_TYPE
 #define HAVE_INDIRECT_CALL_WRAPPER_HEADER
 #endif /* 5.0.0 */
 
@@ -216,7 +213,6 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0))
 #else /* >=5.18.0*/
 #undef NEED_PCI_IOV_VF_ID
-#define HAVE_GTP_SUPPORT
 #undef HAVE_XSK_TX_PEEK_RELEASE_DESC_BATCH_3_PARAMS
 #endif /* 5.18.0 */
 

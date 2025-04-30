@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_vf_lib_private.h"
@@ -36,6 +36,7 @@ static void ice_free_vf_entries(struct ice_pf *pf)
 
 	hash_for_each_safe(vfs->table, bkt, tmp, vf, entry) {
 		hash_del_rcu(&vf->entry);
+		ice_deinitialize_vf_entry(vf);
 		ice_put_vf(vf);
 	}
 }
@@ -212,10 +213,6 @@ void ice_free_vfs(struct ice_pf *pf)
 			bit_idx = (hw->func_caps.vf_base_id + vf->vf_id) % 32;
 			wr32(hw, GLGEN_VFLRSTAT(reg_idx), BIT(bit_idx));
 		}
-
-		/* clear malicious info since the VF is getting released */
-		if (!ice_is_feature_supported(pf, ICE_F_MBX_LIMIT))
-			list_del(&vf->mbx_info.list_entry);
 
 		mutex_unlock(&vf->cfg_lock);
 	}
@@ -797,7 +794,7 @@ static void ice_sriov_post_vsi_rebuild(struct ice_vf *vf)
 static struct ice_q_vector *ice_sriov_get_q_vector(struct ice_vsi *vsi,
 						   u16 vector_id)
 {
-	if (!vsi || !vsi->q_vectors)
+	if (!vsi || !vsi->q_vectors || vector_id < ICE_NONQ_VECS_VF)
 		return NULL;
 
 	/* Subtract non queue vector from vector_id passed by VF

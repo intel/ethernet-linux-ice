@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _KCOMPAT_H_
 #define _KCOMPAT_H_
@@ -11,6 +11,10 @@
 #endif
 
 #include "kcompat_gcc.h"
+
+#ifndef HAVE_XARRAY_API
+#include "kcompat_xarray.h"
+#endif /* !HAVE_XARRAY_API */
 
 #include <linux/io.h>
 #include <linux/delay.h>
@@ -37,6 +41,11 @@
 #include <linux/types.h>
 #include <linux/udp.h>
 #include <linux/vmalloc.h>
+#ifdef HAVE_LINUX_REFCOUNT_TYPES_HEADER
+#include <linux/refcount_types.h>
+#elif defined(HAVE_LINUX_REFCOUNT_HEADER)
+#include <linux/refcount.h>
+#endif /* HAVE_LINUX_REFCOUNT_TYPES_HEADER */
 
 #ifndef IEEE_8021QAZ_APP_SEL_DSCP
 #define IEEE_8021QAZ_APP_SEL_DSCP	5
@@ -278,26 +287,67 @@ struct msix_entry {
 #define IS_ALIGNED(x,a)         (((x) % ((typeof(x))(a))) == 0)
 #endif
 
-#ifdef IS_ENABLED
-#undef IS_ENABLED
-#undef __ARG_PLACEHOLDER_1
-#undef config_enabled
-#undef _config_enabled
-#undef __config_enabled
-#undef ___config_enabled
-#endif
-
 #define __ARG_PLACEHOLDER_1 0,
-#define config_enabled(cfg) _config_enabled(cfg)
-#ifdef __CHECKER__
-/* cppcheck-suppress preprocessorErrorDirective */
-#endif /* __CHECKER__ */
-#define _config_enabled(value) __config_enabled(__ARG_PLACEHOLDER_##value)
-#define __config_enabled(arg1_or_junk) ___config_enabled(arg1_or_junk 1, 0)
-#define ___config_enabled(__ignored, val, ...) val
+#define __take_second_arg(__ignored, val, ...) val
 
-#define IS_ENABLED(option) \
-	(config_enabled(option) || config_enabled(option##_MODULE))
+/*
+ * The use of "&&" / "||" is limited in certain expressions.
+ * The following enable to calculate "and" / "or" with macro expansion only.
+ */
+#define __and(x, y)			___and(x, y)
+#define ___and(x, y)			____and(__ARG_PLACEHOLDER_##x, y)
+#define ____and(arg1_or_junk, y)	__take_second_arg(arg1_or_junk y, 0)
+
+#define __or(x, y)			___or(x, y)
+#define ___or(x, y)			____or(__ARG_PLACEHOLDER_##x, y)
+#define ____or(arg1_or_junk, y)		__take_second_arg(arg1_or_junk 1, y)
+
+/*
+ * Helper macros to use CONFIG_ options in C/CPP expressions. Note that
+ * these only work with boolean and tristate options.
+ */
+
+/*
+ * Getting something that works in C and CPP for an arg that may or may
+ * not be defined is tricky.  Here, if we have "#define CONFIG_BOOGER 1"
+ * we match on the placeholder define, insert the "0," for arg1 and generate
+ * the triplet (0, 1, 0).  Then the last step cherry picks the 2nd arg (a one).
+ * When CONFIG_BOOGER is not defined, we generate a (... 1, 0) pair, and when
+ * the last step cherry picks the 2nd arg, we get a zero.
+ */
+#define __is_defined(x)			___is_defined(x)
+#define ___is_defined(val)		____is_defined(__ARG_PLACEHOLDER_##val)
+#define ____is_defined(arg1_or_junk)	__take_second_arg(arg1_or_junk 1, 0)
+
+/*
+ * IS_BUILTIN(CONFIG_FOO) evaluates to 1 if CONFIG_FOO is set to 'y', 0
+ * otherwise. For boolean options, this is equivalent to
+ * IS_ENABLED(CONFIG_FOO).
+ */
+#define IS_BUILTIN(option) __is_defined(option)
+
+/*
+ * IS_MODULE(CONFIG_FOO) evaluates to 1 if CONFIG_FOO is set to 'm', 0
+ * otherwise.  CONFIG_FOO=m results in "#define CONFIG_FOO_MODULE 1" in
+ * autoconf.h.
+ */
+#define IS_MODULE(option) __is_defined(option##_MODULE)
+
+/*
+ * IS_REACHABLE(CONFIG_FOO) evaluates to 1 if the currently compiled
+ * code can call a function defined in code compiled based on CONFIG_FOO.
+ * This is similar to IS_ENABLED(), but returns false when invoked from
+ * built-in code when CONFIG_FOO is set to 'm'.
+ */
+#define IS_REACHABLE(option) __or(IS_BUILTIN(option), \
+				__and(IS_MODULE(option), __is_defined(MODULE)))
+
+/*
+ * IS_ENABLED(CONFIG_FOO) evaluates to 1 if CONFIG_FOO is set to 'y' or 'm',
+ * 0 otherwise.  Note that CONFIG_FOO=y results in "#define CONFIG_FOO 1" in
+ * autoconf.h, while CONFIG_FOO=m results in "#define CONFIG_FOO_MODULE 1".
+ */
+#define IS_ENABLED(option) __or(IS_BUILTIN(option), IS_MODULE(option))
 
 #if !defined(NETIF_F_HW_VLAN_TX) && !defined(NETIF_F_HW_VLAN_CTAG_TX)
 struct _kc_vlan_ethhdr {
@@ -1104,33 +1154,6 @@ static inline struct sk_buff *__kc__vlan_hwaccel_put_tag(struct sk_buff *skb,
 #define __vlan_hwaccel_put_tag(skb, vlan_proto, vlan_tci) \
 	__kc__vlan_hwaccel_put_tag(skb, vlan_tci)
 #endif
-
-#ifdef HAVE_FDB_OPS
-#if defined(HAVE_NDO_FDB_ADD_NLATTR)
-int __kc_ndo_dflt_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
-			  struct net_device *dev,
-			  const unsigned char *addr, u16 flags);
-#elif defined(USE_CONST_DEV_UC_CHAR)
-int __kc_ndo_dflt_fdb_add(struct ndmsg *ndm, struct net_device *dev,
-			  const unsigned char *addr, u16 flags);
-#else
-int __kc_ndo_dflt_fdb_add(struct ndmsg *ndm, struct net_device *dev,
-			  unsigned char *addr, u16 flags);
-#endif /* HAVE_NDO_FDB_ADD_NLATTR */
-#if defined(HAVE_FDB_DEL_NLATTR)
-int __kc_ndo_dflt_fdb_del(struct ndmsg *ndm, struct nlattr *tb[],
-			  struct net_device *dev,
-			  const unsigned char *addr);
-#elif defined(USE_CONST_DEV_UC_CHAR)
-int __kc_ndo_dflt_fdb_del(struct ndmsg *ndm, struct net_device *dev,
-			  const unsigned char *addr);
-#else
-int __kc_ndo_dflt_fdb_del(struct ndmsg *ndm, struct net_device *dev,
-			  unsigned char *addr);
-#endif /* HAVE_FDB_DEL_NLATTR */
-#define ndo_dflt_fdb_add __kc_ndo_dflt_fdb_add
-#define ndo_dflt_fdb_del __kc_ndo_dflt_fdb_del
-#endif /* HAVE_FDB_OPS */
 
 #ifndef PCI_DEVID
 #define PCI_DEVID(bus, devfn)  ((((u16)(bus)) << 8) | (devfn))
@@ -2860,8 +2883,6 @@ _kc_dev_change_flags(struct net_device *netdev, unsigned int flags,
 
 #define dev_change_flags _kc_dev_change_flags
 #endif /* !(RHEL_RELEASE_CODE && RHEL > RHEL(8,0)) */
-#if (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,2))
-#endif /* RHEL 8.2 */
 #else /* >= 5.0.0 */
 #define HAVE_DMA_ALLOC_COHERENT_ZEROES_MEM
 #endif /* 5.0.0 */

@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-December 09, 2024
+April 07, 2025
 
 
 Contents
@@ -83,6 +83,8 @@ The driver is compatible with devices based on the following:
 * Intel(R) Ethernet Connection E823-C
 
 * Intel(R) Ethernet Connection E823-L
+
+* Intel(R) Ethernet Connection E825-C
 
 * Intel(R) Ethernet Controller E830
 
@@ -2644,6 +2646,16 @@ utility, to enable this setting:
 
    hwstamp_ctl -i <ethX> -t 1 -r 1
 
+All Intel Ethernet 800 Series (except E810) devices support hardware-
+generated cross timestamps, which capture PHC and x86 ART time
+simultaneously in HW. This is available through kernel PTP device's
+PTP_SYS_OFFSET_PRECISE IOCTL.
+
+E810 devices support only SW cross timestamping, which captures PHC
+and x86 TSC times in software with high enough precision. This is only
+available to VFs by using VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP and
+VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO commands.
+
 
 SyncE Support
 -------------
@@ -3286,10 +3298,34 @@ Use ethtool to read the PHY registers:
 
    ethtool -d <ethX> [raw on|off] [hex on|off] [file name]
 
+The output of the command is similar to:
+
+   Offset          Values
+   ------          ------
+   0x0000:         00 00 00 00 0a 00 00 00 00 00 00 00 00 00 00 00
+   0x0010:         00 00 00 00 02 00 a9 b1 00 10 00 00 19 df 00 00
+   0x0020:         b7 00 00 00 d4 00 00 00 00 00 00 00 00 00 00 00
+   0x0030:         0a 00 00 00 19 00 00 00 00 00 00 00 0e 00 00 00
+   ...
+
 Note:
 
   The contents of the registers are not human-readable. You must work
   with Customer Support to decode the file.
+
+Use ethtool to read the RS FEC correctable and uncorrectable block
+counts:
+
+   ethtool --show-fec <ethX>
+
+The output of the command is similar to:
+
+   FEC parameters for ethX:
+   Supported/Configured FEC encodings: Auto RS BaseR
+   Active FEC encoding: RS
+   Statistics:
+     corrected_blocks: 0
+     uncorrectable_blocks: 0
 
 
 Hierarchical QoS (HQoS) Transmit Scheduler
@@ -3373,6 +3409,30 @@ Example output:
 
 Refer to the devlink-rate man page and other documentation for
 details.
+
+
+Types of supported resets
+-------------------------
+
+The driver supports a few types of resets that the user can perform
+using ethtool. Ethtool reset flags are mapped to the E810 reset type:
+
+PF reset:
+
+   ethtool --reset <ethX> irq dma filter offload
+
+CORE reset:
+
+   ethtool --reset <ethX> irq-shared dma-shared filter-shared offload-shared \
+   ram-shared
+
+GLOBAL reset:
+
+   ethtool --reset <ethX> irq-shared dma-shared filter-shared offload-shared \
+   mac-shared phy-shared ram-shared
+
+Calling the same set of flags on a port representor triggers a VF
+reset.
 
 
 Performance Optimization
@@ -3561,55 +3621,56 @@ may be helpful to optimize performance in VMs.
      ethtool -L <virt_interface> rx <max> tx <max>
 
 
-Transmit Balancing
-------------------
+Transmit Scheduling Layers
+--------------------------
 
-Some Intel(R) Ethernet 800 Series devices allow you to enable a
-transmit balancing feature to improve transmit performance under
-certain conditions. When the feature is enabled, you should experience
-more consistent transmit performance across queues and/or PFs and VFs.
+The ice hardware uses hierarchical scheduling for Tx with a fixed
+number of layers in the scheduling tree. Each of them are decision
+points. Root node represents a port, while all the leaves represent
+the queues. This way of configuring the Tx scheduler allows features
+like DCB or devlink-rate (documented below) to configure how much
+bandwidth is given to any given queue or group of queues, enabling
+fine-grained control because scheduling parameters can be configured
+at any given layer of the tree.
 
-By default, transmit balancing is disabled in the NVM. To enable this
-feature, use one of the following to persistently change the setting
-for the device:
+The default 9-layer tree topology was deemed best for most workloads,
+as it gives an optimal ratio of performance to configurability.
+However, for some specific cases, this 9-layer topology might not be
+desired.  One example would be sending traffic to queues that are not
+a multiple of 8. Because the maximum radix is limited to 8 in 9-layer
+topology, the 9th queue has a different parent than the rest, and it's
+given more bandwidth credits. This causes a problem when the system is
+sending traffic to 9 queues:
 
-* Use the Ethernet Port Configuration Tool (EPCT) to enable the
-  tx_balancing option. Refer to the EPCT readme for more information.
+   | tx_queue_0_packets: 24163396
+   | tx_queue_1_packets: 24164623
+   | tx_queue_2_packets: 24163188
+   | tx_queue_3_packets: 24163701
+   | tx_queue_4_packets: 24163683
+   | tx_queue_5_packets: 24164668
+   | tx_queue_6_packets: 23327200
+   | tx_queue_7_packets: 24163853
+   | tx_queue_8_packets: 91101417 < Too much traffic is sent from 9th
 
-* Enable the Transmit Balancing device setting in UEFI HII.
+To address this need, you can switch to a 5-layer topology, which
+changes the maximum topology radix to 512. With this enhancement, the
+performance characteristic is equal as all queues can be assigned to
+the same parent in the tree. The obvious drawback of this solution is
+a lower configuration depth of the tree.
 
-* Enable transmit balancing via Linux devlink (see below).
+Use the "tx_scheduling_layer" parameter with the devlink command to
+change the transmit scheduler topology. To use 5-layer topology, use a
+value of 5. For example:
 
-When the driver loads, it reads the transmit balancing setting from
-the NVM and configures the device accordingly.
+   devlink dev param set pci/0000:16:00.0 name tx_scheduling_layers
+   value 5 cmode permanent
 
-Note:
+Use a value of 9 to set it back to the default value. You must do PCI
+slot powercycle for the selected topology to take effect.
 
-  * The user selection for transmit balancing in EPCT, HII, or Linux
-    devlink is persistent across reboots. You must reboot the system
-    for the selected setting to take effect.
+To verify that value has been set:
 
-  * This setting is device wide.
-
-  * The driver, NVM, and DDP package must all support this
-    functionality to enable the feature.
-
-To set the transmit balancing feature via devlink:
-
-   devlink dev param set <pci/D:b:d.f> name txbalancing value <setting> cmode permanent
-
-Where:
-
-<pci/D:b:d.f>:
-   The PCI address of the PF.
-
-<setting>:
-   Set to true to enable transmit balancing, or false to disable
-   transmit balancing.
-
-To show the current transmit balancing setting:
-
-   devlink dev param show [ <pci> name txbalancing ]
+   devlink dev param show pci/0000:16:00.0 name tx_scheduling_layers
 
 
 MSI-X Vector Allocation
@@ -3648,8 +3709,8 @@ Where:
 
    * For an RDMA function, use the "msix_rdma" parameter.
 
-   * For the pool of vectors used by the VFs, use the "msix_vf
-     parameter".
+   * For the pool of vectors used by the VFs, use the "msix_vf"
+     parameter.
 
 <num>:
    The number of MSI-X vector to assign to the function.
@@ -3681,6 +3742,11 @@ Where:
 For example, to set a VF to 64 MSI-X vectors, use:
 
    echo 64 > /sys/bus/pci/devices/0000:31:00.2/sriov_vf_msix_count
+
+Note:
+
+  For some Linux distributions, the "sriov_vf_msix_count" parameter is
+  not available, and it is recommended to use devlink parameter.
 
 
 Current MSI-X Allocation

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice_common.h"
 
@@ -1003,6 +1003,13 @@ int ice_sq_send_cmd(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	struct ice_aq_desc *desc_on_ring;
 	struct ice_dma_mem *dma_buf;
 	u32 val;
+
+	/* If reset is in progress return a soft error. */
+	if (hw->reset_ongoing)
+		return -EBUSY;
+
+	if (!buf && buf_size)
+		return -EINVAL;
 
 	scoped_guard(ice_var_lock, &cq->sq_lock) {
 		cq->sq_last_status = ICE_AQ_RC_OK;

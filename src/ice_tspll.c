@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -101,9 +101,9 @@ void ice_tspll_sysfs_init(struct ice_hw *hw)
 {
 	struct device *dev = ice_hw_to_dev(hw);
 
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E82X:
-	case ICE_PHY_ETH56G:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC:
+	case ICE_MAC_GENERIC_3K_E825:
 		if (device_create_file(dev, &dev_attr_tspll_cfg))
 			dev_dbg(dev, "Failed to create tspll_cfg kobject\n");
 		return;
@@ -120,23 +120,14 @@ void ice_tspll_sysfs_release(struct ice_hw *hw)
 {
 	struct device *dev = ice_hw_to_dev(hw);
 
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E82X:
-	case ICE_PHY_ETH56G:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC:
+	case ICE_MAC_GENERIC_3K_E825:
 		device_remove_file(dev, &dev_attr_tspll_cfg);
 		return;
 	default:
 		return;
 	}
-}
-
-/**
- * _list_initialized - checks if list is initialized
- * @head: list head potentially containing all the entries
- */
-static bool _list_initialized(struct list_head head)
-{
-	return head.next && head.prev;
 }
 
 /**
@@ -153,19 +144,15 @@ static void ice_tspll_set_params_e82x(struct ice_pf *pf,
 {
 	struct ice_ptp_port *port;
 
-	mutex_lock(&pf->ptp.ports_owner.lock);
-	if (!_list_initialized(pf->ptp.ports_owner.ports)) {
-		mutex_unlock(&pf->ptp.ports_owner.lock);
-		return;
-	}
-	list_for_each_entry(port, &pf->ptp.ports_owner.ports, list_member) {
+	mutex_lock(&pf->adapter->ports.lock);
+	list_for_each_entry(port, &pf->adapter->ports.ports, list_node) {
 		struct ice_pf *target_pf = ptp_port_to_pf(port);
 
 		target_pf->hw.ptp.tspll_freq = tspll_freq;
 		target_pf->hw.ptp.src_tmr_mode = src_tmr_mode;
 		target_pf->hw.ptp.clk_src = clk_src;
 	}
-	mutex_unlock(&pf->ptp.ports_owner.lock);
+	mutex_unlock(&pf->adapter->ports.lock);
 }
 
 /**
@@ -226,8 +213,14 @@ static bool ice_tspll_check_params(struct ice_hw *hw,
 		return false;
 	}
 
-	if (hw->ptp.phy_model == ICE_PHY_ETH56G)
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825) {
 		tcxo_freq = ICE_TSPLL_FREQ_156_250;
+		if (clk_freq != tcxo_freq) {
+			dev_warn(ice_hw_to_dev(hw), "Only %s frequency is supported on this device\n",
+				 ice_tspll_clk_freq_str(tcxo_freq));
+			return false;
+		}
+	}
 
 	if (clk_src == ICE_CLK_SRC_TCXO &&
 	    clk_freq != tcxo_freq) {
@@ -272,7 +265,7 @@ static const char *ice_tspll_clk_src_str(enum ice_clk_src clk_src)
 static const char *
 ice_tspll_src_tmr_mode_str(const struct ice_hw *hw)
 {
-	if (hw->ptp.phy_model == ICE_PHY_ETH56G)
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
 		return "";
 
 	switch (hw->ptp.src_tmr_mode) {
@@ -337,7 +330,7 @@ static enum ice_sbq_msg_dev ice_get_dest_cgu(struct ice_hw *hw)
 	 * access primary CGU from the secondary complex, the driver should use
 	 * cgu_peer as a destination device.
 	 */
-	if (hw->ptp.phy_model == ICE_PHY_ETH56G && ice_is_dual(hw) &&
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825 && ice_is_dual(hw) &&
 	    !ice_is_primary(hw))
 		return cgu_peer;
 	else
@@ -969,10 +962,10 @@ int ice_tspll_ena_pps_out_e825c(struct ice_hw *hw, bool ena)
 static int ice_tspll_cfg(struct ice_hw *hw, enum ice_tspll_freq clk_freq,
 			 enum ice_clk_src clk_src)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E82X:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC:
 		return ice_tspll_cfg_e82x(hw, clk_freq, clk_src);
-	case ICE_PHY_ETH56G:
+	case ICE_MAC_GENERIC_3K_E825:
 		return ice_tspll_cfg_e825c(hw, clk_freq, clk_src);
 	default:
 		return -1;
@@ -988,10 +981,10 @@ static int ice_tspll_cfg(struct ice_hw *hw, enum ice_tspll_freq clk_freq,
  */
 static int ice_tspll_dis_sticky_bits(struct ice_hw *hw)
 {
-	switch (hw->ptp.phy_model) {
-	case ICE_PHY_E82X:
+	switch (hw->mac_type) {
+	case ICE_MAC_GENERIC:
 		return ice_tspll_dis_sticky_bits_e82x(hw);
-	case ICE_PHY_ETH56G:
+	case ICE_MAC_GENERIC_3K_E825:
 		return ice_tspll_dis_sticky_bits_e825c(hw);
 	default:
 		return -1;
@@ -1033,8 +1026,8 @@ static ssize_t tspll_cfg_store(struct device *dev,
 	if (!argv)
 		return -ENOMEM;
 
-	if ((pf->hw.ptp.phy_model == ICE_PHY_E82X && argc != 3) ||
-	    (pf->hw.ptp.phy_model == ICE_PHY_ETH56G && argc != 2))
+	if ((pf->hw.mac_type == ICE_MAC_GENERIC && argc != 3) ||
+	    (pf->hw.mac_type == ICE_MAC_GENERIC_3K_E825 && argc != 2))
 		goto command_help;
 
 	ret = kstrtou32(argv[0], 0, &tspll_freq);
@@ -1043,7 +1036,7 @@ static ssize_t tspll_cfg_store(struct device *dev,
 	ret = kstrtou32(argv[1], 0, &clk_src);
 	if (ret)
 		goto command_help;
-	if (pf->hw.ptp.phy_model == ICE_PHY_E82X) {
+	if (pf->hw.mac_type == ICE_MAC_GENERIC) {
 		ret = kstrtou32(argv[2], 0, &src_tmr_mode);
 		if (ret)
 			goto command_help;
@@ -1082,8 +1075,12 @@ static ssize_t tspll_cfg_store(struct device *dev,
 
 command_help:
 	argv_free(argv);
-	dev_info(dev, "Usage: <tspll_freq> <clk_src>%s\ntspll_freq (MHz): 0 = 25, 1 = 122, 2 = 125, 3 = 153, 4 = 156.25, 5 = 245.76\nclk_src: 0 = TCXO, 1 = TIME_REF\n%s",
-		 arg3_str, mode_str);
+	if (pf->hw.mac_type == ICE_MAC_GENERIC_3K_E825)
+		dev_info(dev, "Usage: <tspll_freq> <clk_src>%s\ntspll_freq (MHz): 4 = 156.25\nclk_src: 0 = TCXO, 1 = TIME_REF\n%s",
+			 arg3_str, mode_str);
+	else
+		dev_info(dev, "Usage: <tspll_freq> <clk_src>%s\ntspll_freq (MHz): 0 = 25, 1 = 122, 2 = 125, 3 = 153, 4 = 156.25, 5 = 245.76\nclk_src: 0 = TCXO, 1 = TIME_REF\n%s",
+			 arg3_str, mode_str);
 	return -EIO;
 }
 
@@ -1125,7 +1122,7 @@ static ssize_t tspll_cfg_show(struct device *dev, struct device_attribute *attr,
 	if (err)
 		return err;
 
-	if (ice_is_e825c(hw))
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
 		err = ice_read_cgu_reg(hw, ICE_CGU_R23, &val);
 	else
 		err = ice_read_cgu_reg(hw, ICE_CGU_R24, &val);
@@ -1188,8 +1185,8 @@ int ice_tspll_init(struct ice_hw *hw)
 	int err;
 
 	/* Only E822, E823 and E825 products support TSPLL */
-	if (hw->ptp.phy_model != ICE_PHY_E82X &&
-	    hw->ptp.phy_model != ICE_PHY_ETH56G)
+	if (hw->mac_type != ICE_MAC_GENERIC &&
+	    hw->mac_type != ICE_MAC_GENERIC_3K_E825)
 		return 0;
 
 	/* Disable sticky lock detection so lock status reported is accurate */
@@ -1209,7 +1206,7 @@ int ice_tspll_init(struct ice_hw *hw)
 		dev_warn(ice_hw_to_dev(hw), "Failed to lock TSPLL to predefined frequency. Retrying with fallback frequency.\n");
 
 		/* Try to lock to internal TCXO as a fallback */
-		if (hw->ptp.phy_model == ICE_PHY_ETH56G)
+		if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
 			tspll_freq = ICE_TSPLL_FREQ_156_250;
 		else
 			tspll_freq = ICE_TSPLL_FREQ_25_000;
@@ -1219,7 +1216,7 @@ int ice_tspll_init(struct ice_hw *hw)
 			dev_warn(ice_hw_to_dev(hw), "Failed to lock TSPLL to fallback frequency.\n");
 	}
 
-	if (!err && hw->ptp.phy_model == ICE_PHY_E82X)
+	if (!err && hw->mac_type == ICE_MAC_GENERIC)
 		ice_tspll_cfg_cgu_err_reporting(hw, true);
 
 	return err;

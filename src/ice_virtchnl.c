@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_virtchnl.h"
@@ -902,7 +902,7 @@ static bool ice_vc_isvalid_ring_len(u16 ring_len)
 {
 	return ring_len == 0 ||
 	       (ring_len >= ICE_MIN_NUM_DESC &&
-		ring_len <= ICE_MAX_NUM_DESC &&
+		ring_len <= ICE_MAX_NUM_DESC_E810 &&
 		!(ring_len % ICE_REQ_DESC_MULTIPLE));
 }
 
@@ -3544,7 +3544,7 @@ static int ice_vc_cfg_irq_map_msg(struct ice_vf *vf, u8 *msg)
 
 		/* Update VSI and TC only when ADQ is configured */
 		if (ice_is_vf_adq_ena(vf)) {
-			if (tc >= VIRTCHNL_MAX_ADQ_V2_CHANNELS)
+			if (tc + 1 >= vf->num_tc)
 				goto error_param;
 			if (vector_id == vf->ch[tc + 1].offset) {
 				vsi = pf->vsi[vf->ch[tc + 1].vsi_idx];
@@ -3610,6 +3610,37 @@ static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
 		goto err;
 	}
 
+	for (i = 0; i < qbw->num_queues; i++) {
+		if (qbw->cfg[i].shaper.peak != 0 && vf->max_tx_rate != 0 &&
+		    qbw->cfg[i].shaper.peak > vf->max_tx_rate) {
+			dev_warn(ice_pf_to_dev(vf->pf), "The maximum queue %d rate limit configuration may not take effect because the maximum TX rate for VF-%d is %d\n",
+				 qbw->cfg[i].queue_id, vf->vf_id,
+				 vf->max_tx_rate);
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+		if (qbw->cfg[i].shaper.committed != 0 && vf->min_tx_rate != 0 &&
+		    qbw->cfg[i].shaper.committed < vf->min_tx_rate) {
+			dev_warn(ice_pf_to_dev(vf->pf), "The minimum queue %d rate limit configuration may not take effect because the minimum TX rate for VF-%d is %d\n",
+				 qbw->cfg[i].queue_id, vf->vf_id,
+				 vf->min_tx_rate);
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+		if (qbw->cfg[i].queue_id > vf->num_vf_qs) {
+			dev_warn(ice_pf_to_dev(vf->pf), "VF-%d trying to configure invalid queue_id\n",
+				 vf->vf_id);
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err;
+		}
+		if (qbw->cfg[i].tc >= VIRTCHNL_MAX_ADQ_V2_CHANNELS) {
+			dev_warn(ice_pf_to_dev(vf->pf), "VF-%d trying to configure invalid TC\n",
+				 vf->vf_id);
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto err_bw;
+		}
+	}
+
 	len = sizeof(struct ice_vf_qs_bw) * qbw->num_queues;
 	qs_bw = kzalloc(len, GFP_KERNEL);
 	if (!qs_bw) {
@@ -3618,10 +3649,6 @@ static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
 	}
 
 	for (i = 0; i < qbw->num_queues; i++) {
-		if (qbw->cfg[i].tc >= VIRTCHNL_MAX_ADQ_V2_CHANNELS) {
-			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-			goto err_bw;
-		}
 		qs_bw[i].queue_id = qbw->cfg[i].queue_id;
 		qs_bw[i].peak = qbw->cfg[i].shaper.peak;
 		qs_bw[i].committed = qbw->cfg[i].shaper.committed;
@@ -3873,7 +3900,7 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 		 * it cares is about its own queues. PF configures these queues
 		 * to its appropriate VSIs based on TC mapping
 		 */
-		if (ice_is_vf_adq_ena(vf)) {
+		if (ice_is_vf_adq_ena(vf) && tc < vf->num_tc - 1) {
 			if (queue_id_tmp == (vf->ch[tc].num_qps - 1)) {
 				tc++;
 				/* reset the queue num */
@@ -3893,12 +3920,16 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 error_param:
 	/* disable whatever we can */
 	if (vsi) {
+		if (i >= qci->num_queue_pairs)
+			i = qci->num_queue_pairs - 1;
 		for (; i >= 0; i--) {
 			qpi = &qci->qpair[i];
 
 			if (ice_vsi_ctrl_one_rx_ring(vsi, false, i, true))
 				dev_err(ice_pf_to_dev(pf), "VF-%d could not disable RX queue %d\n",
 					vf->vf_id, i);
+			if (!ice_vc_isvalid_q_id(vsi, qpi->txq.queue_id))
+				continue;
 			if (ice_vf_vsi_dis_single_txq(vf, vsi, i,
 						      qpi->txq.queue_id))
 				dev_err(ice_pf_to_dev(pf), "VF-%d could not disable TX queue %d\n",
@@ -6275,7 +6306,7 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 			vsi_q_id = ice_vf_get_tc_based_qid(i / 2,
 							   vf->ch[tc].offset);
 			vector_id = qv_map->vector_id - vf->ch[tc].offset;
-			if (tc + 1 >= VIRTCHNL_MAX_ADQ_V2_CHANNELS) {
+			if (tc + 1 >= vf->num_tc) {
 				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 				goto error_param;
 			}

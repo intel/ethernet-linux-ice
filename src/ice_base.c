@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifdef HAVE_INCLUDE_BITFIELD
 #include <linux/bitfield.h>
@@ -397,10 +397,11 @@ ice_setup_tx_ctx(struct ice_tx_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf
  * ice_setup_txtime_ctx - setup a struct ice_txtime_ctx instance
  * @ring: The tstamp ring to configure
  * @txtime_ctx: Pointer to the Tx time queue context structure to be initialized
+ * @txtime_ena: Tx time enable flag, set to true if Tx time should be enabled
  */
 static void
 ice_setup_txtime_ctx(struct ice_tx_ring *ring,
-		     struct ice_txtime_ctx *txtime_ctx)
+		     struct ice_txtime_ctx *txtime_ctx, bool txtime_ena)
 {
 	struct ice_vsi *vsi = ring->vsi;
 	struct ice_hw *hw;
@@ -410,6 +411,9 @@ ice_setup_txtime_ctx(struct ice_tx_ring *ring,
 
 	/* Tx time Queue Length */
 	txtime_ctx->qlen = ring->count;
+
+	if (txtime_ena)
+		txtime_ctx->txtime_ena_q = 1;
 
 	/* PF number */
 	txtime_ctx->pf_num = hw->pf_id;
@@ -426,6 +430,37 @@ ice_setup_txtime_ctx(struct ice_tx_ring *ring,
 
 	txtime_ctx->ts_res = ICE_TXTIME_CTX_RESOLUTION_128NS;
 	txtime_ctx->drbell_mode_32 = ICE_TXTIME_CTX_DRBELL_MODE_32;
+	txtime_ctx->ts_fetch_prof_id = ICE_TXTIME_CTX_FETCH_PROF_ID_0;
+}
+
+/**
+ * ice_calc_ts_ring_count - Calculate the number of timestamp descriptors
+ * @hw: pointer to the hardware structure
+ * @tx_desc_count: number of Tx descriptors in the ring
+ *
+ * Return: the number of timestamp descriptors
+ */
+u16 ice_calc_ts_ring_count(struct ice_hw *hw, u16 tx_desc_count)
+{
+	u16 prof = ICE_TXTIME_CTX_FETCH_PROF_ID_0;
+	u16 max_fetch_desc = 0;
+	u16 fetch;
+	u32 reg;
+	u16 i;
+
+	for (i = 0; i < ICE_TXTIME_FETCH_PROFILE_CNT; i++) {
+		reg = rd32(hw, E830_GLTXTIME_FETCH_PROFILE(prof, 0));
+		fetch = FIELD_GET(E830_GLTXTIME_FETCH_PROFILE_FETCH_TS_DESC_M,
+				  reg);
+		max_fetch_desc = max(fetch, max_fetch_desc);
+	}
+
+	if (!max_fetch_desc)
+		max_fetch_desc = ICE_TXTIME_FETCH_TS_DESC_DFLT;
+
+	max_fetch_desc = ALIGN(max_fetch_desc, ICE_REQ_DESC_MULTIPLE);
+
+	return tx_desc_count + max_fetch_desc;
 }
 
 /**
@@ -979,7 +1014,8 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 		u8 txtime_buf_len = struct_size(txtime_qg_buf, txtimeqs, 1);
 		struct ice_txtime_ctx txtime_ctx = { 0 };
 
-		ice_setup_txtime_ctx(tstamp_ring, &txtime_ctx);
+		ice_setup_txtime_ctx(tstamp_ring, &txtime_ctx,
+				     !!(ring->flags & ICE_TX_FLAGS_TXTIME));
 		ice_set_ctx(hw, (u8 *)&txtime_ctx,
 			    txtime_qg_buf->txtimeqs[0].txtime_ctx,
 			    ice_txtime_ctx_info);

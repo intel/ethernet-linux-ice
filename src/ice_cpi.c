@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice_type.h"
 #include "ice_common.h"
@@ -384,91 +384,5 @@ int ice_cpi_ena_dis_clk_ref(struct ice_hw *hw, u8 phy,
 	      FIELD_PREP(CPI_OPCODE_PHY_CLK_REF_SEL_M, clk);
 
 	return ice_cpi_set_cmd(hw, CPI_OPCODE_PHY_CLK, phy, 0, val);
-}
-
-/**
- * ice_cpi_select_clk_ref - selects Tx reference clock for given port
- * @hw: pointer to the HW struct
- * @phy: phy index of port to be enabled/disabled
- * @port: phy index of port for which Tx reference clock is selected
- * @clk: Tx reference clock to enable or disable
- *
- * This function executes CPI request to select specific Tx reference
- * clock on given port.
- *
- * Return: 0 on success.
- */
-int ice_cpi_select_clk_ref(struct ice_hw *hw, u8 phy, u8 port,
-			   enum ice_e825c_ref_clk clk)
-{
-	u16 val;
-
-	val = FIELD_PREP(CPI_OPCODE_PHY_CLK_PHY_SEL_M, phy) |
-	      FIELD_PREP(CPI_OPCODE_PHY_CLK_REF_CTRL_M,
-			 CPI_OPCODE_PHY_CLK_PORT_SEL) |
-	      FIELD_PREP(CPI_OPCODE_PHY_CLK_REF_SEL_M, clk);
-
-	return ice_cpi_set_cmd(hw, CPI_OPCODE_PHY_CLK, phy, port, val);
-}
-
-/**
- * ice_cpi_set_port_state - disables/enables port
- * @hw: pointer to the HW struct
- * @phy: phy index of port for which Tx reference clock is selected
- * @port: port/lane to enable/disable
- * @disable: bool value to enable or disable the port
- *
- * This function executes CPI request to enable or disable specific port.
- *
- * Return: 0 on success.
- */
-int ice_cpi_set_port_state(struct ice_hw *hw, u8 phy, u8 port, bool disable)
-{
-	u16 val = disable ? CPI_OPCODE_PORT_STATE_DISABLE : 0;
-
-	ice_debug(hw, ICE_DBG_PHY, "CPI Set Port State: phy=%d port=%d disable=%d\n",
-		  phy, port, disable);
-	return ice_cpi_set_cmd(hw, CPI_OPCODE_PORT_STATE, phy, port, val);
-}
-
-/**
- * ice_cpi_set_port_mode - configure port
- * @hw: pointer to the HW struct
- * @phy: phy index of port to be configured
- * @port: port to be configured
- * @port_width: the width of the port to be established
- * @port_mode: port mode to be configured
- *
- * Return: 0 on success.
- */
-int ice_cpi_set_port_mode(struct ice_hw *hw, u8 phy, u8 port, u8 port_width,
-			  u8 port_mode)
-{
-	u16 val;
-
-	val = FIELD_PREP(CPI_OPCODE_PORT_MODE_PORT_WIDTH_M, port_width) |
-	      FIELD_PREP(CPI_OPCODE_PORT_MODE_PORT_MODE_M, port_mode);
-
-	return ice_cpi_set_cmd(hw, CPI_OPCODE_PORT_MODE, phy, port, val);
-}
-
-/**
- * ice_cpi_reset_port - resets port
- * @hw: pointer to the HW struct
- * @phy: phy index of port to be reset
- * @port: port to be reset
- *
- * This function executes CPI request to reset specific port.
- *
- * Return: 0 on success.
- */
-int ice_cpi_reset_port(struct ice_hw *hw, u8 phy, u8 port)
-{
-	u16 val;
-
-	val = FIELD_PREP(CPI_OPCODE_COMMAND_CMD_M,
-			 CPI_OPCODE_COMMAND_RESET_PORT);
-
-	return ice_cpi_set_cmd(hw, CPI_OPCODE_COMMAND, phy, port, val);
 }
 

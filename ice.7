@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "December 09, 2024" "" "Linux ice readme"
+.TH "ICE" "7" "April 07, 2025" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -104,6 +104,8 @@ Intel(R) Ethernet Connection E822\-L
 Intel(R) Ethernet Connection E823\-C
 .IP \(bu 2
 Intel(R) Ethernet Connection E823\-L
+.IP \(bu 2
+Intel(R) Ethernet Connection E825\-C
 .IP \(bu 2
 Intel(R) Ethernet Controller E830
 .UNINDENT
@@ -3819,6 +3821,15 @@ hwstamp_ctl \-i <ethX> \-t 1 \-r 1
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+All Intel Ethernet 800 Series (except E810) devices support hardware\-generated
+cross timestamps, which capture PHC and x86 ART time simultaneously in HW.
+This is available through kernel PTP device\(aqs PTP_SYS_OFFSET_PRECISE IOCTL.
+.sp
+E810 devices support only SW cross timestamping, which captures PHC and x86 TSC
+times in software with high enough precision. This is only available to VFs by
+using VIRTCHNL_OP_1588_PTP_GET_SW_CROSS_TSTAMP and
+VIRTCHNL_OP_1588_PTP_GET_PHC_TO_CPU_DYNAMIC_RATIO commands.
 .SS SyncE Support
 .sp
 On hardware that supports Synchronous Ethernet (SyncE), the ice driver has
@@ -4781,11 +4792,58 @@ ethtool \-d <ethX> [raw on|off] [hex on|off] [file name]
 .UNINDENT
 .UNINDENT
 .sp
+The output of the command is similar to:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+Offset          Values
+\-\-\-\-\-\-          \-\-\-\-\-\-
+0x0000:         00 00 00 00 0a 00 00 00 00 00 00 00 00 00 00 00
+0x0010:         00 00 00 00 02 00 a9 b1 00 10 00 00 19 df 00 00
+0x0020:         b7 00 00 00 d4 00 00 00 00 00 00 00 00 00 00 00
+0x0030:         0a 00 00 00 19 00 00 00 00 00 00 00 0e 00 00 00
+\&...
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
 \fBNOTE:\fP
 .INDENT 0.0
 .INDENT 3.5
 The contents of the registers are not human\-readable. You must work
 with Customer Support to decode the file.
+.UNINDENT
+.UNINDENT
+.sp
+Use ethtool to read the RS FEC correctable and uncorrectable block counts:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ethtool \-\-show\-fec <ethX>
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+The output of the command is similar to:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+FEC parameters for ethX:
+Supported/Configured FEC encodings: Auto RS BaseR
+Active FEC encoding: RS
+Statistics:
+  corrected_blocks: 0
+  uncorrectable_blocks: 0
+.ft P
+.fi
 .UNINDENT
 .UNINDENT
 .SS Hierarchical QoS (HQoS) Transmit Scheduler
@@ -4931,6 +4989,50 @@ pci/0000:03:00.0/1 type leaf parent class_1
 .UNINDENT
 .sp
 Refer to the devlink\-rate man page and other documentation for details.
+.SS Types of supported resets
+.sp
+The driver supports a few types of resets that the user can perform using ethtool.
+Ethtool reset flags are mapped to the E810 reset type:
+.sp
+PF reset:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ethtool \-\-reset <ethX> irq dma filter offload
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+CORE reset:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ethtool \-\-reset <ethX> irq\-shared dma\-shared filter\-shared offload\-shared \e
+ram\-shared
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+GLOBAL reset:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ethtool \-\-reset <ethX> irq\-shared dma\-shared filter\-shared offload\-shared \e
+mac\-shared phy\-shared ram\-shared
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Calling the same set of flags on a port representor triggers a VF reset.
 .SH PERFORMANCE OPTIMIZATION
 .sp
 Driver defaults are meant to fit a wide variety of workloads, but if further
@@ -5242,75 +5344,73 @@ ethtool \-L <virt_interface> rx <max> tx <max>
 .UNINDENT
 .UNINDENT
 .UNINDENT
-.SS Transmit Balancing
+.SS Transmit Scheduling Layers
 .sp
-Some Intel(R) Ethernet 800 Series devices allow you to enable a transmit
-balancing feature to improve transmit performance under certain conditions.
-When the feature is enabled, you should experience more consistent transmit
-performance across queues and/or PFs and VFs.
+The ice hardware uses hierarchical scheduling for Tx with a fixed number of
+layers in the scheduling tree. Each of them are decision points. Root node
+represents a port, while all the leaves represent the queues. This way of
+configuring the Tx scheduler allows features like DCB or devlink\-rate
+(documented below) to configure how much bandwidth is given to any given queue
+or group of queues, enabling fine\-grained control because scheduling parameters
+can be configured at any given layer of the tree.
 .sp
-By default, transmit balancing is disabled in the NVM. To enable this feature,
-use one of the following to persistently change the setting for the device:
-.INDENT 0.0
-.IP \(bu 2
-Use the Ethernet Port Configuration Tool (EPCT) to enable the tx_balancing
-option. Refer to the EPCT readme for more information.
-.IP \(bu 2
-Enable the Transmit Balancing device setting in UEFI HII.
-.IP \(bu 2
-Enable transmit balancing via Linux devlink (see below).
-.UNINDENT
-.sp
-When the driver loads, it reads the transmit balancing setting from the NVM and
-configures the device accordingly.
-.sp
-\fBNOTE:\fP
-.INDENT 0.0
-.INDENT 3.5
-.INDENT 0.0
-.IP \(bu 2
-The user selection for transmit balancing in EPCT, HII, or Linux devlink
-is persistent across reboots. You must reboot the system for the selected
-setting to take effect.
-.IP \(bu 2
-This setting is device wide.
-.IP \(bu 2
-The driver, NVM, and DDP package must all support this functionality to
-enable the feature.
-.UNINDENT
-.UNINDENT
-.UNINDENT
-.sp
-To set the transmit balancing feature via devlink:
+The default 9\-layer tree topology was deemed best for most workloads, as it
+gives an optimal ratio of performance to configurability. However, for some
+specific cases, this 9\-layer topology might not be desired.  One example would
+be sending traffic to queues that are not a multiple of 8. Because the maximum
+radix is limited to 8 in 9\-layer topology, the 9th queue has a different parent
+than the rest, and it\(aqs given more bandwidth credits. This causes a problem
+when the system is sending traffic to 9 queues:
 .INDENT 0.0
 .INDENT 3.5
 .sp
 .nf
 .ft C
-devlink dev param set <pci/D:b:d.f> name txbalancing value <setting> cmode permanent
+| tx_queue_0_packets: 24163396
+| tx_queue_1_packets: 24164623
+| tx_queue_2_packets: 24163188
+| tx_queue_3_packets: 24163701
+| tx_queue_4_packets: 24163683
+| tx_queue_5_packets: 24164668
+| tx_queue_6_packets: 23327200
+| tx_queue_7_packets: 24163853
+| tx_queue_8_packets: 91101417 < Too much traffic is sent from 9th
 .ft P
 .fi
 .UNINDENT
 .UNINDENT
 .sp
-Where:
-.INDENT 0.0
-.TP
-.B <pci/D:b:d.f>
-The PCI address of the PF.
-.TP
-.B <setting>
-Set to true to enable transmit balancing, or false to
-disable transmit balancing.
-.UNINDENT
+To address this need, you can switch to a 5\-layer topology, which
+changes the maximum topology radix to 512. With this enhancement,
+the performance characteristic is equal as all queues can be assigned
+to the same parent in the tree. The obvious drawback of this solution
+is a lower configuration depth of the tree.
 .sp
-To show the current transmit balancing setting:
+Use the \fBtx_scheduling_layer\fP parameter with the devlink command to change
+the transmit scheduler topology. To use 5\-layer topology, use a value of 5.
+For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
 .nf
 .ft C
-devlink dev param show [ <pci> name txbalancing ]
+devlink dev param set pci/0000:16:00.0 name tx_scheduling_layers
+value 5 cmode permanent
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Use a value of 9 to set it back to the default value. You must do PCI slot
+powercycle for the selected topology to take effect.
+.sp
+To verify that value has been set:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+devlink dev param show pci/0000:16:00.0 name tx_scheduling_layers
 .ft P
 .fi
 .UNINDENT
@@ -5355,7 +5455,7 @@ For a PF, use the \fBmsix_eth\fP parameter.
 .IP \(bu 2
 For an RDMA function, use the \fBmsix_rdma\fP parameter.
 .IP \(bu 2
-For the pool of vectors used by the VFs, use the \fBmsix_vf parameter\fP\&.
+For the pool of vectors used by the VFs, use the \fBmsix_vf\fP parameter.
 .UNINDENT
 .TP
 .B <num>
@@ -5416,6 +5516,14 @@ For example, to set a VF to 64 MSI\-X vectors, use:
 echo 64 > /sys/bus/pci/devices/0000:31:00.2/sriov_vf_msix_count
 .ft P
 .fi
+.UNINDENT
+.UNINDENT
+.sp
+\fBNOTE:\fP
+.INDENT 0.0
+.INDENT 3.5
+For some Linux distributions, the \fBsriov_vf_msix_count\fP
+parameter is not available, and it is recommended to use devlink parameter.
 .UNINDENT
 .UNINDENT
 .SS Current MSI\-X Allocation

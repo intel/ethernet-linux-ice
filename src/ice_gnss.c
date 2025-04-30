@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -412,31 +412,29 @@ void ice_gnss_exit(struct ice_pf *pf)
 }
 
 /**
- * ice_gnss_is_gps_present - Check if GPS HW is present
+ * ice_gnss_is_module_present - Check if GPS HW is present
  * @hw: pointer to HW struct
+ *
+ * Return: true when GNSS is present, false otherwise.
  */
-bool ice_gnss_is_gps_present(struct ice_hw *hw)
+bool ice_gnss_is_module_present(struct ice_hw *hw)
 {
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
-	if (!hw->func_caps.ts_func_info.src_tmr_owned)
-		return false;
+	u8 data;
 
-	if (!ice_is_gps_in_netlist(hw))
+	if (!hw->func_caps.ts_func_info.src_tmr_owned ||
+	    !ice_is_gps_in_netlist(hw))
 		return false;
 
 	if (ice_is_pca9575_present(hw)) {
-		int err;
-		u8 data;
+		int err = ice_read_pca9575_reg(hw, ICE_PCA9575_P0_IN, &data);
 
-		err = ice_read_pca9575_reg(hw, ICE_PCA9575_P0_IN, &data);
 		if (err || !!(data & ICE_P0_GNSS_PRSNT_N))
 			return false;
-	} else {
-		return false;
 	}
 
 	return true;
-#else /* CONFIG_PTP_1588_CLOCK */
+#else /* !CONFIG_PTP_1588_CLOCK || NO_PTP_SUPPORT */
 	return false;
-#endif /* CONFIG_PTP_1588_CLOCK */
+#endif /* CONFIG_PTP_1588_CLOCK && !NO_PTP_SUPPORT */
 }

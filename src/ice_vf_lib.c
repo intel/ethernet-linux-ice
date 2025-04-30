@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_vf_lib_private.h"
@@ -1505,6 +1505,14 @@ void ice_initialize_vf_entry(struct ice_vf *vf)
 	else
 		ice_mbx_init_vf_info(&pf->hw, &vf->mbx_info);
 	mutex_init(&vf->cfg_lock);
+}
+
+void ice_deinitialize_vf_entry(struct ice_vf *vf)
+{
+	struct ice_pf *pf = vf->pf;
+
+	if (!ice_is_feature_supported(pf, ICE_F_MBX_LIMIT))
+		list_del(&vf->mbx_info.list_entry);
 }
 
 /**

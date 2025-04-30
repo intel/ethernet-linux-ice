@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_TXRX_H_
 #define _ICE_TXRX_H_
@@ -425,10 +425,7 @@ struct ice_tx_ring {
 	void *desc;			/* Descriptor ring memory */
 	struct device *dev;		/* Used for DMA mapping */
 	void __iomem *tail;
-	union {
-		struct ice_tx_buf *tx_buf;
-		struct ice_tstamp_buf *tstamp_buf;
-	};
+	struct ice_tx_buf *tx_buf;
 	struct ice_q_vector *q_vector;	/* Backreference to associated vector */
 	struct net_device *netdev;	/* netdev ring maps to */
 	struct ice_vsi *vsi;		/* Backreference to associated VSI */

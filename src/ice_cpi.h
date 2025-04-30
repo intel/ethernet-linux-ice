@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #ifndef _ICE_CPI_H_
 #define _ICE_CPI_H_
@@ -22,6 +22,9 @@
 #define CPI_OPCODE_PORT_MODE_EIGHT_LANE		3
 #define CPI_OPCODE_PORT_MODE_PORT_MODE_M	GENMASK(7, 0)
 #define CPI_OPCODE_PORT_MODE_AN73		BIT(2)
+#define CPI_OPCODE_PORT_MODE_SGMII		0x02
+#define CPI_OPCODE_PORT_MODE_1000_BASE_X	0x06
+#define CPI_OPCODE_PORT_MODE_2500_BASE_X	0x08
 #define CPI_OPCODE_PORT_MODE_10G_SFI		0x0C
 #define CPI_OPCODE_PORT_MODE_25G_AUI		0x15
 #define CPI_OPCODE_PORT_MODE_50G_LAUI_2		0x17
@@ -31,6 +34,8 @@
 #define CPI_OPCODE_PORT_MODE_100G_AUI_4		0x1A
 #define CPI_OPCODE_PORT_MODE_50G_AUI_1		0x20
 #define CPI_OPCODE_PORT_MODE_100G_AUI_2		0x21
+#define CPI_OPCODE_PORT_NEG_FORCED		BIT(13)
+#define CPI_OPCODE_PORT_AN37			BIT(14)
 
 #define CPI_OPCODE_NEG_MODE			0x5
 #define CPI_OPCODE_NEG_MODE_FEC_M		GENMASK(15, 12)
@@ -42,8 +47,11 @@
 #define CPI_OPCODE_PMD_CONTROL			0xC
 #define CPI_OPCODE_PMD_CONTROL_SFI		0x0
 #define CPI_OPCODE_PMD_CONTROL_TRAINING		0x400
+#define CPI_OPCODE_PMD_DIS_DSP_ADAPTATION	BIT(6)
 
 #define CPI_OPCODE_CURATE0			0x18
+#define CPI_OPCODE_CURATE0_100M_SGMII		BIT(1)
+#define CPI_OPCODE_CURATE0_1G_SGMII		BIT(2)
 #define CPI_OPCODE_CURATE0_1000BASE_KX		BIT(3)
 #define CPI_OPCODE_CURATE0_2500BASE_KX		BIT(4)
 #define CPI_OPCODE_CURATE0_5GBASE_KR		BIT(6)
@@ -143,10 +151,4 @@ int ice_cpi_exec(struct ice_hw *hw, u8 phy,
 		 struct ice_cpi_resp *resp);
 int ice_cpi_ena_dis_clk_ref(struct ice_hw *hw, u8 port,
 			    enum ice_e825c_ref_clk clk, bool enable);
-int ice_cpi_select_clk_ref(struct ice_hw *hw, u8 phy, u8 port,
-			   enum ice_e825c_ref_clk clk);
-int ice_cpi_set_port_state(struct ice_hw *hw, u8 phy, u8 port, bool disable);
-int ice_cpi_set_port_mode(struct ice_hw *hw, u8 phy, u8 port, u8 port_width,
-			  u8 port_mode);
-int ice_cpi_reset_port(struct ice_hw *hw, u8 phy, u8 port);
 #endif /* _ICE_CPI_H_ */

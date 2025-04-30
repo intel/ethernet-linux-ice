@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 #include "ice.h"
 #include "ice_base.h"
@@ -146,7 +146,7 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 	if (!vsi->tx_rings)
 		return -ENOMEM;
 
-	if (ice_is_feature_supported(pf, ICE_F_TXPP) &&
+	if (test_bit(ICE_FLAG_TXPP, pf->flags) &&
 	    vsi->type == ICE_VSI_PF) {
 		vsi->tstamp_rings = devm_kcalloc(dev, vsi->alloc_txq,
 						 sizeof(*vsi->tstamp_rings),
@@ -173,17 +173,9 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 	vsi->txq_map = devm_kcalloc(dev, alloc_txq, sizeof(*vsi->txq_map),
 				    GFP_KERNEL);
 #endif /* HAVE_XDP_SUPPORT */
-
 	if (!vsi->txq_map)
 		goto err_txq_map;
 
-	if (ice_is_feature_supported(pf, ICE_F_TXPP)) {
-		vsi->tstampq_map = devm_kcalloc(dev, vsi->alloc_txq,
-						sizeof(*vsi->tstampq_map),
-						GFP_KERNEL);
-		if (!vsi->tstampq_map)
-			goto err_tstampq_map;
-	}
 	vsi->rxq_map = devm_kcalloc(dev, alloc_rxq, sizeof(*vsi->rxq_map),
 				    GFP_KERNEL);
 	if (!vsi->rxq_map)
@@ -203,8 +195,6 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 err_vectors:
 	devm_kfree(dev, vsi->rxq_map);
 err_rxq_map:
-	devm_kfree(dev, vsi->tstampq_map);
-err_tstampq_map:
 	devm_kfree(dev, vsi->txq_map);
 err_txq_map:
 	devm_kfree(dev, vsi->rx_rings);
@@ -470,10 +460,6 @@ static void ice_vsi_free_arrays(struct ice_vsi *vsi)
 	if (vsi->rxq_map) {
 		devm_kfree(dev, vsi->rxq_map);
 		vsi->rxq_map = NULL;
-	}
-	if (vsi->tstampq_map) {
-		devm_kfree(dev, vsi->tstampq_map);
-		vsi->tstampq_map = NULL;
 	}
 }
 
@@ -1910,6 +1896,16 @@ static void ice_vsi_clear_rings(struct ice_vsi *vsi)
 			}
 		}
 	}
+
+	if (vsi->type == ICE_VSI_PF && vsi->tstamp_rings) {
+		ice_for_each_alloc_txq(vsi, i) {
+			if (vsi->tstamp_rings[i]) {
+				kfree_rcu(vsi->tstamp_rings[i], rcu);
+				WRITE_ONCE(vsi->tstamp_rings[i], NULL);
+			}
+		}
+	}
+
 	if (vsi->rx_rings) {
 		ice_for_each_alloc_rxq(vsi, i) {
 			if (vsi->rx_rings[i]) {
@@ -1958,10 +1954,9 @@ static int ice_vsi_alloc_rings(struct ice_vsi *vsi)
 			ring->flags |= ICE_TXRX_FLAGS_GCS_ENA;
 		WRITE_ONCE(vsi->tx_rings[i], ring);
 
-		if (ice_is_feature_supported(pf, ICE_F_TXPP) &&
+		if (test_bit(ICE_FLAG_TXPP, pf->flags) &&
 		    vsi->type == ICE_VSI_PF) {
 			tstamp_ring = kzalloc(sizeof(*ring), GFP_KERNEL);
-
 			if (!tstamp_ring)
 				goto err_out;
 
@@ -1969,7 +1964,9 @@ static int ice_vsi_alloc_rings(struct ice_vsi *vsi)
 			tstamp_ring->reg_idx = vsi->txq_map[i];
 			tstamp_ring->vsi = vsi;
 			tstamp_ring->dev = dev;
-			tstamp_ring->count = vsi->num_tx_desc;
+			tstamp_ring->count =
+				       ice_calc_ts_ring_count(&pf->hw,
+							      vsi->num_tx_desc);
 			WRITE_ONCE(vsi->tstamp_rings[i], tstamp_ring);
 		}
 	}
@@ -3622,14 +3619,16 @@ void ice_vsi_free_tx_rings(struct ice_vsi *vsi)
 	if (!vsi->tx_rings)
 		return;
 
-	ice_for_each_txq(vsi, i)
-		if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc) {
-			if (vsi->tx_rings[i]->flags & ICE_TX_FLAGS_TXTIME)
+	if (vsi->tstamp_rings) {
+		ice_for_each_txq(vsi, i)
+			if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc)
 				ice_free_tx_ring(vsi->tx_rings[i],
 						 vsi->tstamp_rings[i]);
-			else
+	} else {
+		ice_for_each_txq(vsi, i)
+			if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc)
 				ice_free_tx_ring(vsi->tx_rings[i], NULL);
-		}
+	}
 }
 
 /**
@@ -3712,8 +3711,7 @@ int ice_ena_vsi(struct ice_vsi *vsi, bool locked)
  */
 void ice_dis_vsi(struct ice_vsi *vsi, bool locked)
 {
-	if (test_bit(ICE_VSI_DOWN, vsi->state))
-		return;
+	bool already_down = test_bit(ICE_VSI_DOWN, vsi->state);
 
 	set_bit(ICE_VSI_NEEDS_RESTART, vsi->state);
 
@@ -3722,17 +3720,19 @@ void ice_dis_vsi(struct ice_vsi *vsi, bool locked)
 			if (!locked)
 				rtnl_lock();
 
-			ice_vsi_close(vsi);
+			already_down = test_bit(ICE_VSI_DOWN, vsi->state);
+			if (!already_down)
+				ice_vsi_close(vsi);
 
 			if (!locked)
 				rtnl_unlock();
-		} else {
+		} else if (!already_down) {
 			ice_vsi_close(vsi);
 		}
-	} else if (vsi->type == ICE_VSI_CTRL) {
+	} else if (vsi->type == ICE_VSI_CTRL && !already_down) {
 		ice_vsi_close(vsi);
 #ifdef HAVE_NDO_DFWD_OPS
-	} else if (vsi->type == ICE_VSI_OFFLOAD_MACVLAN) {
+	} else if (vsi->type == ICE_VSI_OFFLOAD_MACVLAN && !already_down) {
 		ice_vsi_close(vsi);
 #endif /* HAVE_NDO_DFWD_OPS */
 	}
@@ -4727,7 +4727,8 @@ int ice_set_link(struct ice_vsi *vsi, bool ena)
 	if (vsi->type != ICE_VSI_PF)
 		return -EINVAL;
 
-	status = hw->lm_ops->restart_an(pi, ena, NULL);
+	status = hw->lm_ops->restart_an(pi, ena, NULL,
+					ICE_AQC_RESTART_AN_REFCLK_NOCHANGE);
 
 	/* if link is owned by manageability, FW will return ICE_AQ_RC_EMODE.
 	 * this is not a fatal error, so print a warning message and return
@@ -5064,7 +5065,7 @@ void ice_init_feature_support(struct ice_pf *pf)
 			ice_set_feature_support(pf, ICE_F_SMA_CTRL);
 		if (ice_is_cgu_in_netlist(&pf->hw))
 			ice_set_feature_support(pf, ICE_F_CGU);
-		if (ice_gnss_is_gps_present(&pf->hw))
+		if (ice_gnss_is_module_present(&pf->hw))
 			ice_set_feature_support(pf, ICE_F_GNSS);
 #endif /* CONFIG_PTP_1588_CLOCK */
 		break;

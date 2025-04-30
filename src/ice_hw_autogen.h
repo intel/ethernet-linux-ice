@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* Machine generated file. Do not edit. */
 
@@ -645,8 +645,8 @@
 #define QRX_TAIL1(_QRX)				(0x00002000 + ((_QRX) * 4)) /* _i=0...255 */ /* Reset Source: CORER */
 #define QTX_TAIL(_DBQM)				(0x00000000 + ((_DBQM) * 4)) /* _i=0...255 */ /* Reset Source: CORER */
 #define E830_GLQTX_TXTIME_DBELL_LSB(_DBQM)	(0x002E0000 + ((_DBQM) * 8)) /* _i=0...16383 */ /* Reset Source: CORER */
-#define E830_GLTXTIME_TS_CFG			0x002D3100 /* Reset Source: CORER */
-#define E830_GLTXTIME_TS_CFG_TXTIME_ENABLE_M	BIT(0)
+#define E830_GLTXTIME_FETCH_PROFILE(_i, _j)	(0x002D3500 + ((_i) * 4 + (_j) * 64)) /* _i=0...15, _j=0...15 */ /* Reset Source: CORER */
+#define E830_GLTXTIME_FETCH_PROFILE_FETCH_TS_DESC_M ICE_M(0x1FF, 0)
 #define E830_MBX_PF_IN_FLIGHT_VF_MSGS_THRESH	0x00234000 /* Reset Source: CORER */
 #define E830_MBX_VF_DEC_TRIG(_VF)		(0x00233800 + ((_VF) * 4)) /* _i=0...255 */ /* Reset Source: CORER */
 #define E830_MBX_VF_IN_FLIGHT_MSGS_AT_PF_CNT(_VF) (0x00233000 + ((_VF) * 4)) /* _i=0...255 */ /* Reset Source: CORER */

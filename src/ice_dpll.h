@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright (C) 2023, Intel Corporation. */
@@ -16,14 +16,30 @@
 
 /**
  * enum ice_dpll_pin_type - enumerate ice pin types:
+ * @ICE_DPLL_PIN_TYPE_INVALID: invalid pin type
  * @ICE_DPLL_PIN_TYPE_INPUT: input pin
  * @ICE_DPLL_PIN_TYPE_OUTPUT: output pin
  * @ICE_DPLL_PIN_TYPE_RCLK_INPUT: recovery clock input pin
+ * @ICE_DPLL_PIN_TYPE_SOFTWARE: software controlled SMA/U.FL pins
  */
 enum ice_dpll_pin_type {
+	ICE_DPLL_PIN_TYPE_INVALID,
 	ICE_DPLL_PIN_TYPE_INPUT,
 	ICE_DPLL_PIN_TYPE_OUTPUT,
 	ICE_DPLL_PIN_TYPE_RCLK_INPUT,
+	ICE_DPLL_PIN_TYPE_SOFTWARE,
+};
+
+/**
+ * enum ice_dpll_pin_sw - enumerate ice software pin indices:
+ * @ICE_DPLL_PIN_SW_1_IDX: index of first SW pin
+ * @ICE_DPLL_PIN_SW_2_IDX: index of second SW pin
+ * @ICE_DPLL_PIN_SW_NUM: number of SW pins in pair
+ */
+enum ice_dpll_pin_sw {
+	ICE_DPLL_PIN_SW_1_IDX,
+	ICE_DPLL_PIN_SW_2_IDX,
+	ICE_DPLL_PIN_SW_NUM
 };
 
 #ifdef CONFIG_DPLL
@@ -50,7 +66,12 @@ struct ice_dpll_pin {
 	struct dpll_pin_properties prop;
 	u32 freq;
 	s32 phase_adjust;
+	struct ice_dpll_pin *input;
+	struct ice_dpll_pin *output;
+	enum dpll_pin_direction direction;
 	u8 status;
+	bool active;
+	bool hidden;
 };
 
 /** ice_dpll - store info required for DPLL control
@@ -112,14 +133,18 @@ struct ice_dplls {
 	struct ice_dpll pps;
 	struct ice_dpll_pin *inputs;
 	struct ice_dpll_pin *outputs;
+	struct ice_dpll_pin sma[ICE_DPLL_PIN_SW_NUM];
+	struct ice_dpll_pin ufl[ICE_DPLL_PIN_SW_NUM];
 	struct ice_dpll_pin rclk;
 	u8 num_inputs;
 	u8 num_outputs;
-	int cgu_state_acq_err_num;
+	u8 sma_data;
 	u8 base_rclk_idx;
+	int cgu_state_acq_err_num;
 	u64 clock_id;
 	s32 input_phase_adj_max;
 	s32 output_phase_adj_max;
+	bool generic;
 };
 
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)

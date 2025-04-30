@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2024 Intel Corporation */
+/* Copyright (C) 2018-2025 Intel Corporation */
 
 /* The driver transmit and receive code */
 
@@ -235,7 +235,7 @@ void ice_free_tx_ring(struct ice_tx_ring *tx_ring,
 	}
 
 	if (tstamp_ring && tstamp_ring->desc) {
-		size = ALIGN(tstamp_ring->count * sizeof(struct ice_tx_desc),
+		size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
 			     PAGE_SIZE);
 		dmam_free_coherent(tstamp_ring->dev, size,
 				   tstamp_ring->desc, tstamp_ring->dma);
@@ -2876,6 +2876,7 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 	if (kick) {
 		/* notify HW of packet */
 		if (tx_ring->flags & ICE_TX_FLAGS_TXTIME) {
+			u16 j = tstamp_ring->next_to_use;
 			struct ice_ts_desc *ts_desc;
 			struct timespec64 ts;
 			u32 tstamp;
@@ -2883,14 +2884,30 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 			ts = ktime_to_timespec64(first->skb->tstamp);
 			tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_128NS;
 
-			ts_desc = ICE_TS_DESC(tstamp_ring,
-					      tstamp_ring->next_to_use);
+			ts_desc = ICE_TS_DESC(tstamp_ring, j);
 			ts_desc->tx_desc_idx_tstamp =
 					ice_build_tstamp_desc(i, tstamp);
 
-			tstamp_ring->next_to_use++;
-			if (tstamp_ring->next_to_use == tstamp_ring->count)
-				tstamp_ring->next_to_use = 0;
+			j++;
+			if (j == tstamp_ring->count) {
+				int fetch = tstamp_ring->count - tx_ring->count;
+
+				j = 0;
+
+				/* To prevent an MDD, when wrapping the tstamp
+				 * ring create additional TS descriptors equal
+				 * to the number of the fetch TS descriptors
+				 * value. HW will merge the TS descriptors with
+				 * the same timestamp value into a single
+				 * descriptor.
+				 */
+				for (; j < fetch; j++) {
+					ts_desc = ICE_TS_DESC(tstamp_ring, j);
+					ts_desc->tx_desc_idx_tstamp =
+					       ice_build_tstamp_desc(i, tstamp);
+				}
+			}
+			tstamp_ring->next_to_use = j;
 
 			writel_relaxed(tstamp_ring->next_to_use,
 				       tstamp_ring->tail);
