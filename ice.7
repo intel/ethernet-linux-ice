@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "May 28, 2025" "" "Linux ice readme"
+.TH "ICE" "7" "June 13, 2025" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -87,7 +87,7 @@ sizes larger than 3KB.
 .sp
 See the \(dqIntel(R) Ethernet Adapters and Devices User Guide\(dq for additional
 information on features. It is available on the Intel website at
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/705831\fP\&.
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/705831'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/705831\fP\X'tty: link'\&.
 .SH IDENTIFYING YOUR ADAPTER
 .sp
 The driver is compatible with devices based on the following:
@@ -112,7 +112,7 @@ Intel(R) Ethernet Controller E830
 .sp
 For information on how to identify your adapter, and for the latest Intel
 network drivers, refer to the Intel Support website at
-\fI\%https://www.intel.com/support\fP\&.
+\X'tty: link https://www.intel.com/support'\fI\%https://www.intel.com/support\fP\X'tty: link'\&.
 .SH IMPORTANT NOTES
 .SS Configuring SR\-IOV for improved network security
 .sp
@@ -504,7 +504,7 @@ user\-changeable parameters after the driver is loaded.
 The driver utilizes the ethtool interface for driver configuration and
 diagnostics, as well as displaying statistical information. The latest ethtool
 version is required for this functionality. Download it at
-\fI\%https://kernel.org/pub/software/network/ethtool/\fP\&.
+\X'tty: link https://kernel.org/pub/software/network/ethtool/'\fI\%https://kernel.org/pub/software/network/ethtool/\fP\X'tty: link'\&.
 .SS Viewing Link Messages
 .sp
 Link messages will not be displayed to the console if the distribution is
@@ -717,7 +717,7 @@ Configuration Guide
 .UNINDENT
 .sp
 Both guides are available on the Intel Technical Library at:
-\fI\%https://www.intel.com/content/www/us/en/design/products\-and\-solutions/networking\-and\-io/ethernet\-controller\-e810/technical\-library.html\fP
+\X'tty: link https://www.intel.com/content/www/us/en/design/products-and-solutions/networking-and-io/ethernet-controller-e810/technical-library.html'\fI\%https://www.intel.com/content/www/us/en/design/products\-and\-solutions/networking\-and\-io/ethernet\-controller\-e810/technical\-library.html\fP\X'tty: link'
 .SS Link Aggregation and RDMA
 .sp
 Link aggregation (LAG) and RDMA are compatible only if all the following are
@@ -787,7 +787,7 @@ and allow Tx traffic to be rate limited per application.
 .sp
 The ADQ information contained here is specific to the ice driver. For more
 details, refer to the E810 ADQ Configuration Guide at
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/609008\fP\&.
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/609008'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/609008\fP\X'tty: link'\&.
 .sp
 Requirements:
 .INDENT 0.0
@@ -990,7 +990,7 @@ Refer to the \fBREADME.md\fP file in \fBscripts/adqsetup\fP inside the driver
 tarball for more information.
 .sp
 The script and README are also available as part of the Python Package Index
-at \fI\%https://pypi.org/project/adqsetup\fP\&.
+at \X'tty: link https://pypi.org/project/adqsetup'\fI\%https://pypi.org/project/adqsetup\fP\X'tty: link'\&.
 .SS Using ADQ with Independent Pollers
 .sp
 The ice driver supports ADQ acceleration using independent pollers. Independent
@@ -1402,7 +1402,7 @@ tc filter show dev <ethX> egress
 For detailed configuration information, supported fields, and example code for
 switchdev mode on Intel Ethernet 800 Series devices, refer to the configuration
 guide at
-\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\&.
+\X'tty: link https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote-e810-eswitch-switchdev-mode-config-guide/'\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\X'tty: link'\&.
 .sp
 TC FILTER EXAMPLES:
 .sp
@@ -2275,7 +2275,7 @@ Any VF properties that are set by the PF will not be migrated. Make sure that
 both devices have the same PF\-set properties.
 .UNINDENT
 .sp
-Refer to \fI\%https://qemu.readthedocs.io/en/latest/devel/vfio\-migration.html\fP for
+Refer to \X'tty: link https://qemu.readthedocs.io/en/latest/devel/vfio-migration.html'\fI\%https://qemu.readthedocs.io/en/latest/devel/vfio\-migration.html\fP\X'tty: link' for
 more details.
 .SS Displaying VF Statistics on the PF
 .sp
@@ -2934,7 +2934,7 @@ kernel versions, the DCF method provides the same functionality.
 For detailed configuration information, supported fields, and example code for
 switchdev mode on Intel Ethernet 800 Series devices, refer to the configuration
 guide at
-\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\&.
+\X'tty: link https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote-e810-eswitch-switchdev-mode-config-guide/'\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\X'tty: link'\&.
 .sp
 At a high level, do the following to offload TC filters to the hardware and
 create switch rules in switchdev mode:
@@ -3245,7 +3245,7 @@ In software\-based DCBX mode, you can configure DCB parameters using
 software LLDP/DCBX agents that interface with the Linux kernel\(aqs DCB
 Netlink API. We recommend using OpenLLDP as the DCBX agent when running
 in software mode. For more information, see the OpenLLDP man pages and
-\fI\%https://github.com/intel/openlldp\fP\&.
+\X'tty: link https://github.com/intel/openlldp'\fI\%https://github.com/intel/openlldp\fP\X'tty: link'\&.
 .IP \(bu 2
 The driver implements the DCB netlink interface layer to allow the user
 space to communicate with the driver and query DCB configuration for the
@@ -3543,7 +3543,7 @@ echo 0 > /sys/class/net/<ethx>/queues/tx\-1/tx_maxrate
 .SS NAPI
 .sp
 This driver supports NAPI (Rx polling mode). For more information on NAPI, see
-\fI\%https://docs.kernel.org/networking/napi.html\fP\&.
+\X'tty: link https://docs.kernel.org/networking/napi.html'\fI\%https://docs.kernel.org/networking/napi.html\fP\X'tty: link'\&.
 .SS MACVLAN
 .sp
 This driver supports MACVLAN. Kernel support for MACVLAN can be tested by
@@ -3801,10 +3801,10 @@ advanced configuration of this feature.
 .INDENT 0.0
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-XXV\-4T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/646265'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP\X'tty: link'
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-C\-Q2T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/722960'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP\X'tty: link'
 .UNINDENT
 .sp
 Intel Ethernet 800 Series devices support hardware\-generated timestamps. The
@@ -3844,10 +3844,10 @@ advanced configuration of this feature.
 .INDENT 0.0
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-XXV\-4T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/646265'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP\X'tty: link'
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-C\-Q2T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/722960'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP\X'tty: link'
 .UNINDENT
 .SS Earliest TxTime First (ETF) Offloads
 .sp
@@ -5905,14 +5905,14 @@ compatible out\-of\-tree irdma driver.
 .SH SUPPORT
 .sp
 For general information, go to the Intel support website at
-\fI\%https://www.intel.com/support/\fP
+\X'tty: link https://www.intel.com/support/'\fI\%https://www.intel.com/support/\fP\X'tty: link'
 .sp
 or the Intel Ethernet Linux project hosted by GitHub at
-\fI\%https://github.com/intel/ethernet\-linux\-ice\fP
+\X'tty: link https://github.com/intel/ethernet-linux-ice'\fI\%https://github.com/intel/ethernet\-linux\-ice\fP\X'tty: link'
 .sp
 If an issue is identified with the released source code on a supported kernel
 with a supported adapter, contact Intel Customer Support at
-\fI\%https://www.intel.com/content/www/us/en/support/products/36773/ethernet\-products.html\fP
+\X'tty: link https://www.intel.com/content/www/us/en/support/products/36773/ethernet-products.html'\fI\%https://www.intel.com/content/www/us/en/support/products/36773/ethernet\-products.html\fP\X'tty: link'
 .SH LICENSE
 .sp
 This program is free software; you can redistribute it and/or modify it under
