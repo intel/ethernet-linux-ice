@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-June 13, 2025
+June 16, 2025
 
 
 Contents
@@ -883,9 +883,13 @@ Creating Traffic Classes
 
 Note:
 
-  These instructions are not specific to ADQ configuration. Refer to
-  the tc and tc-flower man pages for more information on creating
-  traffic classes (TCs).
+  * These instructions are not specific to ADQ configuration. Refer to
+    the tc and tc-flower man pages for more information on creating
+    traffic classes (TCs).
+
+  * Disable FW-LLDP before using tc command to add filter. Refer to
+    the FW-LLDP (Firmware Link Layer Discovery Protocol) section in
+    this README for more information on disabling FW-LLDP.
 
 To create traffic classes on the interface:
 
@@ -1004,7 +1008,11 @@ Creating Traffic Class Filters
 
 Note:
 
-  These instructions are not specific to ADQ configuration.
+  * These instructions are not specific to ADQ configuration.
+
+  * Disable FW-LLDP before using tc command to add filter. Refer to
+    the FW-LLDP (Firmware Link Layer Discovery Protocol) section in
+    this README for more information on disabling FW-LLDP.
 
 After creating traffic classes, use the tc command to create filters
 for traffic. Refer to the tc and tc-flower man pages for more
@@ -1131,7 +1139,11 @@ the packet to specific Rx queues, using the TC filter's class ID.
 
 Note:
 
-  This functionality can be used with or without ADQ.
+  * This functionality can be used with or without ADQ.
+
+  * Disable FW-LLDP before using tc command to add filter. Refer to
+    the FW-LLDP (Firmware Link Layer Discovery Protocol) section in
+    this README for more information on disabling FW-LLDP.
 
 To add filters for the desired queue, use the following tc command:
 
@@ -2065,8 +2077,12 @@ another specified VF that resides on the same PF.
 
 Note:
 
-  This feature is only supported in switchdev mode. See Switchdev Mode
-  in this README for more information.
+  * This feature is only supported in switchdev mode. See Switchdev
+    Mode in this README for more information.
+
+  * Disable FW-LLDP before using tc command to add filter. Refer to
+    the FW-LLDP (Firmware Link Layer Discovery Protocol) section in
+    this README for more information on disabling FW-LLDP.
 
 Use the tc-mirred command to configure the mirror rules. For example,
 to add a minimal filter:
@@ -2676,6 +2692,94 @@ it for advanced configuration of this feature.
 
 * Intel(R) Ethernet Network Adapter E810-C-Q2T:
   https://cdrdv2.intel.com/v1/dl/getContent/722960
+
+
+Unmanaged DPLL Support
+----------------------
+
+The managed DPLL support for supported hardware is described in
+external guides, as mentioned in SyncE Support.
+
+Hardware variants of E830 may support an unmanaged DPLL:
+
+* Intel® Ethernet Network Adapter E830-XXVDA8F for OCP 3.0,
+
+* Intel® Ethernet Network Adapter E830-XXVDA4F.
+
+In the case of the unmanaged DPLL, the configuration is hardcoded
+within the hardware and firmware, meaning users cannot modify
+settings. However, users can check the DPLL lock status and obtain
+configuration information through the Linux DPLL subsystem.
+
+When present, the DPLL device locks to an external signal provided
+through the PCIe/OCP pin. The expected input signal is 1PPS (1 Pulse
+Per Second) embedded on a 10MHz reference clock. The DPLL produces
+output:
+
+* for MAC (Media Access Control) & PHY (Physical Layer) clocks,
+
+* 1PPS for synchronization of onboard PHC (Precision Hardware Clock)
+  timer.
+
+Requirements: The Linux kernel must have support for both the DPLL
+Subsystem and the Embedded Sync patch series.
+
+Example output of querying the Linux DPLL subsystem can be found
+below.
+
+Dumping the DPLL pins
+
+   $ ./tools/net/ynl/cli.py --spec Documentation/netlink/specs/dpll.yaml --dump pin-get
+   [{'board-label': '1588-TIME_SYNC',
+     'capabilities': set(),
+     'clock-id': 282574471561216,
+     'esync-frequency': 1,
+     'esync-frequency-supported': [{'frequency-max': 1, 'frequency-min': 1}],
+     'esync-pulse': 25,
+     'frequency': 10000000,
+     'id': 13,
+     'module-name': 'ice',
+     'parent-device': [{'direction': 'input',
+                        'parent-id': 6,
+                        'state': 'connected'}],
+     'phase-adjust-max': 0,
+     'phase-adjust-min': 0,
+     'type': 'ext'},
+     {'board-label': 'MAC-PHY-CLK',
+       'capabilities': set(),
+     'clock-id': 282574471561216,
+     'frequency': 156250000,
+     'id': 14,
+     'module-name': 'ice',
+     'parent-device': [{'direction': 'output',
+                        'parent-id': 6,
+                        'state': 'connected'}],
+     'phase-adjust-max': 0,
+     'phase-adjust-min': 0,
+     'type': 'synce-eth-port'},
+   {'board-label': '1588-TIME_REF',
+     'capabilities': set(),
+     'clock-id': 282574471561216,
+     'frequency': 1,
+     'id': 15,
+     'module-name': 'ice',
+     'parent-device': [{'direction': 'output',
+                        'parent-id': 6,
+                        'state': 'connected'}],
+     'phase-adjust-max': 0,
+     'phase-adjust-min': 0,
+     'type': 'int-oscillator'}]
+
+Dumping the DPLL devices
+
+   $ ./tools/net/ynl/cli.py --spec Documentation/netlink/specs/dpll.yaml --dump device-get
+   [{'clock-id': 282574471561216,
+     'id': 6,
+     'lock-status': 'locked',
+     'mode': 'automatic',
+     'mode-supported': ['automatic'],
+     'module-name': 'ice',
+     'type': 'eec'}]
 
 
 Earliest TxTime First (ETF) Offloads

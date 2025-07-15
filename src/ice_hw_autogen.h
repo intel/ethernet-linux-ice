@@ -272,7 +272,9 @@
 #define GLGEN_CLKSTAT_SRC			0x000B826C /* Reset Source: POR */
 #define GLGEN_CLKSTAT_SRC_PSM_CLK_SRC_M		ICE_M(0x3, 4)
 #define GLGEN_GPIO_CTL(_i)			(0x000880C8 + ((_i) * 4)) /* _i=0...6 */ /* Reset Source: POR */
+#define GLGEN_GPIO_CTL_MAX_INDEX		6
 #define GLGEN_GPIO_CTL_PIN_DIR_M		BIT(4)
+#define GLGEN_GPIO_CTL_TRI_CTL_M		BIT(5)
 #define GLGEN_GPIO_CTL_PIN_FUNC_M		ICE_M(0xF, 8)
 #define GLGEN_RSTAT				0x000B8188 /* Reset Source: POR */
 #define GLGEN_RSTAT_DEVSTATE_M			ICE_M(0x3, 0)

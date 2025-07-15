@@ -25,10 +25,10 @@
  * byte 0 = 0x2: to identify it as locally administered DA MAC
  * byte 6 = 0x2: to identify it as locally administered SA MAC
  * byte 12 = 0x81 & byte 13 = 0x00:
- *	In case of VLAN filter first two bytes defines ether type (0x8100)
- *	and remaining two bytes are placeholder for programming a given VLAN ID
- *	In case of Ether type filter it is treated as header without VLAN tag
- *	and byte 12 and 13 is used to program a given Ether type instead
+ *      In case of VLAN filter first two bytes defines ether type (0x8100)
+ *      and remaining two bytes are placeholder for programming a given VLAN ID
+ *      In case of Ether type filter it is treated as header without VLAN tag
+ *      and byte 12 and 13 is used to program a given Ether type instead
  */
 static const u8 dummy_eth_header[DUMMY_ETH_HDR_LEN] = { 0x2, 0, 0, 0, 0, 0,
 							0x2, 0, 0, 0, 0, 0,
@@ -1916,8 +1916,7 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 	bitmap_zero(result_bm, ICE_MAX_FV_WORDS);
 
 	/* we need a buffer big enough to accommodate all the recipes */
-	tmp = devm_kcalloc(ice_hw_to_dev(hw), ICE_MAX_NUM_RECIPES,
-			   sizeof(*tmp), GFP_KERNEL);
+	tmp = kcalloc(ICE_MAX_NUM_RECIPES, sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
 
@@ -2031,7 +2030,7 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 		recps[rid].recp_created = true;
 
 err_unroll:
-	devm_kfree(ice_hw_to_dev(hw), tmp);
+	kfree(tmp);
 	return status;
 }
 
@@ -2079,8 +2078,7 @@ ice_init_def_sw_recp(struct ice_hw *hw, struct ice_sw_recipe **recp_list)
 	struct ice_sw_recipe *recps;
 	u8 i;
 
-	recps = devm_kcalloc(ice_hw_to_dev(hw), ICE_MAX_NUM_RECIPES,
-			     sizeof(*recps), GFP_KERNEL);
+	recps = kcalloc(ICE_MAX_NUM_RECIPES, sizeof(*recps), GFP_KERNEL);
 	if (!recps)
 		return -ENOMEM;
 
@@ -2155,8 +2153,7 @@ int ice_dump_sw_cfg(struct ice_hw *hw)
 	int ret;
 	u16 i;
 
-	rbuf = devm_kzalloc(ice_hw_to_dev(hw), ICE_SW_CFG_MAX_BUF_LEN,
-			    GFP_KERNEL);
+	rbuf = kzalloc(ICE_SW_CFG_MAX_BUF_LEN, GFP_KERNEL);
 	if (!rbuf)
 		return -ENOMEM;
 
@@ -2220,7 +2217,7 @@ int ice_dump_sw_cfg(struct ice_hw *hw)
 		}
 	} while (req_desc && !ret);
 
-	devm_kfree(ice_hw_to_dev(hw), rbuf);
+	kfree(rbuf);
 	return ret;
 }
 
@@ -2236,7 +2233,7 @@ int ice_alloc_rss_global_lut(struct ice_hw *hw, u16 *global_lut_id)
 	int status;
 
 	buf_len = struct_size(sw_buf, elem, 1);
-	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
 
@@ -2254,7 +2251,7 @@ int ice_alloc_rss_global_lut(struct ice_hw *hw, u16 *global_lut_id)
 	*global_lut_id = le16_to_cpu(sw_buf->elem[0].e.sw_resp);
 
 ice_alloc_global_lut_exit:
-	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	kfree(sw_buf);
 	return status;
 }
 
@@ -2270,7 +2267,7 @@ int ice_free_rss_global_lut(struct ice_hw *hw, u16 global_lut_id)
 	int status;
 
 	buf_len = struct_size(sw_buf, elem, num_elems);
-	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
 
@@ -2283,7 +2280,7 @@ int ice_free_rss_global_lut(struct ice_hw *hw, u16 global_lut_id)
 		ice_debug(hw, ICE_DBG_RES, "Failed to free RSS global LUT %d, status %d\n",
 			  global_lut_id, status);
 
-	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	kfree(sw_buf);
 	return status;
 }
 
@@ -2307,7 +2304,7 @@ ice_alloc_sw(struct ice_hw *hw, bool ena_stats, bool shared_res, u16 *sw_id,
 	int status;
 
 	buf_len = struct_size(sw_buf, elem, 1);
-	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
 
@@ -2337,8 +2334,7 @@ ice_alloc_sw(struct ice_hw *hw, bool ena_stats, bool shared_res, u16 *sw_id,
 		struct ice_aqc_alloc_free_res_elem *counter_buf;
 		struct ice_aqc_res_elem *counter_ele;
 
-		counter_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len,
-					   GFP_KERNEL);
+		counter_buf = kzalloc(buf_len, GFP_KERNEL);
 		if (!counter_buf) {
 			status = -ENOMEM;
 			goto ice_alloc_sw_exit;
@@ -2356,16 +2352,16 @@ ice_alloc_sw(struct ice_hw *hw, bool ena_stats, bool shared_res, u16 *sw_id,
 					       opc, NULL);
 
 		if (status) {
-			devm_kfree(ice_hw_to_dev(hw), counter_buf);
+			kfree(counter_buf);
 			goto ice_alloc_sw_exit;
 		}
 		counter_ele = &counter_buf->elem[0];
 		*counter_id = le16_to_cpu(counter_ele->e.sw_resp);
-		devm_kfree(ice_hw_to_dev(hw), counter_buf);
+		kfree(counter_buf);
 	}
 
 ice_alloc_sw_exit:
-	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	kfree(sw_buf);
 	return status;
 }
 
@@ -2388,7 +2384,7 @@ int ice_free_sw(struct ice_hw *hw, u16 sw_id, u16 counter_id)
 	u16 buf_len;
 
 	buf_len = struct_size(sw_buf, elem, 1);
-	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
 
@@ -2408,9 +2404,9 @@ int ice_free_sw(struct ice_hw *hw, u16 sw_id, u16 counter_id)
 		ice_debug(hw, ICE_DBG_SW, "CQ CMD Buffer:\n");
 
 	/* Prepare buffer to free for VEB Counter resource */
-	counter_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	counter_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!counter_buf) {
-		devm_kfree(ice_hw_to_dev(hw), sw_buf);
+		kfree(sw_buf);
 		return -ENOMEM;
 	}
 
@@ -2429,8 +2425,8 @@ int ice_free_sw(struct ice_hw *hw, u16 sw_id, u16 counter_id)
 		ret_status = status;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), counter_buf);
-	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	kfree(counter_buf);
+	kfree(sw_buf);
 	return ret_status;
 }
 
@@ -2616,11 +2612,11 @@ static void ice_clear_vsi_q_ctx(struct ice_hw *hw, u16 vsi_handle)
 		return;
 	ice_for_each_traffic_class(i) {
 		if (vsi->lan_q_ctx[i]) {
-			devm_kfree(ice_hw_to_dev(hw), vsi->lan_q_ctx[i]);
+			kfree(vsi->lan_q_ctx[i]);
 			vsi->lan_q_ctx[i] = NULL;
 		}
 		if (vsi->rdma_q_ctx[i]) {
-			devm_kfree(ice_hw_to_dev(hw), vsi->rdma_q_ctx[i]);
+			kfree(vsi->rdma_q_ctx[i]);
 			vsi->rdma_q_ctx[i] = NULL;
 		}
 	}
@@ -2640,7 +2636,7 @@ static void ice_clear_vsi_ctx(struct ice_hw *hw, u16 vsi_handle)
 	vsi = ice_get_vsi_ctx(hw, vsi_handle);
 	if (vsi) {
 		ice_clear_vsi_q_ctx(hw, vsi_handle);
-		devm_kfree(ice_hw_to_dev(hw), vsi);
+		kfree(vsi);
 		hw->vsi_ctx[vsi_handle] = NULL;
 	}
 }
@@ -2683,8 +2679,7 @@ ice_add_vsi(struct ice_hw *hw, u16 vsi_handle, struct ice_vsi_ctx *vsi_ctx,
 	tmp_vsi_ctx = ice_get_vsi_ctx(hw, vsi_handle);
 	if (!tmp_vsi_ctx) {
 		/* Create a new VSI context */
-		tmp_vsi_ctx = devm_kzalloc(ice_hw_to_dev(hw),
-					   sizeof(*tmp_vsi_ctx), GFP_KERNEL);
+		tmp_vsi_ctx = kzalloc(sizeof(*tmp_vsi_ctx), GFP_KERNEL);
 		if (!tmp_vsi_ctx) {
 			ice_aq_free_vsi(hw, vsi_ctx, false, cd);
 			return -ENOMEM;
@@ -2760,7 +2755,7 @@ ice_cfg_iwarp_fltr(struct ice_hw *hw, u16 vsi_handle, bool enable)
 	if (!cached_ctx)
 		return -ENOENT;
 
-	ctx = devm_kcalloc(ice_hw_to_dev(hw), 1, sizeof(*ctx), GFP_KERNEL);
+	ctx = kcalloc(1, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -2781,7 +2776,7 @@ ice_cfg_iwarp_fltr(struct ice_hw *hw, u16 vsi_handle, bool enable)
 		cached_ctx->info.valid_sections |= ctx->info.valid_sections;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), ctx);
+	kfree(ctx);
 	return status;
 }
 
@@ -2853,8 +2848,7 @@ ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
 			return -EINVAL;
 
 		buf_size = count * sizeof(__le16);
-		mr_list = devm_kzalloc(ice_hw_to_dev(hw), buf_size,
-				       GFP_KERNEL);
+		mr_list = kzalloc(buf_size, GFP_KERNEL);
 		if (!mr_list)
 			return -ENOMEM;
 		break;
@@ -2891,7 +2885,7 @@ ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
 			if (id >= ICE_MAX_VSI) {
 				ice_debug(hw, ICE_DBG_SW, "Error VSI index (%u) out-of-range\n",
 					  id);
-				devm_kfree(ice_hw_to_dev(hw), mr_list);
+				kfree(mr_list);
 				return -EIO;
 			}
 
@@ -2918,7 +2912,7 @@ ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
 	if (!status)
 		*rule_id = le16_to_cpu(cmd->rule_id) & ICE_AQC_RULE_ID_M;
 
-	devm_kfree(ice_hw_to_dev(hw), mr_list);
+	kfree(mr_list);
 
 	return status;
 }
@@ -2976,7 +2970,7 @@ ice_aq_alloc_free_vsi_list(struct ice_hw *hw, u16 *vsi_list_id,
 	int status;
 
 	buf_len = struct_size(sw_buf, elem, 1);
-	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
 	sw_buf->num_elems = cpu_to_le16(1);
@@ -3017,7 +3011,7 @@ ice_aq_alloc_free_vsi_list(struct ice_hw *hw, u16 *vsi_list_id,
 	}
 
 ice_aq_alloc_free_vsi_list_exit:
-	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	kfree(sw_buf);
 	return status;
 }
 
@@ -3222,8 +3216,7 @@ ice_update_recipe_lkup_idx(struct ice_hw *hw,
 	u16 num_recps = ICE_MAX_NUM_RECIPES;
 	int status;
 
-	rcp_list = devm_kzalloc(ice_hw_to_dev(hw),
-				num_recps * sizeof(*rcp_list), GFP_KERNEL);
+	rcp_list = kzalloc(num_recps * sizeof(*rcp_list), GFP_KERNEL);
 	if (!rcp_list)
 		return -ENOMEM;
 
@@ -3256,7 +3249,7 @@ ice_update_recipe_lkup_idx(struct ice_hw *hw,
 			  status);
 
 error_out:
-	devm_kfree(ice_hw_to_dev(hw), rcp_list);
+	kfree(rcp_list);
 	return status;
 }
 
@@ -3341,7 +3334,7 @@ ice_alloc_legacy_shared_recipe(struct ice_hw *hw, u16 *rid)
 	int status;
 
 	buf_len = struct_size(sw_buf, elem, 1);
-	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
 
@@ -3353,7 +3346,7 @@ ice_alloc_legacy_shared_recipe(struct ice_hw *hw, u16 *rid)
 				       ice_aqc_opc_alloc_res, NULL);
 	if (!status)
 		*rid = le16_to_cpu(sw_buf->elem[0].e.sw_resp);
-	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	kfree(sw_buf);
 
 	return status;
 }
@@ -3371,7 +3364,7 @@ ice_alloc_subscribable_recipe(struct ice_hw *hw, u16 *rid)
 	u16 buf_len;
 
 	buf_len = struct_size(buf, elem, 1);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -3390,7 +3383,7 @@ ice_alloc_subscribable_recipe(struct ice_hw *hw, u16 *rid)
 	memcpy(rid, buf->elem, sizeof(*buf->elem) * 1);
 
 exit:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -3446,7 +3439,7 @@ static int ice_subscribe_recipe(struct ice_hw *hw, u16 rid)
 	u16 buf_len;
 
 	buf_len = struct_size(buf, elem, 1);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -3462,7 +3455,7 @@ static int ice_subscribe_recipe(struct ice_hw *hw, u16 rid)
 	status = ice_aq_alloc_free_res(hw, 1, buf, buf_len,
 				       ice_aqc_opc_alloc_res, NULL);
 
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -3581,8 +3574,7 @@ int ice_get_initial_sw_cfg(struct ice_hw *hw)
 
 	num_total_ports = 1;
 
-	rbuf = devm_kzalloc(ice_hw_to_dev(hw), ICE_SW_CFG_MAX_BUF_LEN,
-			    GFP_KERNEL);
+	rbuf = kzalloc(ICE_SW_CFG_MAX_BUF_LEN, GFP_KERNEL);
 
 	if (!rbuf)
 		return -ENOMEM;
@@ -3641,7 +3633,7 @@ int ice_get_initial_sw_cfg(struct ice_hw *hw)
 	} while (req_desc && !status);
 
 out:
-	devm_kfree(ice_hw_to_dev(hw), rbuf);
+	kfree(rbuf);
 	return status;
 }
 
@@ -3859,6 +3851,15 @@ static void ice_fill_sw_info(struct ice_hw *hw, struct ice_fltr_info *fi)
 }
 
 /**
+ * ice_fill_eth_hdr - helper to copy dummy_eth_hdr into supplied buffer
+ * @eth_hdr: pointer to buffer to populate
+ */
+void ice_fill_eth_hdr(u8 *eth_hdr)
+{
+	memcpy(eth_hdr, dummy_eth_header, DUMMY_ETH_HDR_LEN);
+}
+
+/**
  * ice_fill_sw_rule - Helper function to fill switch rule structure
  * @hw: pointer to the hardware structure
  * @f_info: entry containing packet forwarding information
@@ -3873,7 +3874,6 @@ ice_fill_sw_rule(struct ice_hw *hw, struct ice_fltr_info *f_info,
 	u16 vlan_id = ICE_MAX_VLAN_ID + 1;
 	u16 vlan_tpid = ETH_P_8021Q;
 	void *daddr = NULL;
-	u16 eth_hdr_sz;
 	u8 *eth_hdr;
 	u32 act = 0;
 	__be16 *off;
@@ -3886,11 +3886,10 @@ ice_fill_sw_rule(struct ice_hw *hw, struct ice_fltr_info *f_info,
 		return;
 	}
 
-	eth_hdr_sz = sizeof(dummy_eth_header);
 	eth_hdr = s_rule->hdr_data;
 
 	/* initialize the ether header with a dummy header */
-	memcpy(eth_hdr, dummy_eth_header, eth_hdr_sz);
+	ice_fill_eth_hdr(eth_hdr);
 	ice_fill_sw_info(hw, f_info);
 
 	switch (f_info->fltr_act) {
@@ -3991,7 +3990,7 @@ ice_fill_sw_rule(struct ice_hw *hw, struct ice_fltr_info *f_info,
 
 	/* Create the switch rule with the final dummy Ethernet header */
 	if (opc != ice_aqc_opc_update_sw_rules)
-		s_rule->hdr_len = cpu_to_le16(eth_hdr_sz);
+		s_rule->hdr_len = cpu_to_le16(DUMMY_ETH_HDR_LEN);
 }
 
 /**
@@ -4043,7 +4042,7 @@ ice_add_marker_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 	lg_act_size = (u16) struct_size(lg_act, act, num_lg_acts);
 	rules_size = lg_act_size +
 		     struct_size(rx_tx, hdr_data, DUMMY_ETH_HDR_LEN);
-	lg_act = devm_kzalloc(ice_hw_to_dev(hw), rules_size, GFP_KERNEL);
+	lg_act = kzalloc(rules_size, GFP_KERNEL);
 	if (!lg_act)
 		return -ENOMEM;
 
@@ -4103,7 +4102,7 @@ ice_add_marker_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 		m_ent->sw_marker_id = sw_marker;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), lg_act);
+	kfree(lg_act);
 	return status;
 }
 
@@ -4140,7 +4139,7 @@ ice_add_counter_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 	lg_act_size = (u16) struct_size(lg_act, act, num_acts);
 	rules_size = lg_act_size +
 		     struct_size(rx_tx, hdr_data, DUMMY_ETH_HDR_LEN);
-	lg_act = devm_kzalloc(ice_hw_to_dev(hw), rules_size, GFP_KERNEL);
+	lg_act = kzalloc(rules_size, GFP_KERNEL);
 	if (!lg_act)
 		return -ENOMEM;
 
@@ -4191,7 +4190,7 @@ ice_add_counter_act(struct ice_hw *hw, struct ice_fltr_mgmt_list_entry *m_ent,
 		m_ent->counter_index = (u8)counter_id;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), lg_act);
+	kfree(lg_act);
 	return status;
 }
 
@@ -4213,7 +4212,7 @@ ice_create_vsi_list_map(struct ice_hw *hw, u16 *vsi_handle_arr, u16 num_vsi,
 	struct ice_vsi_list_map_info *v_map;
 	int i;
 
-	v_map = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*v_map), GFP_KERNEL);
+	v_map = kzalloc(sizeof(*v_map), GFP_KERNEL);
 	if (!v_map)
 		return NULL;
 
@@ -4270,7 +4269,7 @@ ice_update_vsi_list_rule(struct ice_hw *hw, u16 *vsi_handle_arr, u16 num_vsi,
 		return -EINVAL;
 
 	s_rule_size = (u16) struct_size(s_rule, vsi, num_vsi);
-	s_rule = devm_kzalloc(ice_hw_to_dev(hw), s_rule_size, GFP_KERNEL);
+	s_rule = kzalloc(s_rule_size, GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
 	for (i = 0; i < num_vsi; i++) {
@@ -4290,7 +4289,7 @@ ice_update_vsi_list_rule(struct ice_hw *hw, u16 *vsi_handle_arr, u16 num_vsi,
 	status = ice_aq_sw_rules(hw, s_rule, s_rule_size, 1, opc, NULL);
 
 exit:
-	devm_kfree(ice_hw_to_dev(hw), s_rule);
+	kfree(s_rule);
 	return status;
 }
 
@@ -4337,13 +4336,11 @@ ice_create_pkt_fwd_rule(struct ice_hw *hw, struct ice_sw_recipe *recp_list,
 	struct ice_sw_rule_lkup_rx_tx *s_rule;
 	int status;
 
-	s_rule = devm_kzalloc(ice_hw_to_dev(hw),
-			      struct_size(s_rule, hdr_data, DUMMY_ETH_HDR_LEN),
-			      GFP_KERNEL);
+	s_rule = kzalloc(struct_size(s_rule, hdr_data, DUMMY_ETH_HDR_LEN),
+			 GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
-	fm_entry = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*fm_entry),
-				GFP_KERNEL);
+	fm_entry = kzalloc(sizeof(*fm_entry), GFP_KERNEL);
 	if (!fm_entry) {
 		status = -ENOMEM;
 		goto ice_create_pkt_fwd_rule_exit;
@@ -4364,7 +4361,7 @@ ice_create_pkt_fwd_rule(struct ice_hw *hw, struct ice_sw_recipe *recp_list,
 				 struct_size(s_rule, hdr_data, DUMMY_ETH_HDR_LEN),
 				 1, ice_aqc_opc_add_sw_rules, NULL);
 	if (status) {
-		devm_kfree(ice_hw_to_dev(hw), fm_entry);
+		kfree(fm_entry);
 		goto ice_create_pkt_fwd_rule_exit;
 	}
 
@@ -4377,7 +4374,7 @@ ice_create_pkt_fwd_rule(struct ice_hw *hw, struct ice_sw_recipe *recp_list,
 	list_add(&fm_entry->list_entry, &recp_list->filt_rules);
 
 ice_create_pkt_fwd_rule_exit:
-	devm_kfree(ice_hw_to_dev(hw), s_rule);
+	kfree(s_rule);
 	return status;
 }
 
@@ -4395,9 +4392,8 @@ ice_update_pkt_fwd_rule(struct ice_hw *hw, struct ice_fltr_info *f_info)
 	struct ice_sw_rule_lkup_rx_tx *s_rule;
 	int status;
 
-	s_rule = devm_kzalloc(ice_hw_to_dev(hw),
-			      struct_size(s_rule, hdr_data, DUMMY_ETH_HDR_LEN),
-			      GFP_KERNEL);
+	s_rule = kzalloc(struct_size(s_rule, hdr_data, DUMMY_ETH_HDR_LEN),
+			 GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
 
@@ -4410,7 +4406,7 @@ ice_update_pkt_fwd_rule(struct ice_hw *hw, struct ice_fltr_info *f_info)
 				 struct_size(s_rule, hdr_data, DUMMY_ETH_HDR_LEN),
 				 1, ice_aqc_opc_update_sw_rules, NULL);
 
-	devm_kfree(ice_hw_to_dev(hw), s_rule);
+	kfree(s_rule);
 	return status;
 }
 
@@ -4798,7 +4794,7 @@ ice_rem_update_vsi_list(struct ice_hw *hw, u16 vsi_handle,
 		}
 
 		list_del(&vsi_list_info->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), vsi_list_info);
+		kfree(vsi_list_info);
 		fm_list->vsi_list_info = NULL;
 	}
 
@@ -4867,9 +4863,8 @@ ice_remove_rule_internal(struct ice_hw *hw, struct ice_sw_recipe *recp_list,
 		/* Remove the lookup rule */
 		struct ice_sw_rule_lkup_rx_tx *s_rule;
 
-		s_rule = devm_kzalloc(ice_hw_to_dev(hw),
-				      struct_size(s_rule, hdr_data, 0),
-				      GFP_KERNEL);
+		s_rule = kzalloc(struct_size(s_rule, hdr_data, 0),
+				 GFP_KERNEL);
 		if (!s_rule) {
 			status = -ENOMEM;
 			goto exit;
@@ -4883,13 +4878,13 @@ ice_remove_rule_internal(struct ice_hw *hw, struct ice_sw_recipe *recp_list,
 					 1, ice_aqc_opc_remove_sw_rules, NULL);
 
 		/* Remove a book keeping from the list */
-		devm_kfree(ice_hw_to_dev(hw), s_rule);
+		kfree(s_rule);
 
 		if (status)
 			goto exit;
 
 		list_del(&list_elem->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), list_elem);
+		kfree(list_elem);
 	}
 exit:
 	mutex_unlock(rule_lock);
@@ -5174,8 +5169,7 @@ ice_add_mac_rule(struct ice_hw *hw, struct list_head *m_list,
 
 	/* Allocate switch rule buffer for the bulk update for unicast */
 	s_rule_size = struct_size(s_rule, hdr_data, DUMMY_ETH_HDR_LEN);
-	s_rule = devm_kcalloc(ice_hw_to_dev(hw), num_unicast, s_rule_size,
-			      GFP_KERNEL);
+	s_rule = kcalloc(num_unicast, s_rule_size, GFP_KERNEL);
 	if (!s_rule) {
 		status = -ENOMEM;
 		goto ice_add_mac_exit;
@@ -5224,8 +5218,7 @@ ice_add_mac_rule(struct ice_hw *hw, struct list_head *m_list,
 				le16_to_cpu(r_iter->index);
 			f_info->fltr_act = ICE_FWD_TO_VSI;
 			/* Create an entry to track this MAC address */
-			fm_entry = devm_kzalloc(ice_hw_to_dev(hw),
-						sizeof(*fm_entry), GFP_KERNEL);
+			fm_entry = kzalloc(sizeof(*fm_entry), GFP_KERNEL);
 			if (!fm_entry) {
 				status = -ENOMEM;
 				goto ice_add_mac_exit;
@@ -5245,7 +5238,7 @@ ice_add_mac_rule(struct ice_hw *hw, struct list_head *m_list,
 ice_add_mac_exit:
 	mutex_unlock(rule_lock);
 	if (s_rule)
-		devm_kfree(ice_hw_to_dev(hw), s_rule);
+		kfree(s_rule);
 	return status;
 }
 
@@ -5676,7 +5669,7 @@ ice_alloc_res_lg_act(struct ice_hw *hw, u16 *l_id, u16 num_acts)
 
 	/* Allocate resource for large action */
 	buf_len = struct_size(sw_buf, elem, 1);
-	sw_buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	sw_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!sw_buf)
 		return -ENOMEM;
 
@@ -5688,7 +5681,7 @@ ice_alloc_res_lg_act(struct ice_hw *hw, u16 *l_id, u16 num_acts)
 	if (!status)
 		*l_id = le16_to_cpu(sw_buf->elem[0].e.sw_resp);
 
-	devm_kfree(ice_hw_to_dev(hw), sw_buf);
+	kfree(sw_buf);
 
 	return status;
 }
@@ -5707,7 +5700,7 @@ ice_rem_sw_rule_info(struct ice_hw *hw, struct list_head *rule_head)
 
 		list_for_each_entry_safe(entry, tmp, rule_head, list_entry) {
 			list_del(&entry->list_entry);
-			devm_kfree(ice_hw_to_dev(hw), entry);
+			kfree(entry);
 		}
 	}
 }
@@ -5728,8 +5721,8 @@ ice_rem_adv_rule_info(struct ice_hw *hw, struct list_head *rule_head)
 
 	list_for_each_entry_safe(lst_itr, tmp_entry, rule_head, list_entry) {
 		list_del(&lst_itr->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), lst_itr->lkups);
-		devm_kfree(ice_hw_to_dev(hw), lst_itr);
+		kfree(lst_itr->lkups);
+		kfree(lst_itr);
 	}
 }
 
@@ -6077,7 +6070,7 @@ ice_add_entry_to_vsi_fltr_list(struct ice_hw *hw, u16 vsi_handle,
 	/* this memory is freed up in the caller function
 	 * once filters for this VSI are removed
 	 */
-	tmp = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*tmp), GFP_KERNEL);
+	tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
 
@@ -6360,7 +6353,7 @@ free_fltr_list:
 	list_for_each_entry_safe(fm_entry, tmp, &remove_list_head,
 				 list_entry) {
 		list_del(&fm_entry->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), fm_entry);
+		kfree(fm_entry);
 	}
 
 	return status;
@@ -6592,7 +6585,7 @@ free_fltr_list:
 	list_for_each_entry_safe(list_itr, tmp, &vsi_list_head,
 				 list_entry) {
 		list_del(&list_itr->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), list_itr);
+		kfree(list_itr);
 	}
 	return status;
 }
@@ -6677,7 +6670,7 @@ free_fltr_list:
 	list_for_each_entry_safe(fm_entry, tmp, &remove_list_head,
 				 list_entry) {
 		list_del(&fm_entry->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), fm_entry);
+		kfree(fm_entry);
 	}
 }
 
@@ -6737,7 +6730,7 @@ ice_alloc_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 
 	/* Allocate resource */
 	buf_len = struct_size(buf, elem, 1);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -6753,7 +6746,7 @@ ice_alloc_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 	*counter_id = le16_to_cpu(buf->elem[0].e.sw_resp);
 
 exit:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -6775,7 +6768,7 @@ ice_free_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 
 	/* Free resource */
 	buf_len = struct_size(buf, elem, 1);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -6789,7 +6782,39 @@ ice_free_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 	if (status)
 		ice_debug(hw, ICE_DBG_SW, "counter resource could not be freed\n");
 
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
+	return status;
+}
+
+/**
+ * ice_share_res - set a resource as shared or dedicated
+ * @hw: hw struct of original owner of resource
+ * @type: resource type
+ * @shared: is the resource being set to shared
+ * @res_id: resource id (descriptor)
+ *
+ * Return: 0 on success, error code on failure.
+ */
+int ice_share_res(struct ice_hw *hw, u16 type, u8 shared, u16 res_id)
+{
+	DEFINE_RAW_FLEX(struct ice_aqc_alloc_free_res_elem, buf, elem, 1);
+	u16 buf_len = __struct_size(buf);
+	u16 res_type;
+	int status;
+
+	buf->num_elems = cpu_to_le16(1);
+	res_type = FIELD_PREP(ICE_AQC_RES_TYPE_M, type);
+	if (shared)
+		res_type |= ICE_AQC_RES_TYPE_FLAG_SHARED;
+
+	buf->res_type = cpu_to_le16(res_type);
+	buf->elem[0].e.sw_resp = cpu_to_le16(res_id);
+	status = ice_aq_alloc_free_res(hw, 1, buf, buf_len,
+				       ice_aqc_opc_share_res, NULL);
+	if (status)
+		ice_debug(hw, ICE_DBG_SW, "Could not set resource type %u id %u to %s\n",
+			  type, res_id, shared ? "SHARED" : "DEDICATED");
+
 	return status;
 }
 
@@ -7489,8 +7514,7 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 	if (recp_cnt > ICE_MAX_CHAIN_RECIPE_RES)
 		return -E2BIG;
 
-	buf = devm_kcalloc(ice_hw_to_dev(hw), recp_cnt, sizeof(*buf),
-			   GFP_KERNEL);
+	buf = kcalloc(recp_cnt, sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -7604,7 +7628,7 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 		goto err_unroll;
 
 err_unroll:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -7715,8 +7739,7 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	if (!ice_is_prof_rule(rinfo->tun_type) && !lkups_cnt)
 		return -EINVAL;
 
-	lkup_exts = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*lkup_exts),
-				 GFP_KERNEL);
+	lkup_exts = kzalloc(sizeof(*lkup_exts), GFP_KERNEL);
 	if (!lkup_exts)
 		return -ENOMEM;
 
@@ -7738,7 +7761,7 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		}
 	}
 
-	rm = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*rm), GFP_KERNEL);
+	rm = kzalloc(sizeof(*rm), GFP_KERNEL);
 	if (!rm) {
 		status = -ENOMEM;
 		goto err_free_lkup_exts;
@@ -7783,8 +7806,7 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		for_each_set_bit(j, fv_bitmap, ICE_MAX_NUM_PROFILES) {
 			struct ice_sw_fv_list_entry *fvl;
 
-			fvl = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*fvl),
-					   GFP_KERNEL);
+			fvl = kzalloc(sizeof(*fvl), GFP_KERNEL);
 			if (!fvl)
 				goto err_unroll;
 			fvl->fv_ptr = NULL;
@@ -7883,13 +7905,13 @@ err_free_recipe:
 err_unroll:
 	list_for_each_entry_safe(fvit, tmp, &rm->fv_list, list_entry) {
 		list_del(&fvit->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), fvit);
+		kfree(fvit);
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), rm);
+	kfree(rm);
 
 err_free_lkup_exts:
-	devm_kfree(ice_hw_to_dev(hw), lkup_exts);
+	kfree(lkup_exts);
 
 	return status;
 }
@@ -8519,7 +8541,7 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		return status;
 	}
 	rule_buf_sz = struct_size(s_rule, hdr_data, 0) + profile->pkt_len;
-	s_rule = devm_kzalloc(ice_hw_to_dev(hw), rule_buf_sz, GFP_KERNEL);
+	s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
 	if (!s_rule)
 		return -ENOMEM;
 
@@ -8606,21 +8628,15 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 				 ice_aqc_opc_add_sw_rules, NULL);
 	if (status)
 		goto err_ice_add_adv_rule;
-	adv_fltr = devm_kzalloc(ice_hw_to_dev(hw),
-				sizeof(struct ice_adv_fltr_mgmt_list_entry),
-				GFP_KERNEL);
+	adv_fltr = kzalloc(sizeof(*adv_fltr), GFP_KERNEL);
 	if (!adv_fltr) {
 		status = -ENOMEM;
 		goto err_ice_add_adv_rule;
 	}
 
-	if (lkups_cnt) {
-		adv_fltr->lkups = devm_kmemdup(ice_hw_to_dev(hw), lkups,
-					       lkups_cnt * sizeof(*lkups),
-					       GFP_KERNEL);
-	} else {
-		adv_fltr->lkups = NULL;
-	}
+	if (lkups_cnt)
+		adv_fltr->lkups = kmemdup(lkups, lkups_cnt * sizeof(*lkups),
+					  GFP_KERNEL);
 
 	if (!adv_fltr->lkups && !prof_rule) {
 		status = -ENOMEM;
@@ -8648,11 +8664,11 @@ ice_add_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	}
 err_ice_add_adv_rule:
 	if (status && adv_fltr) {
-		devm_kfree(ice_hw_to_dev(hw), adv_fltr->lkups);
-		devm_kfree(ice_hw_to_dev(hw), adv_fltr);
+		kfree(adv_fltr->lkups);
+		kfree(adv_fltr);
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), s_rule);
+	kfree(s_rule);
 
 	return status;
 }
@@ -8740,7 +8756,7 @@ ice_adv_rem_update_vsi_list(struct ice_hw *hw, u16 vsi_handle,
 		}
 
 		list_del(&vsi_list_info->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), vsi_list_info);
+		kfree(vsi_list_info);
 		fm_list->vsi_list_info = NULL;
 	}
 
@@ -8821,8 +8837,7 @@ ice_rem_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		u16 rule_buf_sz;
 
 		rule_buf_sz = struct_size(s_rule, hdr_data, 0);
-		s_rule = devm_kzalloc(ice_hw_to_dev(hw), rule_buf_sz,
-				      GFP_KERNEL);
+		s_rule = kzalloc(rule_buf_sz, GFP_KERNEL);
 		if (!s_rule)
 			return -ENOMEM;
 		s_rule->act = 0;
@@ -8836,8 +8851,8 @@ ice_rem_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 
 			mutex_lock(rule_lock);
 			list_del(&list_elem->list_entry);
-			devm_kfree(ice_hw_to_dev(hw), list_elem->lkups);
-			devm_kfree(ice_hw_to_dev(hw), list_elem);
+			kfree(list_elem->lkups);
+			kfree(list_elem);
 			mutex_unlock(rule_lock);
 			if (list_empty(&r_list[rid].filt_rules)) {
 				r_list[rid].adv_rule = false;
@@ -8848,7 +8863,7 @@ ice_rem_adv_rule(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 							       &r_list[rid]);
 			}
 		}
-		devm_kfree(ice_hw_to_dev(hw), s_rule);
+		kfree(s_rule);
 	}
 	return status;
 }

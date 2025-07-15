@@ -129,8 +129,6 @@ static int ice_eswitch_setup_repr(struct ice_pf *pf, struct ice_repr *repr)
 	if (ice_vsi_add_vlan_zero(vsi))
 		goto err_add_vlan;
 
-	netif_keep_dst(uplink_vsi->netdev);
-
 	dst = repr->dst;
 	dst->u.port_info.port_id = vsi->vsi_num;
 	dst->u.port_info.lower_dev = uplink_vsi->netdev;
@@ -288,6 +286,8 @@ static int ice_eswitch_enable_switchdev(struct ice_pf *pf)
 
 	if (ice_eswitch_setup_env(pf))
 		return -ENODEV;
+
+	netif_keep_dst(uplink_vsi->netdev);
 
 	pf->eswitch.is_running = true;
 

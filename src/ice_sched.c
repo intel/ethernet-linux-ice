@@ -26,15 +26,15 @@ ice_sched_add_root_node(struct ice_port_info *pi,
 
 	hw = pi->hw;
 
-	root = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*root), GFP_KERNEL);
+	root = kzalloc(sizeof(*root), GFP_KERNEL);
 	if (!root)
 		return -ENOMEM;
 
-	root->children = devm_kcalloc(ice_hw_to_dev(hw), hw->max_children[0],
-				      sizeof(*root->children), GFP_KERNEL);
+	root->children = kcalloc(hw->max_children[0], sizeof(*root->children),
+				 GFP_KERNEL);
 
 	if (!root->children) {
-		devm_kfree(ice_hw_to_dev(hw), root);
+		kfree(root);
 		return -ENOMEM;
 	}
 
@@ -188,17 +188,14 @@ ice_sched_add_node(struct ice_port_info *pi, u8 layer,
 	if (prealloc_node)
 		node = prealloc_node;
 	else
-		node = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*node),
-				    GFP_KERNEL);
+		node = kzalloc(sizeof(*node), GFP_KERNEL);
 	if (!node)
 		return -ENOMEM;
 	if (hw->max_children[layer]) {
-		node->children = devm_kcalloc(ice_hw_to_dev(hw),
-					      hw->max_children[layer],
-					      sizeof(*node->children),
-					      GFP_KERNEL);
+		node->children = kcalloc(hw->max_children[layer],
+					 sizeof(*node->children), GFP_KERNEL);
 		if (!node->children) {
-			devm_kfree(ice_hw_to_dev(hw), node);
+			kfree(node);
 			return -ENOMEM;
 		}
 	}
@@ -264,7 +261,7 @@ ice_sched_remove_elems(struct ice_hw *hw, struct ice_sched_node *parent,
 	int status;
 
 	buf_size = struct_size(buf, teid, num_nodes);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_size, GFP_KERNEL);
+	buf = kzalloc(buf_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -279,7 +276,7 @@ ice_sched_remove_elems(struct ice_hw *hw, struct ice_sched_node *parent,
 		ice_debug(hw, ICE_DBG_SCHED, "remove node failed FW error %d\n",
 			  hw->adminq.sq_last_status);
 
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -380,12 +377,12 @@ void ice_free_sched_node(struct ice_port_info *pi, struct ice_sched_node *node)
 
 	/* leaf nodes have no children */
 	if (node->children)
-		devm_kfree(ice_hw_to_dev(hw), node->children);
+		kfree(node->children);
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 	kfree(node->name);
 	xa_erase(&pi->sched_node_ids, node->id);
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
-	devm_kfree(ice_hw_to_dev(hw), node);
+	kfree(node);
 }
 
 /**
@@ -550,7 +547,7 @@ ice_aq_query_sched_res(struct ice_hw *hw, u16 buf_size,
  *
  * This function suspends or resumes HW nodes
  */
-static int
+int
 ice_sched_suspend_resume_elems(struct ice_hw *hw, u8 num_nodes, u32 *node_teids,
 			       bool suspend)
 {
@@ -559,7 +556,7 @@ ice_sched_suspend_resume_elems(struct ice_hw *hw, u8 num_nodes, u32 *node_teids,
 	int status;
 
 	buf_size = sizeof(*buf) * num_nodes;
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_size, GFP_KERNEL);
+	buf = kzalloc(buf_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -577,7 +574,7 @@ ice_sched_suspend_resume_elems(struct ice_hw *hw, u8 num_nodes, u32 *node_teids,
 	if (status || num_elem_ret != num_nodes)
 		ice_debug(hw, ICE_DBG_SCHED, "suspend/resume failed\n");
 
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -593,18 +590,23 @@ ice_alloc_lan_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 new_numqs)
 {
 	struct ice_vsi_ctx *vsi_ctx;
 	struct ice_q_ctx *q_ctx;
+	u16 idx;
 
 	vsi_ctx = ice_get_vsi_ctx(hw, vsi_handle);
 	if (!vsi_ctx)
 		return -EINVAL;
 	/* allocate LAN queue contexts */
 	if (!vsi_ctx->lan_q_ctx[tc]) {
-		vsi_ctx->lan_q_ctx[tc] = devm_kcalloc(ice_hw_to_dev(hw),
-						      new_numqs,
-						      sizeof(*q_ctx),
-						      GFP_KERNEL);
-		if (!vsi_ctx->lan_q_ctx[tc])
+		q_ctx = kcalloc(new_numqs, sizeof(*q_ctx), GFP_KERNEL);
+		if (!q_ctx)
 			return -ENOMEM;
+
+		for (idx = 0; idx < new_numqs; idx++) {
+			q_ctx[idx].q_handle = ICE_INVAL_Q_HANDLE;
+			q_ctx[idx].q_teid = ICE_INVAL_TEID;
+		}
+
+		vsi_ctx->lan_q_ctx[tc] = q_ctx;
 		vsi_ctx->num_lan_q_entries[tc] = new_numqs;
 		return 0;
 	}
@@ -612,13 +614,18 @@ ice_alloc_lan_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 new_numqs)
 	if (new_numqs > vsi_ctx->num_lan_q_entries[tc]) {
 		u16 prev_num = vsi_ctx->num_lan_q_entries[tc];
 
-		q_ctx = devm_kcalloc(ice_hw_to_dev(hw), new_numqs,
-				     sizeof(*q_ctx), GFP_KERNEL);
+		q_ctx = kcalloc(new_numqs, sizeof(*q_ctx), GFP_KERNEL);
 		if (!q_ctx)
 			return -ENOMEM;
 		memcpy(q_ctx, vsi_ctx->lan_q_ctx[tc],
 		       prev_num * sizeof(*q_ctx));
-		devm_kfree(ice_hw_to_dev(hw), vsi_ctx->lan_q_ctx[tc]);
+		kfree(vsi_ctx->lan_q_ctx[tc]);
+
+		for (idx = prev_num; idx < new_numqs; idx++) {
+			q_ctx[idx].q_handle = ICE_INVAL_Q_HANDLE;
+			q_ctx[idx].q_teid = ICE_INVAL_TEID;
+		}
+
 		vsi_ctx->lan_q_ctx[tc] = q_ctx;
 		vsi_ctx->num_lan_q_entries[tc] = new_numqs;
 	}
@@ -643,10 +650,8 @@ ice_alloc_rdma_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 new_numqs)
 		return -EINVAL;
 	/* allocate RDMA queue contexts */
 	if (!vsi_ctx->rdma_q_ctx[tc]) {
-		vsi_ctx->rdma_q_ctx[tc] = devm_kcalloc(ice_hw_to_dev(hw),
-						       new_numqs,
-						       sizeof(*q_ctx),
-						       GFP_KERNEL);
+		vsi_ctx->rdma_q_ctx[tc] = kcalloc(new_numqs, sizeof(*q_ctx),
+						  GFP_KERNEL);
 		if (!vsi_ctx->rdma_q_ctx[tc])
 			return -ENOMEM;
 		vsi_ctx->num_rdma_q_entries[tc] = new_numqs;
@@ -656,13 +661,12 @@ ice_alloc_rdma_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 new_numqs)
 	if (new_numqs > vsi_ctx->num_rdma_q_entries[tc]) {
 		u16 prev_num = vsi_ctx->num_rdma_q_entries[tc];
 
-		q_ctx = devm_kcalloc(ice_hw_to_dev(hw), new_numqs,
-				     sizeof(*q_ctx), GFP_KERNEL);
+		q_ctx = kcalloc(new_numqs, sizeof(*q_ctx), GFP_KERNEL);
 		if (!q_ctx)
 			return -ENOMEM;
 		memcpy(q_ctx, vsi_ctx->rdma_q_ctx[tc],
 		       prev_num * sizeof(*q_ctx));
-		devm_kfree(ice_hw_to_dev(hw), vsi_ctx->rdma_q_ctx[tc]);
+		kfree(vsi_ctx->rdma_q_ctx[tc]);
 		vsi_ctx->rdma_q_ctx[tc] = q_ctx;
 		vsi_ctx->num_rdma_q_entries[tc] = new_numqs;
 	}
@@ -791,7 +795,7 @@ ice_sched_del_rl_profile(struct ice_hw *hw,
 
 	/* Delete stale entry now */
 	list_del(&rl_info->list_entry);
-	devm_kfree(ice_hw_to_dev(hw), rl_info);
+	kfree(rl_info);
 	return status;
 }
 
@@ -821,7 +825,7 @@ static void ice_sched_clear_rl_prof(struct ice_port_info *pi)
 				ice_debug(hw, ICE_DBG_SCHED, "Remove rl profile failed\n");
 				/* On error, free mem required */
 				list_del(&rl_prof_elem->list_entry);
-				devm_kfree(ice_hw_to_dev(hw), rl_prof_elem);
+				kfree(rl_prof_elem);
 			}
 		}
 	}
@@ -848,10 +852,10 @@ void ice_sched_clear_agg(struct ice_hw *hw)
 					 &agg_info->agg_vsi_list,
 					 list_entry) {
 			list_del(&agg_vsi_info->list_entry);
-			devm_kfree(ice_hw_to_dev(hw), agg_vsi_info);
+			kfree(agg_vsi_info);
 		}
 		list_del(&agg_info->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), agg_info);
+		kfree(agg_info);
 	}
 }
 
@@ -903,7 +907,7 @@ void ice_sched_cleanup_all(struct ice_hw *hw)
 		return;
 
 	if (hw->layer_info) {
-		devm_kfree(ice_hw_to_dev(hw), hw->layer_info);
+		kfree(hw->layer_info);
 		hw->layer_info = NULL;
 	}
 
@@ -996,7 +1000,7 @@ ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 	u32 teid;
 
 	buf_size = struct_size(buf, generic, num_nodes);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_size, GFP_KERNEL);
+	buf = kzalloc(buf_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -1024,7 +1028,7 @@ ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 	if (status || num_groups_added != 1) {
 		ice_debug(hw, ICE_DBG_SCHED, "add node failed FW Error %d\n",
 			  hw->adminq.sq_last_status);
-		devm_kfree(ice_hw_to_dev(hw), buf);
+		kfree(buf);
 		return -EIO;
 	}
 
@@ -1083,7 +1087,7 @@ ice_sched_add_elems(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 			*first_node_teid = teid;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -1143,7 +1147,7 @@ ice_sched_add_nodes_to_hw_layer(struct ice_port_info *pi,
  *
  * This function add nodes to a given layer.
  */
-static int
+int
 ice_sched_add_nodes_to_layer(struct ice_port_info *pi,
 			     struct ice_sched_node *tc_node,
 			     struct ice_sched_node *parent, u8 layer,
@@ -1335,7 +1339,7 @@ int ice_sched_init_port(struct ice_port_info *pi)
 	hw = pi->hw;
 
 	/* Query the Default Topology from FW */
-	buf = devm_kzalloc(ice_hw_to_dev(hw), ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
+	buf = kzalloc(ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -1414,7 +1418,7 @@ err_init_port:
 		pi->root = NULL;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -1460,7 +1464,7 @@ int ice_sched_query_res_alloc(struct ice_hw *hw)
 	if (hw->layer_info)
 		return status;
 
-	buf = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*buf), GFP_KERNEL);
+	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -1487,16 +1491,16 @@ int ice_sched_query_res_alloc(struct ice_hw *hw)
 		hw->max_children[i] = le16_to_cpu(max_sibl);
 	}
 
-	hw->layer_info = devm_kmemdup(ice_hw_to_dev(hw), buf->layer_props,
-				      (hw->num_tx_sched_layers * sizeof(*hw->layer_info)),
-				      GFP_KERNEL);
+	hw->layer_info = kmemdup(buf->layer_props,
+				 (hw->num_tx_sched_layers * sizeof(*hw->layer_info)),
+				 GFP_KERNEL);
 	if (!hw->layer_info) {
 		status = -ENOMEM;
 		goto sched_query_out;
 	}
 
 sched_query_out:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -1704,7 +1708,7 @@ ice_sched_get_vsi_node(struct ice_port_info *pi, struct ice_sched_node *tc_node,
  * This function retrieves an aggregator node for a given aggregator ID from
  * a given TC branch
  */
-static struct ice_sched_node *
+struct ice_sched_node *
 ice_sched_get_agg_node(struct ice_port_info *pi, struct ice_sched_node *tc_node,
 		       u32 agg_id)
 {
@@ -2143,8 +2147,7 @@ static void ice_sched_rm_agg_vsi_info(struct ice_port_info *pi, u16 vsi_handle)
 					 list_entry)
 			if (agg_vsi_info->vsi_handle == vsi_handle) {
 				list_del(&agg_vsi_info->list_entry);
-				devm_kfree(ice_hw_to_dev(pi->hw),
-					   agg_vsi_info);
+				kfree(agg_vsi_info);
 				return;
 			}
 	}
@@ -2344,7 +2347,7 @@ ice_get_agg_info(struct ice_hw *hw, u32 agg_id)
  * This function walks through the aggregator subtree to find a free parent
  * node
  */
-static struct ice_sched_node *
+struct ice_sched_node *
 ice_sched_get_free_vsi_parent(struct ice_hw *hw, struct ice_sched_node *node,
 			      u16 *num_nodes)
 {
@@ -2442,7 +2445,7 @@ ice_sched_move_nodes(struct ice_port_info *pi, struct ice_sched_node *parent,
 		return -ENOSPC;
 
 	buf_len = struct_size(buf, teid, 1);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -2469,7 +2472,7 @@ ice_sched_move_nodes(struct ice_port_info *pi, struct ice_sched_node *parent,
 	}
 
 move_err_exit:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -2487,7 +2490,7 @@ ice_sched_move_leaves(struct ice_port_info *pi, struct ice_sched_node *parent,
 		      u16 num_items, u32 *list)
 {
 	struct ice_sched_node *leaf, *old_parent;
-	struct ice_aqc_move_txqs_data *buf;
+	struct ice_aqc_cfg_txqs_buf *buf;
 	u16 buf_len, i = 0;
 	struct ice_hw *hw;
 	u32 blocked_cgds;
@@ -2504,8 +2507,8 @@ ice_sched_move_leaves(struct ice_port_info *pi, struct ice_sched_node *parent,
 	    hw->max_children[parent->tx_sched_layer])
 		return -ENOSPC;
 
-	buf_len = struct_size(buf, txqs, 1);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf_len = struct_size(buf, queue_info, 1);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -2526,9 +2529,9 @@ ice_sched_move_leaves(struct ice_port_info *pi, struct ice_sched_node *parent,
 
 		buf->src_teid = old_parent->info.node_teid;
 		buf->dest_teid = parent->info.node_teid;
-		buf->txqs[0].txq_id = cpu_to_le16(leaf->tx_queue_id);
-		buf->txqs[0].q_cgd = 0;
-		buf->txqs[0].q_teid = leaf->info.node_teid;
+		buf->queue_info[0].q_handle = cpu_to_le16(leaf->tx_queue_id);
+		buf->queue_info[0].tc = 0;
+		buf->queue_info[0].q_teid = leaf->info.node_teid;
 
 		status = ice_aq_move_recfg_lan_txq(hw, 1, true, false,
 						   false, false, 50,
@@ -2545,7 +2548,7 @@ ice_sched_move_leaves(struct ice_port_info *pi, struct ice_sched_node *parent,
 	}
 
 move_err_exit:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -2666,7 +2669,7 @@ ice_move_all_vsi_to_dflt_agg(struct ice_port_info *pi,
 		clear_bit(tc, agg_vsi_info->tc_bitmap);
 		if (rm_vsi_info && !agg_vsi_info->tc_bitmap[0]) {
 			list_del(&agg_vsi_info->list_entry);
-			devm_kfree(ice_hw_to_dev(pi->hw), agg_vsi_info);
+			kfree(agg_vsi_info);
 		}
 	}
 
@@ -2911,8 +2914,7 @@ ice_sched_cfg_agg(struct ice_port_info *pi, u32 agg_id,
 	agg_info = ice_get_agg_info(hw, agg_id);
 	if (!agg_info) {
 		/* Create new entry for new aggregator ID */
-		agg_info = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*agg_info),
-					GFP_KERNEL);
+		agg_info = kzalloc(sizeof(*agg_info), GFP_KERNEL);
 		if (!agg_info)
 			return -ENOMEM;
 
@@ -3099,8 +3101,7 @@ ice_sched_assoc_vsi_to_agg(struct ice_port_info *pi, u32 agg_id,
 	agg_vsi_info = ice_get_agg_vsi_info(agg_info, vsi_handle);
 	if (!agg_vsi_info) {
 		/* Create new entry for VSI under aggregator list */
-		agg_vsi_info = devm_kzalloc(ice_hw_to_dev(hw),
-					    sizeof(*agg_vsi_info), GFP_KERNEL);
+		agg_vsi_info = kzalloc(sizeof(*agg_vsi_info), GFP_KERNEL);
 		if (!agg_vsi_info)
 			return -EINVAL;
 
@@ -3124,7 +3125,7 @@ ice_sched_assoc_vsi_to_agg(struct ice_port_info *pi, u32 agg_id,
 	}
 	if (old_agg_vsi_info && !old_agg_vsi_info->tc_bitmap[0]) {
 		list_del(&old_agg_vsi_info->list_entry);
-		devm_kfree(ice_hw_to_dev(pi->hw), old_agg_vsi_info);
+		kfree(old_agg_vsi_info);
 	}
 	return status;
 }
@@ -3294,7 +3295,7 @@ int ice_rm_agg_cfg(struct ice_port_info *pi, u32 agg_id)
 
 	/* Safe to delete entry now */
 	list_del(&agg_info->list_entry);
-	devm_kfree(ice_hw_to_dev(pi->hw), agg_info);
+	kfree(agg_info);
 
 	/* Remove unused RL profile IDs from HW and SW DB */
 	ice_sched_rm_unused_rl_prof(pi->hw);
@@ -4326,8 +4327,7 @@ ice_sched_add_rl_profile(struct ice_hw *hw, enum ice_rl_type rl_type,
 			return rl_prof_elem;
 
 	/* Create new profile ID */
-	rl_prof_elem = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*rl_prof_elem),
-				    GFP_KERNEL);
+	rl_prof_elem = kzalloc(sizeof(*rl_prof_elem), GFP_KERNEL);
 
 	if (!rl_prof_elem)
 		return NULL;
@@ -4355,7 +4355,7 @@ ice_sched_add_rl_profile(struct ice_hw *hw, enum ice_rl_type rl_type,
 	return rl_prof_elem;
 
 exit_add_rl_prof:
-	devm_kfree(ice_hw_to_dev(hw), rl_prof_elem);
+	kfree(rl_prof_elem);
 	return NULL;
 }
 

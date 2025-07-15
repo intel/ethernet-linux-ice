@@ -951,12 +951,20 @@ static void ice_notify_vf_reset(struct ice_vf *vf)
 int ice_reset_vf(struct ice_vf *vf, u32 flags)
 {
 	struct ice_pf *pf = vf->pf;
+#ifdef HAVE_NETDEV_UPPER_INFO
+	struct ice_lag *lag;
+	u8 act_prt, pri_prt;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	struct ice_vsi *vsi;
 	struct device *dev;
 	int err = 0;
 	bool rsd;
 
 	dev = ice_pf_to_dev(pf);
+#ifdef HAVE_NETDEV_UPPER_INFO
+	act_prt = ICE_LAG_INVALID_PORT;
+	pri_prt = pf->hw.port_info->lport;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if (flags & ICE_VF_RESET_NOTIFY)
 		ice_notify_vf_reset(vf);
@@ -974,27 +982,36 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 		mutex_lock(&vf->cfg_lock);
 	else
 		lockdep_assert_held(&vf->cfg_lock);
+#ifdef HAVE_NETDEV_UPPER_INFO
+
+	lag = pf->lag;
+	mutex_lock(&pf->lag_mutex);
+	if (lag && lag->bonded && lag->primary) {
+		act_prt = lag->active_port;
+		if (act_prt != pri_prt && act_prt != ICE_LAG_INVALID_PORT &&
+		    lag->upper_netdev)
+			ice_lag_move_vf_nodes_cfg(lag, act_prt, pri_prt);
+		else
+			act_prt = ICE_LAG_INVALID_PORT;
+	}
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if (ice_is_vf_disabled(vf)) {
 		vsi = ice_get_vf_vsi(vf);
 		if (!vsi) {
-			if (flags & ICE_VF_RESET_LOCK)
-				mutex_unlock(&vf->cfg_lock);
-
 			dev_dbg(dev, "VF %d is already removed\n", vf->vf_id);
-			return -EINVAL;
+			err = -EINVAL;
+			goto out_unlock;
 		}
 		ice_vsi_stop_lan_tx_rings(vsi, ICE_NO_RESET, vf->vf_id);
 
 		if (ice_vsi_is_rx_queue_active(vsi))
 			ice_vsi_stop_all_rx_rings(vsi);
 
-		if (flags & ICE_VF_RESET_LOCK)
-			mutex_unlock(&vf->cfg_lock);
-
 		dev_dbg(dev, "VF is already disabled, there is no need for resetting it, telling VM, all is fine %d\n",
 			vf->vf_id);
-		return 0;
+		err = 0;
+		goto out_unlock;
 	}
 
 	/* Set VF disable bit state here, before triggering reset */
@@ -1010,7 +1027,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	vsi = ice_get_vf_vsi(vf);
 	if (WARN_ON(!vsi)) {
 		err = -EIO;
-		goto out_unlock;
+		goto out_clear_state;
 	}
 
 	ice_dis_vf_qs(vf);
@@ -1086,14 +1103,14 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 		dev_err(dev, "Failed to reconfigure the VF%u's VSI\n",
 			vf->vf_id);
 		err = -EFAULT;
-		goto out_unlock;
+		goto out_clear_state;
 	}
 
 	ice_vf_post_vsi_rebuild(vf);
 	vsi = ice_get_vf_vsi(vf);
 	if (WARN_ON(!vsi)) {
 		err = -EINVAL;
-		goto out_unlock;
+		goto out_clear_state;
 	}
 
 	ice_eswitch_update_repr(vf->repr_id, vsi);
@@ -1123,9 +1140,16 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	/* if the VF has been reset allow it to come up again */
 	ice_reset_vf_mbx_cnt(vf);
 
-out_unlock:
+out_clear_state:
 	clear_bit(ICE_VF_STATE_IN_RESET, vf->vf_states);
+out_unlock:
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (lag && lag->bonded && lag->primary &&
+	    act_prt != ICE_LAG_INVALID_PORT)
+		ice_lag_move_vf_nodes_cfg(lag, pri_prt, act_prt);
+	mutex_unlock(&pf->lag_mutex);
 
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	if (flags & ICE_VF_RESET_LOCK)
 		mutex_unlock(&vf->cfg_lock);
 
@@ -1199,9 +1223,9 @@ rss_lut_vf_attr_store(struct device *dev, struct device_attribute *attr,
 
 static int ice_init_vf_rss_lut_sysfs(struct ice_vf *vf)
 {
-	struct device_attribute tmp = __ATTR(rss_lut_vf_attr, 0644,
-					     rss_lut_vf_attr_show,
-					     rss_lut_vf_attr_store);
+	struct device_attribute tmp = __ATTR_IGNORE_LOCKDEP(rss_lut_vf_attr, 0644,
+							    rss_lut_vf_attr_show,
+							    rss_lut_vf_attr_store);
 
 	vf->rss_lut_attr = tmp;
 
@@ -1382,9 +1406,9 @@ transmit_lldp_vf_attr_store(struct device *dev, struct device_attribute *attr,
 
 static int ice_init_vf_transmit_lldp_sysfs(struct ice_vf *vf)
 {
-	struct device_attribute tmp = __ATTR(transmit_lldp, 0644,
-					     transmit_lldp_vf_attr_show,
-					     transmit_lldp_vf_attr_store);
+	struct device_attribute tmp = __ATTR_IGNORE_LOCKDEP(transmit_lldp, 0644,
+							    transmit_lldp_vf_attr_show,
+							    transmit_lldp_vf_attr_store);
 
 	vf->transmit_lldp_attr = tmp;
 

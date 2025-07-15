@@ -157,6 +157,16 @@ function find-typedef-decl() {
 	find-decl "$what" "$end" "$@"
 }
 
+# yield symbol line from Module.symvers
+function find-symbol-decl() {
+	test $# -ge 2
+	local what end
+	what="/^0x[0-9a-f]+\t$1\t/"
+	end=1 # only one line
+	shift
+	find-decl "$what" "$end" "$@"
+}
+
 # gen() - DSL-like function to wrap around all the other
 #
 # syntax:
@@ -184,10 +194,14 @@ function find-typedef-decl() {
 #         gen HAVE_FOO_12 if string "${FUNC1:+1}${FUNC2:+1}" equals "11"
 #
 #   KIND specifies what kind of declaration/definition we are looking for,
-#      could be: fun, enum, struct, method, macro, typedef,
-#      'implementation of macro'
+#      could be: fun, enum, struct, method, macro, typedef, symbol
+#      or 'implementation of macro'
 #   for KIND=method, we are looking for function ptr named METHOD in struct
 #     named NAME (two optional args are then necessary (METHOD & of));
+#
+#   for KIND=symbol, we are looking for a symbol definition in the format of
+#     Module.symvers. To verify that the symbol is exported by a particular
+#     module, the matches syntax can be used.
 #
 #   for KIND='implementation of macro' we are looking for the full
 #     implementation of the macro, not just its first line. This is usually
@@ -253,7 +267,7 @@ function gen() {
 
 		return
 	;;
-	fun|enum|struct|macro|typedef)
+	fun|enum|struct|macro|typedef|symbol)
 		test $# -ge 3 || die 22 "$src_line: too few arguments, $orig_args_cnt given, at least 6 needed"
 		name="$1"
 		shift
@@ -383,7 +397,7 @@ function config_has() {
 	grep -qE "^(#define )?$1((_MODULE)? 1|=m|=y)$" "$CONFIG_FILE"
 }
 
-# try to locate a suitable config file from KSRC
+# try to locate a suitable config file from KOBJ
 #
 # On success, the CONFIG_FILE variable will be updated to reflect the full
 # path to a configuration file.
@@ -401,9 +415,9 @@ function find_config_file() {
 	fi
 
 	CSP=(
-		"$KSRC/include/generated/autoconf.h"
-		"$KSRC/include/linux/autoconf.h"
-		"$KSRC/.config"
+		"$KOBJ/include/generated/autoconf.h"
+		"$KOBJ/include/linux/autoconf.h"
+		"$KOBJ/.config"
 	)
 
 	for file in "${CSP[@]}"; do

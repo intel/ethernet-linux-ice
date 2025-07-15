@@ -3910,7 +3910,12 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring,
 	ice_tstamp(tx_ring, skb, first, &offload);
 
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
+#if defined(HAVE_NETDEV_UPPER_INFO)
+	if (ice_is_switchdev_running(vsi->back) ||
+	    ice_lag_is_switchdev_running(vsi->back))
+#else
 	if (ice_is_switchdev_running(vsi->back))
+#endif /* LAG_SUPPORT && HAVE_NETDEV_UPPER_INFO */
 		ice_eswitch_set_target_vsi(skb, &offload);
 #endif /* CONFIG_NET_DEVLINK */
 	if (offload.cd_qw1 & ICE_TX_DESC_DTYPE_CTX) {

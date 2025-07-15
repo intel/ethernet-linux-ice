@@ -18,6 +18,18 @@ static struct dpll_pin_frequency ice_cgu_pin_freq_common[] = {
 	DPLL_PIN_FREQUENCY_RANGE(1, 25000000),
 };
 
+static struct dpll_pin_frequency ice_cgu_pin_freq_1hz[] = {
+	DPLL_PIN_FREQUENCY_1PPS,
+};
+
+static struct dpll_pin_frequency ice_cgu_pin_freq_10mhz[] = {
+	DPLL_PIN_FREQUENCY_10MHZ,
+};
+
+static struct dpll_pin_frequency ice_cgu_pin_freq_156_25mhz[] = {
+	DPLL_PIN_FREQUENCY_RANGE(156250000, 156250000),
+};
+
 static const struct ice_cgu_pin_desc ice_e810t_sfp_cgu_inputs[] = {
 	{ "CVL-SDP22",	  ZL_REF0P, DPLL_PIN_TYPE_INT_OSCILLATOR,
 		ARRAY_SIZE(ice_cgu_pin_freq_common), ice_cgu_pin_freq_common },
@@ -145,6 +157,18 @@ static const struct ice_cgu_pin_desc ice_e823_zl_cgu_outputs[] = {
 	{ "CPK-TIME_SYNC", ZL_OUT4, DPLL_PIN_TYPE_EXT,
 		ARRAY_SIZE(ice_cgu_pin_freq_common), ice_cgu_pin_freq_common },
 	{ "NONE",	   ZL_OUT5, 0, 0 },
+};
+
+static const struct ice_cgu_pin_desc ice_e830_unmanaged_inputs[] = {
+	{ "1588-TIME_SYNC", 0, DPLL_PIN_TYPE_EXT,
+	  ARRAY_SIZE(ice_cgu_pin_freq_10mhz), ice_cgu_pin_freq_10mhz },
+};
+
+static const struct ice_cgu_pin_desc ice_e830_unmanaged_outputs[] = {
+	{ "MAC-PHY-CLK", 0, DPLL_PIN_TYPE_SYNCE_ETH_PORT,
+	  ARRAY_SIZE(ice_cgu_pin_freq_156_25mhz), ice_cgu_pin_freq_156_25mhz },
+	{ "1588-TIME_REF", 1, DPLL_PIN_TYPE_INT_OSCILLATOR,
+	  ARRAY_SIZE(ice_cgu_pin_freq_1hz), ice_cgu_pin_freq_1hz},
 };
 #else /* defined(CONFIG_DPLL) */
 static const struct ice_cgu_pin_desc ice_e810t_cgu_inputs[] = {
@@ -5041,6 +5065,23 @@ ice_cgu_get_pin_desc(const struct ice_hw *hw, bool input, int *size)
 		} else {
 			t = ice_e810t_qsfp_cgu_outputs;
 			*size = ARRAY_SIZE(ice_e810t_qsfp_cgu_outputs);
+		}
+		break;
+	case ICE_DEV_ID_E830_BACKPLANE:
+	case ICE_DEV_ID_E830_QSFP56:
+	case ICE_DEV_ID_E830_SFP:
+	case ICE_DEV_ID_E830C_BACKPLANE:
+	case ICE_DEV_ID_E830_L_BACKPLANE:
+	case ICE_DEV_ID_E830C_QSFP:
+	case ICE_DEV_ID_E830_L_QSFP:
+	case ICE_DEV_ID_E830C_SFP:
+	case ICE_DEV_ID_E830_L_SFP:
+		if (input) {
+			t = ice_e830_unmanaged_inputs;
+			*size = ARRAY_SIZE(ice_e830_unmanaged_inputs);
+		} else {
+			t = ice_e830_unmanaged_outputs;
+			*size = ARRAY_SIZE(ice_e830_unmanaged_outputs);
 		}
 		break;
 #else /* defined(CONFIG_DPLL) */

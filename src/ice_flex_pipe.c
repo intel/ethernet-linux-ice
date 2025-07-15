@@ -1319,7 +1319,7 @@ ice_vsig_free(struct ice_hw *hw, enum ice_block blk, u16 vsig)
 				 &hw->blk[blk].xlt2.vsig_tbl[idx].prop_lst,
 				 list) {
 		list_del(&del->list);
-		devm_kfree(ice_hw_to_dev(hw), del);
+		kfree(del);
 	}
 
 	/* if VSIG characteristic list was cleared for reset
@@ -2361,44 +2361,40 @@ int ice_init_hw_tbls(struct ice_hw *hw)
 		xlt1->sid = ice_blk_sids[i][ICE_SID_XLT1_OFF];
 		xlt1->count = blk_sizes[i].xlt1;
 
-		xlt1->ptypes = devm_kcalloc(ice_hw_to_dev(hw), xlt1->count,
-					    sizeof(*xlt1->ptypes), GFP_KERNEL);
+		xlt1->ptypes = kcalloc(xlt1->count, sizeof(*xlt1->ptypes),
+				       GFP_KERNEL);
 
 		if (!xlt1->ptypes)
 			goto err;
 
-		xlt1->ptg_tbl = devm_kcalloc(ice_hw_to_dev(hw), ICE_MAX_PTGS,
-					     sizeof(*xlt1->ptg_tbl),
-					     GFP_KERNEL);
+		xlt1->ptg_tbl = kcalloc(ICE_MAX_PTGS, sizeof(*xlt1->ptg_tbl),
+					GFP_KERNEL);
 
 		if (!xlt1->ptg_tbl)
 			goto err;
 
-		xlt1->t = devm_kcalloc(ice_hw_to_dev(hw), xlt1->count,
-				       sizeof(*xlt1->t), GFP_KERNEL);
+		xlt1->t = kcalloc(xlt1->count, sizeof(*xlt1->t), GFP_KERNEL);
 		if (!xlt1->t)
 			goto err;
 
 		xlt2->sid = ice_blk_sids[i][ICE_SID_XLT2_OFF];
 		xlt2->count = blk_sizes[i].xlt2;
 
-		xlt2->vsis = devm_kcalloc(ice_hw_to_dev(hw), xlt2->count,
-					  sizeof(*xlt2->vsis), GFP_KERNEL);
+		xlt2->vsis = kcalloc(xlt2->count, sizeof(*xlt2->vsis),
+				     GFP_KERNEL);
 
 		if (!xlt2->vsis)
 			goto err;
 
-		xlt2->vsig_tbl = devm_kcalloc(ice_hw_to_dev(hw), xlt2->count,
-					      sizeof(*xlt2->vsig_tbl),
-					      GFP_KERNEL);
+		xlt2->vsig_tbl = kcalloc(xlt2->count, sizeof(*xlt2->vsig_tbl),
+					 GFP_KERNEL);
 		if (!xlt2->vsig_tbl)
 			goto err;
 
 		for (j = 0; j < xlt2->count; j++)
 			INIT_LIST_HEAD(&xlt2->vsig_tbl[j].prop_lst);
 
-		xlt2->t = devm_kcalloc(ice_hw_to_dev(hw), xlt2->count,
-				       sizeof(*xlt2->t), GFP_KERNEL);
+		xlt2->t = kcalloc(xlt2->count, sizeof(*xlt2->t), GFP_KERNEL);
 		if (!xlt2->t)
 			goto err;
 
@@ -2406,18 +2402,15 @@ int ice_init_hw_tbls(struct ice_hw *hw)
 		prof->count = blk_sizes[i].prof_tcam;
 		prof->max_prof_id = blk_sizes[i].prof_id;
 		prof->cdid_bits = blk_sizes[i].prof_cdid_bits;
-		prof->t = devm_kcalloc(ice_hw_to_dev(hw), prof->count,
-				       sizeof(*prof->t), GFP_KERNEL);
+		prof->t = kcalloc(prof->count, sizeof(*prof->t), GFP_KERNEL);
 
 		if (!prof->t)
 			goto err;
 
 		prof_redir->sid = ice_blk_sids[i][ICE_SID_PR_REDIR_OFF];
 		prof_redir->count = blk_sizes[i].prof_redir;
-		prof_redir->t = devm_kcalloc(ice_hw_to_dev(hw),
-					     prof_redir->count,
-					     sizeof(*prof_redir->t),
-					     GFP_KERNEL);
+		prof_redir->t = kcalloc(prof_redir->count,
+					sizeof(*prof_redir->t), GFP_KERNEL);
 
 		if (!prof_redir->t)
 			goto err;
@@ -2425,34 +2418,32 @@ int ice_init_hw_tbls(struct ice_hw *hw)
 		es->sid = ice_blk_sids[i][ICE_SID_ES_OFF];
 		es->count = blk_sizes[i].es;
 		es->fvw = blk_sizes[i].fvw;
-		es->t = devm_kcalloc(ice_hw_to_dev(hw),
-				     (u32)(es->count * es->fvw),
-				     sizeof(*es->t), GFP_KERNEL);
+		es->t = kcalloc((u32)(es->count * es->fvw), sizeof(*es->t),
+				GFP_KERNEL);
 		if (!es->t)
 			goto err;
 
-		es->ref_count = devm_kcalloc(ice_hw_to_dev(hw), es->count,
-					     sizeof(*es->ref_count),
-					     GFP_KERNEL);
+		es->ref_count = kcalloc(es->count, sizeof(*es->ref_count),
+					GFP_KERNEL);
 
 		if (!es->ref_count)
 			goto err;
 
-		es->written = devm_kcalloc(ice_hw_to_dev(hw), es->count,
-					   sizeof(*es->written), GFP_KERNEL);
+		es->written = kcalloc(es->count, sizeof(*es->written),
+				      GFP_KERNEL);
 
 		if (!es->written)
 			goto err;
 
-		es->mask_ena = devm_kcalloc(ice_hw_to_dev(hw), es->count,
-					    sizeof(*es->mask_ena), GFP_KERNEL);
+		es->mask_ena = kcalloc(es->count, sizeof(*es->mask_ena),
+				       GFP_KERNEL);
 
 		if (!es->mask_ena)
 			goto err;
 
 		prof_id->count = blk_sizes[i].prof_id;
-		prof_id->id = devm_kcalloc(ice_hw_to_dev(hw), prof_id->count,
-					   sizeof(*prof_id->id), GFP_KERNEL);
+		prof_id->id = kcalloc(prof_id->count, sizeof(*prof_id->id),
+				      GFP_KERNEL);
 		if (!prof_id->id)
 			goto err;
 	}
@@ -2501,7 +2492,7 @@ static void ice_free_prof_map(struct ice_hw *hw, u8 blk_idx)
 	mutex_lock(&es->prof_map_lock);
 	list_for_each_entry_safe(del, tmp, &es->prof_map, list) {
 		list_del(&del->list);
-		devm_kfree(ice_hw_to_dev(hw), del);
+		kfree(del);
 	}
 	INIT_LIST_HEAD(&es->prof_map);
 	mutex_unlock(&es->prof_map_lock);
@@ -2528,10 +2519,10 @@ static void ice_free_flow_profs(struct ice_hw *hw, u8 blk_idx)
 
 		list_del(&p->l_entry);
 		if (p->acts)
-			devm_kfree(ice_hw_to_dev(hw), p->acts);
+			kfree(p->acts);
 
 		mutex_destroy(&p->entries_lock);
-		devm_kfree(ice_hw_to_dev(hw), p);
+		kfree(p);
 	}
 	mutex_unlock(&hw->fl_profs_locks[blk_idx]);
 
@@ -2580,25 +2571,25 @@ void ice_free_hw_tbls(struct ice_hw *hw)
 			hw->blk[i].is_list_init = false;
 		}
 		ice_free_vsig_tbl(hw, (enum ice_block)i);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].xlt1.ptypes);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].xlt1.ptg_tbl);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].xlt1.t);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].xlt2.t);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].xlt2.vsig_tbl);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].xlt2.vsis);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].prof.t);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].prof_redir.t);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].es.t);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].es.ref_count);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].es.written);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].es.mask_ena);
-		devm_kfree(ice_hw_to_dev(hw), hw->blk[i].prof_id.id);
+		kfree(hw->blk[i].xlt1.ptypes);
+		kfree(hw->blk[i].xlt1.ptg_tbl);
+		kfree(hw->blk[i].xlt1.t);
+		kfree(hw->blk[i].xlt2.t);
+		kfree(hw->blk[i].xlt2.vsig_tbl);
+		kfree(hw->blk[i].xlt2.vsis);
+		kfree(hw->blk[i].prof.t);
+		kfree(hw->blk[i].prof_redir.t);
+		kfree(hw->blk[i].es.t);
+		kfree(hw->blk[i].es.ref_count);
+		kfree(hw->blk[i].es.written);
+		kfree(hw->blk[i].es.mask_ena);
+		kfree(hw->blk[i].prof_id.id);
 	}
 
 	list_for_each_entry_safe(r, rt, &hw->rss_list_head,
 				 l_entry) {
 		list_del(&r->l_entry);
-		devm_kfree(ice_hw_to_dev(hw), r);
+		kfree(r);
 	}
 	mutex_destroy(&hw->rss_locks);
 	ice_shutdown_all_prof_masks(hw);
@@ -3429,7 +3420,7 @@ ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id,
 
 	/* add profile info */
 
-	prof = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*prof), GFP_KERNEL);
+	prof = kzalloc(sizeof(*prof), GFP_KERNEL);
 	if (!prof) {
 		status = -ENOMEM;
 		goto err_ice_add_prof;
@@ -3647,7 +3638,7 @@ ice_rem_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig,
 			return status;
 
 		list_del(&d->list);
-		devm_kfree(ice_hw_to_dev(hw), d);
+		kfree(d);
 	}
 
 	/* Move all VSIS associated with this VSIG to the default VSIG */
@@ -3660,8 +3651,7 @@ ice_rem_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig,
 			struct ice_vsig_vsi *tmp = vsi_cur->next_vsi;
 			struct ice_chs_chg *p;
 
-			p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*p),
-					 GFP_KERNEL);
+			p = kzalloc(sizeof(*p), GFP_KERNEL);
 			if (!p)
 				return -ENOMEM;
 
@@ -3706,7 +3696,7 @@ ice_rem_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 			status = ice_rem_prof_id(hw, blk, p);
 			if (!status) {
 				list_del(&p->list);
-				devm_kfree(ice_hw_to_dev(hw), p);
+				kfree(p);
 			}
 			return status;
 		}
@@ -3745,7 +3735,7 @@ ice_rem_flow_all(struct ice_hw *hw, enum ice_block blk, u64 id)
 err_ice_rem_flow_all:
 	list_for_each_entry_safe(del, tmp, &chg, list_entry) {
 		list_del(&del->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), del);
+		kfree(del);
 	}
 
 	return status;
@@ -3783,7 +3773,7 @@ int ice_rem_prof(struct ice_hw *hw, enum ice_block blk, u64 id)
 	ice_prof_dec_ref(hw, blk, pmap->prof_id);
 
 	list_del(&pmap->list);
-	devm_kfree(ice_hw_to_dev(hw), pmap);
+	kfree(pmap);
 
 err_ice_rem_prof:
 	mutex_unlock(&hw->blk[blk].es.prof_map_lock);
@@ -3817,8 +3807,7 @@ ice_get_prof(struct ice_hw *hw, enum ice_block blk, u64 hdl,
 	for (i = 0; i < map->ptg_cnt; i++)
 		if (!hw->blk[blk].es.written[map->prof_id]) {
 			/* add ES to change list */
-			p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*p),
-					 GFP_KERNEL);
+			p = kzalloc(sizeof(*p), GFP_KERNEL);
 			if (!p) {
 				status = -ENOMEM;
 				goto err_ice_get_prof;
@@ -3865,8 +3854,7 @@ ice_get_profs_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig,
 		struct ice_vsig_prof *p;
 
 		/* copy to the input list */
-		p = devm_kmemdup(ice_hw_to_dev(hw), ent1, sizeof(*p),
-				 GFP_KERNEL);
+		p = kmemdup(ent1, sizeof(*p), GFP_KERNEL);
 		if (!p)
 			goto err_ice_get_profs_vsig;
 
@@ -3878,7 +3866,7 @@ ice_get_profs_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig,
 err_ice_get_profs_vsig:
 	list_for_each_entry_safe(ent1, ent2, lst, list) {
 		list_del(&ent1->list);
-		devm_kfree(ice_hw_to_dev(hw), ent1);
+		kfree(ent1);
 	}
 
 	return -ENOMEM;
@@ -3907,7 +3895,7 @@ ice_add_prof_to_lst(struct ice_hw *hw, enum ice_block blk,
 		goto err_ice_add_prof_to_lst;
 	}
 
-	p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*p), GFP_KERNEL);
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
 	if (!p) {
 		status = -ENOMEM;
 		goto err_ice_add_prof_to_lst;
@@ -3947,7 +3935,7 @@ ice_move_vsi(struct ice_hw *hw, enum ice_block blk, u16 vsi, u16 vsig,
 	u16 orig_vsig;
 	int status;
 
-	p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*p), GFP_KERNEL);
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 
@@ -3956,7 +3944,7 @@ ice_move_vsi(struct ice_hw *hw, enum ice_block blk, u16 vsi, u16 vsig,
 		status = ice_vsig_add_mv_vsi(hw, blk, vsi, vsig);
 
 	if (status) {
-		devm_kfree(ice_hw_to_dev(hw), p);
+		kfree(p);
 		return status;
 	}
 
@@ -3998,7 +3986,7 @@ ice_rem_chg_tcam_ent(struct ice_hw *hw, u16 idx, struct list_head *chg)
 	list_for_each_entry_safe(tmp, pos, chg, list_entry)
 		if (tmp->type == ICE_TCAM_ADD && tmp->tcam_idx == idx) {
 			list_del(&tmp->list_entry);
-			devm_kfree(ice_hw_to_dev(hw), tmp);
+			kfree(tmp);
 		}
 }
 
@@ -4050,7 +4038,7 @@ ice_prof_tcam_ena_dis(struct ice_hw *hw, enum ice_block blk, bool enable,
 		return status;
 
 	/* add TCAM to change list */
-	p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*p), GFP_KERNEL);
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 
@@ -4078,7 +4066,7 @@ ice_prof_tcam_ena_dis(struct ice_hw *hw, enum ice_block blk, bool enable,
 	return 0;
 
 err_ice_prof_tcam_ena_dis:
-	devm_kfree(ice_hw_to_dev(hw), p);
+	kfree(p);
 	return status;
 }
 
@@ -4127,8 +4115,7 @@ ice_adj_prof_priorities(struct ice_hw *hw, enum ice_block blk, u16 vsig,
 	u16 idx;
 
 #define ICE_MAX_PTG_ATTRS	1024
-	attr_used = devm_kcalloc(ice_hw_to_dev(hw), ICE_MAX_PTG_ATTRS,
-				 sizeof(*attr_used), GFP_KERNEL);
+	attr_used = kcalloc(ICE_MAX_PTG_ATTRS, sizeof(*attr_used), GFP_KERNEL);
 	if (!attr_used)
 		return -ENOMEM;
 
@@ -4190,7 +4177,7 @@ ice_adj_prof_priorities(struct ice_hw *hw, enum ice_block blk, u16 vsig,
 	}
 
 err_ice_adj_prof_priorities:
-	devm_kfree(ice_hw_to_dev(hw), attr_used);
+	kfree(attr_used);
 	return status;
 }
 
@@ -4222,7 +4209,7 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 		return -EEXIST;
 
 	/* new VSIG profile structure */
-	t = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*t), GFP_KERNEL);
+	t = kzalloc(sizeof(*t), GFP_KERNEL);
 	if (!t)
 		return -ENOMEM;
 
@@ -4243,7 +4230,7 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 		u16 tcam_idx;
 
 		/* add TCAM to change list */
-		p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*p), GFP_KERNEL);
+		p = kzalloc(sizeof(*p), GFP_KERNEL);
 		if (!p) {
 			status = -ENOMEM;
 			goto err_ice_add_prof_id_vsig;
@@ -4257,7 +4244,7 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 		status = ice_alloc_tcam_ent(hw, blk, map->attr[i].mask == 0,
 					    &tcam_idx);
 		if (status) {
-			devm_kfree(ice_hw_to_dev(hw), p);
+			kfree(p);
 			goto err_ice_add_prof_id_vsig;
 		}
 
@@ -4284,7 +4271,7 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 					      t->tcam[i].attr.flags, vl_msk,
 					      dc_msk, nm_msk);
 		if (status) {
-			devm_kfree(ice_hw_to_dev(hw), p);
+			kfree(p);
 			goto err_ice_add_prof_id_vsig;
 		}
 
@@ -4307,7 +4294,7 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 err_ice_add_prof_id_vsig:
 	mutex_unlock(&hw->blk[blk].es.prof_map_lock);
 	/* let caller clean up the change list */
-	devm_kfree(ice_hw_to_dev(hw), t);
+	kfree(t);
 	return status;
 }
 
@@ -4327,7 +4314,7 @@ ice_create_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl,
 	u16 new_vsig;
 	int status;
 
-	p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*p), GFP_KERNEL);
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 
@@ -4356,7 +4343,7 @@ ice_create_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl,
 
 err_ice_create_prof_id_vsig:
 	/* let caller clean up the change list */
-	devm_kfree(ice_hw_to_dev(hw), p);
+	kfree(p);
 	return status;
 }
 
@@ -4415,7 +4402,7 @@ ice_find_prof_vsig(struct ice_hw *hw, enum ice_block blk, u64 hdl, u16 *vsig)
 
 	INIT_LIST_HEAD(&lst);
 
-	t = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*t), GFP_KERNEL);
+	t = kzalloc(sizeof(*t), GFP_KERNEL);
 	if (!t)
 		return false;
 
@@ -4425,7 +4412,7 @@ ice_find_prof_vsig(struct ice_hw *hw, enum ice_block blk, u64 hdl, u16 *vsig)
 	status = ice_find_dup_props_vsig(hw, blk, &lst, vsig);
 
 	list_del(&t->list);
-	devm_kfree(ice_hw_to_dev(hw), t);
+	kfree(t);
 
 	return !status;
 }
@@ -4465,7 +4452,7 @@ ice_add_vsi_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi, u16 vsig)
 
 	list_for_each_entry_safe(del, tmp, &chg, list_entry) {
 		list_del(&del->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), del);
+		kfree(del);
 	}
 
 	return status;
@@ -4606,12 +4593,12 @@ ice_add_prof_id_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl)
 err_ice_add_prof_id_flow:
 	list_for_each_entry_safe(del, tmp, &chg, list_entry) {
 		list_del(&del->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), del);
+		kfree(del);
 	}
 
 	list_for_each_entry_safe(del1, tmp1, &union_lst, list) {
 		list_del(&del1->list);
-		devm_kfree(ice_hw_to_dev(hw), del1);
+		kfree(del1);
 	}
 
 	return status;
@@ -4709,7 +4696,7 @@ ice_rem_prof_from_list(struct ice_hw *hw, struct list_head *lst, u64 hdl)
 	list_for_each_entry_safe(ent, tmp, lst, list)
 		if (ent->profile_cookie == hdl) {
 			list_del(&ent->list);
-			devm_kfree(ice_hw_to_dev(hw), ent);
+			kfree(ent);
 			return 0;
 		}
 
@@ -4838,12 +4825,12 @@ ice_rem_prof_id_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl)
 err_ice_rem_prof_id_flow:
 	list_for_each_entry_safe(del, tmp, &chg, list_entry) {
 		list_del(&del->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), del);
+		kfree(del);
 	}
 
 	list_for_each_entry_safe(del1, tmp1, &copy, list) {
 		list_del(&del1->list);
-		devm_kfree(ice_hw_to_dev(hw), del1);
+		kfree(del1);
 	}
 
 	return status;

@@ -79,10 +79,6 @@ function gen-device() {
 	dph='include/linux/dev_printk.h'
 	gen NEED_BUS_FIND_DEVICE_CONST_DATA if fun bus_find_device lacks 'const void \\*data' in "$dh"
 	gen NEED_DEV_LEVEL_ONCE if macro dev_level_once absent in "$dh" "$dph"
-	gen NEED_DEVM_KASPRINTF if fun devm_kasprintf absent in "$dh"
-	gen NEED_DEVM_KFREE if fun devm_kfree absent in "$dh"
-	gen NEED_DEVM_KVASPRINTF if fun devm_kvasprintf absent in "$dh"
-	gen NEED_DEVM_KZALLOC if fun devm_kzalloc absent in "$dh"
 }
 
 function gen-devlink() {
@@ -142,6 +138,18 @@ function gen-devlink() {
 	gen HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT if enum devlink_reload_action matches DEVLINK_RELOAD_ACTION_FW_ACTIVATE in include/uapi/linux/devlink.h
 }
 
+function gen-devres() {
+	dh='include/linux/device.h'
+	ddrh='include/linux/device/devres.h'
+	gen NEED_DEVM_KASPRINTF if fun devm_kasprintf absent in "$dh" "$ddrh"
+	gen NEED_DEVM_KCALLOC if fun devm_kcalloc absent in "$dh" "$ddrh"
+	gen NEED_DEVM_KFREE if fun devm_kfree absent in "$dh" "$ddrh"
+	gen NEED_DEVM_KMEMDUP if fun devm_kmemdup absent in "$dh" "$ddrh"
+	gen NEED_DEVM_KSTRDUP if fun devm_kstrdup absent in "$dh" "$ddrh"
+	gen NEED_DEVM_KVASPRINTF if fun devm_kvasprintf absent in "$dh" "$ddrh"
+	gen NEED_DEVM_KZALLOC if fun devm_kzalloc absent in "$dh" "$ddrh"
+}
+
 function gen-dma() {
 	dma='include/linux/dma-mapping.h'
 	gen NEED_DMA_ATTRS_PTR if struct dma_attrs in include/linux/dma-attrs.h
@@ -170,6 +178,13 @@ function gen-ethtool() {
 	gen HAVE_ETHTOOL_FLOW_RSS if macro FLOW_RSS in "$ueth"
 	gen HAVE_ETHTOOL_LINK_MODE_FEC_NONE_BIT if enum ethtool_link_mode_bit_indices matches ETHTOOL_LINK_MODE_FEC_NONE_BIT in "$ueth"
 	gen NEED_ETHTOOL_LINK_MODE_BIT_INDICES if enum ethtool_link_mode_bit_indices absent in "$ueth"
+}
+
+function gen-exported-symbols() {
+	# The Module.symvers is a generated file that is found in the object
+	# directory, not the source directory.
+	symvers="${KOBJ}/Module.symvers"
+	gen HAVE_EXPORTED_IRQ_SET_AFFINITY if symbol irq_set_affinity matches vmlinux in "$symvers"
 }
 
 function gen-filter() {
@@ -427,6 +442,9 @@ function gen-other() {
 	gen NEED_DECLARE_STATIC_KEY_FALSE if macro DECLARE_STATIC_KEY_FALSE absent in include/linux/jump_label.h include/linux/jump_label_type.h
 	gen NEED_LOWER_16_BITS if macro lower_16_bits absent in include/linux/kernel.h
 	gen NEED_UPPER_16_BITS if macro upper_16_bits absent in include/linux/kernel.h
+	gen HAVE_LINKMODE if fun linkmode_zero in include/linux/linkmode.h
+	gen NEED_LINKMODE_SET_BIT_ARRAY if fun linkmode_set_bit_array absent in include/linux/linkmode.h
+	gen NEED_LINKMODE_ZERO if fun linkmode_zero absent in include/linux/linkmode.h
 	gen NEED_LIST_COUNT_NODES if fun list_count_nodes absent in include/linux/list.h
 
 	# On aarch64 RHEL systems, mul_u64_u64_div_u64 appears to be declared
@@ -462,6 +480,7 @@ function gen-other() {
 	gen NEED_STR_ENABLED_DISABLED if fun str_enabled_disabled absent in include/linux/string_choices.h include/linux/string_helpers.h
 	gen HAVE_STRING_HELPERS_H if enum string_size_units in include/linux/string_helpers.h
 	gen NEED_SYSFS_EMIT if fun sysfs_emit absent in include/linux/sysfs.h
+	gen NEED_TIMER_DELETE if fun timer_delete absent in include/linux/timer.h
 	gen HAVE_TRACE_ENABLED_SUPPORT if implementation of macro __DECLARE_TRACE matches 'trace_##name##_enabled' in include/linux/tracepoint.h
 	gen HAVE_TTY_OP_WRITE_SIZE_T if method write of tty_operations matches size_t in include/linux/tty_driver.h
 	gen HAVE_U64_STATS_FETCH_BEGIN_IRQ if fun u64_stats_fetch_begin_irq in "$ush"
@@ -509,9 +528,11 @@ function gen-all() {
 	gen-aux
 	gen-bitfield
 	gen-device
+	gen-devres
 	gen-dma
 	gen-dpll
 	gen-ethtool
+	gen-exported-symbols
 	gen-filter
 	gen-flow-dissector
 	gen-gnss
@@ -533,12 +554,17 @@ function main() {
 		exit 11
 	fi
 
+	# Assume KOBJ is the same as KSRC if not set.
+	if [ -z "${KOBJ-}" ]; then
+		KOBJ="${KSRC-}"
+	fi
+
 	# we need some flags from .config or (autoconf.h), try to find it
-	if [ -z ${CONFIG_FILE-} ]; then
+	if [ -z "${CONFIG_FILE-}" ]; then
 		find_config_file
 
 		if [ -z ${CONFIG_FILE-} ]; then
-			echo >&2 "unable to locate a config file at KSRC=${KSRC}. please set CONFIG_FILE to the kernel configuration file."
+			echo >&2 "unable to locate a config file at KOBJ=${KOBJ}. please set CONFIG_FILE to the kernel configuration file."
 			exit 10
 		fi
 	fi

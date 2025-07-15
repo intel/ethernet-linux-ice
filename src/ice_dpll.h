@@ -145,6 +145,7 @@ struct ice_dplls {
 	s32 input_phase_adj_max;
 	s32 output_phase_adj_max;
 	bool generic;
+	bool unmanaged;
 };
 
 #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
@@ -153,9 +154,16 @@ void ice_dpll_deinit(struct ice_pf *pf);
 void ice_dpll_pin_update_lock(struct ice_pf *pf);
 void ice_dpll_pin_update_unlock(struct ice_pf *pf, bool pin_updated,
 				enum ice_dpll_pin_type pin_type, u8 pin_idx);
+void ice_dpll_lock_state_set_unmanaged(struct ice_pf *pf,
+				       struct ice_aqc_health_status_elem *buff,
+				       bool notify);
 #else /* CONFIG_PTP_1588_CLOCK */
 static inline void ice_dpll_init(struct ice_pf *pf) { }
 static inline void ice_dpll_deinit(struct ice_pf *pf) { }
+static inline void
+ice_dpll_lock_state_set_unmanaged(struct ice_pf *pf,
+				  struct ice_aqc_health_status_elem *buff,
+				  bool notify) { }
 #endif /* CONFIG_PTP_1588_CLOCK */
 #else /* CONFIG_DPLL */
 static inline void ice_dpll_pin_update_lock(struct ice_pf *pf) { }

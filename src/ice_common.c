@@ -7,7 +7,7 @@
 #include "ice_flow.h"
 #include "ice_switch.h"
 
-#define ICE_PF_RESET_WAIT_COUNT	500
+#define ICE_PF_RESET_WAIT_COUNT	2000
 #define ICE_SCHED_VALID_SEC_BITS 4
 
 static const char * const ice_link_mode_str_low[] = {
@@ -779,8 +779,7 @@ static int ice_init_fltr_mgmt_struct(struct ice_hw *hw)
 	struct ice_switch_info *sw;
 	int status;
 
-	hw->switch_info = devm_kzalloc(ice_hw_to_dev(hw),
-				       sizeof(*hw->switch_info), GFP_KERNEL);
+	hw->switch_info = kzalloc(sizeof(*hw->switch_info), GFP_KERNEL);
 	sw = hw->switch_info;
 
 	if (!sw)
@@ -794,7 +793,7 @@ static int ice_init_fltr_mgmt_struct(struct ice_hw *hw)
 
 	status = ice_init_def_sw_recp(hw, &hw->switch_info->recp_list);
 	if (status) {
-		devm_kfree(ice_hw_to_dev(hw), hw->switch_info);
+		kfree(hw->switch_info);
 		return status;
 	}
 	return 0;
@@ -819,7 +818,7 @@ ice_cleanup_fltr_mgmt_single(struct ice_hw *hw, struct ice_switch_info *sw)
 	list_for_each_entry_safe(v_pos_map, v_tmp_map, &sw->vsi_list_map_head,
 				 list_entry) {
 		list_del(&v_pos_map->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), v_pos_map);
+		kfree(v_pos_map);
 	}
 	recps = sw->recp_list;
 	for (i = 0; i < ICE_MAX_NUM_RECIPES; i++) {
@@ -834,8 +833,8 @@ ice_cleanup_fltr_mgmt_single(struct ice_hw *hw, struct ice_switch_info *sw)
 						 &recps[i].filt_rules,
 						 list_entry) {
 				list_del(&lst_itr->list_entry);
-				devm_kfree(ice_hw_to_dev(hw), lst_itr->lkups);
-				devm_kfree(ice_hw_to_dev(hw), lst_itr);
+				kfree(lst_itr->lkups);
+				kfree(lst_itr);
 			}
 		} else {
 			struct ice_fltr_mgmt_list_entry *lst_itr, *tmp_entry;
@@ -845,13 +844,13 @@ ice_cleanup_fltr_mgmt_single(struct ice_hw *hw, struct ice_switch_info *sw)
 						 &recps[i].filt_rules,
 						 list_entry) {
 				list_del(&lst_itr->list_entry);
-				devm_kfree(ice_hw_to_dev(hw), lst_itr);
+				kfree(lst_itr);
 			}
 		}
 	}
 	ice_rm_sw_replay_rule_info(hw, sw);
-	devm_kfree(ice_hw_to_dev(hw), sw->recp_list);
-	devm_kfree(ice_hw_to_dev(hw), sw);
+	kfree(sw->recp_list);
+	kfree(sw);
 }
 
 /**
@@ -1029,9 +1028,7 @@ int ice_init_hw(struct ice_hw *hw)
 		goto err_unroll_cqinit;
 
 	if (!hw->port_info)
-		hw->port_info = devm_kzalloc(ice_hw_to_dev(hw),
-					     sizeof(*hw->port_info),
-					     GFP_KERNEL);
+		hw->port_info = kzalloc(sizeof(*hw->port_info), GFP_KERNEL);
 	if (!hw->port_info) {
 		status = -ENOMEM;
 		goto err_unroll_cqinit;
@@ -1069,7 +1066,7 @@ int ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_sched;
 
-	pcaps = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*pcaps), GFP_KERNEL);
+	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps) {
 		status = -ENOMEM;
 		goto err_unroll_sched;
@@ -1079,7 +1076,7 @@ int ice_init_hw(struct ice_hw *hw)
 	status = hw->lm_ops->get_phy_caps(hw->port_info, false,
 					  ICE_AQC_REPORT_TOPO_CAP_MEDIA,
 					  pcaps, NULL);
-	devm_kfree(ice_hw_to_dev(hw), pcaps);
+	kfree(pcaps);
 	if (status)
 		dev_warn(ice_hw_to_dev(hw),
 			 "Get PHY capabilities failed status = %d, continuing anyway\n",
@@ -1107,9 +1104,8 @@ int ice_init_hw(struct ice_hw *hw)
 
 	/* Get MAC information */
 	/* A single port can report up to two (LAN and WoL) addresses */
-	mac_buf = devm_kcalloc(ice_hw_to_dev(hw), 2,
-			       sizeof(struct ice_aqc_manage_mac_read_resp),
-			       GFP_KERNEL);
+	mac_buf = kcalloc(2, sizeof(struct ice_aqc_manage_mac_read_resp),
+			  GFP_KERNEL);
 	mac_buf_len = 2 * sizeof(struct ice_aqc_manage_mac_read_resp);
 
 	if (!mac_buf) {
@@ -1118,7 +1114,7 @@ int ice_init_hw(struct ice_hw *hw)
 	}
 
 	status = ice_aq_manage_mac_read(hw, mac_buf, mac_buf_len, NULL);
-	devm_kfree(ice_hw_to_dev(hw), mac_buf);
+	kfree(mac_buf);
 
 	if (status)
 		goto err_unroll_fltr_mgmt_struct;
@@ -1147,7 +1143,7 @@ err_unroll_fltr_mgmt_struct:
 err_unroll_sched:
 	ice_sched_cleanup_all(hw);
 err_unroll_alloc:
-	devm_kfree(ice_hw_to_dev(hw), hw->port_info);
+	kfree(hw->port_info);
 	hw->port_info = NULL;
 err_unroll_cqinit:
 	ice_destroy_all_ctrlq(hw);
@@ -2405,7 +2401,7 @@ ice_alloc_hw_res(struct ice_hw *hw, u16 type, u16 num, bool btm, u16 *res)
 	int status;
 
 	buf_len = struct_size(buf, elem, num);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -2424,7 +2420,7 @@ ice_alloc_hw_res(struct ice_hw *hw, u16 type, u16 num, bool btm, u16 *res)
 	memcpy(res, buf->elem, sizeof(*buf->elem) * num);
 
 ice_alloc_res_exit:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -2442,7 +2438,7 @@ int ice_free_hw_res(struct ice_hw *hw, u16 type, u16 num, u16 *res)
 	int status;
 
 	buf_len = struct_size(buf, elem, num);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_len, GFP_KERNEL);
+	buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -2456,7 +2452,7 @@ int ice_free_hw_res(struct ice_hw *hw, u16 type, u16 num, u16 *res)
 	if (status)
 		ice_debug(hw, ICE_DBG_SW, "CQ CMD Buffer:\n");
 
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -2754,10 +2750,13 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		caps->iwarp = (number == 1);
 		ice_debug(hw, ICE_DBG_INIT, "%s: iwarp = %d\n", prefix, caps->iwarp);
 		break;
-	case ICE_AQC_CAPS_ROCEV2_LAG:
+	case ICE_AQC_CAPS_FW_LAG_SUPPORT:
 		caps->roce_lag = !!(number & ICE_AQC_BIT_ROCEV2_LAG);
 		ice_debug(hw, ICE_DBG_INIT, "%s: roce_lag = %d\n",
 			  prefix, caps->roce_lag);
+		caps->sriov_lag = !!(number & ICE_AQC_BIT_SRIOV_LAG);
+		ice_debug(hw, ICE_DBG_INIT, "%s: sriov_lag = %u\n",
+			  prefix, caps->sriov_lag);
 		break;
 	case ICE_AQC_CAPS_LED:
 		if (phys_id < ICE_MAX_SUPPORTED_GPIO_LED) {
@@ -3643,7 +3642,7 @@ ice_discover_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_caps)
 	void *cbuf;
 	int status;
 
-	cbuf = devm_kzalloc(ice_hw_to_dev(hw), ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
+	cbuf = kzalloc(ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
 	if (!cbuf)
 		return -ENOMEM;
 
@@ -3657,7 +3656,7 @@ ice_discover_dev_caps(struct ice_hw *hw, struct ice_hw_dev_caps *dev_caps)
 				  ice_aqc_opc_list_dev_caps, NULL);
 	if (!status)
 		ice_parse_dev_caps(hw, dev_caps, cbuf, cap_count);
-	devm_kfree(ice_hw_to_dev(hw), cbuf);
+	kfree(cbuf);
 
 	return status;
 }
@@ -3677,7 +3676,7 @@ ice_discover_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_caps)
 	void *cbuf;
 	int status;
 
-	cbuf = devm_kzalloc(ice_hw_to_dev(hw), ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
+	cbuf = kzalloc(ICE_AQ_MAX_BUF_LEN, GFP_KERNEL);
 	if (!cbuf)
 		return -ENOMEM;
 
@@ -3691,7 +3690,7 @@ ice_discover_func_caps(struct ice_hw *hw, struct ice_hw_func_caps *func_caps)
 				  ice_aqc_opc_list_func_caps, NULL);
 	if (!status)
 		ice_parse_func_caps(hw, func_caps, cbuf, cap_count);
-	devm_kfree(ice_hw_to_dev(hw), cbuf);
+	kfree(cbuf);
 
 	return status;
 }
@@ -4207,8 +4206,7 @@ int ice_update_link_info(struct ice_port_info *pi)
 	if (li->link_info & ICE_AQ_MEDIA_AVAILABLE) {
 		struct ice_aqc_get_phy_caps_data *pcaps;
 
-		pcaps = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*pcaps),
-				     GFP_KERNEL);
+		pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
 		if (!pcaps)
 			return -ENOMEM;
 
@@ -4220,7 +4218,7 @@ int ice_update_link_info(struct ice_port_info *pi)
 			memcpy(li->module_type, &pcaps->module_type,
 			       sizeof(li->module_type));
 
-		devm_kfree(ice_hw_to_dev(hw), pcaps);
+		kfree(pcaps);
 	}
 
 	return status;
@@ -4376,7 +4374,7 @@ ice_set_fc(struct ice_port_info *pi, u8 *aq_failures, bool ena_auto_link_update)
 	*aq_failures = 0;
 	hw = pi->hw;
 
-	pcaps = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*pcaps), GFP_KERNEL);
+	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps)
 		return -ENOMEM;
 
@@ -4429,7 +4427,7 @@ ice_set_fc(struct ice_port_info *pi, u8 *aq_failures, bool ena_auto_link_update)
 	}
 
 out:
-	devm_kfree(ice_hw_to_dev(hw), pcaps);
+	kfree(pcaps);
 	return status;
 }
 
@@ -4517,7 +4515,7 @@ ice_cfg_phy_fec(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
 
 	hw = pi->hw;
 
-	pcaps = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*pcaps), GFP_KERNEL);
+	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps)
 		return -ENOMEM;
 
@@ -4587,7 +4585,7 @@ ice_cfg_phy_fec(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
 	}
 
 out:
-	devm_kfree(ice_hw_to_dev(hw), pcaps);
+	kfree(pcaps);
 
 	return status;
 }
@@ -5240,6 +5238,51 @@ do_aq:
 }
 
 /**
+ * ice_aq_cfg_lan_txq - Move/Configure LAN Tx queue (0x0C32)
+ * @hw: pointer to the hardware structure
+ * @buf: buffer for command
+ * @buf_size: size of buffer in bytes
+ * @num_qs: number of queues being configured
+ * @oldport: origination lport
+ * @newport: destination lport
+ * @cd: pointer to command details structure or NULL
+ *
+ * There is a better AQ command to use for moving nodes, so only coding
+ * this one for configuring the node.
+ *
+ * Return: 0 on success, error code on failure.
+ */
+int
+ice_aq_cfg_lan_txq(struct ice_hw *hw, struct ice_aqc_cfg_txqs_buf *buf,
+		   u16 buf_size, u16 num_qs, u8 oldport, u8 newport,
+		   struct ice_sq_cd *cd)
+{
+	struct ice_aqc_cfg_txqs *cmd;
+	struct ice_aq_desc desc;
+	int status;
+
+	cmd = &desc.params.cfg_txqs;
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_cfg_txqs);
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+
+	if (!buf)
+		return -EINVAL;
+
+	cmd->cmd_type = ICE_AQC_Q_CFG_TC_CHNG;
+	cmd->num_qs = num_qs;
+	cmd->port_num_chng = (oldport & ICE_AQC_Q_CFG_SRC_PRT_M);
+	cmd->port_num_chng |= FIELD_PREP(ICE_AQC_Q_CFG_DST_PRT_M, newport);
+	cmd->time_out = FIELD_PREP(ICE_AQC_Q_CFG_TIMEOUT_M, 5);
+	cmd->blocked_cgds = 0;
+
+	status = ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
+	if (status)
+		ice_debug(hw, ICE_DBG_SCHED, "Failed to reconfigure nodes %d\n",
+			  hw->adminq.sq_last_status);
+	return status;
+}
+
+/**
  * ice_aq_move_recfg_lan_txq
  * @hw: pointer to the hardware structure
  * @num_qs: number of queues to move/reconfigure
@@ -5260,15 +5303,15 @@ int
 ice_aq_move_recfg_lan_txq(struct ice_hw *hw, u8 num_qs, bool is_move,
 			  bool is_tc_change, bool subseq_call, bool flush_pipe,
 			  u8 timeout, u32 *blocked_cgds,
-			  struct ice_aqc_move_txqs_data *buf, u16 buf_size,
+			  struct ice_aqc_cfg_txqs_buf *buf, u16 buf_size,
 			  u8 *txqs_moved, struct ice_sq_cd *cd)
 {
-	struct ice_aqc_move_txqs *cmd;
+	struct ice_aqc_cfg_txqs *cmd;
 	struct ice_aq_desc desc;
 	int status;
 
-	cmd = &desc.params.move_txqs;
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_move_recfg_txqs);
+	cmd = &desc.params.cfg_txqs;
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_cfg_txqs);
 
 #define ICE_LAN_TXQ_MOVE_TIMEOUT_MAX 50
 	if (timeout > ICE_LAN_TXQ_MOVE_TIMEOUT_MAX)
@@ -5283,19 +5326,20 @@ ice_aq_move_recfg_lan_txq(struct ice_hw *hw, u8 num_qs, bool is_move,
 	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
 	if (is_move)
-		cmd->cmd_type |= ICE_AQC_Q_CMD_TYPE_MOVE;
+		cmd->cmd_type |= ICE_AQC_Q_CFG_MOVE_NODE;
 
 	if (is_tc_change)
-		cmd->cmd_type |= ICE_AQC_Q_CMD_TYPE_TC_CHANGE;
+		cmd->cmd_type |= ICE_AQC_Q_CFG_TC_CHNG;
 
 	if (subseq_call)
-		cmd->cmd_type |= ICE_AQC_Q_CMD_SUBSEQ_CALL;
+		cmd->cmd_type |= ICE_AQC_Q_CFG_SUBSEQ_CALL;
 
 	if (flush_pipe)
-		cmd->cmd_type |= ICE_AQC_Q_CMD_FLUSH_PIPE;
+		cmd->cmd_type |= ICE_AQC_Q_CFG_FLUSH;
 
 	cmd->num_qs = num_qs;
-	cmd->timeout = FIELD_PREP(ICE_AQC_Q_CMD_TIMEOUT_M, timeout);
+
+	cmd->time_out = FIELD_PREP(ICE_AQC_Q_CFG_TIMEOUT_M, timeout);
 
 	status = ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
 
@@ -5802,7 +5846,7 @@ int ice_dump_port_dflt_topo(struct ice_port_info *pi)
 
 	/* allocate memory for response buffer */
 	buf_size = sizeof(*buf) * ICE_TXSCHED_MAX_BRANCHES;
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_size, GFP_KERNEL);
+	buf = kzalloc(buf_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 	ret = ice_aq_get_dflt_topo(hw, pi->lport, buf, buf_size, &num_branches,
@@ -5833,7 +5877,7 @@ int ice_dump_port_dflt_topo(struct ice_port_info *pi)
 	}
 
 err_exit:
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return ret;
 }
 
@@ -6444,7 +6488,7 @@ ice_dis_vsi_txq(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u8 num_queues,
 	}
 
 	buf_size = struct_size(qg_list, q_id, 1);
-	qg_list = devm_kzalloc(ice_hw_to_dev(hw), buf_size, GFP_KERNEL);
+	qg_list = kzalloc(buf_size, GFP_KERNEL);
 	if (!qg_list)
 		return -ENOMEM;
 
@@ -6477,9 +6521,10 @@ ice_dis_vsi_txq(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u8 num_queues,
 			break;
 		ice_free_sched_node(pi, node);
 		q_ctx->q_handle = ICE_INVAL_Q_HANDLE;
+		q_ctx->q_teid = ICE_INVAL_TEID;
 	}
 	mutex_unlock(&pi->sched_lock);
-	devm_kfree(ice_hw_to_dev(hw), qg_list);
+	kfree(qg_list);
 	return status;
 }
 
@@ -6587,7 +6632,7 @@ ice_ena_vsi_rdma_qset(struct ice_port_info *pi, u16 vsi_handle, u8 tc,
 		return -EINVAL;
 
 	buf_size = struct_size(buf, rdma_qsets, num_qsets);
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_size, GFP_KERNEL);
+	buf = kzalloc(buf_size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 	mutex_lock(&pi->sched_lock);
@@ -6633,7 +6678,7 @@ ice_ena_vsi_rdma_qset(struct ice_port_info *pi, u16 vsi_handle, u8 tc,
 	}
 rdma_error_exit:
 	mutex_unlock(&pi->sched_lock);
-	devm_kfree(ice_hw_to_dev(hw), buf);
+	kfree(buf);
 	return status;
 }
 
@@ -6660,7 +6705,7 @@ ice_dis_vsi_rdma_qset(struct ice_port_info *pi, u16 count, u32 *qset_teid,
 	hw = pi->hw;
 
 	qg_size = struct_size(qg_list, q_id, 1);
-	qg_list = devm_kzalloc(ice_hw_to_dev(hw), qg_size, GFP_KERNEL);
+	qg_list = kzalloc(qg_size, GFP_KERNEL);
 	if (!qg_list)
 		return -ENOMEM;
 
@@ -6688,7 +6733,7 @@ ice_dis_vsi_rdma_qset(struct ice_port_info *pi, u16 count, u32 *qset_teid,
 	}
 
 	mutex_unlock(&pi->sched_lock);
-	devm_kfree(ice_hw_to_dev(hw), qg_list);
+	kfree(qg_list);
 	return status;
 }
 
@@ -8008,6 +8053,50 @@ bool ice_is_fw_health_report_supported(struct ice_hw *hw)
 }
 
 /**
+ * ice_aq_get_health_status_supported - get supported health status codes
+ * @hw: pointer to the HW struct
+ * @buff: pointer to buffer where health status elements will be stored
+ * @num: number of health status elements buffer can hold
+ *
+ * Return:
+ * * 0 - success,
+ * * negative - AQ error code.
+ */
+static int
+ice_aq_get_health_status_supported(struct ice_hw *hw,
+				   struct ice_aqc_health_status_elem *buff,
+				   int num)
+{
+	u16 code = ice_aqc_opc_get_supported_health_status_codes;
+	struct ice_aq_desc desc;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, code);
+
+	return ice_aq_send_cmd(hw, &desc, buff, num * sizeof(*buff), NULL);
+}
+
+/**
+ * ice_aq_get_health_status - get current health status array from the firmware
+ * @hw: pointer to the HW struct
+ * @buff: pointer to buffer where health status elements will be stored
+ * @num: number of health status elements buffer can hold
+ *
+ * Return:
+ * * 0 - success,
+ * * negative - AQ error code.
+ */
+int ice_aq_get_health_status(struct ice_hw *hw,
+			     struct ice_aqc_health_status_elem *buff, int num)
+{
+	struct ice_aq_desc desc;
+
+	ice_fill_dflt_direct_cmd_desc(&desc,
+				      ice_aqc_opc_get_health_status);
+
+	return ice_aq_send_cmd(hw, &desc, buff, num * sizeof(*buff), NULL);
+}
+
+/**
  * ice_aq_set_health_status_config - Configure FW health events
  * @hw: pointer to the HW struct
  * @event_source: type of diagnostic events to enable
@@ -8031,6 +8120,76 @@ ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,
 	cmd->event_source = event_source;
 
 	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
+}
+
+/**
+ * ice_is_health_status_code_supported - check if health status is supported
+ * @hw: pointer to the hardware structure
+ * @code: health status code to check
+ * @supported: on success holds the outcome
+ *
+ * Return:
+ * * 0 - success,
+ * * -ENOMEM - failed to allocate memory for buffer,
+ * * other negative - AQ error code.
+ */
+int ice_is_health_status_code_supported(struct ice_hw *hw, u16 code,
+					bool *supported)
+{
+	struct ice_aqc_health_status_elem *buff __free(kfree) = NULL;
+	const int BUFF_SIZE = ICE_AQC_HEALTH_STATUS_CODE_NUM;
+	int ret;
+
+	buff = kcalloc(BUFF_SIZE, sizeof(*buff), GFP_KERNEL);
+	if (!buff)
+		return -ENOMEM;
+	ret = ice_aq_get_health_status_supported(hw, buff, BUFF_SIZE);
+	if (ret)
+		return ret;
+	for (int i = 0; i < BUFF_SIZE && buff[i].health_status_code; i++)
+		if (le16_to_cpu(buff[i].health_status_code) == code) {
+			*supported = true;
+			break;
+		}
+
+	return 0;
+}
+
+/**
+ * ice_get_last_health_status_code - get last health status for given code
+ * @hw: pointer to the hardware structure
+ * @out: pointer to the health status struct to be filled
+ * @code: health status code to check
+ *
+ * Return:
+ * * 0 - success,
+ * * -ENOMEM - failed to allocate memory for buffer,
+ * * other negative - AQ error code.
+ */
+int ice_get_last_health_status_code(struct ice_hw *hw,
+				    struct ice_aqc_health_status_elem *out,
+				    u16 code)
+{
+	struct ice_aqc_health_status_elem *buff __free(kfree) = NULL;
+	const int BUFF_SIZE = ICE_AQC_HEALTH_STATUS_CODE_NUM;
+	int last_status = -1, ret;
+
+	buff = kcalloc(BUFF_SIZE, sizeof(*buff), GFP_KERNEL);
+	if (!buff)
+		return -ENOMEM;
+	ret = ice_aq_get_health_status(hw, buff, BUFF_SIZE);
+	if (ret)
+		return ret;
+	for (int i = 0; i < BUFF_SIZE && buff[i].health_status_code; i++)
+		if (le16_to_cpu(buff[i].health_status_code) == code)
+			last_status = i;
+
+	if (last_status >= 0 && last_status < BUFF_SIZE)
+		memcpy(out, &buff[last_status], sizeof(*out));
+	else
+		memset(out, 0, sizeof(*out));
+
+	return ret;
 }
 
 /**

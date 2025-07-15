@@ -121,10 +121,14 @@ int
 ice_aq_set_rss_key(struct ice_hw *hw, u16 vsi_handle,
 		   struct ice_aqc_get_set_rss_keys *keys);
 int
+ice_aq_cfg_lan_txq(struct ice_hw *hw, struct ice_aqc_cfg_txqs_buf *buf,
+		   u16 buf_size, u16 num_qs, u8 oldport, u8 newport,
+		   struct ice_sq_cd *cd);
+int
 ice_aq_move_recfg_lan_txq(struct ice_hw *hw, u8 num_qs, bool is_move,
 			  bool is_tc_change, bool subseq_call, bool flush_pipe,
 			  u8 timeout, u32 *blocked_cgds,
-			  struct ice_aqc_move_txqs_data *buf, u16 buf_size,
+			  struct ice_aqc_cfg_txqs_buf *buf, u16 buf_size,
 			  u8 *txqs_moved, struct ice_sq_cd *cd);
 
 int
@@ -385,7 +389,14 @@ ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
 int
 ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,
 				struct ice_sq_cd *cd);
+int ice_aq_get_health_status(struct ice_hw *hw,
+			     struct ice_aqc_health_status_elem *buff, int num);
 bool ice_is_fw_health_report_supported(struct ice_hw *hw);
+int ice_is_health_status_code_supported(struct ice_hw *hw, u16 code,
+					bool *supported);
+int ice_get_last_health_status_code(struct ice_hw *hw,
+				    struct ice_aqc_health_status_elem *out,
+				    u16 code);
 bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
 /* AQ API version for FW auto drop reports */
 bool ice_is_fw_auto_drop_supported(struct ice_hw *hw);

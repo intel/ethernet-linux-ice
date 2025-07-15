@@ -311,7 +311,7 @@ int __kc_pci_enable_msix_range(struct pci_dev *dev, struct msix_entry *entries,
 }
 #endif /* 3.14.0 */
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,15,0))
+#ifdef NEED_DEVM_KSTRDUP
 char *_kc_devm_kstrdup(struct device *dev, const char *s, gfp_t gfp)
 {
 	size_t size;
@@ -326,7 +326,9 @@ char *_kc_devm_kstrdup(struct device *dev, const char *s, gfp_t gfp)
 		memcpy(buf, s, size);
 	return buf;
 }
+#endif /* NEED_DEVM_KSTRDUP */
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,15,0))
 void __kc_netdev_rss_key_fill(void *buffer, size_t len)
 {
 	/* Set of random keys generated using kernel random number generator */
@@ -487,7 +489,10 @@ void __kc_dev_addr_unsync_dev(struct dev_addr_list **list, int *count,
 }
 #endif /* NETDEV_HW_ADDR_T_MULTICAST  */
 #endif /* HAVE_SET_RX_MODE */
-void *__kc_devm_kmemdup(struct device *dev, const void *src, size_t len,
+#endif /* 3.16.0 */
+
+#ifdef NEED_DEVM_KMEMDUP
+void *_kc_devm_kmemdup(struct device *dev, const void *src, size_t len,
 			gfp_t gfp)
 {
 	void *p;
@@ -498,7 +503,7 @@ void *__kc_devm_kmemdup(struct device *dev, const void *src, size_t len,
 
 	return p;
 }
-#endif /* 3.16.0 */
+#endif /* NEED_DEVM_KMEMDUP */
 
 /******************************************************************************/
 #if ((LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)) && \

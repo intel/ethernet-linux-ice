@@ -1970,20 +1970,20 @@ ice_dealloc_flow_entry(struct ice_hw *hw, struct ice_flow_entry *entry)
 		return;
 
 	if (entry->entry)
-		devm_kfree(ice_hw_to_dev(hw), entry->entry);
+		kfree(entry->entry);
 
 	if (entry->range_buf) {
-		devm_kfree(ice_hw_to_dev(hw), entry->range_buf);
+		kfree(entry->range_buf);
 		entry->range_buf = NULL;
 	}
 
 	if (entry->acts) {
-		devm_kfree(ice_hw_to_dev(hw), entry->acts);
+		kfree(entry->acts);
 		entry->acts = NULL;
 		entry->acts_cnt = 0;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), entry);
+	kfree(entry);
 }
 
 /**
@@ -2207,12 +2207,11 @@ ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
 	if (prof_id >= (u64)ids->count)
 		return -ENOSPC;
 
-	params = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*params), GFP_KERNEL);
+	params = kzalloc(sizeof(*params), GFP_KERNEL);
 	if (!params)
 		return -ENOMEM;
 
-	params->prof = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*params->prof),
-				    GFP_KERNEL);
+	params->prof = kzalloc(sizeof(*params->prof), GFP_KERNEL);
 	if (!params->prof) {
 		status = -ENOMEM;
 		goto free_params;
@@ -2239,9 +2238,8 @@ ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
 	 * profile instance.
 	 */
 	if (acts_cnt) {
-		params->prof->acts = devm_kmemdup(ice_hw_to_dev(hw), acts,
-						  acts_cnt * sizeof(*acts),
-						  GFP_KERNEL);
+		params->prof->acts = kmemdup(acts, acts_cnt * sizeof(*acts),
+					     GFP_KERNEL);
 
 		if (!params->prof->acts) {
 			status = -ENOMEM;
@@ -2272,11 +2270,11 @@ ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
 out:
 	if (status) {
 		if (params->prof->acts)
-			devm_kfree(ice_hw_to_dev(hw), params->prof->acts);
-		devm_kfree(ice_hw_to_dev(hw), params->prof);
+			kfree(params->prof->acts);
+		kfree(params->prof);
 	}
 free_params:
-	devm_kfree(ice_hw_to_dev(hw), params);
+	kfree(params);
 
 	return status;
 }
@@ -2350,8 +2348,8 @@ ice_flow_rem_prof_sync(struct ice_hw *hw, enum ice_block blk,
 		list_del(&prof->l_entry);
 		mutex_destroy(&prof->entries_lock);
 		if (prof->acts)
-			devm_kfree(ice_hw_to_dev(hw), prof->acts);
-		devm_kfree(ice_hw_to_dev(hw), prof);
+			kfree(prof->acts);
+		kfree(prof);
 	}
 
 	return status;
@@ -2565,7 +2563,7 @@ ice_flow_set_hw_prof(struct ice_hw *hw, u16 dest_vsi_handle,
 	int status;
 	int i, idx;
 
-	params = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*params), GFP_KERNEL);
+	params = kzalloc(sizeof(*params), GFP_KERNEL);
 	if (!params)
 		return -ENOMEM;
 
@@ -2616,7 +2614,7 @@ ice_flow_set_hw_prof(struct ice_hw *hw, u16 dest_vsi_handle,
 	return 0;
 
 free_params:
-	devm_kfree(ice_hw_to_dev(hw), params);
+	kfree(params);
 
 	return status;
 }
@@ -2948,8 +2946,7 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 
 	status = -ENOMEM;
 
-	e->acts = devm_kmemdup(ice_hw_to_dev(hw), acts,
-			       acts_cnt * sizeof(*acts), GFP_KERNEL);
+	e->acts = kmemdup(acts, acts_cnt * sizeof(*acts), GFP_KERNEL);
 	if (!e->acts)
 		goto out;
 
@@ -2957,24 +2954,23 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 
 	/* Format the matching data */
 	buf_sz = prof->cfg.scen->width;
-	buf = devm_kzalloc(ice_hw_to_dev(hw), buf_sz, GFP_KERNEL);
+	buf = kzalloc(buf_sz, GFP_KERNEL);
 	if (!buf)
 		goto out;
 
-	dontcare = devm_kzalloc(ice_hw_to_dev(hw), buf_sz, GFP_KERNEL);
+	dontcare = kzalloc(buf_sz, GFP_KERNEL);
 	if (!dontcare)
 		goto out;
 
 	/* 'key' buffer will store both key and key_inverse, so must be twice
 	 * size of buf
 	 */
-	key = devm_kzalloc(ice_hw_to_dev(hw), buf_sz * 2, GFP_KERNEL);
+	key = kzalloc(buf_sz * 2, GFP_KERNEL);
 	if (!key)
 		goto out;
 
-	range_buf = devm_kzalloc(ice_hw_to_dev(hw),
-				 sizeof(struct ice_aqc_acl_profile_ranges),
-				 GFP_KERNEL);
+	range_buf = kzalloc(sizeof(struct ice_aqc_acl_profile_ranges),
+			    GFP_KERNEL);
 	if (!range_buf)
 		goto out;
 
@@ -3040,7 +3036,7 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 		dontcare[prof->cfg.scen->rng_chk_idx] = ~range;
 		e->range_buf = range_buf;
 	} else {
-		devm_kfree(ice_hw_to_dev(hw), range_buf);
+		kfree(range_buf);
 	}
 
 	status = ice_set_key(key, buf_sz * 2, buf, NULL, dontcare, NULL, 0,
@@ -3053,21 +3049,21 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 
 out:
 	if (buf)
-		devm_kfree(ice_hw_to_dev(hw), buf);
+		kfree(buf);
 
 	if (dontcare)
-		devm_kfree(ice_hw_to_dev(hw), dontcare);
+		kfree(dontcare);
 
 	if (status && key)
-		devm_kfree(ice_hw_to_dev(hw), key);
+		kfree(key);
 
 	if (status && range_buf) {
-		devm_kfree(ice_hw_to_dev(hw), range_buf);
+		kfree(range_buf);
 		e->range_buf = NULL;
 	}
 
 	if (status && e->acts) {
-		devm_kfree(ice_hw_to_dev(hw), e->acts);
+		kfree(e->acts);
 		e->acts = NULL;
 		e->acts_cnt = 0;
 	}
@@ -3310,8 +3306,8 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 	}
 
 	/* Prepare the result action buffer */
-	acts = devm_kcalloc(ice_hw_to_dev(hw), e->entry_sz,
-			    sizeof(struct ice_acl_act_entry), GFP_KERNEL);
+	acts = kcalloc(e->entry_sz, sizeof(struct ice_acl_act_entry),
+		       GFP_KERNEL);
 	if (!acts)
 		return -ENOMEM;
 
@@ -3341,12 +3337,11 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 			/* For the action memory info, update the SW's copy of
 			 * exist entry with e's action memory info
 			 */
-			devm_kfree(ice_hw_to_dev(hw), exist->acts);
+			kfree(exist->acts);
 			exist->acts_cnt = e->acts_cnt;
-			exist->acts = devm_kcalloc(ice_hw_to_dev(hw),
-						   exist->acts_cnt,
-						   sizeof(struct ice_flow_action),
-						   GFP_KERNEL);
+			exist->acts = kcalloc(exist->acts_cnt,
+					      sizeof(struct ice_flow_action),
+					      GFP_KERNEL);
 			if (!exist->acts) {
 				status = -ENOMEM;
 				goto out;
@@ -3379,7 +3374,7 @@ ice_flow_acl_add_scen_entry_sync(struct ice_hw *hw, struct ice_flow_prof *prof,
 		*(entry) = exist;
 	}
 out:
-	devm_kfree(ice_hw_to_dev(hw), acts);
+	kfree(acts);
 
 	return status;
 }
@@ -3446,7 +3441,7 @@ ice_flow_add_entry(struct ice_hw *hw, enum ice_block blk, u64 prof_id,
 		/* Allocate memory for the entry being added and associate
 		 * the VSI to the found flow profile
 		 */
-		e = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*e), GFP_KERNEL);
+		e = kzalloc(sizeof(*e), GFP_KERNEL);
 		if (!e)
 			status = -ENOMEM;
 		else
@@ -3499,8 +3494,8 @@ ice_flow_add_entry(struct ice_hw *hw, enum ice_block blk, u64 prof_id,
 out:
 	if (status && e) {
 		if (e->entry)
-			devm_kfree(ice_hw_to_dev(hw), e->entry);
-		devm_kfree(ice_hw_to_dev(hw), e);
+			kfree(e->entry);
+		kfree(e);
 	}
 
 	return status;
@@ -3821,7 +3816,7 @@ void ice_rem_vsi_rss_list(struct ice_hw *hw, u16 vsi_handle)
 		if (test_and_clear_bit(vsi_handle, r->vsis))
 			if (bitmap_empty(r->vsis, ICE_MAX_VSI)) {
 				list_del(&r->l_entry);
-				devm_kfree(ice_hw_to_dev(hw), r);
+				kfree(r);
 			}
 	mutex_unlock(&hw->rss_locks);
 }
@@ -3936,7 +3931,7 @@ ice_rem_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 			clear_bit(vsi_handle, r->vsis);
 			if (bitmap_empty(r->vsis, ICE_MAX_VSI)) {
 				list_del(&r->l_entry);
-				devm_kfree(ice_hw_to_dev(hw), r);
+				kfree(r);
 			}
 			return;
 		}
@@ -3972,8 +3967,7 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 			return 0;
 		}
 
-	rss_cfg = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*rss_cfg),
-			       GFP_KERNEL);
+	rss_cfg = kzalloc(sizeof(*rss_cfg), GFP_KERNEL);
 
 	if (!rss_cfg)
 		return -ENOMEM;
@@ -4229,8 +4223,7 @@ ice_add_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle,
 			   ICE_FLOW_SEG_SINGLE :
 			   ICE_FLOW_SEG_MAX;
 
-	segs = devm_kcalloc(ice_hw_to_dev(hw), segs_cnt, sizeof(*segs),
-			    GFP_KERNEL);
+	segs = kcalloc(segs_cnt, sizeof(*segs), GFP_KERNEL);
 	if (!segs)
 		return -ENOMEM;
 
@@ -4320,7 +4313,7 @@ update_symm:
 	ice_rss_update_symm(hw, prof);
 
 exit:
-	devm_kfree(ice_hw_to_dev(hw), segs);
+	kfree(segs);
 	return status;
 }
 
@@ -4385,8 +4378,7 @@ ice_rem_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle,
 	segs_cnt = (cfg->hdr_type == ICE_RSS_OUTER_HEADERS) ?
 			   ICE_FLOW_SEG_SINGLE :
 			   ICE_FLOW_SEG_MAX;
-	segs = devm_kcalloc(ice_hw_to_dev(hw), segs_cnt, sizeof(*segs),
-			    GFP_KERNEL);
+	segs = kcalloc(segs_cnt, sizeof(*segs), GFP_KERNEL);
 	if (!segs)
 		return -ENOMEM;
 
@@ -4416,7 +4408,7 @@ ice_rem_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle,
 		status = ice_flow_rem_prof(hw, blk, prof->id);
 
 out:
-	devm_kfree(ice_hw_to_dev(hw), segs);
+	kfree(segs);
 	return status;
 }
 

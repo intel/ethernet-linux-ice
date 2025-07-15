@@ -1744,12 +1744,7 @@ static inline u64 roundup_u64(u64 x, u32 y)
 }
 #endif /* NEED_ROUNDUP_U64 */
 
-#ifndef HAVE_LINKMODE
-static inline void linkmode_set_bit(int nr, volatile unsigned long *addr)
-{
-	__set_bit(nr, addr);
-}
-
+#ifdef NEED_LINKMODE_ZERO
 static inline void linkmode_zero(unsigned long *dst)
 {
 	bitmap_zero(dst, __ETHTOOL_LINK_MODE_MASK_NBITS);
@@ -1760,11 +1755,68 @@ static inline void linkmode_copy(unsigned long *dst, const unsigned long *src)
 	bitmap_copy(dst, src, __ETHTOOL_LINK_MODE_MASK_NBITS);
 }
 
+static inline void linkmode_and(unsigned long *dst, const unsigned long *a,
+				const unsigned long *b)
+{
+	bitmap_and(dst, a, b, __ETHTOOL_LINK_MODE_MASK_NBITS);
+}
+
+static inline void linkmode_or(unsigned long *dst, const unsigned long *a,
+				const unsigned long *b)
+{
+	bitmap_or(dst, a, b, __ETHTOOL_LINK_MODE_MASK_NBITS);
+}
+
 static inline bool linkmode_empty(const unsigned long *src)
 {
 	return bitmap_empty(src, __ETHTOOL_LINK_MODE_MASK_NBITS);
 }
-#endif /* !HAVE_LINKMODE */
+
+static inline int linkmode_andnot(unsigned long *dst, const unsigned long *src1,
+				  const unsigned long *src2)
+{
+	return bitmap_andnot(dst, src1, src2,  __ETHTOOL_LINK_MODE_MASK_NBITS);
+}
+
+static inline void linkmode_set_bit(int nr, volatile unsigned long *addr)
+{
+	__set_bit(nr, addr);
+}
+
+static inline void linkmode_clear_bit(int nr, volatile unsigned long *addr)
+{
+	__clear_bit(nr, addr);
+}
+
+static inline void linkmode_change_bit(int nr, volatile unsigned long *addr)
+{
+	__change_bit(nr, addr);
+}
+
+static inline int linkmode_test_bit(int nr, volatile unsigned long *addr)
+{
+	return test_bit(nr, addr);
+}
+
+static inline int linkmode_equal(const unsigned long *src1,
+				 const unsigned long *src2)
+{
+	return bitmap_equal(src1, src2, __ETHTOOL_LINK_MODE_MASK_NBITS);
+}
+#else /* !NEED_LINKMODE_ZERO */
+#include <linux/linkmode.h>
+#endif /* NEED_LINKMODE_ZERO */
+
+#ifdef NEED_LINKMODE_SET_BIT_ARRAY
+static inline void linkmode_set_bit_array(const int *array, int array_size,
+					  unsigned long *addr)
+{
+	int i;
+
+	for (i = 0; i < array_size; i++)
+		linkmode_set_bit(array[i], addr);
+}
+#endif /* NEED_LINKMODE_SET_BIT_ARRAY */
 
 #ifdef NEED_ETHTOOL_LINK_MODE_BIT_INDICES
 /* Link mode bit indices */
@@ -2561,6 +2613,38 @@ static inline void _kc_devm_kfree(struct device *dev, const void *p)
 #ifdef NEED_DEVM_KZALLOC
 #define devm_kzalloc(dev, size, flags) kzalloc(size, flags)
 #endif /* NEED_DEVM_KZALLOC */
+
+#ifdef NEED_DEVM_KCALLOC
+/* NEED_DEVM_KCALLOC
+ *
+ * Since commit 64c862a839a8 ("devres: add kernel standard devm_k.alloc
+ * functions"), the kernel has provided several devres variants of the
+ * standard allocation functions.
+ */
+#define devm_kcalloc(dev, cnt, size, flags) \
+	devm_kzalloc(dev, array_size((cnt), (size)), flags)
+#endif /* NEED_DEVM_KCALLOC */
+
+#ifdef NEED_DEVM_KSTRDUP
+/* NEED_DEVM_KSTRDUP
+ *
+ * devm_kstrdup was introduced upstream by commit e31108cad3de ("devres:
+ * introduce API "devm_kstrdup"").
+ */
+char *_kc_devm_kstrdup(struct device *dev, const char *s, gfp_t gfp);
+#define devm_kstrdup(dev, s, gfp) _kc_devm_kstrdup(dev, s, gfp)
+#endif /* NEED_DEVM_KSTRDUP */
+
+#ifdef NEED_DEVM_KMEMDUP
+/* NEED_DEVM_KMEMDUP
+ *
+ * devm_kmemdup was introduced upstream by commit 3046365bb470 ("devres:
+ * introduce API "devm_kmemdup").
+ */
+void *_kc_devm_kmemdup(struct device *dev, const void *src, size_t len,
+		       gfp_t gfp);
+#define devm_kmemdup _kc_devm_kmemdup
+#endif /* NEED_DEVM_KMEMDUP */
 
 /* NEED_DIFF_BY_SCALED_PPM
  *
@@ -3421,4 +3505,9 @@ static inline const char *str_yes_no(bool v)
 		atomic_t refs;
 	} refcount_t;
 #endif /* HAVE_LINUX_REFCOUNT_TYPES_HEADER && HAVE_LINUX_REFCOUNT_HEADER */
+
+#ifdef NEED_TIMER_DELETE
+#define timer_delete del_timer
+#define timer_delete_sync del_timer_sync
+#endif /* NEED_TIMER_DELETE */
 #endif /* _KCOMPAT_IMPL_H_ */

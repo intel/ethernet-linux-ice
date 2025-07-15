@@ -23,6 +23,8 @@
 		8086 0001  Ethernet Network Adapter E830-XXV-2 for OCP 3.0
 		8086 0003  Ethernet Network Adapter E830-XXV-2
 		8086 0004  Ethernet Network Adapter E830-XXV-4 for OCP 3.0
+		8086 0005  Ethernet Network Adapter E830-XXV-8 for OCP 3.0
+		8086 0006  Ethernet Network Adapter E830-XXV-8
 	12d5  Ethernet Controller E830-C for backplane
 	12d8  Ethernet Controller E830-C for QSFP
 	12da  Ethernet Controller E830-C for SFP
