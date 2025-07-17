@@ -137,7 +137,7 @@ static struct ice_xlt_kb *_xlt_kb_get(struct ice_hw *hw, u32 sect_type)
 	if (!seg)
 		return NULL;
 
-	kb = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*kb), GFP_KERNEL);
+	kb = kzalloc(sizeof(*kb), GFP_KERNEL);
 	if (!kb) {
 		ice_debug(hw, ICE_DBG_PARSER, "failed to allocate memory for xlt key builder type %d.\n",
 			  sect_type);

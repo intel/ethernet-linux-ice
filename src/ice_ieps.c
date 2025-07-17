@@ -51,7 +51,7 @@ ice_ieps_i2c_fill(struct ice_pf *pf, struct ieps_peer_i2c *rw,
 	struct ice_hw *hw = &pf->hw;
 	u8 params;
 
-	params = (rw->data_len << ICE_AQC_I2C_DATA_SIZE_S);
+	params = ((rw->data_len & ICE_AQC_I2C_DATA_SIZE_M) << ICE_AQC_I2C_DATA_SIZE_S);
 	if (unlikely(rw->en_10b_addr))
 		params |= ICE_AQC_I2C_ADDR_TYPE_10BIT;
 	else

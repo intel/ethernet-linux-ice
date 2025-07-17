@@ -680,6 +680,7 @@ struct ice_hw_common_caps {
 	u8 mgmt_cem;
 	u8 iwarp;
 	u8 roce_lag;
+	u8 sriov_lag;
 
 	/* WoL and APM support */
 #define ICE_WOL_SUPPORT_M		BIT(0)
@@ -1404,7 +1405,7 @@ enum ice_e810_c827_idx {
 #define ICE_SMA2_MASK		(ICE_SMA2_UFL2_RX_DIS | ICE_SMA2_DIR_EN | \
 				 ICE_SMA2_TX_EN)
 #define ICE_ALL_SMA_MASK	(ICE_SMA1_MASK | ICE_SMA2_MASK)
-
+#define ICE_SMA2_INACTIVE_MASK	(ICE_SMA2_DIR_EN | ICE_SMA2_TX_EN)
 #define ICE_SMA_MIN_BIT		3
 #define ICE_SMA_MAX_BIT		7
 #define ICE_PCA9575_P1_OFFSET	8

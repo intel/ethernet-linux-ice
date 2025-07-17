@@ -160,7 +160,7 @@ struct ice_ptp_tx {
  * @list_node: list member structure
  * @tx: Tx timestamp tracking for this port
  * @aux_dev: auxiliary device associated with this port
- * @ov_work: delayed work task for tracking when PHY offset is valid
+ * @ov_work: delayed work for tracking when PHY offset is valid
  * @ps_lock: mutex used to protect the overall PTP PHY start procedure
  * @link_up: indicates whether the link is up
  * @tx_fifo_busy_cnt: number of times the Tx FIFO was busy
@@ -171,7 +171,7 @@ struct ice_ptp_tx {
 struct ice_ptp_port {
 	struct list_head list_node;
 	struct ice_ptp_tx tx;
-	struct kthread_delayed_work ov_work;
+	struct delayed_work ov_work;
 	struct mutex ps_lock; /* protects overall PTP PHY start procedure */
 	bool link_up;
 	u8 tx_fifo_busy_cnt;
@@ -225,9 +225,20 @@ enum ice_ptp_pin_nvm {
 #define GLTSYN_EVNT_L(_chan, _idx)	(GLTSYN_EVNT_L_0(_idx) + ((_chan) * 16))
 #define GLTSYN_EVNT_H(_chan, _idx)	(GLTSYN_EVNT_H_0(_idx) + ((_chan) * 16))
 #define GLTSYN_EVNT_H_IDX_MAX		3
+/* GLGEN_GPIO_CTL_PIN_FUNC is sequential starting from idx 1 and going up based
+ * first on the channel, then on timer index, then on the direction.
+ */
+#define ICE_GPIO_CTL_PIN_FUNC_START	1
+#define ICE_TMR_IDX_MAX			1
+#define ICE_GPIO_CTL_IN(_chan, _tmr_idx)         \
+	(ICE_GPIO_CTL_PIN_FUNC_START + (_chan) + \
+	 GLTSYN_EVNT_H_IDX_MAX * (_tmr_idx))
+#define ICE_GPIO_CTL_OUT(_chan, _tmr_idx)                                    \
+	(ICE_GPIO_CTL_IN(GLTSYN_EVNT_H_IDX_MAX, ICE_TMR_IDX_MAX) + (_chan) + \
+	 GLTSYN_TGT_H_IDX_MAX * (_tmr_idx))
 
 /* Pin definitions for PTP */
-#define ICE_N_PINS_MAX			6
+#define ICE_N_PINS_MAX			(GLGEN_GPIO_CTL_MAX_INDEX + 1)
 #define MAX_PIN_NAME			15
 #define	ICE_PTP_PIN_FREQ_1HZ		1
 #define	ICE_PTP_PIN_FREQ_10MHZ		10000000
@@ -253,10 +264,12 @@ struct ice_ptp_pin_desc {
  * @state: current state of PTP state machine
  * @tx_interrupt_mode: the TX interrupt mode for the PHC device
  * @port: data for the PHY port initialization procedure
- * @work: delayed work function for periodic tasks
  * @cached_phc_time: a cached copy of the PHC time for timestamp extension
  * @cached_phc_jiffies: jiffies when cached_phc_time was last updated
+#ifndef HAVE_PTP_CLOCK_DO_AUX_WORK
  * @kworker: kwork thread for handling periodic work
+ * @aux_work: delayed work function for periodic tasks
+#endif
  * @ext_ts_irq: the external timestamp IRQ in use
  * @pin_desc: structure defining pins
  * @ice_pin_desc: internal structure describing pin relations
@@ -279,12 +292,13 @@ struct ice_ptp {
 	enum ice_ptp_state state;
 	enum ice_ptp_tx_interrupt tx_interrupt_mode;
 	struct ice_ptp_port port;
-	struct kthread_delayed_work work;
 	u64 cached_phc_time;
 	unsigned long cached_phc_jiffies;
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
 	struct kthread_worker *kworker;
+	struct kthread_delayed_work aux_work;
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
 	u8 ext_ts_irq;
-	u8 first_pin_idx;
 	struct ptp_pin_desc pin_desc[ICE_N_PINS_MAX];
 	const struct ice_ptp_pin_desc *ice_pin_desc;
 	struct ptp_perout_request perout_rqs[GLTSYN_TGT_H_IDX_MAX];

@@ -2934,38 +2934,6 @@ static int ice_ptp_init_tx(struct ice_pf *pf, struct ice_ptp_tx *tx, u8 port)
 }
 
 /**
- * ice_ptp_schedule_periodic_work - Helper for scheduling PTP periodic work
- * @ptp: pointer to the PTP structure
- * @delay: delay before starting nex periodic work
- */
-static void
-ice_ptp_schedule_periodic_work(struct ice_ptp *ptp, unsigned long delay)
-{
-	struct ice_pf *pf = container_of(ptp, struct ice_pf, ptp);
-
-	if (!ice_pf_src_tmr_owned(pf) ||
-	    test_bit(ICE_FLAG_PTP_WT_BLOCKED, pf->flags))
-		return;
-
-	kthread_queue_delayed_work(ptp->kworker,
-				   &ptp->work, delay);
-}
-
-/**
- * ice_ptp_cancel_periodic_work - Helper for cancelling PTP periodic work
- * @ptp: pointer to the PTP structure
- */
-static void ice_ptp_cancel_periodic_work(struct ice_ptp *ptp)
-{
-	struct ice_pf *pf = container_of(ptp, struct ice_pf, ptp);
-
-	if (!ice_pf_src_tmr_owned(pf))
-		return;
-
-	kthread_cancel_delayed_work_sync(&ptp->work);
-}
-
-/**
  * ice_ptp_update_cached_phctime - Update the cached PHC time values
  * @pf: Board specific private structure
  * @systime: Cached PHC time to write
@@ -3037,8 +3005,9 @@ static int ice_ptp_update_cached_phctime(struct ice_pf *pf, u64 systime)
  * ice_ptp_update_cached_phctime_all - Update the cached PHC time for all ports
  * @pf: Board specific private structure
  *
- * Returns: 0 on success or -EAGAIN when PF was busy and the update needs to be
- * rescheduled
+ * Return:
+ * * 0 - OK, successfully updated
+ * * -EAGAIN - PF was busy, need to reschedule the update
  */
 static int ice_ptp_update_cached_phctime_all(struct ice_pf *pf)
 {
@@ -3060,6 +3029,10 @@ static int ice_ptp_update_cached_phctime_all(struct ice_pf *pf)
 	return err;
 }
 
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
+static int ice_ptp_schedule_worker(struct ice_ptp *ptp, unsigned long delay);
+
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
 /**
  * ice_ptp_reset_cached_phctime - Reset cached PHC time after an update
  * @pf: Board specific private structure
@@ -3073,23 +3046,16 @@ static int ice_ptp_update_cached_phctime_all(struct ice_pf *pf)
  */
 static void ice_ptp_reset_cached_phctime(struct ice_pf *pf)
 {
-	struct device *dev = ice_pf_to_dev(pf);
-	int err;
-
 	/* Update the cached PHC time immediately if possible, otherwise
 	 * schedule the work item to execute soon.
 	 */
-	err = ice_ptp_update_cached_phctime_all(pf);
-	if (err) {
-		/* If another thread is updating the Rx rings, we won't
-		 * properly reset them here. This could lead to reporting of
-		 * invalid timestamps, but there isn't much we can do.
-		 */
-		dev_warn(dev, "%s: ICE_CFG_BUSY, unable to immediately update cached PHC time\n",
-			 __func__);
-
+	if (ice_ptp_update_cached_phctime_all(pf)) {
 		/* Queue the work item to update the Rx rings when possible */
-		ice_ptp_schedule_periodic_work(&pf->ptp, 0);
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
+		ice_ptp_schedule_worker(&pf->ptp, msecs_to_jiffies(10));
+#else /* HAVE_PTP_CANCEL_WORKER_SYNC */
+		ptp_schedule_worker(pf->ptp.clock, msecs_to_jiffies(10));
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
 	}
 }
 
@@ -3216,7 +3182,7 @@ static int ice_ptp_check_tx_fifo(struct ice_ptp_port *port)
 
 /**
  * ice_ptp_wait_for_offsets - Check for valid Tx and Rx offsets
- * @work: Pointer to the kthread_work structure for this task
+ * @work: Pointer to the delayed_work structure for this task
  *
  * Check whether hardware has completed measuring the Tx and Rx offset values
  * used to configure and enable vernier timestamp calibration.
@@ -3229,42 +3195,41 @@ static int ice_ptp_check_tx_fifo(struct ice_ptp_port *port)
  * This function reschedules itself until both Tx and Rx calibration have
  * completed.
  */
-static void ice_ptp_wait_for_offsets(struct kthread_work *work)
+static void ice_ptp_wait_for_offsets(struct work_struct *work)
 {
+	struct delayed_work *dwork = to_delayed_work(work);
 	struct ice_ptp_port *port;
 	struct ice_pf *pf;
-	struct ice_hw *hw;
 	int tx_err = 0;
 	int rx_err;
 
-	port = container_of(work, struct ice_ptp_port, ov_work.work);
+	port = container_of(dwork, struct ice_ptp_port, ov_work);
 	pf = ptp_port_to_pf(port);
-	hw = &pf->hw;
 
 	if (ice_is_reset_in_progress(pf->state))
-		goto requeue;
+		goto err;
 
 	if (port->tx.calibrating) {
 		tx_err = ice_ptp_check_tx_fifo(port);
 		if (!tx_err)
-			tx_err = ice_phy_cfg_tx_offset_e82x(hw, port->port_num);
+			tx_err = ice_phy_cfg_tx_offset_e82x(&pf->hw,
+							    port->port_num);
 		if (!tx_err)
 			port->tx.calibrating = false;
 	}
 
 	if (port->rx_calibrating) {
-		rx_err = ice_phy_cfg_rx_offset_e82x(hw, port->port_num);
+		rx_err = ice_phy_cfg_rx_offset_e82x(&pf->hw, port->port_num);
 		if (!rx_err)
 			port->rx_calibrating = false;
 	}
 
 	if (!tx_err && !port->rx_calibrating)
 		return;
-
-requeue:
+err:
 	/* Tx and/or Rx offset not yet configured, try again later */
-	kthread_queue_delayed_work(pf->ptp.kworker, &port->ov_work,
-				   msecs_to_jiffies(100));
+	queue_delayed_work(system_unbound_wq, &port->ov_work,
+			   msecs_to_jiffies(100));
 }
 
 /**
@@ -3285,7 +3250,7 @@ static int ice_ptp_port_phy_stop(struct ice_ptp_port *ptp_port)
 
 	switch (hw->mac_type) {
 	case ICE_MAC_GENERIC:
-		kthread_cancel_delayed_work_sync(&ptp_port->ov_work);
+		cancel_delayed_work_sync(&ptp_port->ov_work);
 
 		err = ice_stop_phy_timer_e82x(hw, port, true);
 		break;
@@ -3330,7 +3295,7 @@ static int ice_ptp_port_phy_restart(struct ice_ptp_port *ptp_port)
 	switch (hw->mac_type) {
 	case ICE_MAC_GENERIC:
 		/* Start the PHY timer in Vernier mode */
-		kthread_cancel_delayed_work_sync(&ptp_port->ov_work);
+		cancel_delayed_work_sync(&ptp_port->ov_work);
 
 		/* temporarily disable Tx timestamps while calibrating
 		 * PHY offset
@@ -3346,8 +3311,7 @@ static int ice_ptp_port_phy_restart(struct ice_ptp_port *ptp_port)
 		if (err)
 			break;
 
-		kthread_queue_delayed_work(pf->ptp.kworker, &ptp_port->ov_work,
-					   0);
+		queue_delayed_work(system_unbound_wq, &ptp_port->ov_work, 0);
 		break;
 	case ICE_MAC_GENERIC_3K_E825:
 		err = ice_start_phy_timer_eth56g(hw, port);
@@ -3704,7 +3668,7 @@ static int ice_ptp_cfg_extts(struct ice_pf *pf, struct ptp_extts_request *rq,
 		 * + num_in_channels * tmr_idx
 		 */
 		gpio_reg = FIELD_PREP(GLGEN_GPIO_CTL_PIN_FUNC_M,
-				      1 + chan + (tmr_idx * 3));
+				      ICE_GPIO_CTL_IN(chan, tmr_idx));
 	} else {
 		bool last_enabled = true;
 		uint i;
@@ -3818,11 +3782,14 @@ static int ice_ptp_write_perout(struct ice_hw *hw, unsigned int chan,
 		val = GLTSYN_AUX_OUT_0_OUT_ENA_M | GLTSYN_AUX_OUT_0_OUTMOD_M;
 	wr32(hw, GLTSYN_AUX_OUT(chan, tmr_idx), val);
 
-	/* 4. write GPIO CTL reg */
-	val = GLGEN_GPIO_CTL_PIN_DIR_M;
+	/* 4. Write GPIO CTL reg.
+	 * Enable TRI_CTL to improve SDPs rising time. This does not affect
+	 * other pins.
+	 */
+	val = GLGEN_GPIO_CTL_PIN_DIR_M | GLGEN_GPIO_CTL_TRI_CTL_M;
 	if (!!period)
 		val |= FIELD_PREP(GLGEN_GPIO_CTL_PIN_FUNC_M,
-				  8 + chan + (tmr_idx * 4));
+				  ICE_GPIO_CTL_OUT(chan, tmr_idx));
 
 	wr32(hw, GLGEN_GPIO_CTL(gpio_pin), val);
 	ice_flush(hw);
@@ -4929,6 +4896,175 @@ static void ice_ptp_set_funcs_e830(struct ice_pf *pf)
 }
 
 /**
+ * ice_dpll_pin_idx_to_name - Return pin name for a corresponding pin
+ *
+ * @pf: pointer to the PF instance
+ * @pin: pin number to get name for
+ * @pin_name: pointer to pin name buffer
+ *
+ * A wrapper for device-specific pin index to name converters that take care
+ * of mapping pin indices returned by a netlist to real pin names
+ */
+void ice_dpll_pin_idx_to_name(struct ice_pf *pf, u8 pin, char *pin_name)
+{
+	/* if we are on a custom board, print generic descriptions */
+	if (!ice_is_feature_supported(pf, ICE_F_SMA_CTRL)) {
+		snprintf(pin_name, MAX_PIN_NAME, "Pin %i", pin);
+		return;
+	}
+	snprintf(pin_name, MAX_PIN_NAME, "%s",
+		 ice_cgu_get_pin_name(&pf->hw, pin, true));
+}
+
+static void ice_handle_cgu_state(struct ice_pf *pf)
+{
+	const s64 HUNDREDTH_PSEC = 100LL;
+	enum dpll_lock_status state;
+	char pin_name[MAX_PIN_NAME];
+	int ret;
+
+	ret = ice_get_cgu_state(&pf->hw, ICE_CGU_DPLL_SYNCE,
+				pf->synce_dpll_state, &pf->synce_ref_pin,
+				NULL, NULL, NULL, &state);
+
+	if (ret) {
+		dev_err(ice_pf_to_dev(pf), "Failed to get cgu state (%u:%s)",
+			ret, ice_aq_str(pf->hw.adminq.sq_last_status));
+		return;
+	}
+	ice_dpll_pin_idx_to_name(pf, pf->synce_ref_pin, pin_name);
+#if defined(BLOCK_DPLL_FREERUN)
+	if (!pf->past_synce_lock && state == DPLL_LOCK_STATUS_LOCKED_HO_ACQ)
+		pf->past_synce_lock = true;
+	if (test_bit(ICE_FLAG_BLOCK_DPLL_FREERUN, pf->flags) &&
+	    pf->past_synce_lock && state == DPLL_LOCK_STATUS_UNLOCKED)
+		state = DPLL_LOCK_STATUS_HOLDOVER;
+#endif /* NOT_FOR_UPSTREAM && BLOCK_DPLL_FREERUN */
+	if (pf->synce_dpll_state != state) {
+		pf->synce_dpll_state = state;
+		dev_warn(ice_pf_to_dev(pf),
+			 "DPLL%i state changed to: %s, pin %s",
+			 ICE_CGU_DPLL_SYNCE,
+			 ice_cgu_state_to_name(pf->synce_dpll_state), pin_name);
+	}
+
+	ret = ice_get_cgu_state(&pf->hw, ICE_CGU_DPLL_PTP, pf->ptp_dpll_state,
+				&pf->ptp_ref_pin, NULL, NULL,
+				&pf->ptp_dpll_phase_offset, &state);
+#if defined(BLOCK_DPLL_FREERUN)
+	if (!pf->past_ptp_lock && state == DPLL_LOCK_STATUS_LOCKED_HO_ACQ)
+		pf->past_ptp_lock = true;
+	if (test_bit(ICE_FLAG_BLOCK_DPLL_FREERUN, pf->flags) &&
+	    pf->past_ptp_lock && state == DPLL_LOCK_STATUS_UNLOCKED)
+		state = DPLL_LOCK_STATUS_HOLDOVER;
+#endif /* NOT_FOR_UPSTREAM && BLOCK_DPLL_FREERUN */
+	ice_dpll_pin_idx_to_name(pf, pf->ptp_ref_pin, pin_name);
+	/* offset is in 0.01ps, convert to ps */
+	pf->ptp_dpll_phase_offset /= HUNDREDTH_PSEC;
+	if (pf->ptp_dpll_state != state) {
+		pf->ptp_dpll_state = state;
+		dev_warn(ice_pf_to_dev(pf),
+			 "DPLL%i state changed to: %s, pin %s",
+			 ICE_CGU_DPLL_PTP,
+			 ice_cgu_state_to_name(pf->ptp_dpll_state), pin_name);
+	}
+}
+
+/**
+ * ice_ptp_maybe_trigger_tx_interrupt - Trigger Tx timestamp interrupt
+ * @pf: Board private structure
+ *
+ * The device PHY issues Tx timestamp interrupts to the driver for processing
+ * timestamp data from the PHY. It will not interrupt again until all
+ * current timestamp data is read. In rare circumstances, it is possible that
+ * the driver fails to read all outstanding data.
+ *
+ * To avoid getting permanently stuck, periodically check if the PHY has
+ * outstanding timestamp data. If so, trigger an interrupt from software to
+ * process this data.
+ */
+static void ice_ptp_maybe_trigger_tx_interrupt(struct ice_pf *pf)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	unsigned int i;
+
+	for (i = 0; i < ICE_GET_QUAD_NUM(hw->ptp.num_lports); i++) {
+		u64 tstamp_ready;
+		int err;
+
+		err = ice_get_phy_tx_tstamp_ready(&pf->hw, i, &tstamp_ready);
+		if (err || tstamp_ready) {
+			/* Trigger a software interrupt, to ensure this data
+			 * gets processed.
+			 */
+			dev_dbg(dev, "PTP periodic task detected waiting timestamps. Triggering Tx timestamp interrupt now.\n");
+
+			wr32(hw, PFINT_OICR, PFINT_OICR_TSYN_TX_M);
+			ice_flush(hw);
+
+			return;
+		}
+	}
+}
+
+/**
+ * ice_ptp_periodic_work - Do PTP periodic work
+ * @info: Driver's PTP info structure
+ *
+ * Return: delay of the next auxiliary work scheduling time (>=0) or negative
+ *         value in case further scheduling is not required.
+ */
+static long ice_ptp_periodic_work(struct ptp_clock_info *info)
+{
+	struct ice_pf *pf = ptp_info_to_pf(info);
+	struct ice_hw *hw = &pf->hw;
+	bool retry = false;
+	int err;
+
+	if (test_bit(ICE_FLAG_PTP_WT_BLOCKED, pf->flags))
+		return -EBUSY;
+
+	err = ice_ptp_update_cached_phctime_all(pf);
+	if (err)
+		retry = true;
+
+	ice_ptp_maybe_trigger_tx_interrupt(pf);
+
+	if (ice_is_feature_supported(pf, ICE_F_CGU))
+		if (test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags))
+			ice_handle_cgu_state(pf);
+
+	/* only E825C should monitor the TS PLL */
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
+		err = ice_tspll_monitor_lock_e825c(hw);
+	if (err)
+		retry = true;
+
+	/* Run twice a second or reschedule soon if we need to retry */
+	return msecs_to_jiffies(retry ? 10 : MSEC_PER_SEC / 2);
+}
+
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
+static void ice_ptp_aux_kworker(struct kthread_work *work)
+{
+	struct ice_ptp *ptp = container_of(work, struct ice_ptp, aux_work.work);
+	struct ptp_clock_info *info = &ptp->info;
+	long delay;
+
+	delay = ice_ptp_periodic_work(info);
+
+	if (delay >= 0)
+		kthread_queue_delayed_work(ptp->kworker, &ptp->aux_work, delay);
+}
+
+static int ice_ptp_schedule_worker(struct ice_ptp *ptp, unsigned long delay)
+{
+	return kthread_mod_delayed_work(ptp->kworker, &ptp->aux_work, delay);
+}
+
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
+/**
  * ice_ptp_set_caps - Set PTP capabilities
  * @pf: Board private structure
  */
@@ -4963,6 +5099,9 @@ static void ice_ptp_set_caps(struct ice_pf *pf)
 	info->n_ext_ts = GLTSYN_EVNT_H_IDX_MAX;
 	info->enable = ice_ptp_gpio_enable;
 	info->verify = ice_verify_pin;
+#ifdef HAVE_PTP_CANCEL_WORKER_SYNC
+	info->do_aux_work = ice_ptp_periodic_work;
+#endif /* HAVE_PTP_CANCEL_WORKER_SYNC */
 
 	switch (pf->hw.mac_type) {
 	case ICE_MAC_E810:
@@ -5154,150 +5293,6 @@ irqreturn_t ice_ptp_ts_irq(struct ice_pf *pf)
 }
 
 /**
- * ice_dpll_pin_idx_to_name - Return pin name for a corresponding pin
- *
- * @pf: pointer to the PF instance
- * @pin: pin number to get name for
- * @pin_name: pointer to pin name buffer
- *
- * A wrapper for device-specific pin index to name converters that take care
- * of mapping pin indices returned by a netlist to real pin names
- */
-void ice_dpll_pin_idx_to_name(struct ice_pf *pf, u8 pin, char *pin_name)
-{
-	/* if we are on a custom board, print generic descriptions */
-	if (!ice_is_feature_supported(pf, ICE_F_SMA_CTRL)) {
-		snprintf(pin_name, MAX_PIN_NAME, "Pin %i", pin);
-		return;
-	}
-	snprintf(pin_name, MAX_PIN_NAME, "%s",
-		 ice_cgu_get_pin_name(&pf->hw, pin, true));
-}
-
-static void ice_handle_cgu_state(struct ice_pf *pf)
-{
-	const s64 HUNDREDTH_PSEC = 100LL;
-	enum dpll_lock_status state;
-	char pin_name[MAX_PIN_NAME];
-	int ret;
-
-	ret = ice_get_cgu_state(&pf->hw, ICE_CGU_DPLL_SYNCE,
-				pf->synce_dpll_state, &pf->synce_ref_pin,
-				NULL, NULL, NULL, &state);
-
-	if (ret) {
-		dev_err(ice_pf_to_dev(pf), "Failed to get cgu state (%u:%s)",
-			ret, ice_aq_str(pf->hw.adminq.sq_last_status));
-		return;
-	}
-	ice_dpll_pin_idx_to_name(pf, pf->synce_ref_pin, pin_name);
-#if defined(BLOCK_DPLL_FREERUN)
-	if (!pf->past_synce_lock && state == DPLL_LOCK_STATUS_LOCKED_HO_ACQ)
-		pf->past_synce_lock = true;
-	if (test_bit(ICE_FLAG_BLOCK_DPLL_FREERUN, pf->flags) &&
-	    pf->past_synce_lock && state == DPLL_LOCK_STATUS_UNLOCKED)
-		state = DPLL_LOCK_STATUS_HOLDOVER;
-#endif /* NOT_FOR_UPSTREAM && BLOCK_DPLL_FREERUN */
-	if (pf->synce_dpll_state != state) {
-		pf->synce_dpll_state = state;
-		dev_warn(ice_pf_to_dev(pf),
-			 "DPLL%i state changed to: %s, pin %s",
-			 ICE_CGU_DPLL_SYNCE,
-			 ice_cgu_state_to_name(pf->synce_dpll_state), pin_name);
-	}
-
-	ret = ice_get_cgu_state(&pf->hw, ICE_CGU_DPLL_PTP, pf->ptp_dpll_state,
-				&pf->ptp_ref_pin, NULL, NULL,
-				&pf->ptp_dpll_phase_offset, &state);
-#if defined(BLOCK_DPLL_FREERUN)
-	if (!pf->past_ptp_lock && state == DPLL_LOCK_STATUS_LOCKED_HO_ACQ)
-		pf->past_ptp_lock = true;
-	if (test_bit(ICE_FLAG_BLOCK_DPLL_FREERUN, pf->flags) &&
-	    pf->past_ptp_lock && state == DPLL_LOCK_STATUS_UNLOCKED)
-		state = DPLL_LOCK_STATUS_HOLDOVER;
-#endif /* NOT_FOR_UPSTREAM && BLOCK_DPLL_FREERUN */
-	ice_dpll_pin_idx_to_name(pf, pf->ptp_ref_pin, pin_name);
-	/* offset is in 0.01ps, convert to ps */
-	pf->ptp_dpll_phase_offset /= HUNDREDTH_PSEC;
-	if (pf->ptp_dpll_state != state) {
-		pf->ptp_dpll_state = state;
-		dev_warn(ice_pf_to_dev(pf),
-			 "DPLL%i state changed to: %s, pin %s",
-			 ICE_CGU_DPLL_PTP,
-			 ice_cgu_state_to_name(pf->ptp_dpll_state), pin_name);
-	}
-}
-
-/**
- * ice_ptp_maybe_trigger_tx_interrupt - Trigger Tx timstamp interrupt
- * @pf: Board private structure
- *
- * The device PHY issues Tx timestamp interrupts to the driver for processing
- * timestamp data from the PHY. It will not interrupt again until all
- * current timestamp data is read. In rare circumstances, it is possible that
- * the driver fails to read all outstanding data.
- *
- * To avoid getting permanently stuck, periodically check if the PHY has
- * outstanding timestamp data. If so, trigger an interrupt from software to
- * process this data.
- */
-static void ice_ptp_maybe_trigger_tx_interrupt(struct ice_pf *pf)
-{
-	struct device *dev = ice_pf_to_dev(pf);
-	struct ice_hw *hw = &pf->hw;
-	unsigned int i;
-
-	for (i = 0; i < ICE_GET_QUAD_NUM(hw->ptp.num_lports); i++) {
-		u64 tstamp_ready;
-		int err;
-
-		err = ice_get_phy_tx_tstamp_ready(&pf->hw, i, &tstamp_ready);
-		if (err || tstamp_ready) {
-			/* Trigger a software interrupt, to ensure this data
-			 * gets processed.
-			 */
-			dev_dbg(dev, "PTP periodic task detected waiting timestamps. Triggering Tx timestamp interrupt now.\n");
-
-			wr32(hw, PFINT_OICR, PFINT_OICR_TSYN_TX_M);
-			ice_flush(hw);
-
-			return;
-		}
-	}
-}
-
-static void ice_ptp_periodic_work(struct kthread_work *work)
-{
-	struct ice_ptp *ptp = container_of(work, struct ice_ptp, work.work);
-	struct ice_pf *pf = container_of(ptp, struct ice_pf, ptp);
-	struct ice_hw *hw = &pf->hw;
-	bool retry = false;
-	int err;
-
-	if (test_bit(ICE_FLAG_PTP_WT_BLOCKED, pf->flags))
-		return;
-
-	err = ice_ptp_update_cached_phctime_all(pf);
-	if (err)
-		retry = true;
-
-	ice_ptp_maybe_trigger_tx_interrupt(pf);
-
-	if (ice_is_feature_supported(pf, ICE_F_CGU))
-		if (test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags))
-			ice_handle_cgu_state(pf);
-
-	/* only E825C should monitor the TS PLL */
-	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
-		err = ice_tspll_monitor_lock_e825c(hw);
-	if (err)
-		retry = true;
-
-	/* Run twice a second or reschedule soon if we need to retry */
-	ice_ptp_schedule_periodic_work(ptp, msecs_to_jiffies(retry ? 10 : 500));
-}
-
-/**
  * ice_ptp_prepare_rebuild_sec - Prepare second NAC for PTP reset or rebuild
  * @pf: Board private structure
  * @rebuild: rebuild if true, prepare if false
@@ -5341,7 +5336,12 @@ void ice_ptp_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 	/* Disable timestamping for both Tx and Rx */
 	ice_ptp_disable_timestamp_mode(pf);
 
-	ice_ptp_cancel_periodic_work(&pf->ptp);
+	if (ice_pf_src_tmr_owned(pf))
+#ifdef HAVE_PTP_CANCEL_WORKER_SYNC
+		ptp_cancel_worker_sync(ptp->clock);
+#else /* !HAVE_PTP_CANCEL_WORKER_SYNC */
+		kthread_cancel_delayed_work_sync(&ptp->aux_work);
+#endif /* HAVE_PTP_CANCEL_WORKER_SYNC */
 
 	if (reset_type == ICE_RESET_PFR)
 		return;
@@ -5349,7 +5349,8 @@ void ice_ptp_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 	if (ice_pf_src_tmr_owned(pf) && hw->mac_type == ICE_MAC_GENERIC_3K_E825)
 		ice_ptp_prepare_rebuild_sec(pf, false, reset_type);
 
-	kthread_cancel_delayed_work_sync(&pf->ptp.port.ov_work);
+	if (hw->mac_type == ICE_MAC_GENERIC)
+		cancel_delayed_work_sync(&pf->ptp.port.ov_work);
 
 	/* Disable periodic outputs */
 	ice_ptp_disable_all_perout(pf);
@@ -5485,8 +5486,11 @@ void ice_ptp_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 			ice_block_ptp_workthreads_global(pf, false);
 		}
 
-		/* Start periodic work going */
-		ice_ptp_schedule_periodic_work(ptp, 0);
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
+		ice_ptp_schedule_worker(ptp, 0);
+#else /* HAVE_PTP_CANCEL_WORKER_SYNC */
+		ptp_schedule_worker(ptp->clock, 0);
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
 	}
 
 	ptp->state = ICE_PTP_READY;
@@ -5630,6 +5634,17 @@ static int ice_ptp_init_owner(struct ice_pf *pf)
 		goto err_clk;
 	}
 
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
+	ptp->kworker = kthread_create_worker(0, "ice-ptp-%s", dev_name(dev));
+	if (IS_ERR(ptp->kworker)) {
+		err = PTR_ERR(ptp->kworker);
+		dev_err(dev, "Failed to create ptp aux_worker err=%d\n",
+			err);
+		goto err_kthread;
+	}
+	kthread_init_delayed_work(&ptp->aux_work, ice_ptp_aux_kworker);
+
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
 	if (ice_is_feature_supported(pf, ICE_F_CGU)) {
 		set_bit(ICE_FLAG_DPLL_MONITOR, pf->flags);
 		pf->synce_dpll_state = DPLL_LOCK_STATUS_UNLOCKED;
@@ -5642,39 +5657,14 @@ static int ice_ptp_init_owner(struct ice_pf *pf)
 
 	return 0;
 
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
+err_kthread:
+	ptp_clock_unregister(ptp->clock);
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
 err_clk:
 	ptp->clock = NULL;
 err_exit:
 	return err;
-}
-
-/**
- * ice_ptp_init_work - Initialize PTP work threads
- * @pf: Board private structure
- * @ptp: PF PTP structure
- */
-static int ice_ptp_init_work(struct ice_pf *pf, struct ice_ptp *ptp)
-{
-	struct kthread_worker *kworker;
-
-	/* Initialize work functions */
-	if (ice_pf_src_tmr_owned(pf))
-		kthread_init_delayed_work(&ptp->work, ice_ptp_periodic_work);
-
-	/* Allocate a kworker for handling work required for the ports
-	 * connected to the PTP hardware clock.
-	 */
-	kworker = kthread_create_worker(0, "ice-ptp-%s",
-					dev_name(ice_pf_to_dev(pf)));
-	if (IS_ERR(kworker))
-		return PTR_ERR(kworker);
-
-	ptp->kworker = kworker;
-
-	/* Start periodic work going */
-	ice_ptp_schedule_periodic_work(ptp, 0);
-
-	return 0;
 }
 
 /**
@@ -5695,8 +5685,7 @@ static int ice_ptp_init_port(struct ice_pf *pf, struct ice_ptp_port *ptp_port)
 		return ice_ptp_init_tx(pf, &ptp_port->tx, ptp_port->port_num);
 	case ICE_MAC_GENERIC:
 		ptp_port->rx_calibrating = 0;
-		kthread_init_delayed_work(&ptp_port->ov_work,
-					  ice_ptp_wait_for_offsets);
+		INIT_DELAYED_WORK(&ptp_port->ov_work, ice_ptp_wait_for_offsets);
 		return ice_ptp_init_tx_e82x(pf, &ptp_port->tx,
 					    ptp_port->port_num);
 	default:
@@ -5844,9 +5833,12 @@ void ice_ptp_init(struct ice_pf *pf)
 
 	ptp->state = ICE_PTP_READY;
 
-	err = ice_ptp_init_work(pf, ptp);
-	if (err)
-		goto err_exit;
+	if (ice_pf_src_tmr_owned(pf))
+#ifndef HAVE_PTP_CANCEL_WORKER_SYNC
+		ice_ptp_schedule_worker(ptp, 0);
+#else /* HAVE_PTP_CANCEL_WORKER_SYNC */
+		ptp_schedule_worker(ptp->clock, 0);
+#endif /* !HAVE_PTP_CANCEL_WORKER_SYNC */
 
 	dev_info(ice_pf_to_dev(pf), "PTP init successful\n");
 	return;
@@ -5870,10 +5862,11 @@ err_exit:
  */
 void ice_ptp_release(struct ice_pf *pf)
 {
-	if (pf->ptp.state != ICE_PTP_READY)
+	struct ice_ptp *ptp = &pf->ptp;
+	if (ptp->state != ICE_PTP_READY)
 		return;
 
-	pf->ptp.state = ICE_PTP_UNINIT;
+	ptp->state = ICE_PTP_UNINIT;
 	if (ice_pf_src_tmr_owned(pf) && pf->hw.mac_type == ICE_MAC_GENERIC)
 		ice_tspll_cfg_cgu_err_reporting(&pf->hw, false);
 
@@ -5882,29 +5875,33 @@ void ice_ptp_release(struct ice_pf *pf)
 
 	ice_ptp_cleanup_pf(pf);
 
-	ice_ptp_release_tx_tracker(pf, &pf->ptp.port.tx);
+	ice_ptp_release_tx_tracker(pf, &ptp->port.tx);
 
 	ice_ptp_disable_all_extts(pf);
 
-	ice_ptp_cancel_periodic_work(&pf->ptp);
-
-	ice_ptp_port_phy_stop(&pf->ptp.port);
-	mutex_destroy(&pf->ptp.port.ps_lock);
-	if (pf->ptp.kworker) {
-		kthread_destroy_worker(pf->ptp.kworker);
-		pf->ptp.kworker = NULL;
-	}
-
+	if (pf->hw.mac_type == ICE_MAC_GENERIC)
+		cancel_delayed_work_sync(&ptp->port.ov_work);
+	ice_ptp_port_phy_stop(&ptp->port);
+	mutex_destroy(&ptp->port.ps_lock);
 	ice_ptp_sysfs_release(pf);
 
-	if (!pf->ptp.clock)
+	if (!ptp->clock)
 		return;
 
 	/* Disable periodic outputs */
 	ice_ptp_disable_all_perout(pf);
+#ifdef HAVE_PTP_CANCEL_WORKER_SYNC
+	if (ice_pf_src_tmr_owned(pf))
+		ptp_cancel_worker_sync(ptp->clock);
+#else /* !HAVE_PTP_CANCEL_WORKER_SYNC */
+	if (ice_pf_src_tmr_owned(pf)) {
+		kthread_cancel_delayed_work_sync(&ptp->aux_work);
+		kthread_destroy_worker(ptp->kworker);
+	}
+#endif /* HAVE_PTP_CANCEL_WORKER_SYNC */
 
-	ptp_clock_unregister(pf->ptp.clock);
-	pf->ptp.clock = NULL;
+	ptp_clock_unregister(ptp->clock);
+	ptp->clock = NULL;
 
 	dev_info(ice_pf_to_dev(pf), "Removed PTP clock\n");
 }

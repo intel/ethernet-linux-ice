@@ -23,6 +23,8 @@ static DEFINE_MUTEX(ice_adapters_mutex);
 #define INDEX_FIELD_BUS    GENMASK(12, 5)
 #define INDEX_FIELD_SLOT   GENMASK(4, 0)
 
+#define ICE_DEV_ID_E825C_MASK GENMASK(15, 2)
+
 static unsigned long ice_adapter_index(const struct pci_dev *pdev)
 {
 	unsigned int domain = pci_domain_nr(pdev->bus);
@@ -34,7 +36,8 @@ static unsigned long ice_adapter_index(const struct pci_dev *pdev)
 	case ICE_DEV_ID_E825C_QSFP:
 	case ICE_DEV_ID_E825C_SFP:
 	case ICE_DEV_ID_E825C_SGMII:
-		return FIELD_PREP(INDEX_FIELD_DEV, pdev->device);
+		return FIELD_PREP(INDEX_FIELD_DEV,
+				  pdev->device & ICE_DEV_ID_E825C_MASK);
 	default:
 		return FIELD_PREP(INDEX_FIELD_DOMAIN, domain) |
 		       FIELD_PREP(INDEX_FIELD_BUS,    pdev->bus->number) |

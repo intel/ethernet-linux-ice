@@ -31,11 +31,11 @@
 #include "ice_aux_support.h"
 #include "ice_ieps.h"
 
-#define DRV_VERSION_MAJOR 1
-#define DRV_VERSION_MINOR 17
+#define DRV_VERSION_MAJOR 2
+#define DRV_VERSION_MINOR 2
 #define DRV_VERSION_BUILD 8
 
-#define DRV_VERSION	"1.17.8"
+#define DRV_VERSION	"2.2.8"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -897,8 +897,8 @@ static void ice_remove_tc_fltrs(struct ice_pf *pf, bool remove_from_list)
 			if (entry->rule_info.fltr_rule_id == fltr->rule_id) {
 				mutex_lock(rule_lock);
 				list_del(&entry->list_entry);
-				devm_kfree(ice_pf_to_dev(pf), entry->lkups);
-				devm_kfree(ice_pf_to_dev(pf), entry);
+				kfree(entry->lkups);
+				kfree(entry);
 				mutex_unlock(rule_lock);
 				break;
 			}
@@ -1627,6 +1627,13 @@ static void ice_do_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 	struct ice_hw *hw = &pf->hw;
 
 	dev_dbg(dev, "reset_type 0x%x requested\n", reset_type);
+#ifdef HAVE_NETDEV_UPPER_INFO
+
+	if (pf->lag && pf->lag->bonded && reset_type == ICE_RESET_PFR) {
+		dev_dbg(dev, "PFR on a bonded interface, promoting to CORER\n");
+		reset_type = ICE_RESET_CORER;
+	}
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	ice_prepare_for_reset(pf, reset_type);
 
@@ -1726,8 +1733,19 @@ static void ice_reset_subtask(struct ice_pf *pf)
 	}
 
 	/* No pending resets to finish processing. Check for new resets */
+#if defined(HAVE_NETDEV_UPPER_INFO)
+	if (test_bit(ICE_PFR_REQ, pf->state)) {
+#else
 	if (test_bit(ICE_PFR_REQ, pf->state))
+#endif /* LAG_SUPPORT && HAVE_NETDEV_UPPER_INFO */
 		reset_type = ICE_RESET_PFR;
+#ifdef HAVE_NETDEV_UPPER_INFO
+		if (pf->lag && pf->lag->bonded) {
+			dev_dbg(ice_pf_to_dev(pf), "PFR on a bonded interface, promoting to CORER\n");
+			reset_type = ICE_RESET_CORER;
+		}
+	}
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	if (test_bit(ICE_CORER_REQ, pf->state))
 		reset_type = ICE_RESET_CORER;
 	if (test_bit(ICE_GLOBR_REQ, pf->state))
@@ -2500,6 +2518,11 @@ ice_print_health_status_string(struct ice_pf *pf,
 		netdev_err(netdev, "Possible Solution: Update to the latest NVM image.\n");
 		netdev_err(netdev, "Port Number: %d.\n", internal_data1);
 		break;
+#if IS_ENABLED(CONFIG_DPLL)
+	case ICE_AQC_HEALTH_STATUS_INFO_LOSS_OF_LOCK:
+		ice_dpll_lock_state_set_unmanaged(pf, hse, true);
+		break;
+#endif /* IS_ENABLED(CONFIG_DPLL) */
 	default:
 		break;
 	}
@@ -2999,7 +3022,7 @@ static int ice_service_task_stop(struct ice_pf *pf)
 	ret = test_and_set_bit(ICE_SERVICE_DIS, pf->state);
 
 	if (pf->serv_tmr.function)
-		del_timer_sync(&pf->serv_tmr);
+		timer_delete_sync(&pf->serv_tmr);
 	if (pf->serv_task.func)
 		cancel_work_sync(&pf->serv_task);
 
@@ -6507,7 +6530,9 @@ static void ice_deinit_eth_once(struct ice_pf *pf, struct ice_vsi *vsi)
 	if (!vsi)
 		return;
 
+	rtnl_lock();
 	ice_vsi_close(vsi);
+	rtnl_unlock();
 	ice_unregister_netdev(vsi);
 #if IS_ENABLED(CONFIG_NET_DEVLINK)
 	ice_devlink_destroy_pf_port(pf);
@@ -6681,6 +6706,9 @@ static void ice_deinit_dev(struct ice_pf *pf)
 
 static int ice_init_features(struct ice_pf *pf)
 {
+#if IS_ENABLED(CONFIG_DPLL)
+	u16 code = ICE_AQC_HEALTH_STATUS_INFO_LOSS_OF_LOCK;
+#endif /* IS_ENABLED(CONFIG_DPLL) */
 	struct device *dev = ice_pf_to_dev(pf);
 	int err;
 	u32 reg;
@@ -6707,9 +6735,11 @@ static int ice_init_features(struct ice_pf *pf)
 		ice_gnss_init(pf);
 
 #if IS_ENABLED(CONFIG_DPLL)
-	if ((ice_is_feature_supported(pf, ICE_F_CGU) ||
-	     ice_is_feature_supported(pf, ICE_F_PHY_RCLK)) &&
-	     pf->hw.mac_type == ICE_MAC_E810)
+	err = ice_is_health_status_code_supported(&pf->hw, code,
+						  &pf->dplls.unmanaged);
+	if (((ice_is_feature_supported(pf, ICE_F_CGU) ||
+	      ice_is_feature_supported(pf, ICE_F_PHY_RCLK)) &&
+	      pf->hw.mac_type == ICE_MAC_E810) || (!err && pf->dplls.unmanaged))
 		ice_dpll_init(pf);
 #endif /* IS_ENABLED(CONFIG_DPLL) */
 	if (ice_init_fdir(pf))
@@ -7297,11 +7327,11 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	if (err)
 		goto err_init_devlink;
 
-	devl_unlock(priv_to_devlink(pf));
-
 	err = ice_init_eth(pf);
 	if (err)
 		goto err_init_eth;
+
+	devl_unlock(priv_to_devlink(pf));
 
 	err = ice_init_aux(pf);
 	if (err)
@@ -7315,6 +7345,7 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 err_init_features:
 	ice_deinit_aux(pf);
 err_init_peer:
+	devl_lock(priv_to_devlink(pf));
 	ice_deinit_eth(pf);
 err_init_eth:
 	ice_deinit_devlink(pf);
@@ -7441,8 +7472,10 @@ static void ice_remove(struct pci_dev *pdev)
 
 	ice_setup_mc_magic_wake(pf);
 	ice_deinit_features(pf);
+	devl_lock(priv_to_devlink(pf));
 	ice_deinit_devlink(pf);
 	ice_deinit_eth(pf);
+	devl_unlock(priv_to_devlink(pf));
 	ice_deinit(pf);
 
 	ice_set_wake(pf);
@@ -7952,7 +7985,8 @@ static int __init ice_module_init(void)
 	ice_lag_wq = alloc_ordered_workqueue("ice_lag_wq", 0);
 	if (!ice_lag_wq) {
 		pr_err("Failed to create LAG workqueue\n");
-		return -ENOMEM;
+		status = -ENOMEM;
+		goto err_dest_wq;
 	}
 #ifdef HAVE_RHEL7_PCI_DRIVER_RH
 	/* The size member must be initialized in the driver via a call to
@@ -7969,13 +8003,18 @@ static int __init ice_module_init(void)
 	status = pci_register_driver(&ice_driver);
 	if (status) {
 		pr_err("failed to register PCI driver, err %d\n", status);
-		destroy_workqueue(ice_wq);
-		destroy_workqueue(ice_lag_wq);
 #ifdef CONFIG_DEBUG_FS
 		ice_debugfs_exit();
 #endif /* CONFIG_DEBUG_FS */
+		status = -ENOMEM;
+		goto err_dest_lag_wq;
 	}
 
+	return 0;
+err_dest_lag_wq:
+	destroy_workqueue(ice_lag_wq);
+err_dest_wq:
+	destroy_workqueue(ice_wq);
 	return status;
 }
 module_init(ice_module_init);
@@ -10344,6 +10383,10 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	clear_bit(ICE_RESET_FAILED, pf->state);
 	ice_health_clear(pf);
 	set_bit(ICE_FLAG_PLUG_AUX_DEV, pf->flags);
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (ice_is_feature_supported(pf, ICE_F_SRIOV_LAG))
+		ice_lag_rebuild(pf);
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	/* Restore timestamp mode settings after VSI rebuild */
 	ice_ptp_restore_timestamp_mode(pf);
 

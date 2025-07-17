@@ -4894,6 +4894,10 @@ ice_fdir_comp_rules_basic(struct ice_fdir_fltr *a,  struct ice_fdir_fltr *b)
 		return false;
 	if (memcmp(&a->mask, &b->mask, sizeof(a->mask)))
 		return false;
+	if (!ether_addr_equal(a->ext_data_outer.src_mac, b->ext_data_outer.src_mac))
+		return false;
+	if (!ether_addr_equal(a->ext_data_outer.dst_mac, b->ext_data_outer.dst_mac))
+		return false;
 	if (memcmp(&a->eth, &b->eth, sizeof(a->eth)))
 		return false;
 

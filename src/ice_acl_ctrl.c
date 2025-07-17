@@ -360,7 +360,7 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 		return status;
 	}
 
-	tbl = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*tbl), GFP_KERNEL);
+	tbl = kzalloc(sizeof(*tbl), GFP_KERNEL);
 	if (!tbl) {
 		status = -ENOMEM;
 
@@ -395,7 +395,7 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 	 */
 	status = ice_acl_init_tbl(hw);
 	if (status) {
-		devm_kfree(ice_hw_to_dev(hw), tbl);
+		kfree(tbl);
 		hw->acl_tbl = NULL;
 		ice_debug(hw, ICE_DBG_ACL, "Initialization of TCAM entries failed. status: %d\n",
 			  status);
@@ -744,7 +744,7 @@ ice_acl_create_scen(struct ice_hw *hw, u16 match_width, u16 num_entries,
 	if (!hw->acl_tbl)
 		return -ENOENT;
 
-	scen = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*scen), GFP_KERNEL);
+	scen = kzalloc(sizeof(*scen), GFP_KERNEL);
 	if (!scen)
 		return -ENOMEM;
 
@@ -829,7 +829,7 @@ ice_acl_create_scen(struct ice_hw *hw, u16 match_width, u16 num_entries,
 
 out:
 	if (status)
-		devm_kfree(ice_hw_to_dev(hw), scen);
+		kfree(scen);
 
 	return status;
 }
@@ -873,7 +873,7 @@ static int ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id)
 				 list_entry)
 		if (scen->id == scen_id) {
 			list_del(&scen->list_entry);
-			devm_kfree(ice_hw_to_dev(hw), scen);
+			kfree(scen);
 		}
 
 	return 0;
@@ -938,7 +938,7 @@ int ice_acl_destroy_tbl(struct ice_hw *hw)
 		return status;
 	}
 
-	devm_kfree(ice_hw_to_dev(hw), hw->acl_tbl);
+	kfree(hw->acl_tbl);
 	hw->acl_tbl = NULL;
 
 	return 0;

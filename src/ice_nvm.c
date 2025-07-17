@@ -941,8 +941,7 @@ ice_get_netlist_info(struct ice_hw *hw, enum ice_bank_select bank,
 		return status;
 	node_count &= ICE_LINK_TOPO_NODE_COUNT_M;
 
-	id_blk = devm_kcalloc(ice_hw_to_dev(hw), ICE_NETLIST_ID_BLK_SIZE,
-			      sizeof(*id_blk), GFP_KERNEL);
+	id_blk = kcalloc(ICE_NETLIST_ID_BLK_SIZE, sizeof(*id_blk), GFP_KERNEL);
 	if (!id_blk)
 		return -ENOMEM;
 
@@ -970,7 +969,7 @@ ice_get_netlist_info(struct ice_hw *hw, enum ice_bank_select bank,
 			id_blk[ICE_NETLIST_ID_BLK_SHA_HASH_WORD(14)];
 
 exit_error:
-	devm_kfree(ice_hw_to_dev(hw), id_blk);
+	kfree(id_blk);
 
 	return status;
 }

@@ -4506,6 +4506,14 @@ int ice_set_dflt_vsi(struct ice_vsi *vsi)
 		return -EINVAL;
 
 	dev = ice_pf_to_dev(vsi->back);
+#ifdef HAVE_NETDEV_UPPER_INFO
+
+	if (ice_lag_is_switchdev_running(vsi->back)) {
+		dev_dbg(dev, "VSI %d passed is a part of LAG containing interfaces in switchdev mode, nothing to do\n",
+			vsi->vsi_num);
+		return 0;
+	}
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	/* the VSI passed in is already the default VSI */
 	if (ice_is_vsi_dflt_vsi(vsi)) {

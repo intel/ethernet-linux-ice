@@ -103,12 +103,6 @@
 #endif /* 4,19,0 */
 
 /*****************************************************************************/
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,20,0))
-#else /* >= 4.20.0 */
-#define HAVE_LINKMODE
-#endif /* 4.20.0 */
-
-/*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0))
 #define NEED_INDIRECT_CALL_WRAPPER_MACROS
 #else /* >= 5.0.0 */

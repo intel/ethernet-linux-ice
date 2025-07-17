@@ -126,8 +126,7 @@ void *ice_parser_create_table(struct ice_hw *hw, u32 sect_type,
 	if (!seg)
 		return NULL;
 
-	table = devm_kzalloc(ice_hw_to_dev(hw), item_size * length,
-			     GFP_KERNEL);
+	table = kzalloc(item_size * length, GFP_KERNEL);
 	if (!table) {
 		ice_debug(hw, ICE_DBG_PARSER, "failed to allocate memory for table type %d.\n",
 			  sect_type);
@@ -167,8 +166,7 @@ int ice_parser_create(struct ice_hw *hw, struct ice_parser **psr)
 	struct ice_parser *p;
 	int status;
 
-	p = devm_kzalloc(ice_hw_to_dev(hw), sizeof(struct ice_parser),
-			 GFP_KERNEL);
+	p = kzalloc(sizeof(struct ice_parser), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 
@@ -284,24 +282,24 @@ err:
  */
 void ice_parser_destroy(struct ice_parser *psr)
 {
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->imem_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->mi_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->pg_cam_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->pg_sp_cam_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->pg_nm_cam_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->pg_nm_sp_cam_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->bst_tcam_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->bst_lbl_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->ptype_mk_tcam_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->mk_grp_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->proto_grp_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->flg_rd_table);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->xlt_kb_sw);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->xlt_kb_acl);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->xlt_kb_fd);
-	devm_kfree(ice_hw_to_dev(psr->hw), psr->xlt_kb_rss);
+	kfree(psr->imem_table);
+	kfree(psr->mi_table);
+	kfree(psr->pg_cam_table);
+	kfree(psr->pg_sp_cam_table);
+	kfree(psr->pg_nm_cam_table);
+	kfree(psr->pg_nm_sp_cam_table);
+	kfree(psr->bst_tcam_table);
+	kfree(psr->bst_lbl_table);
+	kfree(psr->ptype_mk_tcam_table);
+	kfree(psr->mk_grp_table);
+	kfree(psr->proto_grp_table);
+	kfree(psr->flg_rd_table);
+	kfree(psr->xlt_kb_sw);
+	kfree(psr->xlt_kb_acl);
+	kfree(psr->xlt_kb_fd);
+	kfree(psr->xlt_kb_rss);
 
-	devm_kfree(ice_hw_to_dev(psr->hw), psr);
+	kfree(psr);
 }
 
 /**
@@ -590,6 +588,6 @@ bool ice_check_ddp_support_proto_id(struct ice_hw *hw,
 	}
 
 exit:
-	devm_kfree(ice_hw_to_dev(hw), proto_grp_table);
+	kfree(proto_grp_table);
 	return exist;
 }

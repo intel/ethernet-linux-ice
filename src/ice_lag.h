@@ -8,19 +8,12 @@
 #include <linux/netdevice.h>
 #include "ice.h"
 
-#define ICE_LAG_INVALID_PORT 0xFF
-#define ICE_LAG_SINGLE_FILTER_SIZE 0xC
+#define ICE_LAG_INVALID_PORT		0xFF
+#define ICE_LAG_RESET_RETRIES		5
+#define ICE_LAG_SINGLE_FILTER_SIZE	0xC
 
 #define ICE_PRI_IDX 0x0
 #define ICE_SEC_IDX 0x1
-
-/* LAG roles for netdev */
-enum ice_lag_role {
-	ICE_LAG_NONE,
-	ICE_LAG_PRIMARY,
-	ICE_LAG_BACKUP,
-	ICE_LAG_UNSET
-};
 
 struct ice_pf;
 
@@ -39,13 +32,21 @@ struct ice_lag {
 	struct net_device *upper_netdev; /* upper bonding netdev */
 	struct list_head *netdev_head;
 	struct notifier_block notif_block;
+	s32 bond_mode;
 	int bond_id; /* identify which bond we are in */
+	u16 bond_swid; /* swid for primary interface */
+	u8 active_port; /* lport value for the current active port */
 	u8 bonded:1; /* currently bonded */
 	u8 primary:1; /* this is primary */
+	u16 pf_recipe;
+	u16 lport_recipe;
+	u16 pf_rx_rule_id;
+	u16 pf_tx_rule_id;
+	u16 cp_rule_idx;
+	u16 lport_rule_idx;
 	/* each thing blocking bonding will increment this value by one.
 	 * If this value is zero, then bonding is allowed.
 	 */
-	u8 role;
 	struct ice_rule_query_data fltr;
 	u16 action_idx;
 };
@@ -60,9 +61,11 @@ struct ice_lag_work {
 	union {
 		struct netdev_notifier_changeupper_info changeupper_info;
 		struct netdev_notifier_bonding_info bonding_info;
+		struct netdev_notifier_info notifier_info;
 	} info;
 };
 
+void ice_lag_move_new_vf_nodes(struct ice_vf *vf);
 int ice_init_lag(struct ice_pf *pf);
 int
 ice_lag_move_node(struct ice_lag *lag, u8 oldport, u8 newport, u8 tc, u32 teid,
@@ -76,6 +79,8 @@ void ice_deinit_lag(struct ice_pf *pf);
 void
 ice_lag_aa_reclaim_nodes(struct iidc_core_dev_info *cdev,
 			 struct iidc_rdma_multi_qset_params *qset);
-struct ice_lag *ice_lag_find_primary(struct ice_lag *lag);
+void ice_lag_rebuild(struct ice_pf *pf);
+bool ice_lag_is_switchdev_running(struct ice_pf *pf);
+void ice_lag_move_vf_nodes_cfg(struct ice_lag *lag, u8 src_prt, u8 dst_prt);
 #endif /* HAVE_NETDEV_UPPER_INFO */
 #endif /* _ICE_LAG_H_ */

@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "June 13, 2025" "" "Linux ice readme"
+.TH "ICE" "7" "June 16, 2025" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -1169,9 +1169,16 @@ devlink dev param show pci/0000:af:00.0 name tc2_inline_fd
 \fBNOTE:\fP
 .INDENT 0.0
 .INDENT 3.5
+.INDENT 0.0
+.IP \(bu 2
 These instructions are not specific to ADQ configuration. Refer to
 the tc and tc\-flower man pages for more information on creating traffic
 classes (TCs).
+.IP \(bu 2
+Disable FW\-LLDP before using tc command to add filter. Refer to the
+\fI\%FW\-LLDP (Firmware Link Layer Discovery Protocol)\fP section in this README for more information on disabling
+FW\-LLDP.
+.UNINDENT
 .UNINDENT
 .UNINDENT
 .sp
@@ -1379,7 +1386,14 @@ max_rate 25Gbit 50Gbit
 \fBNOTE:\fP
 .INDENT 0.0
 .INDENT 3.5
+.INDENT 0.0
+.IP \(bu 2
 These instructions are not specific to ADQ configuration.
+.IP \(bu 2
+Disable FW\-LLDP before using tc command to add filter. Refer to the
+\fI\%FW\-LLDP (Firmware Link Layer Discovery Protocol)\fP section in this README for more information on disabling
+FW\-LLDP.
+.UNINDENT
 .UNINDENT
 .UNINDENT
 .sp
@@ -1568,7 +1582,14 @@ packet to specific Rx queues, using the TC filter\(aqs class ID.
 \fBNOTE:\fP
 .INDENT 0.0
 .INDENT 3.5
+.INDENT 0.0
+.IP \(bu 2
 This functionality can be used with or without ADQ.
+.IP \(bu 2
+Disable FW\-LLDP before using tc command to add filter. Refer to the
+\fI\%FW\-LLDP (Firmware Link Layer Discovery Protocol)\fP section in this README for more information on disabling
+FW\-LLDP.
+.UNINDENT
 .UNINDENT
 .UNINDENT
 .sp
@@ -3004,8 +3025,15 @@ on the same PF.
 \fBNOTE:\fP
 .INDENT 0.0
 .INDENT 3.5
+.INDENT 0.0
+.IP \(bu 2
 This feature is only supported in switchdev mode. See
 \fI\%Switchdev Mode\fP in this README for more information.
+.IP \(bu 2
+Disable FW\-LLDP before using tc command to add filter. Refer to the
+\fI\%FW\-LLDP (Firmware Link Layer Discovery Protocol)\fP section in this README for more information on disabling
+FW\-LLDP.
+.UNINDENT
 .UNINDENT
 .UNINDENT
 .sp
@@ -3848,6 +3876,109 @@ Intel(R) Ethernet Network Adapter E810\-XXV\-4T:
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-C\-Q2T:
 \X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/722960'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP\X'tty: link'
+.UNINDENT
+.SS Unmanaged DPLL Support
+.sp
+The managed DPLL support for supported hardware is described in external guides,
+as mentioned in \fI\%SyncE Support\fP\&.
+.sp
+Hardware variants of E830 may support an unmanaged DPLL:
+.INDENT 0.0
+.IP \(bu 2
+Intel® Ethernet Network Adapter E830\-XXVDA8F for OCP 3.0,
+.IP \(bu 2
+Intel® Ethernet Network Adapter E830\-XXVDA4F.
+.UNINDENT
+.sp
+In the case of the unmanaged DPLL, the configuration is hardcoded within the
+hardware and firmware, meaning users cannot modify settings. However,
+users can check the DPLL lock status and obtain configuration information
+through the Linux DPLL subsystem.
+.sp
+When present, the DPLL device locks to an external signal provided through the
+PCIe/OCP pin. The expected input signal is 1PPS (1 Pulse Per Second) embedded
+on a 10MHz reference clock.
+The DPLL produces output:
+.INDENT 0.0
+.IP \(bu 2
+for MAC (Media Access Control) & PHY (Physical Layer) clocks,
+.IP \(bu 2
+1PPS for synchronization of onboard PHC (Precision Hardware Clock) timer.
+.UNINDENT
+.sp
+Requirements: The Linux kernel must have support for both the DPLL Subsystem
+and the Embedded Sync patch series.
+.sp
+Example output of querying the Linux DPLL subsystem can be found below.
+.sp
+Dumping the DPLL pins
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+$ ./tools/net/ynl/cli.py \-\-spec Documentation/netlink/specs/dpll.yaml \-\-dump pin\-get
+[{\(aqboard\-label\(aq: \(aq1588\-TIME_SYNC\(aq,
+  \(aqcapabilities\(aq: set(),
+  \(aqclock\-id\(aq: 282574471561216,
+  \(aqesync\-frequency\(aq: 1,
+  \(aqesync\-frequency\-supported\(aq: [{\(aqfrequency\-max\(aq: 1, \(aqfrequency\-min\(aq: 1}],
+  \(aqesync\-pulse\(aq: 25,
+  \(aqfrequency\(aq: 10000000,
+  \(aqid\(aq: 13,
+  \(aqmodule\-name\(aq: \(aqice\(aq,
+  \(aqparent\-device\(aq: [{\(aqdirection\(aq: \(aqinput\(aq,
+                     \(aqparent\-id\(aq: 6,
+                     \(aqstate\(aq: \(aqconnected\(aq}],
+  \(aqphase\-adjust\-max\(aq: 0,
+  \(aqphase\-adjust\-min\(aq: 0,
+  \(aqtype\(aq: \(aqext\(aq},
+  {\(aqboard\-label\(aq: \(aqMAC\-PHY\-CLK\(aq,
+    \(aqcapabilities\(aq: set(),
+  \(aqclock\-id\(aq: 282574471561216,
+  \(aqfrequency\(aq: 156250000,
+  \(aqid\(aq: 14,
+  \(aqmodule\-name\(aq: \(aqice\(aq,
+  \(aqparent\-device\(aq: [{\(aqdirection\(aq: \(aqoutput\(aq,
+                     \(aqparent\-id\(aq: 6,
+                     \(aqstate\(aq: \(aqconnected\(aq}],
+  \(aqphase\-adjust\-max\(aq: 0,
+  \(aqphase\-adjust\-min\(aq: 0,
+  \(aqtype\(aq: \(aqsynce\-eth\-port\(aq},
+{\(aqboard\-label\(aq: \(aq1588\-TIME_REF\(aq,
+  \(aqcapabilities\(aq: set(),
+  \(aqclock\-id\(aq: 282574471561216,
+  \(aqfrequency\(aq: 1,
+  \(aqid\(aq: 15,
+  \(aqmodule\-name\(aq: \(aqice\(aq,
+  \(aqparent\-device\(aq: [{\(aqdirection\(aq: \(aqoutput\(aq,
+                     \(aqparent\-id\(aq: 6,
+                     \(aqstate\(aq: \(aqconnected\(aq}],
+  \(aqphase\-adjust\-max\(aq: 0,
+  \(aqphase\-adjust\-min\(aq: 0,
+  \(aqtype\(aq: \(aqint\-oscillator\(aq}]
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Dumping the DPLL devices
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+$ ./tools/net/ynl/cli.py \-\-spec Documentation/netlink/specs/dpll.yaml \-\-dump device\-get
+[{\(aqclock\-id\(aq: 282574471561216,
+  \(aqid\(aq: 6,
+  \(aqlock\-status\(aq: \(aqlocked\(aq,
+  \(aqmode\(aq: \(aqautomatic\(aq,
+  \(aqmode\-supported\(aq: [\(aqautomatic\(aq],
+  \(aqmodule\-name\(aq: \(aqice\(aq,
+  \(aqtype\(aq: \(aqeec\(aq}]
+.ft P
+.fi
+.UNINDENT
 .UNINDENT
 .SS Earliest TxTime First (ETF) Offloads
 .sp

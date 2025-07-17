@@ -3637,7 +3637,7 @@ static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
 			dev_warn(ice_pf_to_dev(vf->pf), "VF-%d trying to configure invalid TC\n",
 				 vf->vf_id);
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-			goto err_bw;
+			goto err;
 		}
 	}
 
@@ -3753,8 +3753,27 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 	struct virtchnl_queue_pair_info *qpi;
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi = NULL;
+#ifdef HAVE_NETDEV_UPPER_INFO
+	struct ice_lag *lag;
+	u8 act_prt, pri_prt;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	u16 queue_id_tmp, tc;
 	int i = -1, q_idx;
+#ifdef HAVE_NETDEV_UPPER_INFO
+
+	lag = pf->lag;
+	mutex_lock(&pf->lag_mutex);
+	act_prt = ICE_LAG_INVALID_PORT;
+	pri_prt = pf->hw.port_info->lport;
+	if (lag && lag->bonded && lag->primary) {
+		act_prt = lag->active_port;
+		if (act_prt != pri_prt && act_prt != ICE_LAG_INVALID_PORT &&
+		    lag->upper_netdev)
+			ice_lag_move_vf_nodes_cfg(lag, act_prt, pri_prt);
+		else
+			act_prt = ICE_LAG_INVALID_PORT;
+	}
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
 		goto error_param;
@@ -3913,6 +3932,13 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 
 	if (ice_vf_cfg_qs_bw(vf, qci->num_queue_pairs))
 		goto error_param;
+#ifdef HAVE_NETDEV_UPPER_INFO
+
+	if (lag && lag->bonded && lag->primary &&
+	    act_prt != ICE_LAG_INVALID_PORT)
+		ice_lag_move_vf_nodes_cfg(lag, pri_prt, act_prt);
+	mutex_unlock(&pf->lag_mutex);
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	/* send the response to the VF */
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,
@@ -3936,6 +3962,15 @@ error_param:
 					vf->vf_id, i);
 		}
 	}
+#ifdef HAVE_NETDEV_UPPER_INFO
+
+	if (lag && lag->bonded && lag->primary &&
+	    act_prt != ICE_LAG_INVALID_PORT)
+		ice_lag_move_vf_nodes_cfg(lag, pri_prt, act_prt);
+	mutex_unlock(&pf->lag_mutex);
+
+	ice_lag_move_new_vf_nodes(vf);
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	/* send the response to the VF */
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_VSI_QUEUES,

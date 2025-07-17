@@ -30,6 +30,11 @@
 #define ICE_PROFID_IPV6_GTPU_TEID		46
 #define ICE_PROFID_IPV6_GTPU_IPV6_TCP		70
 
+#define ICE_SW_RULE_VSI_LIST_SIZE(s, n)		struct_size((s), vsi, (n))
+#define ICE_SW_RULE_RX_TX_HDR_SIZE(s, l)	struct_size((s), hdr_data, (l))
+#define ICE_SW_RULE_RX_TX_ETH_HDR_SIZE(s)	\
+	ICE_SW_RULE_RX_TX_HDR_SIZE((s), DUMMY_ETH_HDR_LEN)
+
 #define DUMMY_ETH_HDR_LEN		16
 
 /* Worst case buffer length for ice_aqc_opc_get_res_alloc */
@@ -454,6 +459,7 @@ ice_alloc_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 int
 ice_free_res_cntr(struct ice_hw *hw, u8 type, u8 alloc_shared, u16 num_items,
 		  u16 counter_id);
+int ice_share_res(struct ice_hw *hw, u16 type, u8 shared, u16 res_id);
 
 int ice_update_sw_rule_bridge_mode(struct ice_hw *hw);
 int ice_alloc_rss_global_lut(struct ice_hw *hw, u16 *global_lut_id);
@@ -575,6 +581,7 @@ ice_replay_vsi_all_fltr(struct ice_hw *hw, struct ice_port_info *pi,
 			u16 vsi_handle);
 void ice_rm_sw_replay_rule_info(struct ice_hw *hw, struct ice_switch_info *sw);
 void ice_rm_all_sw_replay_rule_info(struct ice_hw *hw);
+void ice_fill_eth_hdr(u8 *eth_hdr);
 bool ice_is_prof_rule(enum ice_sw_tunnel_type type);
 int
 ice_aq_sw_rules(struct ice_hw *hw, void *rule_list, u16 rule_list_sz,

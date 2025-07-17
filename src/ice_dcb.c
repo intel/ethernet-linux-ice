@@ -744,7 +744,7 @@ ice_aq_get_dcb_cfg(struct ice_hw *hw, u8 mib_type, u8 bridgetype,
 	int ret;
 
 	/* Allocate the LLDPDU */
-	lldpmib = devm_kzalloc(ice_hw_to_dev(hw), ICE_LLDPDU_SIZE, GFP_KERNEL);
+	lldpmib = kzalloc(ICE_LLDPDU_SIZE, GFP_KERNEL);
 	if (!lldpmib)
 		return -ENOMEM;
 
@@ -755,7 +755,7 @@ ice_aq_get_dcb_cfg(struct ice_hw *hw, u8 mib_type, u8 bridgetype,
 		/* Parse LLDP MIB to get DCB configuration */
 		ret = ice_lldp_to_dcb_cfg(lldpmib, dcbcfg);
 
-	devm_kfree(ice_hw_to_dev(hw), lldpmib);
+	kfree(lldpmib);
 
 	return ret;
 }
@@ -1700,7 +1700,7 @@ int ice_set_dcb_cfg(struct ice_port_info *pi)
 	/* update the HW local config */
 	dcbcfg = &pi->qos_cfg.local_dcbx_cfg;
 	/* Allocate the LLDPDU */
-	lldpmib = devm_kzalloc(ice_hw_to_dev(hw), ICE_LLDPDU_SIZE, GFP_KERNEL);
+	lldpmib = kzalloc(ICE_LLDPDU_SIZE, GFP_KERNEL);
 	if (!lldpmib)
 		return -ENOMEM;
 
@@ -1712,7 +1712,7 @@ int ice_set_dcb_cfg(struct ice_port_info *pi)
 	ret = ice_aq_set_lldp_mib(hw, mib_type, (void *)lldpmib, miblen,
 				  NULL);
 
-	devm_kfree(ice_hw_to_dev(hw), lldpmib);
+	kfree(lldpmib);
 
 	return ret;
 }

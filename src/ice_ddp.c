@@ -854,7 +854,7 @@ enum ice_ddp_state ice_get_pkg_info(struct ice_hw *hw)
 	u32 i;
 
 	size = struct_size(pkg_info, pkg_info, ICE_PKG_CNT);
-	pkg_info = devm_kzalloc(ice_hw_to_dev(hw), size, GFP_KERNEL);
+	pkg_info = kzalloc(size, GFP_KERNEL);
 	if (!pkg_info)
 		return ICE_DDP_PKG_ERR;
 
@@ -894,7 +894,7 @@ enum ice_ddp_state ice_get_pkg_info(struct ice_hw *hw)
 	}
 
 init_pkg_free_alloc:
-	devm_kfree(ice_hw_to_dev(hw), pkg_info);
+	kfree(pkg_info);
 
 	return state;
 }
@@ -1059,7 +1059,7 @@ static enum ice_ddp_state ice_verify_pkg(const struct ice_pkg_hdr *pkg, u32 len)
 void ice_free_seg(struct ice_hw *hw)
 {
 	if (hw->pkg_copy) {
-		devm_kfree(ice_hw_to_dev(hw), hw->pkg_copy);
+		kfree(hw->pkg_copy);
 		hw->pkg_copy = NULL;
 		hw->pkg_size = 0;
 	}
@@ -1123,7 +1123,7 @@ ice_chk_pkg_compat(struct ice_hw *hw, struct ice_pkg_hdr *ospkg,
 
 	/* Check if FW is compatible with the OS package */
 	size = struct_size(pkg, pkg_info, ICE_PKG_CNT);
-	pkg = devm_kzalloc(ice_hw_to_dev(hw), size, GFP_KERNEL);
+	pkg = kzalloc(size, GFP_KERNEL);
 	if (!pkg)
 		return ICE_DDP_PKG_ERR;
 
@@ -1147,7 +1147,7 @@ ice_chk_pkg_compat(struct ice_hw *hw, struct ice_pkg_hdr *ospkg,
 		break;
 	}
 fw_ddp_compat_free_alloc:
-	devm_kfree(ice_hw_to_dev(hw), pkg);
+	kfree(pkg);
 	return state;
 }
 
@@ -1472,12 +1472,12 @@ ice_copy_and_init_pkg(struct ice_hw *hw, const u8 *buf, u32 len)
 	if (!buf || !len)
 		return ICE_DDP_PKG_ERR;
 
-	buf_copy = devm_kmemdup(ice_hw_to_dev(hw), buf, len, GFP_KERNEL);
+	buf_copy = kmemdup(buf, len, GFP_KERNEL);
 
 	state = ice_init_pkg(hw, buf_copy, len);
 	if (!ice_is_init_pkg_successful(state)) {
 		/* Free the copy, since we failed to initialize the package */
-		devm_kfree(ice_hw_to_dev(hw), buf_copy);
+		kfree(buf_copy);
 	} else {
 		/* Track the copied pkg so we can free it later */
 		hw->pkg_copy = buf_copy;
@@ -1515,7 +1515,7 @@ struct ice_buf_build *ice_pkg_buf_alloc(struct ice_hw *hw)
 	struct ice_buf_build *bld;
 	struct ice_buf_hdr *buf;
 
-	bld = devm_kzalloc(ice_hw_to_dev(hw), sizeof(*bld), GFP_KERNEL);
+	bld = kzalloc(sizeof(*bld), GFP_KERNEL);
 	if (!bld)
 		return NULL;
 
@@ -1673,8 +1673,7 @@ ice_get_sw_fv_list(struct ice_hw *hw, struct ice_prot_lkup_ext *lkups,
 			if (j >= hw->blk[ICE_BLK_SW].es.fvw)
 				break;
 			if (i + 1 == lkups->n_val_words) {
-				fvl = devm_kzalloc(ice_hw_to_dev(hw),
-						   sizeof(*fvl), GFP_KERNEL);
+				fvl = kzalloc(sizeof(*fvl), GFP_KERNEL);
 				if (!fvl)
 					goto err;
 				fvl->fv_ptr = fv;
@@ -1694,7 +1693,7 @@ ice_get_sw_fv_list(struct ice_hw *hw, struct ice_prot_lkup_ext *lkups,
 err:
 	list_for_each_entry_safe(fvl, tmp, fv_list, list_entry) {
 		list_del(&fvl->list_entry);
-		devm_kfree(ice_hw_to_dev(hw), fvl);
+		kfree(fvl);
 	}
 
 	return -ENOMEM;
@@ -1749,7 +1748,7 @@ void ice_init_prof_result_bm(struct ice_hw *hw)
  */
 void ice_pkg_buf_free(struct ice_hw *hw, struct ice_buf_build *bld)
 {
-	devm_kfree(ice_hw_to_dev(hw), bld);
+	kfree(bld);
 }
 
 /**

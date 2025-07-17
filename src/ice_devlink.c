@@ -1674,16 +1674,15 @@ void ice_tear_down_devlink_rate_tree(struct ice_pf *pf)
 
 	devlink = priv_to_devlink(pf);
 
-	devl_lock(devlink);
 	mutex_lock(&pf->vfs.table_lock);
+	devl_lock(devlink);
 	ice_for_each_vf(pf, bkt, vf) {
 		if (vf->devlink_port.devlink_rate)
 			devl_rate_leaf_destroy(&vf->devlink_port);
 	}
-	mutex_unlock(&pf->vfs.table_lock);
-
 	devl_rate_nodes_destroy(devlink);
 	devl_unlock(devlink);
+	mutex_unlock(&pf->vfs.table_lock);
 }
 
 /**
