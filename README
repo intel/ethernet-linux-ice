@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-July 02, 2025
+August 14, 2025
 
 
 Contents
@@ -142,9 +142,12 @@ The VF driver will not block teaming/bonding/link aggregation, but
 this is not a supported feature. Do not expect failover or load
 balancing on the VF interface.
 
-LAG and RDMA are compatible only in certain conditions. See the RDMA
-(Remote Direct Memory Access) section later in this README for more
+LAG and RDMA are compatible only in certain conditions. See the Link
+Aggregation and RDMA section later in this README for more
 information.
+
+Likewise, LAG and SR-IOV are compatible only in certain conditions.
+See the Link Aggregation and SR-IOV VFs section for more information.
 
 Bridging and MACVLAN are also affected by this. If you wish to use
 bridging or MACVLAN with RDMA/SR-IOV, you must set up bridging or
@@ -509,6 +512,11 @@ Note:
   creating VFs. Otherwise VF RDMA support may not be negotiated
   between the VF and PF driver.
 
+Note:
+
+  When using Link Aggregation, RDMA in VF is not available - the
+  VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+
 
 Auxiliary Bus
 -------------
@@ -524,6 +532,58 @@ If your kernel supports the auxiliary bus, the LAN and RDMA drivers
 will use the inbox auxiliary bus for IDC. For kernels lower than 5.11,
 the base driver will automatically install an out-of-tree auxiliary
 bus module.
+
+
+Source Pruning
+--------------
+
+E800 Series devices by default prune packets where the source MAC
+address matches the destination MAC address. The ice driver allows you
+to enable or disable source MAC address pruning of Ethernet packets.
+You can use this feature without a bond created or when active-backup
+bonding is configured with ARP monitoring.
+
+Use the ethtool private flag mac-source-pruning to enable or disable
+source MAC pruning on received packets:
+
+# ethtool --set-priv-flags <ethX> mac-source-pruning on|off
+   Where: on - discards packets with source MAC address matching the
+   source MAC
+
+      address of the interface (default)
+
+   off - receives packets with source MAC address matching the source
+   MAC
+      address of the interface
+
+NOTE: When you set mac-source-pruning to on (disabled): - The driver
+will disable spoof check. - The network interface will receive all
+packets with a source MAC address matching the network interface's MAC
+address.
+
+The ice driver allows to enable or disable source pruning on a
+specified VF by setting the private PF flag vf-source-pruning and
+setting correct spoofchk and trust settings on the specified VF (see
+below example).
+
+# ethtool --set-priv-flags <ethX> vf-source-pruning on|off
+   Where: on - discards packets with source MAC address matching the
+   source MAC
+
+      address of the interface (default)
+
+   off - receives packets with source MAC address matching the source
+   MAC
+      address of the interface
+
+NOTE: Enabling vf-source-pruning will not automatically set anti-
+spoofing and trust mode automatically. You must perform these steps
+yourself. They can be performed in any order. For example: # ip link
+set <ethX> vf <vf id> spoofchk off # ip link set <ethX> vf <vf id>
+trust on # ethtool --set-priv-flag <ethX> vf-source-pruning off
+
+For more information, refer to *_macvlanantispoofing* and *_trusted-
+vf* in this README.
 
 
 NVM Express* (NVMe) over TCP and Fabrics
@@ -547,8 +607,16 @@ https://www.intel.com/content/www/us/en/design/products-and-solutions
 /networking-and-io/ethernet-controller-e810/technical-library.html
 
 
+Link Aggregation
+----------------
+
+Link Aggregation (LAG)/bonding allows combining multiple physical
+interfaces to provide redundancy and in some configurations increase
+total throughput.
+
+
 Link Aggregation and RDMA
--------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Link aggregation (LAG) and RDMA are compatible only if all the
 following are true:
@@ -601,6 +669,59 @@ If the ice driver is configured for active-active LAG:
   and move the queue pairs to the currently active port. Once the port
   has recovered, the RDMA driver will move RDMA QSets back to the
   originally allocated port.
+
+Note:
+
+  When using Link Aggregation, RDMA in VF is not available - the
+  VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+
+
+Link Aggregation and SR-IOV VFs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+LAG and SR-IOV are compatible only if all the following are true:
+
+* The bond is in active-backup mode
+
+* The bond comprises of exactly two ports from the same NIC MAC chip
+
+* The primary port (first one added to the bond) is in switchdev mode
+  (see Switchdev Mode)
+
+* Both bond ports have identical DCB configurations
+
+* The FW LLDP Agent is disabled on both bond ports (see FW-LLDP
+  (Firmware Link Layer Discovery Protocol))
+
+* Firmware supports LAN VF LAG capability - version 4.30 or newer
+
+* The ice_lag DDP package is loaded
+
+In order to configure SR-IOV LAG:
+
+1. Enable switchdev mode on the primary port:
+
+      devlink dev eswitch set <pci/0000:##:##.#> mode switchdev
+
+2. Create SR-IOV VFs:
+
+      echo 2 > /sys/class/net/$PF1/device/sriov_numvfs
+
+3. Create a bond interface and configure it to active-backup mode:
+
+      ip link add bond0 type bond
+      ip link set bond0 type bond miimon 100 mode active-backup
+
+4. Enslave primary and secondary port to bond:
+
+      ip link set $PF1 down
+      ip link set $PF1 master bond0
+
+      ip link set $PF2 down
+      ip link set $PF2 master bond0
+
+In the above example "$PF1" is the primary port and "$PF2" is the
+secondary port.
 
 
 Application Device Queues (ADQ)
@@ -734,10 +855,6 @@ ADQ KNOWN ISSUES:
   filters. Dmesg will report the error if TC filters fail to add
   properly.
 
-
-Setting Up ADQ
-~~~~~~~~~~~~~~
-
 To set up the adapter for ADQ, where "<ethX>" is the interface in use:
 
 1. Reload the ice driver to remove any previous TC configuration:
@@ -758,10 +875,6 @@ To set up the adapter for ADQ, where "<ethX>" is the interface in use:
       ethtool -k <ethX> | grep "hw-tc"
       ethtool --show-priv-flags <ethX>
 
-
-ADQ Configuration Script
-~~~~~~~~~~~~~~~~~~~~~~~~
-
 Intel also provides a script to configure ADQ. This script allows you
 configure ADQ-specific parameters such as traffic classes, priority,
 filters, and ethtool parameters.
@@ -771,10 +884,6 @@ tarball for more information.
 
 The script and README are also available as part of the Python Package
 Index at https://pypi.org/project/adqsetup.
-
-
-Using ADQ with Independent Pollers
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice driver supports ADQ acceleration using independent pollers.
 Independent pollers are kernel threads invoked by interrupts and are
@@ -826,10 +935,6 @@ For example:
   flowing:
 
      devlink dev param set pci/0000:3b:00.0 name tc1_poller_timeout value 1000 cmode runtime
-
-
-Configuring ADQ Flows per Traffic Class
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice out-of-tree driver allows you to configure inline Intel(R)
 Ethernet Flow Director (Intel(R) Ethernet FD) filters per traffic
@@ -3102,10 +3207,6 @@ Note:
   * You must have admin permissions and be logged in as root to change
     firmware logging settings.
 
-
-Configuring firmware log modules
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 The driver groups firmware events into categories, called "modules."
 The modules are instantiated under the "fwlog/modules" directory.
 
@@ -3227,10 +3328,6 @@ To read the "log_level" of all the modules:
 
    cat /sys/kernel/debug/ice/0000\:18\:00.0/fwlog/modules/all
 
-
-Enabling and disabling firmware logs
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 You can configure modules, but firmware will **not** send firmware
 logging events to the driver until it explicitly receives the
 "fwlog\enable" setting.
@@ -3242,10 +3339,6 @@ To enable firmware logging:
 To disable firmware logging:
 
    echo 0 > /sys/kernel/debug/ice/0000\:18\:00.0/fwlog/enable
-
-
-Retrieving firmware log data
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To retrieve the firmware log data, read the data from "fwlog\data".
 You can clear the contents of the firmware log data by writing any
@@ -3267,10 +3360,6 @@ Note:
     by Customer Support. Information collected is related only to
     firmware and hardware for debug purposes.
 
-
-Changing how often the log events are sent to the driver
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 The driver receives firmware log data from the Admin Receive Queue
 (ARQ). To change the frequency that the firmware sends the ARQ events,
 write a value to "fwlog/nr_messages".
@@ -3287,10 +3376,6 @@ An example to set the value is:
 To see the currently configured value:
 
    cat /sys/kernel/debug/ice/0000\:18\:00.0/fwlog/nr_messages
-
-
-Configuring the amount of memory used to store firmware log data
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The driver stores firmware log data within the driver. The default
 size of the memory used to store the data is 1MB, but some use cases
@@ -3791,10 +3876,6 @@ for each PF. RDMA requires one more MSI-X vector than the PF
 allocation, so the driver will automatically allocate 9-65 MSI-X
 vectors for RDMA.
 
-
-Setting MSI-X Vector Allocation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 You can use sysfs to override the automatic MSI-X vector allocation
 for a particular PF or RDMA function, or for the pool of vectors used
 by the VFs bound to a PF:
@@ -3852,10 +3933,6 @@ Note:
   For some Linux distributions, the "sriov_vf_msix_count" parameter is
   not available, and it is recommended to use devlink parameter.
 
-
-Current MSI-X Allocation
-~~~~~~~~~~~~~~~~~~~~~~~~
-
 You can check the current MSI-X vector allocation by using the
 "devlink resource show" parameter. For example:
 
@@ -3869,10 +3946,6 @@ Might return:
      name: msix_eth size 48 occ 24 unit
      name: msix_vf size 48 occ 24 unit
      name: msix_rdma size 48 occ 24 unit
-
-
-Increasing the Automatic Allocation Limit
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice driver supports changing the automatic MSI-X vector and queue
 allocation for PFs and VFs to spread the RSS load across more cores.
@@ -3927,10 +4000,6 @@ To set a PF back to using its PF LUT:
    echo 0 > /sys/bus/pci/devices/<ethx>/sriov_drivers_autoprobe
    echo 64 > /sys/bus/pci/devices/<ethx>/rss_lut_vf_attr
    echo 2048 > /sys/bus/pci/devices/<ethx>/rss_lut_pf_attr
-
-
-Internal Temperature Reporting
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice driver support for monitoring the internal temperature of the
 chip.
@@ -4009,6 +4078,18 @@ Issuing the command "ethtool -S" does not display Tx/Rx packet
 statistics. This is by convention. Use other tools (such as the ip
 command) that display standard netdev statistics such as Tx/Rx packet
 statistics.
+
+
+"ethtool -S" rx_bytes and ip stats rx_bytes don't match statistics
+------------------------------------------------------------------
+
+The "rx_bytes" value of ethtool does not match the "rx_bytes" value of
+Netdev, due to the 4-byte CRC being stripped by the device. The
+difference between the two "rx_bytes" values will be 4 x the number of
+Rx packets. For example, if Rx packets are 10 and Netdev (software
+statistics) displays "rx_bytes" as "X", then ethtool (hardware
+statistics) will display "rx_bytes" as "X+40" (4 bytes CRC x 10
+packets).
 
 
 Unexpected issues when the device driver and DPDK share a device

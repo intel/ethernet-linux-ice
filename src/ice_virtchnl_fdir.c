@@ -3348,7 +3348,8 @@ err_free_pkt:
  */
 static void ice_vf_fdir_timer(struct timer_list *t)
 {
-	struct ice_vf_fdir_ctx *ctx_irq = from_timer(ctx_irq, t, rx_tmr);
+	struct ice_vf_fdir_ctx *ctx_irq = timer_container_of(ctx_irq, t,
+							     rx_tmr);
 	struct ice_vf_fdir_ctx *ctx_done;
 	struct ice_vf_fdir *fdir;
 	unsigned long flags;
@@ -4321,4 +4322,18 @@ void ice_vf_fdir_exit(struct ice_vf *vf)
 	idr_destroy(&vf->fdir.fdir_rule_idr);
 	ice_vc_fdir_rem_prof_all(vf);
 	ice_vc_fdir_free_prof_all(vf);
+}
+
+/**
+ * ice_vf_fdir_exit_all - destroy FDIR resource for all VFs in a PF
+ * @pf: pointer to PF info
+ */
+void
+ice_vf_fdir_exit_all(struct ice_pf *pf)
+{
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	ice_for_each_vf(pf, bkt, vf)
+		ice_vf_fdir_exit(vf);
 }

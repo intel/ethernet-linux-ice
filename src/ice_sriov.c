@@ -198,7 +198,7 @@ void ice_free_vfs(struct ice_pf *pf)
 			/* disable VF qp mappings and set VF disable state */
 			ice_dis_vf_mappings(vf);
 			set_bit(ICE_VF_STATE_DIS, vf->vf_states);
-			rcdi = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+			rcdi = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 			ice_send_vf_reset_to_aux(rcdi, abs_vf_id);
 			ice_free_vf_res(vf);
 		}
@@ -1511,6 +1511,11 @@ int ice_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool ena)
 	ret = ice_check_vf_ready_for_cfg(vf);
 	if (ret)
 		goto out_put_vf;
+
+	if (ice_is_eswitch_mode_switchdev(pf)) {
+		dev_info(ice_pf_to_dev(pf), "Trusted VF is forbidden in switchdev mode\n");
+		return -EOPNOTSUPP;
+	}
 
 	vf_vsi = ice_get_vf_vsi(vf);
 	if (!vf_vsi) {

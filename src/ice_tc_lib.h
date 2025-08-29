@@ -48,6 +48,7 @@
 #define ICE_TC_FLWR_FIELD_VLAN_TPID		BIT(29)
 #endif /* HAVE_TCF_VLAN_TPID */
 #define ICE_TC_FLWR_FIELD_IP_PROTO		BIT(30)
+#define ICE_TC_FLWR_FIELD_ICMP			BIT(31)
 
 /* TC flower supported filter match */
 #define ICE_TC_FLWR_FLTR_FLAGS_DST_MAC		ICE_TC_FLWR_FIELD_DST_MAC
@@ -146,6 +147,11 @@ struct ice_tc_l2tpv3_hdr {
 };
 #endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
 
+struct ice_tc_icmp_hdr {
+	u8 type;
+	u8 code;
+};
+
 struct ice_tc_l4_hdr {
 	__be16 dst_port;
 	__be16 src_port;
@@ -161,6 +167,8 @@ struct ice_tc_flower_lyr_2_4_hdrs {
 #ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
 	struct ice_tc_l2tpv3_hdr l2tpv3_hdr;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
+	struct ice_tc_icmp_hdr icmp_key;
+	struct ice_tc_icmp_hdr icmp_mask;
 	/* L3 (IPv4[6]) layer fields with their mask */
 	struct ice_tc_l3_hdr l3_key;
 	struct ice_tc_l3_hdr l3_mask;

@@ -475,8 +475,9 @@ static int ice_tspll_cfg_e82x(struct ice_hw *hw, enum ice_tspll_freq clk_freq,
 
 	/* Configure the TSPLL feedback divisor */
 	ice_read_cgu_reg_or_die(hw, ICE_CGU_R19, &val);
-	val &= ~(ICE_CGU_R19_TSPLL_FBDIV_INTGR | ICE_CGU_R19_TSPLL_NDIVRATIO);
-	val |= FIELD_PREP(ICE_CGU_R19_TSPLL_FBDIV_INTGR,
+	val &= ~(ICE_CGU_R19_TSPLL_FBDIV_INTGR_E82X |
+		 ICE_CGU_R19_TSPLL_NDIVRATIO);
+	val |= FIELD_PREP(ICE_CGU_R19_TSPLL_FBDIV_INTGR_E82X,
 			  e82x_tspll_params[clk_freq].feedback_div);
 	val |= FIELD_PREP(ICE_CGU_R19_TSPLL_NDIVRATIO, 1);
 	ice_write_cgu_reg_or_die(hw, ICE_CGU_R19, val);
@@ -599,8 +600,9 @@ static int ice_tspll_cfg_e825c(struct ice_hw *hw, enum ice_tspll_freq clk_freq,
 
 	/* Configure the TSPLL feedback divisor */
 	ice_read_cgu_reg_or_die(hw, ICE_CGU_R19, &val);
-	val &= ~(ICE_CGU_R19_TSPLL_FBDIV_INTGR | ICE_CGU_R19_TSPLL_NDIVRATIO);
-	val |= FIELD_PREP(ICE_CGU_R19_TSPLL_FBDIV_INTGR,
+	val &= ~(ICE_CGU_R19_TSPLL_FBDIV_INTGR_E825 |
+		 ICE_CGU_R19_TSPLL_NDIVRATIO);
+	val |= FIELD_PREP(ICE_CGU_R19_TSPLL_FBDIV_INTGR_E825,
 			  e825c_tspll_params[clk_freq].fbdiv_intgr);
 	val |= FIELD_PREP(ICE_CGU_R19_TSPLL_NDIVRATIO,
 			  e825c_tspll_params[clk_freq].ndivratio);
@@ -1181,6 +1183,7 @@ int ice_tspll_cfg_cgu_err_reporting(struct ice_hw *hw, bool enable)
 int ice_tspll_init(struct ice_hw *hw)
 {
 	enum ice_tspll_freq tspll_freq = hw->ptp.tspll_freq;
+	struct ice_pf *pf = hw->back;
 	enum ice_clk_src clk_src = hw->ptp.clk_src;
 	int err;
 
@@ -1216,8 +1219,13 @@ int ice_tspll_init(struct ice_hw *hw)
 			dev_warn(ice_hw_to_dev(hw), "Failed to lock TSPLL to fallback frequency.\n");
 	}
 
-	if (!err && hw->mac_type == ICE_MAC_GENERIC)
-		ice_tspll_cfg_cgu_err_reporting(hw, true);
+	if (!err) {
+		ice_tspll_set_params_e82x(pf, tspll_freq, clk_src,
+					  ICE_SRC_TMR_MODE_NANOSECONDS);
+
+		if (hw->mac_type == ICE_MAC_GENERIC)
+			ice_tspll_cfg_cgu_err_reporting(hw, true);
+	}
 
 	return err;
 }

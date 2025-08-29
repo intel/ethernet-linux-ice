@@ -386,6 +386,7 @@ int
 ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
 		 u16 bus_addr, __le16 addr, u8 params, const u8 *data,
 		 struct ice_sq_cd *cd);
+int ice_read_pca9575_reg(struct ice_hw *hw, u8 offset, u8 *data);
 int
 ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,
 				struct ice_sq_cd *cd);

@@ -42,6 +42,8 @@ enum ice_protocol_type {
 	ICE_IPV4_IL,
 	ICE_IPV6_OFOS,
 	ICE_IPV6_IL,
+	ICE_ICMP4,
+	ICE_ICMP6,
 	ICE_TCP_IL,
 	ICE_UDP_OF,
 	ICE_UDP_ILOS,
@@ -158,6 +160,8 @@ enum ice_prot_id {
 #define ICE_ESP_HW			88
 #define ICE_AH_HW			89
 #define ICE_SCTP_IL_HW		96
+#define ICE_ICMP_HW		98
+#define ICE_ICMPV6_HW		100
 #define ICE_PPPOE_HW		103
 #define ICE_L2TPV3_HW		104
 
@@ -227,6 +231,12 @@ struct ice_ipv6_hdr {
 	u8 hop_limit;
 	u8 src_addr[ICE_IPV6_ADDR_LENGTH];
 	u8 dst_addr[ICE_IPV6_ADDR_LENGTH];
+};
+
+struct ice_icmp_hdr {
+	u8 type;
+	u8 code;
+	__be16 check;
 };
 
 struct ice_sctp_hdr {
@@ -500,6 +510,7 @@ union ice_prot_hdr {
 	struct ice_vlan_hdr vlan_hdr;
 	struct ice_ipv4_hdr ipv4_hdr;
 	struct ice_ipv6_hdr ipv6_hdr;
+	struct ice_icmp_hdr icmp_hdr;
 	struct ice_l4_hdr l4_hdr;
 	struct ice_sctp_hdr sctp_hdr;
 	struct ice_udp_tnl_hdr tnl_hdr;

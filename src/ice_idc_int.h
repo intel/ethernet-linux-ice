@@ -19,6 +19,10 @@ void ice_cdev_info_update_vsi(struct iidc_core_dev_info *cdev_info,
 int ice_unroll_cdev_info(struct iidc_core_dev_info *cdev_info, void *data);
 struct iidc_core_dev_info
 *ice_find_cdev_info_by_id(struct ice_pf *pf, int cdev_info_id);
+
+#define ICE_FIND_CDEV_INFO(pf, cdev_info_id) \
+	ice_find_cdev_info_by_id((pf), (cdev_info_id))
+
 void ice_send_vf_reset_to_aux(struct iidc_core_dev_info *cdev_info, u16 vf_id);
 bool ice_is_rdma_aux_loaded(struct ice_pf *pf);
 

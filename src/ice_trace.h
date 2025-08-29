@@ -94,8 +94,7 @@ DECLARE_EVENT_CLASS(ice_print_msg,
 		    TP_fast_assign(__assign_str(msg);),
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
-		    TP_printk("%s", __get_str(msg))
-);
+		    TP_printk("%s", __get_str(msg)));
 
 #define DEFINE_PRINT_MSG_EVENT(name) \
 DEFINE_EVENT(ice_print_msg, name, \
@@ -135,13 +134,11 @@ DECLARE_EVENT_CLASS(ice_rx_dim_template,
 			      __entry->dim->tune_state,
 			      __entry->dim->steps_right,
 			      __entry->dim->steps_left,
-			      __entry->dim->tired)
-);
+			      __entry->dim->tired));
 
 DEFINE_EVENT(ice_rx_dim_template, ice_rx_dim_work,
 	     TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
-	     TP_ARGS(q_vector, dim)
-);
+	     TP_ARGS(q_vector, dim));
 
 DECLARE_EVENT_CLASS(ice_tx_dim_template,
 		    TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
@@ -166,13 +163,11 @@ DECLARE_EVENT_CLASS(ice_tx_dim_template,
 			      __entry->dim->tune_state,
 			      __entry->dim->steps_right,
 			      __entry->dim->steps_left,
-			      __entry->dim->tired)
-);
+			      __entry->dim->tired));
 
 DEFINE_EVENT(ice_tx_dim_template, ice_tx_dim_work,
 	     TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
-	     TP_ARGS(q_vector, dim)
-);
+	     TP_ARGS(q_vector, dim));
 
 /* Events related to a vsi & ring */
 DECLARE_EVENT_CLASS(ice_tx_template,
@@ -195,8 +190,7 @@ DECLARE_EVENT_CLASS(ice_tx_template,
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s ring: %p desc: %p buf %p", __get_str(devname),
-			      __entry->ring, __entry->desc, __entry->buf)
-);
+			      __entry->ring, __entry->desc, __entry->buf));
 
 #define DEFINE_TX_TEMPLATE_OP_EVENT(name) \
 DEFINE_EVENT(ice_tx_template, name, \
@@ -227,12 +221,10 @@ DECLARE_EVENT_CLASS(ice_rx_template,
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s ring: %p desc: %p", __get_str(devname),
-			      __entry->ring, __entry->desc)
-);
+			      __entry->ring, __entry->desc));
 DEFINE_EVENT(ice_rx_template, ice_clean_rx_irq,
 	     TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc),
-	     TP_ARGS(ring, desc)
-);
+	     TP_ARGS(ring, desc));
 
 DECLARE_EVENT_CLASS(ice_rx_indicate_template,
 		    TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc,
@@ -255,14 +247,12 @@ DECLARE_EVENT_CLASS(ice_rx_indicate_template,
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s ring: %p desc: %p skb %p", __get_str(devname),
-			      __entry->ring, __entry->desc, __entry->skb)
-);
+			      __entry->ring, __entry->desc, __entry->skb));
 
 DEFINE_EVENT(ice_rx_indicate_template, ice_clean_rx_irq_indicate,
 	     TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc,
 		      struct sk_buff *skb),
-	     TP_ARGS(ring, desc, skb)
-);
+	     TP_ARGS(ring, desc, skb));
 
 DECLARE_EVENT_CLASS(ice_xmit_template,
 		    TP_PROTO(struct ice_tx_ring *ring, struct sk_buff *skb),
@@ -282,8 +272,7 @@ DECLARE_EVENT_CLASS(ice_xmit_template,
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
 		    TP_printk("netdev: %s skb: %p ring: %p", __get_str(devname),
-			      __entry->skb, __entry->ring)
-);
+			      __entry->skb, __entry->ring));
 
 #define DEFINE_XMIT_TEMPLATE_OP_EVENT(name) \
 DEFINE_EVENT(ice_xmit_template, name, \
@@ -337,8 +326,7 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_template,
 			      __entry->skb, __entry->seq,
 			      __entry->block, __entry->offset, __entry->len,
 			      __entry->in_use, __entry->init,
-			      __entry->calibrating, __entry->idx)
-);
+			      __entry->calibrating, __entry->idx));
 #define DEFINE_TX_TSTAMP_OP_EVENT(name) \
 DEFINE_EVENT(ice_tx_tstamp_template, name, \
 	     TP_PROTO(struct device *dev, struct ice_ptp_tx *tx, \
@@ -371,37 +359,32 @@ DECLARE_EVENT_CLASS(ice_switch_stats_template,
 				   __entry->domain_num = bus->domain_num;
 				   __entry->device = bus->device;
 				   __entry->func = bus->func;
-				   __entry->bus_num = bus->bus_num;
-				   ),
+				   __entry->bus_num = bus->bus_num;),
 		    TP_printk("%04x:%02x:%02x.%d: rules=%u recipes=%u",
 			      __entry->domain_num,
 			      __entry->bus_num,
 			      __entry->device,
 			      __entry->func,
 			      __entry->rule_cnt,
-			      __entry->recp_cnt)
-);
+			      __entry->recp_cnt));
 
 DEFINE_EVENT(ice_switch_stats_template,
 	     ice_aq_sw_rules,
 	     TP_PROTO(struct ice_switch_info *sw_info,
 		      struct ice_bus_info *bus),
-	     TP_ARGS(sw_info, bus)
-);
+	     TP_ARGS(sw_info, bus));
 
 DEFINE_EVENT(ice_switch_stats_template,
 	     ice_alloc_recipe,
 	     TP_PROTO(struct ice_switch_info *sw_info,
 		      struct ice_bus_info *bus),
-	     TP_ARGS(sw_info, bus)
-);
+	     TP_ARGS(sw_info, bus));
 
 DEFINE_EVENT(ice_switch_stats_template,
 	     ice_free_recipe_res,
 	     TP_PROTO(struct ice_switch_info *sw_info,
 		      struct ice_bus_info *bus),
-	     TP_ARGS(sw_info, bus)
-);
+	     TP_ARGS(sw_info, bus));
 
 /* End tracepoints */
 

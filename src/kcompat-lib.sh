@@ -417,8 +417,7 @@ function find_config_file() {
 	CSP=(
 		"$KOBJ/include/generated/autoconf.h"
 		"$KOBJ/include/linux/autoconf.h"
-		"$KOBJ/.config"
-	)
+		"$KOBJ/.config")
 
 	for file in "${CSP[@]}"; do
 		if [ -f $file ]; then

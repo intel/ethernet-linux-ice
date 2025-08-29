@@ -36,6 +36,7 @@ struct ice_lag {
 	int bond_id; /* identify which bond we are in */
 	u16 bond_swid; /* swid for primary interface */
 	u8 active_port; /* lport value for the current active port */
+	bool sriov_enabled; /* whether bond is in SR-IOV mode */
 	u8 bonded:1; /* currently bonded */
 	u8 primary:1; /* this is primary */
 	u16 pf_recipe;

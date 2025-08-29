@@ -962,7 +962,7 @@ static int ice_get_phy_lane_number(struct ice_hw *hw)
 
 		speed = options[active_idx].max_lane_speed;
 		/* If we don't get speed for this lane, it's unoccupied */
-		if (speed > ICE_AQC_PORT_OPT_MAX_LANE_200G)
+		if (speed > ICE_AQC_PORT_OPT_MAX_LANE_40G)
 			continue;
 
 		if (hw->pf_id == lport) {
@@ -5373,21 +5373,17 @@ ice_aq_set_txtimeq(struct ice_hw *hw, u16 txtimeq, u8 q_count,
 	struct ice_aq_desc desc;
 	u16 size;
 
-	cmd = &desc.params.set_txtimeqs;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_txtimeqs);
-
-	if (!txtime_qg)
-		return -EINVAL;
-
-	if (txtimeq > ICE_TXTIME_MAX_QUEUE || q_count < 1 ||
-	    q_count > ICE_SET_TXTIME_MAX_Q_AMOUNT)
+	if (!txtime_qg || txtimeq > ICE_TXTIME_MAX_QUEUE ||
+	    q_count < 1 || q_count > ICE_SET_TXTIME_MAX_Q_AMOUNT)
 		return -EINVAL;
 
 	size = struct_size(txtime_qg, txtimeqs, q_count);
-
 	if (buf_size != size)
 		return -EINVAL;
+
+	cmd = &desc.params.set_txtimeqs;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_txtimeqs);
 
 	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
@@ -5416,16 +5412,13 @@ ice_aq_ena_dis_txtimeq(struct ice_hw *hw, u16 txtimeq, u16 q_count, bool q_ena,
 	struct ice_aqc_ena_dis_txtimeqs *cmd;
 	struct ice_aq_desc desc;
 
+	if (!txtime_qg || txtimeq > ICE_TXTIME_MAX_QUEUE ||
+	    q_count < 1 || q_count > ICE_OP_TXTIME_MAX_Q_AMOUNT)
+		return -EINVAL;
+
 	cmd = &desc.params.operate_txtimeqs;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_ena_dis_txtimeqs);
-
-	if (!txtime_qg)
-		return -EINVAL;
-
-	if (txtimeq > ICE_TXTIME_MAX_QUEUE || q_count < 1 ||
-	    q_count > ICE_OP_TXTIME_MAX_Q_AMOUNT)
-		return -EINVAL;
 
 	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
@@ -7592,13 +7585,16 @@ ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
 }
 
 /**
- * ice_get_pca9575_handle
+ * ice_get_pca9575_handle - find and return the PCA9575 controller
  * @hw: pointer to the hw struct
  * @pca9575_handle: GPIO controller's handle
  *
  * Find and return the GPIO controller's handle by checking what drives clock
  * mux pin. When found - the value will be cached in the hw structure and
  * following calls will return cached value.
+ *
+ * Return: 0 on success, -EINVAL for invalid parameter or -EOPNOTSUPP when
+ *         there's no PCA9575 present.
  */
 int ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle)
 {
@@ -7681,6 +7677,37 @@ int ice_get_pca9575_handle(struct ice_hw *hw, u16 *pca9575_handle)
 	*pca9575_handle = hw->ptp.io_expander_handle;
 
 	return 0;
+}
+
+/**
+ * ice_read_pca9575_reg - read the register from the PCA9575 controller
+ * @hw: pointer to the hw struct
+ * @offset: GPIO controller register offset
+ * @data: pointer to data to be read from the GPIO controller
+ *
+ * Return: 0 on success, negative error code otherwise.
+ */
+int ice_read_pca9575_reg(struct ice_hw *hw, u8 offset, u8 *data)
+{
+	struct ice_aqc_link_topo_addr link_topo;
+	__le16 addr;
+	u16 handle;
+	int err;
+
+	memset(&link_topo, 0, sizeof(link_topo));
+
+	err = ice_get_pca9575_handle(hw, &handle);
+	if (err)
+		return err;
+
+	link_topo.handle = cpu_to_le16(handle);
+	link_topo.topo_params.node_type_ctx =
+		FIELD_PREP(ICE_AQC_LINK_TOPO_NODE_CTX_M,
+			   ICE_AQC_LINK_TOPO_NODE_CTX_PROVIDED);
+
+	addr = cpu_to_le16((u16)offset);
+
+	return ice_aq_read_i2c(hw, link_topo, 0, addr, 1, data, NULL);
 }
 
 /**

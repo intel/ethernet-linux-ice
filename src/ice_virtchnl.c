@@ -814,7 +814,11 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	if (vf->driver_caps & VIRTCHNL_VF_CAP_RDMA &&
 	    vf->vf_ops->cfg_rdma_irq_map && vf->vf_ops->clear_rdma_irq_map &&
 	    ice_is_aux_ena(pf) && ice_is_rdma_ena(pf) &&
+#if defined(HAVE_NETDEV_UPPER_INFO)
+	    ice_is_rdma_aux_loaded(pf) && pf->lag && !pf->lag->sriov_enabled)
+#else
 	    ice_is_rdma_aux_loaded(pf))
+#endif /* LAG_SUPPORT && HAVE_NETDEV_UPPER_INFO */
 		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_RDMA;
 
 	if (ice_is_ptp_supported(pf) &&
@@ -4926,7 +4930,7 @@ static int ice_vc_rdma_msg(struct ice_vf *vf, u8 *msg, u16 len)
 	struct iidc_auxiliary_drv *iadrv;
 	int ret = -ENODEV;
 
-	rcdi = ice_find_cdev_info_by_id(vf->pf, IIDC_RDMA_ID);
+	rcdi = ICE_FIND_CDEV_INFO(vf->pf, IIDC_RDMA_ID);
 	if (!rcdi) {
 		pr_err("Invalid RDMA peer attempted to send message to peer\n");
 		return -EIO;
@@ -5930,6 +5934,8 @@ static int ice_vc_get_max_rss_qregion(struct ice_vf *vf)
 	max_rss_qregion->qregion_width = ilog2(ICE_MAX_RSS_QS_PER_VF);
 	if (vsi->global_lut_id)
 		max_rss_qregion->qregion_width = ilog2(ICE_MAX_RSS_QS_PER_LARGE_VF);
+	if (vsi->rss_table_size == ICE_LUT_PF_SIZE)
+		max_rss_qregion->qregion_width = ilog2(ICE_MAX_LARGE_RSS_QS);
 
 error_param:
 	err = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_MAX_RSS_QREGION, v_ret,

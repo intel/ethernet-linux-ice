@@ -246,7 +246,8 @@ static void ice_cfg_itr_gran(struct ice_hw *hw)
  * @ring: ring to get the absolute queue index
  * @tc: traffic class number
  */
-static u16 ice_calc_txq_handle(struct ice_vsi *vsi, struct ice_tx_ring *ring, u8 tc)
+static u16
+ice_calc_txq_handle(const struct ice_vsi *vsi, struct ice_tx_ring *ring, u8 tc)
 {
 #ifdef HAVE_XDP_SUPPORT
 	WARN_ONCE(ice_ring_is_xdp(ring) && tc, "XDP ring can't belong to TC other than 0\n");
@@ -299,6 +300,8 @@ static void ice_cfg_xps_tx_ring(struct ice_tx_ring *ring)
  * @ring: The Tx ring to configure
  * @vmvf_type: VM/VF type
  * @vmvf_num: VM/VF number
+ *
+ * Return: 0 on success and a negative value on error.
  */
 static int
 ice_set_txq_ctx_vmvf(struct ice_tx_ring *ring, u8 *vmvf_type, u16 *vmvf_num)
@@ -349,10 +352,10 @@ static void
 ice_setup_tx_ctx(struct ice_tx_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 {
 	struct ice_vsi *vsi = ring->vsi;
-	struct ice_hw *hw = &vsi->back->hw;
+	struct ice_hw *hw;
 
+	hw = &vsi->back->hw;
 	tlan_ctx->base = ring->dma >> ICE_TLAN_CTX_BASE_S;
-
 	tlan_ctx->port_num = vsi->port_info->lport;
 
 	/* Transmit Queue Length */
@@ -407,7 +410,7 @@ ice_setup_txtime_ctx(struct ice_tx_ring *ring,
 	struct ice_hw *hw;
 
 	hw = &vsi->back->hw;
-	txtime_ctx->base = ring->dma >> ICE_TX_CMPLTNQ_CTX_BASE_S;
+	txtime_ctx->base = ring->dma >> ICE_TXTIME_CTX_BASE_S;
 
 	/* Tx time Queue Length */
 	txtime_ctx->qlen = ring->count;
@@ -443,10 +446,8 @@ ice_setup_txtime_ctx(struct ice_tx_ring *ring,
 u16 ice_calc_ts_ring_count(struct ice_hw *hw, u16 tx_desc_count)
 {
 	u16 prof = ICE_TXTIME_CTX_FETCH_PROF_ID_0;
-	u16 max_fetch_desc = 0;
-	u16 fetch;
+	u16 max_fetch_desc = 0, fetch, i;
 	u32 reg;
-	u16 i;
 
 	for (i = 0; i < ICE_TXTIME_FETCH_PROFILE_CNT; i++) {
 		reg = rd32(hw, E830_GLTXTIME_FETCH_PROFILE(prof, 0));
@@ -938,6 +939,8 @@ void ice_vsi_free_q_vectors(struct ice_vsi *vsi)
 
 	ice_for_each_q_vector(vsi, v_idx)
 		ice_free_q_vector(vsi, v_idx);
+
+	vsi->num_q_vectors = 0;
 }
 
 /**

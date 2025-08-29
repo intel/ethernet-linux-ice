@@ -221,7 +221,9 @@ static const struct file_operations gnss_fops = {
 	.read		= gnss_read,
 	.write		= gnss_write,
 	.poll		= gnss_poll,
+#ifdef HAVE_NO_LLSEEK
 	.llseek		= no_llseek,
+#endif
 };
 
 static struct class *gnss_class;

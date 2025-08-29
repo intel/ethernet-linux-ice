@@ -88,6 +88,9 @@ struct ice_stats {
 #define ICE_PORT_RX_JABBER		PICK("rx_jabber.nic", "port-rx-jabber_pkts")
 #define ICE_PORT_RX_CSUM_BAD		PICK("rx_csum_bad.nic", "port-rx-csum_errors")
 #define ICE_PORT_RX_EIPE_ERRORS		PICK("rx_eipe_errors.nic", "port-rx-eipe_errors")
+#ifndef HAVE_ETHTOOL_LINK_EXT_STATS
+#define ICE_PORT_LINK_DOWN_EVENTS	PICK("link_down_events.nic", "port-link_down_events")
+#endif
 #ifdef ICE_ADD_PROBES
 #define ICE_PORT_RX_LEN_ERRORS		PICK("rx_length_errors.nic", "port-rx-length_errors")
 #endif /* ICE_ADD_PROBES */

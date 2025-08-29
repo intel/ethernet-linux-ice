@@ -322,7 +322,7 @@ enum ice_feature {
 	ICE_F_SMA_CTRL,
 	ICE_F_CGU,
 	ICE_F_GNSS,
-	ICE_F_TXPP,
+	ICE_F_TXTIME,
 	ICE_F_GCS,
 	ICE_F_ROCE_LAG,
 	ICE_F_SRIOV_LAG,
@@ -675,8 +675,7 @@ struct ice_vsi {
 			    /* channel structure of the VSI, may be NULL */
 			    struct ice_channel *ch;
 			    /* traffic class number */
-			    u8 tc;
-			   );
+			    u8 tc;);
 } ____cacheline_internodealigned_in_smp;
 
 enum ice_chnl_vector_state {
@@ -876,6 +875,8 @@ enum ice_pf_flags {
 	ICE_FLAG_VF_TRUE_PROMISC_ENA,
 	ICE_FLAG_MDD_AUTO_RESET_VF,
 	ICE_FLAG_VF_VLAN_PRUNING,
+	ICE_FLAG_MAC_SOURCE_PRUNING,
+	ICE_FLAG_VF_SOURCE_PRUNING,
 	ICE_FLAG_LINK_LENIENT_MODE_ENA,
 	ICE_FLAG_ESWITCH_CAPABLE,
 	ICE_FLAG_DPLL_MONITOR,
@@ -886,7 +887,7 @@ enum ice_pf_flags {
 #if IS_ENABLED(CONFIG_DPLL)
 	ICE_FLAG_DPLL,			/* SyncE/PTP dplls initialized */
 #endif
-	ICE_FLAG_TXPP,
+	ICE_FLAG_TXTIME,
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
@@ -1052,6 +1053,7 @@ struct ice_pf {
 	struct msi_map oicr_irq;        /* Other interrupt cause MSIX vector */
 
 	struct msi_map ll_ts_irq;	/* LL_TS interrupt MSIX vector index */
+	u32 link_down_events;
 	u16 max_pf_txqs;	/* Total Tx queues PF wide */
 	u16 max_pf_rxqs;	/* Total Rx queues PF wide */
 	u16 num_lan_tx;		/* num LAN Tx queues setup */

@@ -124,6 +124,9 @@ static struct ice_lag *ice_lag_find_member(struct ice_lag *lag, bool primary)
 	struct ice_lag *primary_lag = NULL;
 	struct list_head *tmp;
 
+	if (!lag->netdev_head)
+		return NULL;
+
 	list_for_each(tmp, lag->netdev_head) {
 		struct ice_lag_netdev_list *entry;
 		struct ice_lag *tmp_lag;
@@ -926,7 +929,7 @@ static bool ice_lag_chk_rdma(struct ice_lag *lag, void *ptr)
 	if (event_upper != lag->upper_netdev)
 		return true;
 
-	cdev = ice_find_cdev_info_by_id(lag->pf, IIDC_RDMA_ID);
+	cdev = ICE_FIND_CDEV_INFO(lag->pf, IIDC_RDMA_ID);
 	if (!cdev)
 		return true;
 
@@ -1144,6 +1147,7 @@ void ice_lag_move_new_vf_nodes(struct ice_vf *vf)
 	if (WARN_ON(vsi->type != ICE_VSI_VF))
 		return;
 
+	INIT_LIST_HEAD(&ndlist.node);
 	pf = vf->pf;
 	lag = pf->lag;
 
@@ -1723,7 +1727,7 @@ static void ice_lag_link(struct ice_lag *lag)
 		dev_warn(ice_pf_to_dev(pf), "%s Already part of a bond\n",
 			 netdev_name(lag->netdev));
 
-	cdev = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+	cdev = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 	if (cdev && lag->primary)
 		cdev->rdma_active_port = lag->pf->hw.port_info->lport;
 	ice_clear_rdma_cap(pf);
@@ -1778,7 +1782,7 @@ static void ice_lag_unlink(struct ice_lag *lag)
 	/* Unplug aux dev from aggregate interface if primary*/
 	if (lag->primary) {
 		lag->primary = false;
-		cdev = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+		cdev = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 		if (cdev) {
 			ice_unplug_aux_dev_lock(cdev, lag);
 			ice_clear_rdma_cap(pf);
@@ -1801,8 +1805,8 @@ static void ice_lag_unlink(struct ice_lag *lag)
 
 		primary_lag = ice_lag_find_member(lag, true);
 		if (primary_lag) {
-			cdev = ice_find_cdev_info_by_id(primary_lag->pf,
-							IIDC_RDMA_ID);
+			cdev = ICE_FIND_CDEV_INFO(primary_lag->pf,
+						  IIDC_RDMA_ID);
 			pri_port = primary_lag->pf->hw.port_info->lport;
 			loc_port = pf->hw.port_info->lport;
 			if (cdev) {
@@ -1838,7 +1842,7 @@ static void ice_lag_unlink(struct ice_lag *lag)
 	lag->bonded = false;
 	lag->upper_netdev = NULL;
 	ice_set_rdma_cap(pf);
-	cdev = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+	cdev = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 	if (cdev) {
 		const char *name;
 
@@ -2022,6 +2026,44 @@ static void ice_lag_rdma_changeupper_event(struct ice_lag *lag,
 }
 
 /**
+ * ice_lag_set_vf_rdma_cap - set the VF RDMA support virtchnl capability
+ * @p_lag: primary lag struct
+ * @enable: true to set, false to unset
+ *
+ * Change a flag in the primary's lag struct and issue all VF reset. As part of
+ * VF reset, ice_vc_get_vf_res_msg() will check the flag in lag struct and
+ * decide whether to set the VIRTCHNL_VF_CAP_RDMA capability, enabling or
+ * disabling VF RDMA.
+ *
+ * Note: ice_reset_all_vfs() is not used, as it is designed for different use
+ * cases (different locking, no LAG handling).
+ */
+static void ice_lag_set_vf_rdma_cap(struct ice_lag *p_lag, bool enable)
+{
+	struct ice_pf *pf = p_lag->pf;
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	/* Nothing to change */
+	if (p_lag->sriov_enabled == enable)
+		return;
+
+	p_lag->sriov_enabled = enable;
+
+	if (!ice_has_vfs(pf))
+		return;
+
+	mutex_lock(&pf->vfs.table_lock);
+
+	ice_for_each_vf(pf, bkt, vf) {
+		ice_reset_vf(vf, ICE_VF_RESET_NOTIFY | ICE_VF_RESET_LOCK |
+				 ICE_VF_RESET_NO_LAG_LOCK);
+	}
+
+	mutex_unlock(&pf->vfs.table_lock);
+}
+
+/**
  * ice_lag_sriov_changeupper_event - handle LAG changeupper event for SR-IOV
  * @lag: lag info struct
  * @primary_lag: primary lag info struct
@@ -2034,11 +2076,16 @@ static void ice_lag_sriov_changeupper_event(struct ice_lag *lag,
 	if (linking) {
 		if (primary_lag)
 			ice_lag_cfg_drop_fltr(lag, true);
+		else
+			ice_lag_set_vf_rdma_cap(lag, true);
 
 		/* add filter for primary control packets */
 		ice_lag_cfg_cp_fltr(lag, true);
 	} else {
 		ice_lag_cfg_cp_fltr(lag, false);
+
+		if (primary_lag)
+			ice_lag_set_vf_rdma_cap(lag, false);
 	}
 }
 
@@ -2755,6 +2802,7 @@ ice_lag_chk_sriov_comp(struct ice_lag *lag, void *ptr)
 	struct netdev_bonding_info *bonding_info;
 	struct list_head *tmp;
 	struct device *dev;
+	struct ice_hw *hw;
 	int count = 0;
 
 	if (!lag->primary)
@@ -2782,6 +2830,12 @@ ice_lag_chk_sriov_comp(struct ice_lag *lag, void *ptr)
 	lag->bond_mode = bonding_info->master.bond_mode;
 	if (lag->bond_mode != BOND_MODE_ACTIVEBACKUP) {
 		dev_info(dev, "Bond Mode not ACTIVE-BACKUP - VF LAG disabled\n");
+		return false;
+	}
+
+	hw = &lag->pf->hw;
+	if (hw->active_track_id != ICE_TRACK_ID_LAG) {
+		dev_info(dev, "Invalid DDP package loaded - VF LAG disabled\n");
 		return false;
 	}
 
@@ -3117,7 +3171,7 @@ static void ice_unregister_lag_handler(struct ice_lag *lag)
  * @base_recipe: recipe to base the new recipe on
  * @prio: priority for new recipe
  *
- * function returns 0 on error
+ * function returns 0 or error
  */
 static int ice_create_lag_recipe(struct ice_lag *lag, struct ice_hw *hw,
 				 u16 *rid, const u8 *base_recipe, u8 prio)
@@ -3130,7 +3184,7 @@ static int ice_create_lag_recipe(struct ice_lag *lag, struct ice_hw *hw,
 	if (err)
 		return err;
 
-	new_rcp = kzalloc(ICE_RECIPE_LEN * ICE_MAX_NUM_RECIPES, GFP_KERNEL);
+	new_rcp = kzalloc(sizeof(*new_rcp), GFP_KERNEL);
 	if (!new_rcp)
 		return -ENOMEM;
 
@@ -3140,7 +3194,8 @@ static int ice_create_lag_recipe(struct ice_lag *lag, struct ice_hw *hw,
 	new_rcp->recipe_indx = *rid;
 	bitmap_zero((unsigned long *)new_rcp->recipe_bitmap,
 		    ICE_MAX_NUM_RECIPES);
-	set_bit(*rid, (unsigned long *)new_rcp->recipe_bitmap);
+
+	ice_set_recipe_index(*rid, new_rcp->recipe_bitmap);
 
 	err = ice_aq_add_recipe(hw, new_rcp, 1, NULL);
 	if (err) {
@@ -3415,15 +3470,18 @@ void ice_lag_rebuild(struct ice_pf *pf)
 	if (!pf->lag || !pf->lag->bonded)
 		return;
 
+	INIT_LIST_HEAD(&ndlist.node);
+
 	mutex_lock(&pf->lag_mutex);
 
 	lag = pf->lag;
-	if (lag->primary) {
+
+	ice_lag_build_netdev_list(lag, &ndlist);
+
+	if (lag->primary)
 		prim_lag = lag;
-	} else {
-		ice_lag_build_netdev_list(lag, &ndlist);
+	else
 		prim_lag = ice_lag_find_member(lag, true);
-	}
 
 	if (!prim_lag) {
 		dev_dbg(ice_pf_to_dev(pf), "No primary interface in aggregate, can't rebuild\n");

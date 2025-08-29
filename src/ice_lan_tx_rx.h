@@ -1143,6 +1143,9 @@ struct ice_tx_drbell_q_ctx {
 	u16 rd_tail;
 } __packed;
 
+#define ICE_TXTIME_TX_DESC_IDX_M	GENMASK(12, 0)
+#define ICE_TXTIME_STAMP_M		GENMASK(31, 13)
+
 /* Tx time stamp decriptor */
 struct ice_ts_desc {
 	__le32 tx_desc_idx_tstamp;
@@ -1169,9 +1172,6 @@ struct ice_txtime_ctx {
 	u8 pf_num;
 	u16 vmvf_num;
 	u8 vmvf_type;
-#define ICE_TXTIME_CTX_VMVF_TYPE_VF	0
-#define ICE_TXTIME_CTX_VMVF_TYPE_VMQ	1
-#define ICE_TXTIME_CTX_VMVF_TYPE_PF	2
 	u16 src_vsi;
 	u8 cpuid;
 	u8 tphrd_desc;

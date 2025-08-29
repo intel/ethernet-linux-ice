@@ -582,6 +582,7 @@ ice_replay_vsi_all_fltr(struct ice_hw *hw, struct ice_port_info *pi,
 void ice_rm_sw_replay_rule_info(struct ice_hw *hw, struct ice_switch_info *sw);
 void ice_rm_all_sw_replay_rule_info(struct ice_hw *hw);
 void ice_fill_eth_hdr(u8 *eth_hdr);
+void ice_set_recipe_index(unsigned long idx, u8 *bitmap);
 bool ice_is_prof_rule(enum ice_sw_tunnel_type type);
 int
 ice_aq_sw_rules(struct ice_hw *hw, void *rule_list, u16 rule_list_sz,

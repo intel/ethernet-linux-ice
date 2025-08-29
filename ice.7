@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "July 02, 2025" "" "Linux ice readme"
+.TH "ICE" "7" "August 14, 2025" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -148,8 +148,11 @@ The VF driver will not block teaming/bonding/link aggregation, but this is not
 a supported feature. Do not expect failover or load balancing on the VF
 interface.
 .sp
-LAG and RDMA are compatible only in certain conditions. See the \fI\%RDMA (Remote Direct Memory Access)\fP
+LAG and RDMA are compatible only in certain conditions. See the \fI\%Link Aggregation and RDMA\fP
 section later in this README for more information.
+.sp
+Likewise, LAG and SR\-IOV are compatible only in certain conditions. See the
+\fI\%Link Aggregation and SR\-IOV VFs\fP section for more information.
 .sp
 Bridging and MACVLAN are also affected by this. If you wish to use bridging or
 MACVLAN with RDMA/SR\-IOV, you must set up bridging or MACVLAN before enabling
@@ -690,6 +693,14 @@ VFs. Otherwise VF RDMA support may not be negotiated between the VF and PF
 driver.
 .UNINDENT
 .UNINDENT
+.sp
+\fBNOTE:\fP
+.INDENT 0.0
+.INDENT 3.5
+When using Link Aggregation, RDMA in VF is not available \- the
+VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+.UNINDENT
+.UNINDENT
 .SS Auxiliary Bus
 .sp
 Inter\-Driver Communication (IDC) is the mechanism in which LAN drivers (such as
@@ -701,6 +712,67 @@ RDMA functionality requires use of the auxiliary bus.
 If your kernel supports the auxiliary bus, the LAN and RDMA drivers will use
 the inbox auxiliary bus for IDC. For kernels lower than 5.11, the base driver
 will automatically install an out\-of\-tree auxiliary bus module.
+.SS Source Pruning
+.sp
+E800 Series devices by default prune packets where the source MAC address
+matches the destination MAC address.
+The ice driver allows you to enable or disable source MAC address pruning of
+Ethernet packets. You can use this feature without a bond created or when
+active\-backup bonding is configured with ARP monitoring.
+.sp
+Use the ethtool private flag mac\-source\-pruning to enable or disable source
+MAC pruning on received packets:
+.INDENT 0.0
+.TP
+.B # ethtool \-\-set\-priv\-flags <ethX> mac\-source\-pruning on|off
+Where:
+on \- discards packets with source MAC address matching the source MAC
+.INDENT 7.0
+.INDENT 3.5
+address of the interface (default)
+.UNINDENT
+.UNINDENT
+.INDENT 7.0
+.TP
+.B off \- receives packets with source MAC address matching the source MAC
+address of the interface
+.UNINDENT
+.UNINDENT
+.sp
+NOTE: When you set mac\-source\-pruning to on (disabled):
+\- The driver will disable spoof check.
+\- The network interface will receive all packets with a source MAC address
+matching the network interface\(aqs MAC address.
+.sp
+The ice driver allows to enable or disable source pruning on a specified VF
+by setting the private PF flag vf\-source\-pruning and setting correct spoofchk
+and trust settings on the specified VF (see below example).
+.INDENT 0.0
+.TP
+.B # ethtool \-\-set\-priv\-flags <ethX> vf\-source\-pruning on|off
+Where:
+on \- discards packets with source MAC address matching the source MAC
+.INDENT 7.0
+.INDENT 3.5
+address of the interface (default)
+.UNINDENT
+.UNINDENT
+.INDENT 7.0
+.TP
+.B off \- receives packets with source MAC address matching the source MAC
+address of the interface
+.UNINDENT
+.UNINDENT
+.sp
+NOTE: Enabling vf\-source\-pruning will not automatically set anti\-spoofing and
+trust mode automatically. You must perform these steps yourself. They can be
+performed in any order. For example:
+# ip link set <ethX> vf <vf id> spoofchk off
+# ip link set <ethX> vf <vf id> trust on
+# ethtool \-\-set\-priv\-flag <ethX> vf\-source\-pruning off
+.sp
+For more information, refer to _macvlanantispoofing
+and _trusted\-vf in this README.
 .SS NVM Express* (NVMe) over TCP and Fabrics
 .sp
 RDMA provides a high throughput, low latency means to directly access NVM
@@ -718,6 +790,10 @@ Configuration Guide
 .sp
 Both guides are available on the Intel Technical Library at:
 \X'tty: link https://www.intel.com/content/www/us/en/design/products-and-solutions/networking-and-io/ethernet-controller-e810/technical-library.html'\fI\%https://www.intel.com/content/www/us/en/design/products\-and\-solutions/networking\-and\-io/ethernet\-controller\-e810/technical\-library.html\fP\X'tty: link'
+.SS Link Aggregation
+.sp
+Link Aggregation (LAG)/bonding allows combining multiple physical interfaces to
+provide redundancy and in some configurations increase total throughput.
 .SS Link Aggregation and RDMA
 .sp
 Link aggregation (LAG) and RDMA are compatible only if all the following are
@@ -779,6 +855,94 @@ A port failure on the active port will trigger a failover mechanism and move
 the queue pairs to the currently active port. Once the port has recovered,
 the RDMA driver will move RDMA QSets back to the originally allocated port.
 .UNINDENT
+.sp
+\fBNOTE:\fP
+.INDENT 0.0
+.INDENT 3.5
+When using Link Aggregation, RDMA in VF is not available \- the
+VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+.UNINDENT
+.UNINDENT
+.SS Link Aggregation and SR\-IOV VFs
+.sp
+LAG and SR\-IOV are compatible only if all the following are true:
+.INDENT 0.0
+.IP \(bu 2
+The bond is in active\-backup mode
+.IP \(bu 2
+The bond comprises of exactly two ports from the same NIC MAC chip
+.IP \(bu 2
+The primary port (first one added to the bond) is in switchdev mode (see
+\fI\%Switchdev Mode\fP)
+.IP \(bu 2
+Both bond ports have identical DCB configurations
+.IP \(bu 2
+The FW LLDP Agent is disabled on both bond ports (see \fI\%FW\-LLDP (Firmware Link Layer Discovery Protocol)\fP)
+.IP \(bu 2
+Firmware supports LAN VF LAG capability \- version 4.30 or newer
+.IP \(bu 2
+The ice_lag DDP package is loaded
+.UNINDENT
+.sp
+In order to configure SR\-IOV LAG:
+.INDENT 0.0
+.IP 1. 3
+Enable switchdev mode on the primary port:
+.INDENT 3.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+devlink dev eswitch set <pci/0000:##:##.#> mode switchdev
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.IP 2. 3
+Create SR\-IOV VFs:
+.INDENT 3.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+echo 2 > /sys/class/net/$PF1/device/sriov_numvfs
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.IP 3. 3
+Create a bond interface and configure it to active\-backup mode:
+.INDENT 3.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ip link add bond0 type bond
+ip link set bond0 type bond miimon 100 mode active\-backup
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.IP 4. 3
+Enslave primary and secondary port to bond:
+.INDENT 3.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ip link set $PF1 down
+ip link set $PF1 master bond0
+
+ip link set $PF2 down
+ip link set $PF2 master bond0
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.UNINDENT
+.sp
+In the above example \fB$PF1\fP is the primary port and \fB$PF2\fP is the secondary
+port.
 .SS Application Device Queues (ADQ)
 .sp
 Application Device Queues (ADQ) allow you to dedicate one or more queues to a
@@ -925,7 +1089,6 @@ after issuing the \fBtc qdisc add\fP command. We recommend you wait 5 seconds
 after issuing \fBtc qdisc add\fP before adding TC filters. Dmesg will report
 the error if TC filters fail to add properly.
 .UNINDENT
-.SS Setting Up ADQ
 .sp
 To set up the adapter for ADQ, where \fB<ethX>\fP is the interface in use:
 .INDENT 0.0
@@ -980,7 +1143,6 @@ ethtool \-\-show\-priv\-flags <ethX>
 .UNINDENT
 .UNINDENT
 .UNINDENT
-.SS ADQ Configuration Script
 .sp
 Intel also provides a script to configure ADQ. This script allows you configure
 ADQ\-specific parameters such as traffic classes, priority, filters, and ethtool
@@ -991,7 +1153,6 @@ tarball for more information.
 .sp
 The script and README are also available as part of the Python Package Index
 at \X'tty: link https://pypi.org/project/adqsetup'\fI\%https://pypi.org/project/adqsetup\fP\X'tty: link'\&.
-.SS Using ADQ with Independent Pollers
 .sp
 The ice driver supports ADQ acceleration using independent pollers. Independent
 pollers are kernel threads invoked by interrupts and are used for busy polling
@@ -1078,7 +1239,6 @@ devlink dev param set pci/0000:3b:00.0 name tc1_poller_timeout value 1000 cmode 
 .UNINDENT
 .UNINDENT
 .UNINDENT
-.SS Configuring ADQ Flows per Traffic Class
 .sp
 The ice out\-of\-tree driver allows you to configure inline Intel(R) Ethernet Flow
 Director (Intel(R) Ethernet FD) filters per traffic class (TC) using the
@@ -4458,7 +4618,6 @@ logging settings.
 .UNINDENT
 .UNINDENT
 .UNINDENT
-.SS Configuring firmware log modules
 .sp
 The driver groups firmware events into categories, called \(dqmodules.\(dq
 The modules are instantiated under the \fBfwlog/modules\fP directory.
@@ -4634,7 +4793,6 @@ cat /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/all
 .fi
 .UNINDENT
 .UNINDENT
-.SS Enabling and disabling firmware logs
 .sp
 You can configure modules, but firmware will \fBnot\fP send firmware logging
 events to the driver until it explicitly receives the \fBfwlog\eenable\fP setting.
@@ -4662,7 +4820,6 @@ echo 0 > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/enable
 .fi
 .UNINDENT
 .UNINDENT
-.SS Retrieving firmware log data
 .sp
 To retrieve the firmware log data, read the data from \fBfwlog\edata\fP\&. You can
 clear the contents of the firmware log data by writing any value to
@@ -4705,7 +4862,6 @@ hardware for debug purposes.
 .UNINDENT
 .UNINDENT
 .UNINDENT
-.SS Changing how often the log events are sent to the driver
 .sp
 The driver receives firmware log data from the Admin Receive Queue (ARQ).
 To change the frequency that the firmware sends the ARQ events, write a value
@@ -4741,7 +4897,6 @@ cat /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/nr_messages
 .fi
 .UNINDENT
 .UNINDENT
-.SS Configuring the amount of memory used to store firmware log data
 .sp
 The driver stores firmware log data within the driver. The default size of the
 memory used to store the data is 1MB, but some use cases may require more or less
@@ -5556,7 +5711,6 @@ allocating one vector per local node CPU thread, up to 64 vectors.
 The driver will not automatically allocate more than 64 MSI\-X vectors for each
 PF. RDMA requires one more MSI\-X vector than the PF allocation, so the driver
 will automatically allocate 9\-65 MSI\-X vectors for RDMA.
-.SS Setting MSI\-X Vector Allocation
 .sp
 You can use sysfs to override the automatic MSI\-X vector allocation for a
 particular PF or RDMA function, or for the pool of vectors used by the VFs
@@ -5657,7 +5811,6 @@ For some Linux distributions, the \fBsriov_vf_msix_count\fP
 parameter is not available, and it is recommended to use devlink parameter.
 .UNINDENT
 .UNINDENT
-.SS Current MSI\-X Allocation
 .sp
 You can check the current MSI\-X vector allocation by using the \fBdevlink
 resource show\fP parameter. For example:
@@ -5688,7 +5841,6 @@ resources:
 .fi
 .UNINDENT
 .UNINDENT
-.SS Increasing the Automatic Allocation Limit
 .sp
 The ice driver supports changing the automatic MSI\-X vector and queue allocation
 for PFs and VFs to spread the RSS load across more cores.
@@ -5773,7 +5925,6 @@ echo 2048 > /sys/bus/pci/devices/<ethx>/rss_lut_pf_attr
 .fi
 .UNINDENT
 .UNINDENT
-.SS Internal Temperature Reporting
 .sp
 The ice driver support for monitoring the internal temperature of the chip.
 .sp
@@ -5872,6 +6023,14 @@ address to ensure that the VM is operating correctly.
 Issuing the command \fBethtool \-S\fP does not display Tx/Rx packet statistics.
 This is by convention. Use other tools (such as the ip command) that display
 standard netdev statistics such as Tx/Rx packet statistics.
+.SS \fBethtool \-S\fP rx_bytes and ip stats rx_bytes don\(aqt match statistics
+.sp
+The \fBrx_bytes\fP value of ethtool does not match the \fBrx_bytes\fP value of
+Netdev, due to the 4\-byte CRC being stripped by the device. The difference
+between the two \fBrx_bytes\fP values will be 4 x the number of Rx packets. For
+example, if Rx packets are 10 and Netdev (software statistics) displays
+\fBrx_bytes\fP as \(dqX\(dq, then ethtool (hardware statistics) will display \fBrx_bytes\fP
+as \(dqX+40\(dq (4 bytes CRC x 10 packets).
 .SS Unexpected issues when the device driver and DPDK share a device
 .sp
 Unexpected issues may result when an ice device is in multi driver mode and the

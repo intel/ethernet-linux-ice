@@ -579,10 +579,10 @@ u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
 #endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
 #endif /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
 int ice_setup_tstamp_ring(struct ice_tx_ring *tstamp_ring);
-void ice_clean_tx_ring(struct ice_tx_ring *tx_ring,
-		       struct ice_tx_ring *tstamp_ring);
-void ice_free_tx_ring(struct ice_tx_ring *tx_ring,
-		      struct ice_tx_ring *tstamp_ring);
+void ice_clean_tstamp_ring(struct ice_tx_ring *tstamp_ring);
+void ice_free_tstamp_ring(struct ice_tx_ring *tstamp_ring);
+void ice_free_tx_ring(struct ice_tx_ring *tx_ring);
+void ice_clean_tx_ring(struct ice_tx_ring *tx_ring);
 void ice_clean_rx_ring(struct ice_rx_ring *rx_ring);
 int ice_setup_tx_ring(struct ice_tx_ring *tx_ring);
 int ice_setup_rx_ring(struct ice_rx_ring *rx_ring);

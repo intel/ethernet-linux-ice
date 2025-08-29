@@ -183,6 +183,9 @@ static const struct ice_stats ice_gstrings_pf_stats[] = {
 	ICE_PF_STAT(ICE_PORT_RX_JABBER, stats.rx_jabber),
 	ICE_PF_STAT(ICE_PORT_RX_CSUM_BAD, hw_csum_rx_error),
 	ICE_PF_STAT(ICE_PORT_RX_EIPE_ERRORS, hw_rx_eipe_error),
+#ifndef HAVE_ETHTOOL_LINK_EXT_STATS
+	ICE_PF_STAT(ICE_PORT_LINK_DOWN_EVENTS, link_down_events),
+#endif
 #ifdef ICE_ADD_PROBES
 	ICE_PF_STAT(ICE_PORT_RX_LEN_ERRORS, stats.rx_len_errors),
 #endif /* ICE_ADD_PROBES */
@@ -272,6 +275,8 @@ static const struct ice_priv_flag ice_gstrings_priv_flags[] = {
 		      ICE_FLAG_VF_TRUE_PROMISC_ENA),
 	ICE_PRIV_FLAG("mdd-auto-reset-vf", ICE_FLAG_MDD_AUTO_RESET_VF),
 	ICE_PRIV_FLAG("vf-vlan-pruning", ICE_FLAG_VF_VLAN_PRUNING),
+	ICE_PRIV_FLAG("mac-source-pruning", ICE_FLAG_MAC_SOURCE_PRUNING),
+	ICE_PRIV_FLAG("vf-source-pruning", ICE_FLAG_VF_SOURCE_PRUNING),
 	ICE_PRIV_FLAG("legacy-rx", ICE_FLAG_LEGACY_RX),
 	/* Flag enable/disable monitoring DPLL Admin Queue error events */
 	ICE_PRIV_FLAG("dpll_monitor", ICE_FLAG_DPLL_MONITOR),
@@ -549,7 +554,8 @@ static int ice_get_port_topology(struct ice_hw *hw, u8 lport,
 				return err;
 			if (max_speed == ICE_AQC_PORT_OPT_MAX_LANE_100G)
 				port_topology->serdes_lane_count = 4;
-			else if (max_speed == ICE_AQC_PORT_OPT_MAX_LANE_50G)
+			else if (max_speed == ICE_AQC_PORT_OPT_MAX_LANE_50G ||
+					 max_speed == ICE_AQC_PORT_OPT_MAX_LANE_40G)
 				port_topology->serdes_lane_count = 2;
 			else
 				port_topology->serdes_lane_count = 1;
@@ -809,6 +815,17 @@ static void ice_set_msglevel(struct net_device *netdev, u32 data)
 #endif /* !CONFIG_DYNAMIC_DEBUG */
 }
 
+#ifdef HAVE_ETHTOOL_LINK_EXT_STATS
+static void ice_get_link_ext_stats(struct net_device *netdev,
+				   struct ethtool_link_ext_stats *stats)
+{
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+	struct ice_pf *pf = np->vsi->back;
+
+	stats->link_down_events = pf->link_down_events;
+}
+#endif
+
 static int ice_get_eeprom_len(struct net_device *netdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
@@ -1021,16 +1038,14 @@ static int ice_reg_pattern_test(struct ice_hw *hw, u32 reg, u32 mask)
 		val = rd32(hw, reg);
 		if (val == pattern)
 			continue;
-		dev_err(dev, "%s: reg pattern test failed - reg 0x%08x pat 0x%08x val 0x%08x\n"
-			, __func__, reg, pattern, val);
+		dev_err(dev, "%s: reg pattern test failed - reg 0x%08x pat 0x%08x val 0x%08x\n", __func__, reg, pattern, val);
 		return 1;
 	}
 
 	wr32(hw, reg, orig_val);
 	val = rd32(hw, reg);
 	if (val != orig_val) {
-		dev_err(dev, "%s: reg restore test failed - reg 0x%08x orig 0x%08x val 0x%08x\n"
-			, __func__, reg, orig_val, val);
+		dev_err(dev, "%s: reg restore test failed - reg 0x%08x orig 0x%08x val 0x%08x\n", __func__, reg, orig_val, val);
 		return 1;
 	}
 
@@ -2718,6 +2733,14 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 		change_bit(ICE_FLAG_VF_VLAN_PRUNING, pf->flags);
 		ret = -EOPNOTSUPP;
 	}
+
+	if (test_bit(ICE_FLAG_VF_SOURCE_PRUNING, change_flags) &&
+	    ice_has_vfs(pf)) {
+		dev_err(dev, "vf-source-pruning: VF source pruning cannot be changed while VFs are active.\n");
+		/* toggle bit back to previous state */
+		change_bit(ICE_FLAG_VF_SOURCE_PRUNING, pf->flags);
+		ret = -EOPNOTSUPP;
+	}
 	if (!test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags) &&
 	    pf->synce_dpll_state != 0) {
 		pf->synce_dpll_state = DPLL_LOCK_STATUS_UNLOCKED;
@@ -2765,6 +2788,18 @@ static int ice_set_priv_flags(struct net_device *netdev, u32 flags)
 			netdev_info(vsi->netdev, "Enabled auto configuration of No FEC modules\n");
 		else
 			netdev_info(vsi->netdev, "Auto configuration of No FEC modules reset to NVM defaults\n");
+	}
+
+	if (test_bit(ICE_FLAG_MAC_SOURCE_PRUNING, change_flags)) {
+		int value = test_bit(ICE_FLAG_MAC_SOURCE_PRUNING, pf->flags);
+
+		ret = ice_vsi_config_prune(vsi, value);
+
+		if (ret) {
+			netdev_warn(vsi->netdev, "Failed to set Local Loopback\n");
+			change_bit(ICE_FLAG_MAC_SOURCE_PRUNING, pf->flags);
+			goto ethtool_exit;
+		}
 	}
 ethtool_exit:
 	clear_bit(ICE_FLAG_ETHTOOL_CTXT, pf->flags);
@@ -4733,8 +4768,13 @@ ice_get_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 	hw = &vsi->back->hw;
 	ring->rx_max_pending = ICE_MAX_NUM_DESC_BY_MAC(hw);
 	ring->tx_max_pending = ICE_MAX_NUM_DESC_BY_MAC(hw);
-	ring->rx_pending = vsi->rx_rings[0]->count;
-	ring->tx_pending = vsi->tx_rings[0]->count;
+	if (vsi->tx_rings && vsi->rx_rings) {
+		ring->rx_pending = vsi->rx_rings[0]->count;
+		ring->tx_pending = vsi->tx_rings[0]->count;
+	} else {
+		ring->rx_pending = 0;
+		ring->tx_pending = 0;
+	}
 
 	/* Rx mini and jumbo rings are not supported */
 	ring->rx_mini_max_pending = 0;
@@ -4755,6 +4795,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 #endif /* HAVE_ETHTOOL_EXTENDED_RINGPARAMS */
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+	u16 new_rx_cnt, new_tx_cnt, new_tstamp_cnt;
 	struct ice_tx_ring *tstamp_rings = NULL;
 #ifdef HAVE_XDP_SUPPORT
 	struct ice_tx_ring *xdp_rings = NULL;
@@ -4765,7 +4806,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 	struct ice_pf *pf = vsi->back;
 	int i, timeout = 50, err = 0;
 	struct ice_hw *hw = &pf->hw;
-	u16 new_rx_cnt, new_tx_cnt;
+	bool txtime_ena;
 
 	if (ring->tx_pending > ICE_MAX_NUM_DESC_BY_MAC(hw) ||
 	    ring->tx_pending < ICE_MIN_NUM_DESC ||
@@ -4777,6 +4818,10 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 			   ICE_REQ_DESC_MULTIPLE);
 		return -EINVAL;
 	}
+
+	/* Return if there is no rings (device is reloading) */
+	if (!vsi->tx_rings || !vsi->rx_rings)
+		return -EBUSY;
 
 	new_tx_cnt = ALIGN(ring->tx_pending, ICE_REQ_DESC_MULTIPLE);
 	if (new_tx_cnt != ring->tx_pending)
@@ -4809,19 +4854,18 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 			return -EBUSY;
 		usleep_range(1000, 2000);
 	}
+	txtime_ena = test_bit(ICE_FLAG_TXTIME, pf->flags);
+	if (txtime_ena)
+		new_tstamp_cnt = ice_calc_ts_ring_count(hw, new_tx_cnt);
 
 	/* set for the next time the netdev is started */
 	if (!netif_running(vsi->netdev)) {
-		ice_for_each_txq(vsi, i) {
+		ice_for_each_txq(vsi, i)
 			vsi->tx_rings[i]->count = new_tx_cnt;
-			/* Change all tstamp_rings to match Tx rings */
-			if (test_bit(ICE_FLAG_TXPP, pf->flags)) {
-				u16 cnt = ice_calc_ts_ring_count(&pf->hw,
-								 new_tx_cnt);
-
-				vsi->tstamp_rings[i]->count = cnt;
-			}
-		}
+		/* Change all tstamp_rings to match Tx rings */
+		if (txtime_ena)
+			ice_for_each_txq(vsi, i)
+				vsi->tstamp_rings[i]->count = new_tstamp_cnt;
 		ice_for_each_rxq(vsi, i)
 			vsi->rx_rings[i]->count = new_rx_cnt;
 #ifdef HAVE_XDP_SUPPORT
@@ -4848,10 +4892,13 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		goto done;
 	}
 
-	tstamp_rings = kcalloc(vsi->num_txq, sizeof(*tstamp_rings), GFP_KERNEL);
-	if (!tstamp_rings) {
-		err = -ENOMEM;
-		goto done;
+	if (txtime_ena) {
+		tstamp_rings = kcalloc(vsi->num_txq, sizeof(*tstamp_rings),
+				       GFP_KERNEL);
+		if (!tstamp_rings) {
+			err = -ENOMEM;
+			goto free_tx;
+		}
 	}
 
 	ice_for_each_txq(vsi, i) {
@@ -4861,26 +4908,21 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		tx_rings[i].desc = NULL;
 		tx_rings[i].tx_buf = NULL;
 		tx_rings[i].tx_tstamps = &pf->ptp.port.tx;
-		if (test_bit(ICE_FLAG_TXPP, pf->flags)) {
-			u16 cnt = ice_calc_ts_ring_count(&pf->hw,
-							 new_tx_cnt);
+		err = ice_setup_tx_ring(&tx_rings[i]);
 
+		if (txtime_ena) {
 			tstamp_rings[i] = *vsi->tstamp_rings[i];
-			tstamp_rings[i].count = cnt;
+			tstamp_rings[i].count = new_tstamp_cnt;
 			tstamp_rings[i].desc = NULL;
 			tstamp_rings[i].tx_buf = NULL;
-		}
-
-		err = ice_setup_tx_ring(&tx_rings[i]);
-		if (test_bit(ICE_FLAG_TXPP, pf->flags))
 			err |= ice_setup_tstamp_ring(&tstamp_rings[i]);
+		}
 		if (err) {
-			while (i--)
-				if (test_bit(ICE_FLAG_TXPP, pf->flags))
-					ice_clean_tx_ring(&tx_rings[i],
-							  &tstamp_rings[i]);
-				else
-					ice_clean_tx_ring(&tx_rings[i], NULL);
+			while (i--) {
+				if (txtime_ena)
+					ice_clean_tstamp_ring(&tstamp_rings[i]);
+				ice_clean_tx_ring(&tx_rings[i]);
+			}
 			kfree(tx_rings);
 			tx_rings = NULL;
 			kfree(tstamp_rings);
@@ -4912,7 +4954,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		err = ice_setup_tx_ring(&xdp_rings[i]);
 		if (err) {
 			while (i--)
-				ice_clean_tx_ring(&xdp_rings[i], NULL);
+				ice_clean_tx_ring(&xdp_rings[i]);
 			kfree(xdp_rings);
 			xdp_rings = NULL;
 			goto free_tx;
@@ -4977,18 +5019,18 @@ process_link:
 
 		if (tx_rings) {
 			ice_for_each_txq(vsi, i) {
-				if (test_bit(ICE_FLAG_TXPP, pf->flags))
-					ice_free_tx_ring(vsi->tx_rings[i],
-							 vsi->tstamp_rings[i]);
-				else
-					ice_free_tx_ring(vsi->tx_rings[i],
-							 NULL);
+				ice_free_tx_ring(vsi->tx_rings[i]);
 				*vsi->tx_rings[i] = tx_rings[i];
-				if (test_bit(ICE_FLAG_TXPP, pf->flags))
-					*vsi->tstamp_rings[i] = tstamp_rings[i];
 			}
 			kfree(tx_rings);
 			tx_rings = NULL;
+		}
+
+		if (tstamp_rings) {
+			ice_for_each_txq(vsi, i) {
+				ice_free_tstamp_ring(vsi->tstamp_rings[i]);
+				*vsi->tstamp_rings[i] = tstamp_rings[i];
+			}
 			kfree(tstamp_rings);
 			tstamp_rings = NULL;
 		}
@@ -5015,7 +5057,7 @@ process_link:
 #ifdef HAVE_XDP_SUPPORT
 		if (xdp_rings) {
 			ice_for_each_xdp_txq(vsi, i) {
-				ice_free_tx_ring(vsi->xdp_rings[i], NULL);
+				ice_free_tx_ring(vsi->xdp_rings[i]);
 				*vsi->xdp_rings[i] = xdp_rings[i];
 			}
 			kfree(xdp_rings);
@@ -5033,7 +5075,12 @@ free_tx:
 	/* error cleanup if the Rx allocations failed after getting Tx */
 	if (tx_rings) {
 		ice_for_each_txq(vsi, i)
-			ice_free_tx_ring(&tx_rings[i], NULL);
+			ice_free_tx_ring(&tx_rings[i]);
+	}
+
+	if (tstamp_rings) {
+		ice_for_each_txq(vsi, i)
+			ice_free_tstamp_ring(&tstamp_rings[i]);
 	}
 
 done:
@@ -6569,6 +6616,9 @@ static const struct ethtool_ops ice_ethtool_ops = {
 	.set_msglevel		= ice_set_msglevel,
 	.self_test		= ice_self_test,
 	.get_link		= ethtool_op_get_link,
+#ifdef HAVE_ETHTOOL_LINK_EXT_STATS
+	.get_link_ext_stats     = ice_get_link_ext_stats,
+#endif
 	.get_eeprom_len		= ice_get_eeprom_len,
 	.get_eeprom		= ice_get_eeprom,
 	.set_eeprom		= ice_set_eeprom,

@@ -892,7 +892,7 @@ static irqreturn_t ice_vdcm_msix_handler(int irq, void *arg)
 {
 	struct ice_vdcm_irq_ctx *ctx = arg;
 
-	eventfd_signal(ctx->trigger, 1);
+	eventfd_signal(ctx->trigger);
 	return IRQ_HANDLED;
 }
 

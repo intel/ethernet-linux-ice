@@ -429,8 +429,7 @@ void unpack_fields_u16(const void *pbuf, size_t pbuflen, void *ustruct,
 	__builtin_choose_expr(ARRAY_SIZE(fields) == 48, ({ CHECK_PACKED_FIELDS_48(fields); }), \
 	__builtin_choose_expr(ARRAY_SIZE(fields) == 49, ({ CHECK_PACKED_FIELDS_49(fields); }), \
 	__builtin_choose_expr(ARRAY_SIZE(fields) == 50, ({ CHECK_PACKED_FIELDS_50(fields); }), \
-	({ BUILD_BUG_ON_MSG(1, "CHECK_PACKED_FIELDS() must be regenerated to support array sizes larger than 50."); }) \
-))))))))))))))))))))))))))))))))))))))))))))))))))
+	({ BUILD_BUG_ON_MSG(1, "CHECK_PACKED_FIELDS() must be regenerated to support array sizes larger than 50."); }) \))))))))))))))))))))))))))))))))))))))))))))))))))
 
 /* End of generated content */
 

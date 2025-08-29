@@ -146,8 +146,8 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 	if (!vsi->tx_rings)
 		return -ENOMEM;
 
-	if (test_bit(ICE_FLAG_TXPP, pf->flags) &&
-	    vsi->type == ICE_VSI_PF) {
+	if (vsi->type == ICE_VSI_PF &&
+	    test_bit(ICE_FLAG_TXTIME, pf->flags)) {
 		vsi->tstamp_rings = devm_kcalloc(dev, vsi->alloc_txq,
 						 sizeof(*vsi->tstamp_rings),
 						 GFP_KERNEL);
@@ -1558,6 +1558,8 @@ static void ice_set_rss_vsi_ctx(struct ice_vsi_ctx *ctxt, struct ice_vsi *vsi)
 			lut_type = ICE_AQ_VSI_Q_OPT_RSS_LUT_GBL;
 			global_lut_id = *vsi->global_lut_id;
 		}
+		if (vsi->rss_lut_type == ICE_LUT_PF)
+			lut_type = ICE_AQ_VSI_Q_OPT_RSS_LUT_PF;
 		hash_type = ICE_AQ_VSI_Q_OPT_RSS_HASH_TPLZ;
 		break;
 	default:
@@ -1897,7 +1899,7 @@ static void ice_vsi_clear_rings(struct ice_vsi *vsi)
 		}
 	}
 
-	if (vsi->type == ICE_VSI_PF && vsi->tstamp_rings) {
+	if (vsi->tstamp_rings) {
 		ice_for_each_alloc_txq(vsi, i) {
 			if (vsi->tstamp_rings[i]) {
 				kfree_rcu(vsi->tstamp_rings[i], rcu);
@@ -1930,7 +1932,6 @@ static int ice_vsi_alloc_rings(struct ice_vsi *vsi)
 	dev = ice_pf_to_dev(pf);
 	/* Allocate Tx rings */
 	ice_for_each_alloc_txq(vsi, i) {
-		struct ice_tx_ring *tstamp_ring;
 		struct ice_tx_ring *ring;
 
 		/* allocate with kzalloc(), free with kfree_rcu() */
@@ -1954,8 +1955,10 @@ static int ice_vsi_alloc_rings(struct ice_vsi *vsi)
 			ring->flags |= ICE_TXRX_FLAGS_GCS_ENA;
 		WRITE_ONCE(vsi->tx_rings[i], ring);
 
-		if (test_bit(ICE_FLAG_TXPP, pf->flags) &&
-		    vsi->type == ICE_VSI_PF) {
+		if (vsi->type == ICE_VSI_PF &&
+		    test_bit(ICE_FLAG_TXTIME, pf->flags)) {
+			struct ice_tx_ring *tstamp_ring;
+
 			tstamp_ring = kzalloc(sizeof(*ring), GFP_KERNEL);
 			if (!tstamp_ring)
 				goto err_out;
@@ -2420,7 +2423,6 @@ int ice_vsi_cfg_single_rxq(struct ice_vsi *vsi, u16 q_idx)
 
 int ice_vsi_cfg_single_txq(struct ice_vsi *vsi, struct ice_tx_ring **tx_rings, u16 q_idx)
 {
-	struct ice_tx_ring **tstamp_rings = vsi->tstamp_rings;
 	struct ice_aqc_add_tx_qgrp *qg_buf;
 	int err;
 
@@ -2433,10 +2435,11 @@ int ice_vsi_cfg_single_txq(struct ice_vsi *vsi, struct ice_tx_ring **tx_rings, u
 
 	qg_buf->num_txqs = 1;
 
-	if (!tstamp_rings) {
+	if (!vsi->tstamp_rings) {
 		err = ice_vsi_cfg_txq(vsi, tx_rings[q_idx],
 				      NULL, qg_buf, NULL);
 	} else {
+		struct ice_tx_ring **tstamp_rings = vsi->tstamp_rings;
 		struct ice_aqc_set_txtime_qgrp *txtime_qg_buf;
 
 		txtime_qg_buf = kzalloc(struct_size(txtime_qg_buf, txtimeqs, 1),
@@ -2528,7 +2531,7 @@ ice_vsi_cfg_txqs(struct ice_vsi *vsi, struct ice_tx_ring **rings,
 					      txtime_qg_buf);
 		else
 			err = ice_vsi_cfg_txq(vsi, rings[q_idx],
-					      NULL, qg_buf, txtime_qg_buf);
+					      NULL, qg_buf, NULL);
 		if (err)
 			break;
 	}
@@ -3414,14 +3417,9 @@ void ice_vsi_decfg(struct ice_vsi *vsi)
 	struct ice_pf *pf = vsi->back;
 	int err = 0;
 
-#if   defined(HAVE_DEVLINK_RATE_NODE_CREATE)
-	/* Preserve VF's VSI node config during reset, if in switchdev mode */
-	if (!vsi->vf || !test_bit(ICE_VF_STATE_IN_RESET, vsi->vf->vf_states) ||
-	    !ice_is_switchdev_running(pf))
+	/* Preserve VF's VSI node config during reset. */
+	if (!vsi->vf || !test_bit(ICE_VF_STATE_IN_RESET, vsi->vf->vf_states))
 		err = ice_rm_vsi_lan_cfg(vsi->port_info, vsi->idx);
-#else
-	err = ice_rm_vsi_lan_cfg(vsi->port_info, vsi->idx);
-#endif
 	if (err)
 		dev_err(ice_pf_to_dev(pf), "Failed to remove VSI %u LAN TxQs cfg, err %d\n",
 			vsi->vsi_num, err);
@@ -3619,15 +3617,11 @@ void ice_vsi_free_tx_rings(struct ice_vsi *vsi)
 	if (!vsi->tx_rings)
 		return;
 
-	if (vsi->tstamp_rings) {
-		ice_for_each_txq(vsi, i)
-			if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc)
-				ice_free_tx_ring(vsi->tx_rings[i],
-						 vsi->tstamp_rings[i]);
-	} else {
-		ice_for_each_txq(vsi, i)
-			if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc)
-				ice_free_tx_ring(vsi->tx_rings[i], NULL);
+	ice_for_each_txq(vsi, i) {
+		if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc)
+			ice_free_tx_ring(vsi->tx_rings[i]);
+		if (vsi->tstamp_rings && vsi->tstamp_rings[i])
+			ice_free_tstamp_ring(vsi->tstamp_rings[i]);
 	}
 }
 
@@ -4844,6 +4838,28 @@ int ice_vsi_update_local_lb(struct ice_vsi *vsi, bool set)
 	return 0;
 }
 
+int ice_vsi_config_prune(struct ice_vsi *vsi, bool enable)
+{
+	struct ice_vsi_ctx ctx = {
+		.info	= vsi->info,
+	};
+
+	ctx.info.valid_sections = cpu_to_le16(ICE_AQ_VSI_PROP_SW_VALID);
+	if (enable) {
+		ctx.info.sw_flags &= ~ICE_AQ_VSI_SW_FLAG_LOCAL_LB;
+		ctx.info.sw_flags |= ICE_AQ_VSI_SW_FLAG_SRC_PRUNE;
+	} else {
+		ctx.info.sw_flags |= ICE_AQ_VSI_SW_FLAG_LOCAL_LB;
+		ctx.info.sw_flags &= ~ICE_AQ_VSI_SW_FLAG_SRC_PRUNE;
+	}
+
+	if (ice_update_vsi(&vsi->back->hw, vsi->idx, &ctx, NULL))
+		return -ENODEV;
+
+	vsi->info = ctx.info;
+	return 0;
+}
+
 #ifndef HAVE_NETDEV_MIN_MAX_MTU
 /**
  * ice_check_mtu_valid - check if specified MTU can be set for a netdev
@@ -5109,7 +5125,7 @@ void ice_init_feature_support(struct ice_pf *pf)
 	case ICE_MAC_E830:
 		ice_set_feature_support(pf, ICE_F_DSCP);
 		ice_set_feature_support(pf, ICE_F_GCS);
-		ice_set_feature_support(pf, ICE_F_TXPP);
+		ice_set_feature_support(pf, ICE_F_TXTIME);
 		ice_set_feature_support(pf, ICE_F_MBX_LIMIT);
 	default:
 		break;

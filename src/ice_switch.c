@@ -48,6 +48,7 @@ enum {
 	ICE_PKT_L2TPV3				= BIT(11),
 	ICE_PKT_OUTER_VLAN			= BIT(12),
 	ICE_PKT_INNER_VLAN			= BIT(13),
+	ICE_PKT_ICMP				= BIT(20),
 };
 
 #define ICE_DECLARE_PKT_OFFSETS(type)				\
@@ -1498,6 +1499,76 @@ ICE_DECLARE_PKT_TEMPLATE(qinq_pppoe_ipv6) = {
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
 };
 
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv4_icmp) = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_VLAN_EX,		12 },
+	{ ICE_VLAN_IN,		16 },
+	{ ICE_ETYPE_OL,		20 },
+	{ ICE_IPV4_OFOS,	22 },
+	{ ICE_ICMP4,		42 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv4_icmp) = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x91, 0x00, 0x00, 0x00,	/* ICE_VLAN_EX 12 */
+
+	0x81, 0x00, 0x00, 0x00, /* ICE_VLAN_IN 16 */
+
+	0x08, 0x00,		/* ICE_ETYPE_OL 20 */
+
+	0x45, 0x00, 0x00, 0x1C, /* ICE_IPV4_OFOS 22 */
+	0x00, 0x00, 0x40, 0x00,
+	0x40, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00, 0x00, 0x00, /* ICE_ICMP4 42 */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
+};
+
+ICE_DECLARE_PKT_OFFSETS(qinq_ipv6_icmp) = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_VLAN_EX,		12 },
+	{ ICE_VLAN_IN,		16 },
+	{ ICE_ETYPE_OL,		20 },
+	{ ICE_IPV6_OFOS,	22 },
+	{ ICE_ICMP6,		62 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+ICE_DECLARE_PKT_TEMPLATE(qinq_ipv6_icmp) = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x91, 0x00, 0x00, 0x00,	/* ICE_VLAN_EX 12 */
+
+	0x81, 0x00, 0x00, 0x00, /* ICE_VLAN_IN 16 */
+
+	0x86, 0xDD,		/* ICE_ETYPE_OL 20 */
+
+	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_OFOS 22 */
+	0x00, 0x04, 0x3A, 0x40,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00, 0x00, 0x00, /* ICE_ICMP6 62 */
+
+	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
+};
+
 ICE_DECLARE_PKT_OFFSETS(ipv4_l2tpv3) = {
 	{ ICE_MAC_OFOS,		0 },
 	{ ICE_ETYPE_OL,		12 },
@@ -1554,6 +1625,70 @@ ICE_DECLARE_PKT_TEMPLATE(ipv6_l2tpv3) = {
 	0x00, 0x00, 0x00, 0x00, /* ICE_L2TPV3 54 */
 	0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
+};
+
+ICE_DECLARE_PKT_OFFSETS(ipv4_icmp) = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_VLAN_OFOS,	12 },
+	{ ICE_ETYPE_OL,		16 },
+	{ ICE_IPV4_OFOS,	18 },
+	{ ICE_ICMP4,		38 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+ICE_DECLARE_PKT_TEMPLATE(ipv4_icmp) = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x81, 0x00, 0x00, 0x00,	/* ICE_VLAN_OFOS 12 */
+
+	0x08, 0x00,		/* ICE_ETYPE_OL 16 */
+
+	0x45, 0x00, 0x00, 0x1C, /* ICE_IPV4_IL 18 */
+	0x00, 0x00, 0x40, 0x00,
+	0x40, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00, 0x00, 0x00, /* ICE_ICMP4 38 */
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
+};
+
+ICE_DECLARE_PKT_OFFSETS(ipv6_icmp) = {
+	{ ICE_MAC_OFOS,		0 },
+	{ ICE_VLAN_OFOS,	12 },
+	{ ICE_ETYPE_OL,		16 },
+	{ ICE_IPV6_OFOS,	18 },
+	{ ICE_ICMP6,		58 },
+	{ ICE_PROTOCOL_LAST,	0 },
+};
+
+ICE_DECLARE_PKT_TEMPLATE(ipv6_icmp) = {
+	0x00, 0x00, 0x00, 0x00, /* ICE_MAC_OFOS 0 */
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x81, 0x00, 0x00, 0x00,	/* ICE_VLAN_OFOS 12 */
+
+	0x86, 0xDD,		/* ICE_ETYPE_OL 16 */
+
+	0x60, 0x00, 0x00, 0x00, /* ICE_IPV6_IL 18 */
+	0x00, 0x04, 0x3A, 0x40,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00, 0x00, 0x00, /* ICE_ICMP6 58 */
+
 	0x00, 0x00,		/* 2 bytes for 4 bytes alignment */
 };
 
@@ -1723,6 +1858,13 @@ static const struct ice_dummy_pkt_profile ice_dummy_pkt_profiles[] = {
 					 ICE_PKT_OUTER_IPV6 | ICE_PKT_PPPOE),
 	ICE_PKT_PROFILE(qinq_pppoe_ipv4, ICE_PKT_OUTER_VLAN |
 					 ICE_PKT_INNER_VLAN | ICE_PKT_PPPOE),
+	ICE_PKT_PROFILE(qinq_ipv6_icmp, ICE_PKT_OUTER_VLAN |
+					ICE_PKT_INNER_VLAN |
+					ICE_PKT_ICMP |
+					ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(qinq_ipv4_icmp, ICE_PKT_OUTER_VLAN |
+					ICE_PKT_INNER_VLAN |
+					ICE_PKT_ICMP),
 	ICE_PKT_PROFILE(qinq_ipv6_udp, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN |
 				       ICE_PKT_OUTER_IPV6 | ICE_PKT_INNER_UDP),
 	ICE_PKT_PROFILE(qinq_ipv6_tcp, ICE_PKT_OUTER_VLAN | ICE_PKT_INNER_VLAN |
@@ -1775,6 +1917,8 @@ static const struct ice_dummy_pkt_profile ice_dummy_pkt_profiles[] = {
 					  ICE_PKT_INNER_TCP),
 	ICE_PKT_PROFILE(ipv6_l2tpv3, ICE_PKT_L2TPV3 | ICE_PKT_OUTER_IPV6),
 	ICE_PKT_PROFILE(ipv4_l2tpv3, ICE_PKT_L2TPV3),
+	ICE_PKT_PROFILE(ipv6_icmp, ICE_PKT_ICMP | ICE_PKT_OUTER_IPV6),
+	ICE_PKT_PROFILE(ipv4_icmp, ICE_PKT_ICMP),
 	ICE_PKT_PROFILE(udp_tun_tcp, ICE_PKT_TUN_UDP | ICE_PKT_INNER_TCP),
 	ICE_PKT_PROFILE(udp_tun_ipv6_udp, ICE_PKT_TUN_UDP |
 					  ICE_PKT_INNER_IPV6),
@@ -7062,6 +7206,8 @@ static const struct ice_prot_ext_tbl_entry ice_prot_ext[ICE_PROTOCOL_LAST] = {
 			   20, 22, 24, 26, 28, 30, 32, 34, 36, 38),
 	ICE_PROTOCOL_ENTRY(ICE_IPV6_IL, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20,
 			   22, 24, 26, 28, 30, 32, 34, 36, 38),
+	ICE_PROTOCOL_ENTRY(ICE_ICMP4, 0),
+	ICE_PROTOCOL_ENTRY(ICE_ICMP6, 0),
 	ICE_PROTOCOL_ENTRY(ICE_TCP_IL, 0, 2),
 	ICE_PROTOCOL_ENTRY(ICE_UDP_OF, 0, 2),
 	ICE_PROTOCOL_ENTRY(ICE_UDP_ILOS, 0, 2),
@@ -7101,6 +7247,8 @@ static struct ice_protocol_entry ice_prot_id_tbl[ICE_PROTOCOL_LAST] = {
 	{ ICE_IPV4_IL,		ICE_IPV4_IL_HW },
 	{ ICE_IPV6_OFOS,	ICE_IPV6_OFOS_HW },
 	{ ICE_IPV6_IL,		ICE_IPV6_IL_HW },
+	{ ICE_ICMP4,		ICE_ICMP_HW },
+	{ ICE_ICMP6,		ICE_ICMPV6_HW },
 	{ ICE_TCP_IL,		ICE_TCP_IL_HW },
 	{ ICE_UDP_OF,		ICE_UDP_OF_HW },
 	{ ICE_UDP_ILOS,		ICE_UDP_ILOS_HW },
@@ -7432,10 +7580,22 @@ static int ice_calc_recp_cnt(u8 word_cnt)
 	return (word_cnt + 2) / (ICE_NUM_WORDS_RECIPE - 1);
 }
 
-static void ice_set_recipe_index(unsigned long idx, u8 *bitmap)
+/**
+ * ice_set_recipe_index - helper to set recipe bitmap
+ * @idx: bit index to set
+ * @bitmap: pointer to 64-byte mask
+ *
+ * On some architectures, set_bit() (and similar) must operate on aligned
+ * memory. recipe_bitmap in struct ice_aqc_recipe_data_elem is aligned to 4
+ * bytes, while it should be aligned to 8. The struct itself cannot be modified,
+ * as it's used for communication with the hardware. This can be worked around
+ * by allocating a slightly larger chunk of memory and grabbing the pointer with
+ * an offset of 4 bytes, or doing a dumb lookup and set like in this function.
+ */
+void ice_set_recipe_index(unsigned long idx, u8 *bitmap)
 {
-	u32 byte = idx / BITS_PER_BYTE;
-	u32 bit = idx % BITS_PER_BYTE;
+	const u32 byte = idx / BITS_PER_BYTE;
+	const u32 bit = idx % BITS_PER_BYTE;
 
 	if (byte >= 8)
 		return;
@@ -8013,6 +8173,9 @@ ice_find_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 			match |= ICE_PKT_GTP_NOPAY;
 		else if (lkups[i].type == ICE_L2TPV3)
 			match |= ICE_PKT_L2TPV3;
+		else if (lkups[i].type == ICE_ICMP4 ||
+			 lkups[i].type == ICE_ICMP6)
+			match |= ICE_PKT_ICMP;
 	}
 
 	while (ret->match && (match & ret->match) != ret->match)
@@ -8091,6 +8254,10 @@ ice_fill_adv_dummy_packet(struct ice_adv_lkup_elem *lkups, u16 lkups_cnt,
 		case ICE_IPV6_OFOS:
 		case ICE_IPV6_IL:
 			len = sizeof(struct ice_ipv6_hdr);
+			break;
+		case ICE_ICMP4:
+		case ICE_ICMP6:
+			len = sizeof(struct ice_icmp_hdr);
 			break;
 		case ICE_TCP_IL:
 		case ICE_UDP_OF:

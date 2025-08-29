@@ -58,9 +58,9 @@ static void ice_qp_reset_stats(struct ice_vsi *vsi, u16 q_idx)
  */
 static void ice_qp_clean_rings(struct ice_vsi *vsi, u16 q_idx)
 {
-	ice_clean_tx_ring(vsi->tx_rings[q_idx], NULL);
+	ice_clean_tx_ring(vsi->tx_rings[q_idx]);
 	if (ice_is_xdp_ena_vsi(vsi))
-		ice_clean_tx_ring(vsi->xdp_rings[q_idx], NULL);
+		ice_clean_tx_ring(vsi->xdp_rings[q_idx]);
 
 	ice_clean_rx_ring(vsi->rx_rings[q_idx]);
 }

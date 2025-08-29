@@ -799,7 +799,7 @@ void ice_pf_dcb_recfg(struct ice_pf *pf)
 	}
 	/* Notify the aux drivers that TC change is finished
 	 */
-	cdev_info = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+	cdev_info = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 	if (cdev_info) {
 		ice_setup_dcb_qos_info(pf, &cdev_info->qos_info);
 
@@ -979,8 +979,7 @@ void ice_setup_dcb_qos_info(struct ice_pf *pf, struct iidc_qos_params *qos_info)
 	if (!pf || !qos_info)
 		return;
 
-	cdev_info = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
-
+	cdev_info = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 	if (!cdev_info)
 		return;
 
@@ -1133,7 +1132,7 @@ ice_dcb_process_lldp_set_mib_change(struct ice_pf *pf,
 		dev_warn(dev, "%d TCs more than supported max of %d\n", numtc,
 			 pf->hw.func_caps.common_cap.maxtc);
 
-	cdev_info = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+	cdev_info = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 	if (cdev_info) {
 		struct iidc_event *ievent;
 

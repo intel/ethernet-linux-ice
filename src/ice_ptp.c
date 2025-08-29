@@ -22,7 +22,6 @@ static const char ice_pin_names[][64] = {
 	"TIME_SYNC",
 	"1PPS",
 };
-/* All descriptors' output/input pins are taken from HW specification */
 static const struct ice_ptp_pin_desc ice_pin_desc_e82x[] = {
 	/* name,        gpio,       delay */
 	{  TIME_SYNC, {  4, -1 }, { 0,  0 }},
@@ -2897,6 +2896,8 @@ ice_ptp_release_tx_tracker(struct ice_pf *pf, struct ice_ptp_tx *tx)
  * the timestamp block is shared for all ports in the same quad. To avoid
  * ports using the same timestamp index, logically break the block of
  * registers into chunks based on the port number.
+ *
+ * Return: 0 on success, -ENOMEM when out of memory
  */
 static int ice_ptp_init_tx_e82x(struct ice_pf *pf, struct ice_ptp_tx *tx,
 				u8 port)
@@ -2917,6 +2918,8 @@ static int ice_ptp_init_tx_e82x(struct ice_pf *pf, struct ice_ptp_tx *tx,
  *
  * Initialize the Tx timestamp tracker for this PF. For all PHYs except E82X,
  * each port has its own block of timestamps, independent of the other ports.
+ *
+ * Return: 0 on success, -ENOMEM when out of memory
  */
 static int ice_ptp_init_tx(struct ice_pf *pf, struct ice_ptp_tx *tx, u8 port)
 {
@@ -3590,7 +3593,7 @@ void ice_ptp_extts_event(struct ice_pf *pf)
 
 		lo = rd32(hw, GLTSYN_EVNT_L(chan, tmr_idx));
 		hi = rd32(hw, GLTSYN_EVNT_H(chan, tmr_idx));
-		event.timestamp = (((u64)hi) << 32) | lo;
+		event.timestamp = (u64)hi << 32 | lo;
 
 		/* Add delay compensation */
 		pin_desc_idx = ice_ptp_find_pin_idx(pf, PTP_PF_EXTTS, chan);
@@ -3623,7 +3626,7 @@ static int ice_ptp_cfg_extts(struct ice_pf *pf, struct ptp_extts_request *rq,
 {
 	u32 aux_reg, gpio_reg, irq_reg;
 	struct ice_hw *hw = &pf->hw;
-	uint chan, gpio_pin;
+	unsigned int chan, gpio_pin;
 	int pin_desc_idx;
 	u8 tmr_idx;
 
@@ -3701,9 +3704,7 @@ static int ice_ptp_cfg_extts(struct ice_pf *pf, struct ptp_extts_request *rq,
  */
 static void ice_ptp_disable_all_extts(struct ice_pf *pf)
 {
-	uint i;
-
-	for (i = 0; i < pf->ptp.info.n_ext_ts ; i++)
+	for (unsigned int i = 0; i < pf->ptp.info.n_ext_ts ; i++)
 		if (pf->ptp.extts_rqs[i].flags & PTP_ENABLE_FEATURE)
 			ice_ptp_cfg_extts(pf, &pf->ptp.extts_rqs[i],
 					  false);
@@ -3719,9 +3720,7 @@ static void ice_ptp_disable_all_extts(struct ice_pf *pf)
  */
 static void ice_ptp_enable_all_extts(struct ice_pf *pf)
 {
-	uint i;
-
-	for (i = 0; i < pf->ptp.info.n_ext_ts ; i++)
+	for (unsigned int i = 0; i < pf->ptp.info.n_ext_ts ; i++)
 		if (pf->ptp.extts_rqs[i].flags & PTP_ENABLE_FEATURE)
 			ice_ptp_cfg_extts(pf, &pf->ptp.extts_rqs[i],
 					  true);
@@ -3758,7 +3757,8 @@ static int ice_ptp_write_perout(struct ice_hw *hw, unsigned int chan,
 	 * HW toggles output when source clock hits the TGT and then adds
 	 * GLTSYN_CLKO value to the target, so it ends up with 50% duty cycle.
 	 */
-	period = ice_tspll_ns2ticks(hw, period) >> 1;
+	period = ice_tspll_ns2ticks(hw, period);
+	period >>= 1;
 
 	/* For proper operation, GLTSYN_CLKO must be larger than clock tick and
 	 * period has to fit in 32 bit register.
@@ -3811,7 +3811,7 @@ static int ice_ptp_write_perout(struct ice_hw *hw, unsigned int chan,
 static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 			      int on)
 {
-	unsigned int gpio_pin, prop_delay;
+	unsigned int gpio_pin, prop_delay_ns;
 	u64 clk, period, start, phase;
 	struct ice_hw *hw = &pf->hw;
 	int pin_desc_idx;
@@ -3824,7 +3824,7 @@ static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 		return -EIO;
 
 	gpio_pin = pf->ptp.ice_pin_desc[pin_desc_idx].gpio[1];
-	prop_delay = pf->ptp.ice_pin_desc[pin_desc_idx].delay[1];
+	prop_delay_ns = pf->ptp.ice_pin_desc[pin_desc_idx].delay[1];
 	period = rq->period.sec * NSEC_PER_SEC + rq->period.nsec;
 
 	/* If we're disabling the output or period is 0, clear out CLKO and TGT
@@ -3861,13 +3861,13 @@ static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 	 * at the next multiple of period, maintaining phase at least 0.5 second
 	 * from now, so we have time to write it to HW.
 	 */
-	clk = ice_ptp_read_src_clk_reg(pf, NULL);
-	clk = ice_tspll_ticks2ns(hw, clk + NSEC_PER_MSEC * 500);
-	if (rq->flags & PTP_PEROUT_PHASE || start <= clk - prop_delay)
+	clk = ice_ptp_read_src_clk_reg(pf, NULL) + NSEC_PER_MSEC * 500;
+	clk = ice_tspll_ticks2ns(hw, clk);
+	if (rq->flags & PTP_PEROUT_PHASE || start <= clk - prop_delay_ns)
 		start = roundup_u64(clk, period) + phase;
 
 	/* Compensate for propagation delay from the generator to the pin. */
-	start -= prop_delay;
+	start -= prop_delay_ns;
 
 	return ice_ptp_write_perout(hw, rq->index, gpio_pin, start, period);
 }
@@ -3882,9 +3882,7 @@ static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
  */
 static void ice_ptp_disable_all_perout(struct ice_pf *pf)
 {
-	uint i;
-
-	for (i = 0; i < pf->ptp.info.n_per_out; i++)
+	for (unsigned int i = 0; i < pf->ptp.info.n_per_out; i++)
 		if (pf->ptp.perout_rqs[i].period.sec ||
 		    pf->ptp.perout_rqs[i].period.nsec)
 			ice_ptp_cfg_perout(pf, &pf->ptp.perout_rqs[i],
@@ -3901,9 +3899,7 @@ static void ice_ptp_disable_all_perout(struct ice_pf *pf)
  */
 static void ice_ptp_enable_all_perout(struct ice_pf *pf)
 {
-	uint i;
-
-	for (i = 0; i < pf->ptp.info.n_per_out; i++)
+	for (unsigned int i = 0; i < pf->ptp.info.n_per_out; i++)
 		if (pf->ptp.perout_rqs[i].period.sec ||
 		    pf->ptp.perout_rqs[i].period.nsec)
 			ice_ptp_cfg_perout(pf, &pf->ptp.perout_rqs[i],
@@ -3972,7 +3968,7 @@ err_unlock:
  * @func: Assigned function
  * @chan: Assigned channel
  *
- * Return: 0 on success, -EOPNOTSUPP when function is not supported
+ * Return: 0 on success, -EOPNOTSUPP when function is not supported.
  */
 static int ice_verify_pin(struct ptp_clock_info *info, unsigned int pin,
 			  enum ptp_pin_function func, unsigned int chan)
@@ -4519,9 +4515,9 @@ static int ice_ptp_getcrosststamp(struct ptp_clock_info *info,
 				  struct system_device_crosststamp *cts)
 {
 	struct ice_pf *pf = ptp_info_to_pf(info);
-	struct ice_crosststamp_ctx ctx = {};
-
-	ctx.pf = pf;
+	struct ice_crosststamp_ctx ctx = {
+		.pf = pf
+	};
 
 	switch (pf->hw.mac_type) {
 	case ICE_MAC_E830:
@@ -4702,8 +4698,6 @@ static void ice_ptp_setup_pin_cfg(struct ice_pf *pf)
 			strscpy(pin->name, name, sizeof(pin->name));
 
 		pin->index = i;
-		pin->func = PTP_PF_NONE;
-		pin->chan = 0;
 	}
 
 	pf->ptp.info.pin_config = pf->ptp.pin_desc;
@@ -4730,17 +4724,17 @@ static void ice_ptp_disable_pins(struct ice_pf *pf)
  * ice_ptp_parse_sdp_entries - update ice_ptp_pin_desc structure from NVM
  * @pf: pointer to the PF structure
  * @entries: SDP connection section from NVM
- * @num_entries: number of valid entries in entries
+ * @num_entries: number of valid entries in sdp_entries
  * @pins: PTP pins array to update
  *
  * Return: 0 on success, negative error code otherwise.
  */
 static int ice_ptp_parse_sdp_entries(struct ice_pf *pf, __le16 *entries,
-				     uint num_entries,
+				     unsigned int num_entries,
 				     struct ice_ptp_pin_desc *pins)
 {
-	uint n_pins = 0;
-	uint i;
+	unsigned int n_pins = 0;
+	unsigned int i;
 
 	/* Setup ice_pin_desc array */
 	for (i = 0; i < ICE_N_PINS_MAX; i++) {
@@ -4789,22 +4783,18 @@ static int ice_ptp_parse_sdp_entries(struct ice_pf *pf, __le16 *entries,
 }
 
 /**
- * ice_ptp_set_funcs_e82x - Set specialized functions for E82x support
+ * ice_ptp_set_funcs_e82x - Set specialized functions for E82X support
  * @pf: Board private structure
  *
- * Assign functions to the PTP capabiltiies structure for E82x devices.
+ * Assign functions to the PTP capabiltiies structure for E82X devices.
  * Functions which operate across all device families should be set directly
- * in ice_ptp_set_caps. Only add functions here which are distinct for E82x
+ * in ice_ptp_set_caps. Only add functions here which are distinct for E82X
  * devices.
  */
 static void ice_ptp_set_funcs_e82x(struct ice_pf *pf)
 {
 #ifdef HAVE_PTP_CROSSTIMESTAMP
-#ifdef CONFIG_X86
-	if (boot_cpu_has(X86_FEATURE_ART) &&
-	    boot_cpu_has(X86_FEATURE_TSC_KNOWN_FREQ))
-		pf->ptp.info.getcrosststamp = ice_ptp_getcrosststamp;
-#endif /* CONFIG_X86 */
+	pf->ptp.info.getcrosststamp = ice_ptp_getcrosststamp;
 #endif /* HAVE_PTP_CROSSTIMESTAMP */
 
 	if (pf->hw.mac_type == ICE_MAC_GENERIC_3K_E825) {
@@ -4831,7 +4821,7 @@ static void ice_ptp_set_funcs_e810(struct ice_pf *pf)
 	__le16 entries[ICE_AQC_NVM_SDP_AC_MAX_SIZE];
 	struct ice_ptp_pin_desc *desc = NULL;
 	struct ice_ptp *ptp = &pf->ptp;
-	uint num_entries;
+	unsigned int num_entries;
 	int err;
 
 	err = ice_ptp_read_sdp_ac(&pf->hw, entries, &num_entries);
@@ -5515,9 +5505,11 @@ static int ice_ptp_setup_adapter(struct ice_pf *pf)
 static int ice_ptp_setup_pf(struct ice_pf *pf)
 {
 	struct ice_ptp *ctrl_ptp = ice_get_ctrl_ptp(pf);
+	struct ice_pf *ctrl_pf = ice_get_ctrl_pf(pf);
 	struct ice_ptp *ptp = &pf->ptp;
+	u8 port_num, phy;
 
-	if (WARN_ON(!ctrl_ptp) || pf->hw.mac_type == ICE_MAC_UNKNOWN)
+	if (WARN_ON(!ctrl_pf) || pf->hw.mac_type == ICE_MAC_UNKNOWN)
 		return -ENODEV;
 
 	INIT_LIST_HEAD(&ptp->port.list_node);
@@ -5526,6 +5518,18 @@ static int ice_ptp_setup_pf(struct ice_pf *pf)
 	list_add(&ptp->port.list_node,
 		 &pf->adapter->ports.ports);
 	mutex_unlock(&pf->adapter->ports.lock);
+
+	port_num = ptp->port.port_num;
+	phy = port_num / pf->hw.ptp.ports_per_phy;
+	/* clock ENET is enabled by default, mark it */
+	set_bit(port_num, &ctrl_ptp->tx_refclks[phy][ICE_REF_CLK_ENET]);
+
+	/* propagate TS PLL settings for non-control PFs */
+	if (!ice_pf_src_tmr_owned(pf) && ice_is_generic_mac(&pf->hw)) {
+		pf->hw.ptp.src_tmr_mode = ctrl_pf->hw.ptp.src_tmr_mode;
+		pf->hw.ptp.tspll_freq = ctrl_pf->hw.ptp.tspll_freq;
+		pf->hw.ptp.clk_src = ctrl_pf->hw.ptp.clk_src;
+	}
 
 	return 0;
 }
@@ -5671,6 +5675,8 @@ err_exit:
  * ice_ptp_init_port - Initialize PTP port structure
  * @pf: Board private structure
  * @ptp_port: PTP port structure
+ *
+ * Return: 0 on success, -ENODEV on invalid MAC type, -ENOMEM on failed alloc.
  */
 static int ice_ptp_init_port(struct ice_pf *pf, struct ice_ptp_port *ptp_port)
 {

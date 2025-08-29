@@ -124,6 +124,11 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_fltr const *fltr)
 		lkups_cnt++;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
+#ifdef HAVE_FLOW_MATCH_ICMP
+	if (flags & ICE_TC_FLWR_FIELD_ICMP)
+		lkups_cnt++;
+#endif /* HAVE_FLOW_MATCH_ICMP */
+
 #ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
 	/* are L2TPv3 options specified? */
 	if (flags & ICE_TC_FLWR_FIELD_L2TPV3_SESSID)
@@ -632,6 +637,27 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		i++;
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
+
+#ifdef HAVE_FLOW_MATCH_ICMP
+	if (flags & ICE_TC_FLWR_FIELD_ICMP) {
+		if (headers->l2_key.n_proto == htons(ETH_P_IPV6))
+			list[i].type = ICE_ICMP6;
+		else
+			list[i].type = ICE_ICMP4;
+
+		if (headers->icmp_mask.type) {
+			list[i].h_u.icmp_hdr.type = headers->icmp_key.type;
+			list[i].m_u.icmp_hdr.type = headers->icmp_mask.type;
+		}
+
+		if (headers->icmp_mask.code) {
+			list[i].h_u.icmp_hdr.code = headers->icmp_key.code;
+			list[i].m_u.icmp_hdr.code = headers->icmp_mask.code;
+		}
+
+		i++;
+	}
+#endif /* HAVE_FLOW_MATCH_ICMP */
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
 	if (flags & ICE_TC_FLWR_FIELD_L2TPV3_SESSID) {
@@ -1793,6 +1819,9 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 	      BIT(FLOW_DISSECTOR_KEY_ENC_IP) |
 #endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
 #endif /* HAVE_TC_FLOWER_ENC */
+#ifdef HAVE_FLOW_MATCH_ICMP
+	      BIT(FLOW_DISSECTOR_KEY_ICMP) |
+#endif /* HAVE_FLOW_MATCH_ICMP */
 #ifdef HAVE_FLOW_DISSECTOR_KEY_PPPOE
 	      BIT(FLOW_DISSECTOR_KEY_PPPOE) |
 #endif /* HAVE_FLOW_DISSECTOR_KEY_PPPOE */
@@ -2067,6 +2096,30 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		}
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
+
+#ifdef HAVE_FLOW_MATCH_ICMP
+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ICMP)) {
+		struct flow_match_icmp match;
+
+		flow_rule_match_icmp(rule, &match);
+#ifdef HAVE_FLOW_DISSECTOR_ICMP_ID
+
+		if (match.mask->id)
+			return -EOPNOTSUPP;
+#endif /* HAVE_FLOW_DISSECTOR_ICMP_ID */
+
+		if (!match.mask->type && !match.mask->code)
+			return -EINVAL;
+
+		fltr->flags |= ICE_TC_FLWR_FIELD_ICMP;
+
+		headers->icmp_key.type = match.key->type;
+		headers->icmp_mask.type = match.mask->type;
+
+		headers->icmp_key.code = match.key->code;
+		headers->icmp_mask.code = match.mask->code;
+	}
+#endif /* HAVE_FLOW_MATCH_ICMP */
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_L2TPV3)) {

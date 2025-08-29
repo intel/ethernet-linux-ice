@@ -1154,7 +1154,7 @@ bool ice_is_rdma_aux_loaded(struct ice_pf *pf)
 	struct iidc_auxiliary_drv *iadrv;
 	bool loaded = false;
 
-	rcdi = ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID);
+	rcdi = ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID);
 	if (!rcdi)
 		return false;
 

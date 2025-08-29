@@ -357,6 +357,11 @@ int ice_eswitch_mode_set(struct devlink *devlink, u16 mode)
 			return -EOPNOTSUPP;
 		}
 
+		if (!test_bit(ICE_FLAG_MAC_SOURCE_PRUNING, pf->flags)) {
+			dev_err(ice_pf_to_dev(pf), "switchdev cannot be configured - mac source pruning needs to be enabled\n");
+			return -EOPNOTSUPP;
+		}
+
 		dev_info(ice_pf_to_dev(pf), "PF %d changed eswitch mode to switchdev",
 			 pf->hw.pf_id);
 		INIT_RADIX_TREE(&pf->eswitch.reprs, GFP_KERNEL);

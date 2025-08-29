@@ -31,9 +31,6 @@ ice_build_ctob(u64 td_cmd, u64 td_offset, unsigned int size, u64 td_tag)
 			   (td_tag    << ICE_TXD_QW1_L2TAG1_S));
 }
 
-#define ICE_TXTIME_TX_DESC_IDX_M	GENMASK(12, 0)
-#define ICE_TXTIME_STAMP_M		GENMASK(31, 13)
-
 /**
  * ice_build_tstamp_desc - build Tx time stamp descriptor
  * @tx_desc: Tx LAN descriptor index

@@ -884,7 +884,6 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 		ice_del_all_adv_switch_fltr(vf);
 #endif
 
-		ice_vf_fdir_exit(vf);
 		ice_vf_fdir_init(vf);
 		/* clean VF control VSI when resetting VFs since it should be
 		 * setup only when iAVF creates its first FDIR rule.
@@ -985,7 +984,11 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 #ifdef HAVE_NETDEV_UPPER_INFO
 
 	lag = pf->lag;
-	mutex_lock(&pf->lag_mutex);
+	if (flags & ICE_VF_RESET_NO_LAG_LOCK)
+		lockdep_assert_held(&pf->lag_mutex);
+	else
+		mutex_lock(&pf->lag_mutex);
+
 	if (lag && lag->bonded && lag->primary) {
 		act_prt = lag->active_port;
 		if (act_prt != pri_prt && act_prt != ICE_LAG_INVALID_PORT &&
@@ -1017,7 +1020,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	/* Set VF disable bit state here, before triggering reset */
 	set_bit(ICE_VF_STATE_DIS, vf->vf_states);
 	set_bit(ICE_VF_STATE_IN_RESET, vf->vf_states);
-	ice_send_vf_reset_to_aux(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID),
+	ice_send_vf_reset_to_aux(ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID),
 				 ice_abs_vf_id(&pf->hw, vf->vf_id));
 	ice_trigger_vf_reset(vf, flags & ICE_VF_RESET_VFLR, false);
 
@@ -1147,7 +1150,9 @@ out_unlock:
 	if (lag && lag->bonded && lag->primary &&
 	    act_prt != ICE_LAG_INVALID_PORT)
 		ice_lag_move_vf_nodes_cfg(lag, pri_prt, act_prt);
-	mutex_unlock(&pf->lag_mutex);
+
+	if (!(flags & ICE_VF_RESET_NO_LAG_LOCK))
+		mutex_unlock(&pf->lag_mutex);
 
 #endif /* HAVE_NETDEV_UPPER_INFO */
 	if (flags & ICE_VF_RESET_LOCK)
@@ -1466,7 +1471,7 @@ static ssize_t sw_cross_timestamp_show(struct device *dev,
 int ice_init_vf_sysfs(struct ice_vf *vf)
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
-	int err = 0;
+	int err;
 
 	if (!vf->vfdev) {
 		dev_err(dev, "%s: no vfdev", __func__);
@@ -1481,17 +1486,24 @@ int ice_init_vf_sysfs(struct ice_vf *vf)
 	}
 
 	err = ice_init_vf_transmit_lldp_sysfs(vf);
-	if (err)
+	if (err) {
 		dev_err(dev, "could not init transmit_lldp sysfs entry, err: %d",
 			err);
+		return err;
+	}
 
 #if defined(CONFIG_X86)
-	if (vf->pf->hw.mac_type == ICE_MAC_E810)
-		device_create_file(&vf->vfdev->dev,
-				   &dev_attr_sw_cross_timestamp);
-
+	if (vf->pf->hw.mac_type == ICE_MAC_E810) {
+		err = device_create_file(&vf->vfdev->dev,
+					 &dev_attr_sw_cross_timestamp);
+		if (err) {
+			dev_err(dev, "could not init sw cross timestamping sysfs, err: %d\n", err);
+			return err;
+		}
+	}
 #endif /* CONFIG_X86 && VIRTCHNL_PTP_SUPPORT */
-	return err;
+
+	return 0;
 }
 
 /**
@@ -1701,6 +1713,9 @@ int ice_vsi_apply_spoofchk(struct ice_vsi *vsi, bool enable)
 		err = ice_vsi_ena_spoofchk(vsi);
 	else
 		err = ice_vsi_dis_spoofchk(vsi);
+
+	if (!err && !test_bit(ICE_FLAG_VF_SOURCE_PRUNING, vsi->back->flags))
+		err = ice_vsi_config_prune(vsi, enable);
 
 	return err;
 }

@@ -225,17 +225,13 @@ enum ice_ptp_pin_nvm {
 #define GLTSYN_EVNT_L(_chan, _idx)	(GLTSYN_EVNT_L_0(_idx) + ((_chan) * 16))
 #define GLTSYN_EVNT_H(_chan, _idx)	(GLTSYN_EVNT_H_0(_idx) + ((_chan) * 16))
 #define GLTSYN_EVNT_H_IDX_MAX		3
-/* GLGEN_GPIO_CTL_PIN_FUNC is sequential starting from idx 1 and going up based
- * first on the channel, then on timer index, then on the direction.
- */
-#define ICE_GPIO_CTL_PIN_FUNC_START	1
-#define ICE_TMR_IDX_MAX			1
-#define ICE_GPIO_CTL_IN(_chan, _tmr_idx)         \
-	(ICE_GPIO_CTL_PIN_FUNC_START + (_chan) + \
-	 GLTSYN_EVNT_H_IDX_MAX * (_tmr_idx))
-#define ICE_GPIO_CTL_OUT(_chan, _tmr_idx)                                    \
-	(ICE_GPIO_CTL_IN(GLTSYN_EVNT_H_IDX_MAX, ICE_TMR_IDX_MAX) + (_chan) + \
-	 GLTSYN_TGT_H_IDX_MAX * (_tmr_idx))
+
+#define ICE_GPIO_CTL_IN_START		1
+#define ICE_GPIO_CTL_OUT_START		8
+#define ICE_GPIO_CTL_IN(_chan, _tmr_idx) \
+	(ICE_GPIO_CTL_IN_START + (_chan) + GLTSYN_EVNT_H_IDX_MAX * (_tmr_idx))
+#define ICE_GPIO_CTL_OUT(_chan, _tmr_idx) \
+	(ICE_GPIO_CTL_OUT_START + (_chan) + GLTSYN_TGT_H_IDX_MAX * (_tmr_idx))
 
 /* Pin definitions for PTP */
 #define ICE_N_PINS_MAX			(GLGEN_GPIO_CTL_MAX_INDEX + 1)

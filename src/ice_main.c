@@ -6,7 +6,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include "ice.h"
-#include "kcompat_sigil.h"
 #include "kcompat_generated_defs.h"
 
 #include <linux/crash_dump.h>
@@ -32,10 +31,10 @@
 #include "ice_ieps.h"
 
 #define DRV_VERSION_MAJOR 2
-#define DRV_VERSION_MINOR 2
-#define DRV_VERSION_BUILD 9
+#define DRV_VERSION_MINOR 3
+#define DRV_VERSION_BUILD 10
 
-#define DRV_VERSION	"2.2.9"
+#define DRV_VERSION	"2.3.10"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -843,7 +842,9 @@ static void ice_udp_tunnel_prepare(struct ice_pf *pf)
 
 	pf->udp_tunnel_nic.set_port = ice_udp_tunnel_add;
 	pf->udp_tunnel_nic.unset_port = ice_udp_tunnel_del;
+#ifdef HAVE_UDP_TUNNEL_NIC_INFO_MAY_SLEEP
 	pf->udp_tunnel_nic.flags = UDP_TUNNEL_NIC_INFO_MAY_SLEEP;
+#endif /* HAVE_UDP_TUNNEL_NIC_INFO_MAY_SLEEP */
 #ifdef HAVE_UDP_TUNNEL_NIC_SHARED
 	pf->udp_tunnel_nic.shared = &pf->udp_tunnel_shared;
 #endif /* HAVE_UDP_TUNNEL_NIC_SHARED */
@@ -1031,6 +1032,7 @@ skip:
 	}
 
 	/* clear SW filtering DB */
+	ice_vf_fdir_exit_all(pf);
 	ice_clear_hw_tbls(hw);
 	/* disable the VSIs and their queues that are not already DOWN */
 	ice_pf_dis_all_vsi(pf, false);
@@ -2203,12 +2205,18 @@ int ice_link_event(struct ice_pf *pf, struct ice_port_info *pi, bool link_up,
 		ice_set_link(vsi, false);
 	}
 
+	if (!link_up && old_link)
+		pf->link_down_events++;
+
 	/* change from link event and previous link state */
 	if (link_up != old_link || link_speed != old_link_speed)
 		ice_handle_link_change(vsi, link_up, link_speed);
 
 	new_link = phy_info->link_info.link_info & ICE_AQ_LINK_UP;
 	new_link_speed = phy_info->link_info.link_speed;
+
+	if (!new_link && link_up)
+		pf->link_down_events++;
 
 	/* change from link event and link update */
 	if (link_up != new_link || link_speed != new_link_speed) {
@@ -3048,7 +3056,7 @@ static void ice_service_task_restart(struct ice_pf *pf)
  */
 static void ice_service_timer(struct timer_list *t)
 {
-	struct ice_pf *pf = from_timer(pf, t, serv_tmr);
+	struct ice_pf *pf = timer_container_of(pf, t, serv_tmr);
 
 	mod_timer(&pf->serv_tmr, round_jiffies(pf->serv_tmr_period + jiffies));
 	ice_service_task_schedule(pf);
@@ -4040,7 +4048,7 @@ static int ice_xdp_alloc_setup_rings(struct ice_vsi *vsi)
 
 		ring_stats = kzalloc(sizeof(*ring_stats), GFP_KERNEL);
 		if (!ring_stats) {
-			ice_free_tx_ring(xdp_ring, NULL);
+			ice_free_tx_ring(xdp_ring);
 			kfree(xdp_ring);
 			goto free_xdp_rings;
 		}
@@ -4068,7 +4076,7 @@ free_xdp_rings:
 		if (vsi->xdp_rings[i] && vsi->xdp_rings[i]->desc) {
 			kfree_rcu(vsi->xdp_rings[i]->ring_stats, rcu);
 			vsi->xdp_rings[i]->ring_stats = NULL;
-			ice_free_tx_ring(vsi->xdp_rings[i], NULL);
+			ice_free_tx_ring(vsi->xdp_rings[i]);
 		}
 	}
 	return -ENOMEM;
@@ -4395,7 +4403,7 @@ free_qmap:
 	for (i = 0; i < vsi->num_xdp_txq; i++)
 		if (vsi->xdp_rings[i]) {
 			if (vsi->xdp_rings[i]->desc)
-				ice_free_tx_ring(vsi->xdp_rings[i], NULL);
+				ice_free_tx_ring(vsi->xdp_rings[i]);
 			kfree_rcu(vsi->xdp_rings[i]->ring_stats, rcu);
 			vsi->xdp_rings[i]->ring_stats = NULL;
 			kfree_rcu(vsi->xdp_rings[i], rcu);
@@ -5516,6 +5524,9 @@ static void ice_set_pf_caps(struct ice_pf *pf)
 	if (func_caps->common_cap.ieee_1588)
 		set_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags);
 
+	set_bit(ICE_FLAG_MAC_SOURCE_PRUNING, pf->flags);
+	set_bit(ICE_FLAG_VF_SOURCE_PRUNING, pf->flags);
+
 	pf->max_pf_txqs = func_caps->common_cap.num_txq;
 	pf->max_pf_rxqs = func_caps->common_cap.num_rxq;
 }
@@ -6448,9 +6459,9 @@ static int ice_start_eth(struct ice_vsi *vsi)
 	if (err)
 		return err;
 
-	rtnl_lock();
 	err = ice_vsi_open(vsi);
-	rtnl_unlock();
+	if (err)
+		ice_fltr_remove_all(vsi);
 
 	return err;
 }
@@ -6553,47 +6564,36 @@ static void ice_deinit_eth(struct ice_pf *pf)
 	ice_deinit_eth_once(pf, ice_get_main_vsi(pf));
 }
 
-static int ice_wait_fw_load(struct ice_hw *hw, u32 timeout)
-{
-	int fw_loading_reg, ret;
-
-	ret = rd32_poll_timeout(hw, GL_MNG_FWSM, fw_loading_reg,
-				!(fw_loading_reg & GL_MNG_FWSM_FW_LOADING_M),
-				10000, timeout * 1000);
-
-	return ret ? -EIO : 0;
-}
-
 /**
- * ice_wait_for_fw - wait for full FW readiness
+ * ice_wait_fw_load - wait for FW load is completed
  * @hw: pointer to the hardware structure
  * @timeout: milliseconds that can elapse before timing out
  *
  * On some cards, FW can load longer than usual,
  * and could still not be ready before link is turned on.
  * In these cases, we should wait until all's loaded.
+ *
+ * Return:
+ * * 0 - on success (FW load is completed)
+ * * negative - on timeout
  */
-static int ice_wait_for_fw(struct ice_hw *hw, u32 timeout)
+static int ice_wait_fw_load(struct ice_hw *hw, u32 timeout)
 {
-#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
-	u8 idx;
-#endif /* CONFIG_PTP_1588_CLOCK */
+	int fw_loading_reg;
 
-	if (timeout == 0)
+	if (!timeout)
 		return 0;
 
-	if (hw->mac_type == ICE_MAC_E830)
-		return ice_wait_fw_load(hw, timeout);
-
-#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
-	/* these devices can load FW longer than usual, so we wait */
-	if (!ice_get_pf_c827_idx(hw, &idx))
+	fw_loading_reg = rd32(hw, GL_MNG_FWSM) & GL_MNG_FWSM_FW_LOADING_M;
+	/* notify the user only once if PHY FW is still loading */
+	if (fw_loading_reg)
+		dev_info(ice_hw_to_dev(hw), "Link initialization is blocked by PHY FW initialization. Link initialization will continue after PHY FW initialization completes.\n");
+	else
 		return 0;
 
-	return ice_wait_fw_load(hw, timeout);
-#else /* !CONFIG_PTP_1588_CLOCK */
-	return 0;
-#endif /* CONFIG_PTP_1588_CLOCK */
+	return rd32_poll_timeout(hw, GL_MNG_FWSM, fw_loading_reg,
+				 !(fw_loading_reg & GL_MNG_FWSM_FW_LOADING_M),
+				 10000, timeout * 1000);
 }
 
 static int ice_init_dev(struct ice_pf *pf)
@@ -6620,7 +6620,7 @@ static int ice_init_dev(struct ice_pf *pf)
 	 * due to necessity of loading FW from an external source.
 	 * This can take even half a minute.
 	 */
-	err = ice_wait_for_fw(hw, 30000);
+	err = ice_wait_fw_load(hw, 30000);
 	if (err) {
 		dev_err(dev, "ice_wait_for_fw timed out");
 		return err;
@@ -6890,9 +6890,15 @@ static int ice_init_link(struct ice_pf *pf)
 
 		if (!test_bit(ICE_FLAG_LINK_DOWN_ON_CLOSE_ENA, pf->flags)) {
 			struct ice_vsi *vsi = ice_get_main_vsi(pf);
+			struct ice_link_default_override_tlv *ldo;
+			bool link_en;
+
+			ldo = &pf->link_dflt_override;
+			link_en = !(ldo->options &
+				    ICE_LINK_OVERRIDE_AUTO_LINK_DIS);
 
 			if (vsi)
-				ice_phy_cfg(vsi, true);
+				ice_phy_cfg(vsi, link_en);
 		}
 	} else {
 		set_bit(ICE_FLAG_NO_MEDIA, pf->flags);
@@ -7162,8 +7168,13 @@ int ice_load(struct ice_pf *pf)
 
 	vsi = ice_get_main_vsi(pf);
 
+	err = ice_cfg_netdev(vsi);
+	if (err)
+		goto err_cfg_netdev;
+
 	vsi->flags |= ICE_VSI_FLAG_INIT;
 
+	rtnl_lock();
 	err = ice_vsi_cfg(vsi);
 	if (err)
 		goto err_vsi_cfg;
@@ -7171,6 +7182,15 @@ int ice_load(struct ice_pf *pf)
 	err = ice_start_eth(ice_get_main_vsi(pf));
 	if (err)
 		goto err_start_eth;
+	rtnl_unlock();
+
+	err = ice_devlink_create_pf_port(pf);
+	if (err)
+		goto err_devlink_create_pf_port;
+
+	err = ice_register_netdev(pf);
+	if (err)
+		goto err_register_netdev;
 
 	err = ice_init_aux(pf);
 	if (err)
@@ -7184,10 +7204,18 @@ int ice_load(struct ice_pf *pf)
 	return 0;
 
 err_init_peer:
+	ice_unregister_netdev(vsi);
+err_register_netdev:
+	ice_devlink_destroy_pf_port(pf);
+err_devlink_create_pf_port:
 	ice_vsi_close(ice_get_main_vsi(pf));
+	rtnl_lock();
 err_start_eth:
 	ice_vsi_decfg(ice_get_main_vsi(pf));
 err_vsi_cfg:
+	ice_decfg_netdev(vsi);
+	rtnl_unlock();
+err_cfg_netdev:
 	ice_deinit_dev(pf);
 	return err;
 }
@@ -7203,6 +7231,7 @@ void ice_unload(struct ice_pf *pf)
 	ice_deinit_features(pf);
 	ice_unplug_aux_devs(pf);
 	ice_deinit_aux(pf);
+	rtnl_lock();
 	ice_stop_eth(vsi);
 	/* clear requested queues, to allow new MSI-X value to apply */
 	if (vsi->req_rxq > pf->msix.eth || vsi->req_txq > pf->msix.eth) {
@@ -7211,6 +7240,10 @@ void ice_unload(struct ice_pf *pf)
 	}
 
 	ice_vsi_decfg(vsi);
+	rtnl_unlock();
+	ice_unregister_netdev(vsi);
+	ice_devlink_destroy_pf_port(pf);
+	ice_decfg_netdev(vsi);
 	ice_deinit_dev(pf);
 }
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
@@ -7226,7 +7259,7 @@ static int
 ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 {
 	struct device *dev = &pdev->dev;
-	$(SWITCH_MODE, ,struct ice_adapter *adapter;)
+	struct ice_adapter *adapter;
 	struct ice_pf *pf;
 	struct ice_hw *hw;
 	int err;
@@ -8224,10 +8257,17 @@ ice_set_tx_maxrate(struct net_device *netdev, int queue_index, u32 maxrate)
 static int
 ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
 	    struct net_device *dev, const unsigned char *addr,
-	    $_(HAVE_NDO_FDB_ADD_VID, u16 vid)
+#ifdef HAVE_NDO_FDB_ADD_VID
+	    u16 vid,
+#endif
 	    u16 flags
-	    _$(HAVE_NDO_FDB_ADD_NOTIFIED, bool *notified)
-	    _$(HAVE_NDO_FDB_ADD_EXTACK, struct netlink_ext_ack __always_unused *extack))
+#ifdef HAVE_NDO_FDB_ADD_NOTIFIED
+	    , bool *notified
+#endif
+#ifdef HAVE_NDO_FDB_ADD_EXTACK
+	    , struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	int err;
 
@@ -8269,9 +8309,16 @@ ice_fdb_add(struct ndmsg *ndm, struct nlattr __always_unused *tb[],
 static int
 ice_fdb_del(struct ndmsg *ndm, __always_unused struct nlattr *tb[],
 	    struct net_device *dev, const unsigned char *addr
-	    _$(HAVE_NDO_FDB_ADD_VID, u16 __always_unused vid)
-	    _$(HAVE_NDO_FDB_DEL_NOTIFIED, bool *notified)
-	    _$(HAVE_NDO_FDB_DEL_EXTACK, struct netlink_ext_ack __always_unused *extack))
+#ifdef HAVE_NDO_FDB_ADD_VID
+	    , u16 __always_unused vid
+#endif
+#ifdef HAVE_NDO_FDB_DEL_NOTIFIED
+	    , bool *notified
+#endif
+#ifdef HAVE_NDO_FDB_DEL_EXTACK
+	    , struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	int err;
 
@@ -8329,7 +8376,8 @@ set_tc_queue_err:
  * @netdev: Main net device to configure
  * @vdev: MACVLAN subordinate device
  */
-static $(ICE_TDD, const) void *
+static
+ void *
 ice_fwd_add_macvlan(struct net_device *netdev, struct net_device *vdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
@@ -9361,6 +9409,8 @@ static void ice_update_vsi_netstats(struct ice_vsi *vsi)
 	net_stats->rx_packets = cur_es->rx_unicast + cur_es->rx_multicast +
 				cur_es->rx_broadcast;
 	net_stats->rx_bytes = cur_es->rx_bytes;
+	if (!(vsi->netdev->features & NETIF_F_RXFCS))
+		net_stats->rx_bytes -= net_stats->rx_packets * ETH_FCS_LEN;
 }
 
 /**
@@ -9797,10 +9847,8 @@ int ice_down(struct ice_vsi *vsi)
 	ice_for_each_txq(vsi, i) {
 		if (vsi->tstamp_rings &&
 		    (vsi->tx_rings[i]->flags & ICE_TX_FLAGS_TXTIME))
-			ice_clean_tx_ring(vsi->tx_rings[i],
-					  vsi->tstamp_rings[i]);
-		else
-			ice_clean_tx_ring(vsi->tx_rings[i], NULL);
+			ice_clean_tstamp_ring(vsi->tstamp_rings[i]);
+		ice_clean_tx_ring(vsi->tx_rings[i]);
 	}
 
 	ice_for_each_rxq(vsi, i)
@@ -10309,8 +10357,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 		dev_err(dev, "No PF_VSI to update aux drivers\n");
 		goto err_vsi_rebuild;
 	}
-	ice_cdev_info_update_vsi(ice_find_cdev_info_by_id(pf, IIDC_RDMA_ID),
-				 vsi);
+	ice_cdev_info_update_vsi(ICE_FIND_CDEV_INFO(pf, IIDC_RDMA_ID), vsi);
 #ifdef HAVE_NDO_DFWD_OPS
 	if (test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags)) {
 		err = ice_vsi_rebuild_by_type(pf, ICE_VSI_OFFLOAD_MACVLAN);
@@ -12350,7 +12397,7 @@ static int ice_vsi_cfg_txtime(struct ice_vsi *vsi, bool enable,
 {
 	bool if_running = netif_running(vsi->netdev);
 	struct ice_pf *pf = vsi->back;
-	int err, timeout = 50;
+	int ret, timeout = 50;
 
 	while (test_and_set_bit(ICE_CFG_BUSY, vsi->back->state)) {
 		timeout--;
@@ -12367,14 +12414,16 @@ static int ice_vsi_cfg_txtime(struct ice_vsi *vsi, bool enable,
 	 * for allocating the timestamp rings.
 	 */
 	if (enable)
-		set_bit(ICE_FLAG_TXPP, pf->flags);
+		set_bit(ICE_FLAG_TXTIME, pf->flags);
 	else
-		clear_bit(ICE_FLAG_TXPP, pf->flags);
+		clear_bit(ICE_FLAG_TXTIME, pf->flags);
 
 	/* Rebuild VSI to allocate or free timestamp rings */
-	err = ice_vsi_rebuild(vsi, ICE_VSI_FLAG_NO_INIT);
-	if (err)
-		goto rebuild_err;
+	ret = ice_vsi_rebuild(vsi, ICE_VSI_FLAG_NO_INIT);
+	if (ret) {
+		dev_err(ice_pf_to_dev(pf), "Unhandled error during VSI rebuild. Unload and reload the driver.\n");
+		goto done;
+	}
 
 	if (enable)
 		vsi->tx_rings[queue]->flags |= ICE_TX_FLAGS_TXTIME;
@@ -12382,15 +12431,11 @@ static int ice_vsi_cfg_txtime(struct ice_vsi *vsi, bool enable,
 	if (!if_running)
 		goto done;
 
-	ice_pf_dcb_recfg(pf);
 	ice_vsi_open(vsi);
-	goto done;
 
-rebuild_err:
-	dev_err(ice_pf_to_dev(pf), "Unhandled error during VSI rebuild. Unload and reload the driver.\n");
 done:
 	clear_bit(ICE_CFG_BUSY, vsi->back->state);
-	return err;
+	return ret;
 }
 
 /**
@@ -12404,18 +12449,13 @@ static int ice_offload_txtime(struct net_device *netdev,
 			      void *qopt_off)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_aqc_ena_dis_txtime_qgrp txtime_pg;
 	struct ice_pf *pf = np->vsi->back;
 	struct tc_etf_qopt_offload *qopt;
 	struct ice_vsi *vsi = np->vsi;
-	struct ice_hw *hw = &pf->hw;
 	struct ice_tx_ring *tx_ring;
-	int err;
+	int ret = 0;
 
-	if (test_bit(ICE_SHUTTING_DOWN, pf->state))
-		return 0;
-
-	if (!ice_is_feature_supported(pf, ICE_F_TXPP))
+	if (!ice_is_feature_supported(pf, ICE_F_TXTIME))
 		return -EOPNOTSUPP;
 
 	qopt = qopt_off;
@@ -12433,25 +12473,34 @@ static int ice_offload_txtime(struct net_device *netdev,
 	/* When TxTime is first enabled on any Tx queue or is disabled on all
 	 * Tx queues, then configure TxTime to allocate or free resources.
 	 */
-	if (!test_bit(ICE_FLAG_TXPP, pf->flags) || !ice_is_txtime_ena(vsi)) {
-		err = ice_vsi_cfg_txtime(vsi, qopt->enable, qopt->queue);
-		if (err)
-			return err;
+	if (!test_bit(ICE_FLAG_TXTIME, pf->flags) || !ice_is_txtime_ena(vsi)) {
+		ret = ice_vsi_cfg_txtime(vsi, qopt->enable, qopt->queue);
+		if (ret)
+			goto err;
 	} else if (netif_running(netdev)) {
+		struct ice_aqc_ena_dis_txtime_qgrp txtime_pg;
+		struct ice_hw *hw = &pf->hw;
+
 		/* If queues are allocated and configured (running), then enable
 		 * or disable TxTime on the specified queue.
 		 */
-		err = ice_aq_ena_dis_txtimeq(hw, qopt->queue, 1, qopt->enable,
+		ret = ice_aq_ena_dis_txtimeq(hw, qopt->queue, 1, qopt->enable,
 					     &txtime_pg, NULL);
-		if (err) {
-			netdev_err(netdev, "Failed to %s TxTime\n",
-				   qopt->enable ? "enable" : "disable");
-			return err;
-		}
+		if (ret)
+			goto err;
 	}
 	netdev_info(netdev, "%s TxTime on queue: %i\n",
-		    qopt->enable ? "enable" : "disable", qopt->queue);
+		    str_enable_disable(qopt->enable), qopt->queue);
 	return 0;
+err:
+	netdev_err(netdev, "Failed to %s TxTime on queue: %i\n",
+		   str_enable_disable(qopt->enable), qopt->queue);
+
+	if (qopt->enable)
+		tx_ring->flags &= ~ICE_TX_FLAGS_TXTIME;
+	else
+		tx_ring->flags |= ICE_TX_FLAGS_TXTIME;
+	return ret;
 }
 #endif /* HAVE_TC_ETF_QOPT_OFFLOAD */
 

@@ -150,6 +150,7 @@ void ice_vsi_ctx_clear_antispoof(struct ice_vsi_ctx *ctx);
 void ice_vsi_ctx_set_allow_override(struct ice_vsi_ctx *ctx);
 void ice_vsi_ctx_clear_allow_override(struct ice_vsi_ctx *ctx);
 int ice_vsi_update_local_lb(struct ice_vsi *vsi, bool set);
+int ice_vsi_config_prune(struct ice_vsi *vsi, bool set);
 #ifndef HAVE_NETDEV_MIN_MAX_MTU
 int ice_check_mtu_valid(struct net_device *netdev, int new_mtu);
 #endif /* !HAVE_NETDEV_MIN_MAX_MTU */

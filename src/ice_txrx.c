@@ -157,10 +157,8 @@ static struct netdev_queue *txring_txq(const struct ice_tx_ring *ring)
 /**
  * ice_clean_tx_ring - Free any empty Tx buffers
  * @tx_ring: ring to be cleaned
- * @tstamp_ring: tstamp_ring to be cleaned
  */
-void ice_clean_tx_ring(struct ice_tx_ring *tx_ring,
-		       struct ice_tx_ring *tstamp_ring)
+void ice_clean_tx_ring(struct ice_tx_ring *tx_ring)
 {
 	u32 size;
 	u16 i;
@@ -194,15 +192,6 @@ tx_skip_free:
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
 
-	/* clean tstamp ring */
-	if (tstamp_ring) {
-		size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
-			     PAGE_SIZE);
-		memset(tstamp_ring->desc, 0, size);
-		tstamp_ring->next_to_use = 0;
-		tstamp_ring->next_to_clean = 0;
-	}
-
 	if (!tx_ring->netdev)
 		return;
 
@@ -213,16 +202,14 @@ tx_skip_free:
 /**
  * ice_free_tx_ring - Free Tx resources per queue
  * @tx_ring: Tx descriptor ring for a specific queue
- * @tstamp_ring: tstamp ring tied to tx ring
  *
  * Free all transmit software resources
  */
-void ice_free_tx_ring(struct ice_tx_ring *tx_ring,
-		      struct ice_tx_ring *tstamp_ring)
+void ice_free_tx_ring(struct ice_tx_ring *tx_ring)
 {
 	u32 size;
 
-	ice_clean_tx_ring(tx_ring, tstamp_ring);
+	ice_clean_tx_ring(tx_ring);
 	devm_kfree(tx_ring->dev, tx_ring->tx_buf);
 	tx_ring->tx_buf = NULL;
 
@@ -233,14 +220,44 @@ void ice_free_tx_ring(struct ice_tx_ring *tx_ring,
 				   tx_ring->desc, tx_ring->dma);
 		tx_ring->desc = NULL;
 	}
+}
 
-	if (tstamp_ring && tstamp_ring->desc) {
-		size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
-			     PAGE_SIZE);
-		dmam_free_coherent(tstamp_ring->dev, size,
-				   tstamp_ring->desc, tstamp_ring->dma);
-		tstamp_ring->desc = NULL;
-	}
+/**
+ * ice_clean_tstamp_ring - clean time stamp ring
+ * @tstamp_ring: ring to be cleaned
+ */
+void ice_clean_tstamp_ring(struct ice_tx_ring *tstamp_ring)
+{
+	u32 size;
+
+	if (!tstamp_ring->desc)
+		return;
+
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	memset(tstamp_ring->desc, 0, size);
+	tstamp_ring->next_to_use = 0;
+	tstamp_ring->next_to_clean = 0;
+}
+
+/**
+ * ice_free_tstamp_ring - Free time stamp resources per queue
+ * @tstamp_ring: time stamp descriptor ring for a specific queue
+ */
+void ice_free_tstamp_ring(struct ice_tx_ring *tstamp_ring)
+{
+	u32 size;
+
+	ice_clean_tstamp_ring(tstamp_ring);
+
+	if (!tstamp_ring->desc)
+		return;
+
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	dmam_free_coherent(tstamp_ring->dev, size, tstamp_ring->desc,
+			   tstamp_ring->dma);
+	tstamp_ring->desc = NULL;
 }
 
 /**

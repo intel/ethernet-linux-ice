@@ -10,6 +10,7 @@
 #define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
 #endif
 
+#include "kcompat_generated_defs.h"
 #include "kcompat_gcc.h"
 
 #ifndef HAVE_XARRAY_API
@@ -739,6 +740,16 @@ struct _kc_ethtool_pauseparam {
 
 #ifndef ETHTOOL_BUSINFO_LEN
 #define ETHTOOL_BUSINFO_LEN	32
+#endif
+
+#if defined(HAVE_ETHTOOL_SUPPORTED_RING_PARAMS) && !defined(NEED_ETHTOOL_RING_USE_TCP_DATA_SPLIT)
+/**
+ * enum _kc_ethtool_supported_ring_param - indicator caps for setting ring params
+ * @ETHTOOL_RING_USE_TCP_DATA_SPLIT: capture for setting tcp_data_split
+ */
+enum _kc_ethtool_supported_ring_param {
+	ETHTOOL_RING_USE_TCP_DATA_SPLIT	= BIT(5),
+};
 #endif
 
 #ifndef WAKE_FILTER

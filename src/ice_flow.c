@@ -2608,10 +2608,6 @@ ice_flow_set_hw_prof(struct ice_hw *hw, u16 dest_vsi_handle,
 
 	status = ice_flow_assoc_hw_prof(hw, blk, dest_vsi_handle,
 					fdir_vsi_handle, id);
-	if (status)
-		goto free_params;
-
-	return 0;
 
 free_params:
 	kfree(params);
@@ -3037,6 +3033,7 @@ ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
 		e->range_buf = range_buf;
 	} else {
 		kfree(range_buf);
+		range_buf = NULL;
 	}
 
 	status = ice_set_key(key, buf_sz * 2, buf, NULL, dontcare, NULL, 0,

@@ -172,8 +172,11 @@ function gen-ethtool() {
 	gen HAVE_ETHTOOL_GET_FEC_STATS_OPS if struct ethtool_ops matches '\\*get_fec_stats' in "$eth"
 	gen HAVE_ETHTOOL_KEEE if struct ethtool_keee in "$eth"
 	gen HAVE_ETHTOOL_KERNEL_TS_INFO if struct kernel_ethtool_ts_info in "$eth"
+	gen HAVE_ETHTOOL_LINK_EXT_STATS if struct ethtool_ops matches '\\*get_link_ext_stats' in "$eth"
 	gen HAVE_ETHTOOL_PUTS if fun ethtool_puts in "$eth"
 	gen HAVE_ETHTOOL_RXFH_PARAM if struct ethtool_rxfh_param in "$eth"
+	gen HAVE_ETHTOOL_SUPPORTED_RING_PARAMS if struct ethtool_ops matches 'supported_ring_params' in "$eth"
+	gen NEED_ETHTOOL_RING_USE_TCP_DATA_SPLIT if enum ethtool_supported_ring_param matches ETHTOOL_RING_USE_TCP_DATA_SPLIT in "$eth"
 	gen NEED_ETHTOOL_SPRINTF if fun ethtool_sprintf absent in "$eth"
 	gen HAVE_ETHTOOL_FLOW_RSS if macro FLOW_RSS in "$ueth"
 	gen HAVE_ETHTOOL_LINK_MODE_FEC_NONE_BIT if enum ethtool_link_mode_bit_indices matches ETHTOOL_LINK_MODE_FEC_NONE_BIT in "$ueth"
@@ -210,6 +213,7 @@ function gen-flow-dissector() {
 	# following HAVE ... CVLAN flag is mistakenly named after an enum key,
 	# but guards code around function call that was introduced later
 	gen HAVE_FLOW_DISSECTOR_KEY_CVLAN if fun flow_rule_match_cvlan in "$foh"
+	gen HAVE_FLOW_MATCH_ICMP if struct flow_match_icmp in "$foh"
 	gen HAVE_TC_FLOW_INDIR_BLOCK_CLEANUP if fun flow_indr_dev_unregister matches 'void \\(\\*release\\)\\(void \\*cb_priv\\)'  in "$foh"
 	gen HAVE_TC_FLOW_INDIR_DEV if fun flow_indr_dev_register in "$foh"
 	gen HAVE_TC_FLOW_RULE_INFRASTRUCTURE if struct flow_action in "$foh"
@@ -252,6 +256,7 @@ function gen-gnss() {
 
 	gen HAVE_CDEV_DEVICE if fun cdev_device_add in "$cdh"
 	gen HAVE_DEV_UEVENT_CONST if method dev_uevent of class matches '(const|RH_KABI_CONST) struct device' in "$clh" "$dh"
+	gen HAVE_NO_LLSEEK if fun no_llseek in "$fh"
 	gen HAVE_STREAM_OPEN if fun stream_open in "$fh"
 
 	NEED_CLASS_CREATE=0
@@ -325,6 +330,7 @@ function gen-netif() {
 	gen HAVE_GENEVE_TYPE if fun netif_is_geneve in include/net/geneve.h
 	gen HAVE_GRETAP_TYPE if fun netif_is_gretap in include/net/gre.h
 	gen HAVE_GTP_SUPPORT if fun netif_is_gtp in include/net/gtp.h
+	gen HAVE_NETIF_SUBQUEUE_MAYBE_STOP if macro netif_subqueue_maybe_stop in include/net/netdev_queues.h
 	gen HAVE_VXLAN_TYPE if fun netif_is_vxlan in include/net/vxlan.h
 }
 
@@ -355,6 +361,7 @@ function gen-pci() {
 function gen-ptp() {
 	classifyh='include/linux/ptp_classify.h'
 	clockh='include/linux/ptp_clock_kernel.h'
+	timekeepingh='include/linux/timekeeping.h'
 	uapih='include/uapi/linux/ptp_clock.h'
 	gen HAVE_PTP_CSID_X86_ART if enum clocksource_ids matches CSID_X86_ART in include/linux/clocksource_ids.h
 	gen NEED_PTP_CLASSIFY_RAW if fun ptp_classify_raw absent in "$classifyh"
@@ -367,12 +374,14 @@ function gen-ptp() {
 	gen HAVE_PTP_FIND_PIN_UNLOCKED if fun ptp_find_pin_unlocked in "$clockh"
 	gen NEED_DIFF_BY_SCALED_PPM if fun diff_by_scaled_ppm absent in "$clockh"
 	gen NEED_PTP_SYSTEM_TIMESTAMP if fun ptp_read_system_prets absent in "$clockh"
+	gen HAVE_PTP_SYS_COUNTERVAL_CSID if struct system_counterval_t matches clocksource_ids in "$timekeepingh"
 	gen HAVE_PTP_TX_ONESTEP_P2P if enum hwtstamp_tx_types matches HWTSTAMP_TX_ONESTEP_P2P in include/uapi/linux/net_tstamp.h
 	gen HAVE_PTP_SYS_OFFSET_EXTENDED_IOCTL if macro PTP_SYS_OFFSET_EXTENDED in "$uapih"
 
 	# aarch64 requires additional function to enable cross timestamping
 	if config_has CONFIG_ARM64 &&
-	   check fun arch_timer_wrap_counter in include/clocksource/arm_arch_timer.h ; then
+	   (check fun arch_timer_wrap_counter in include/clocksource/arm_arch_timer.h ||
+	    check struct system_counterval_t matches clocksource_ids in "$timekeepingh") ; then
 		HAVE_CROSS_TSTAMP=1
 	elif config_has CONFIG_X86 &&
 	     (check fun convert_art_ns_to_tsc in arch/x86/include/asm/tsc.h ||
@@ -393,6 +402,10 @@ function gen-stddef() {
 	gen NEED___STRUCT_GROUP if macro __struct_group absent in "$ustddef"
 }
 
+function gen-vdcm() {
+	gen NEED_EVENTFD_SIGNAL_NO_COUNTER if fun eventfd_signal matches '__u64 n' in include/linux/eventfd.h
+}
+
 function gen-vfio() {
 	# PASID_SUPPORT depends on multiple different functions existing
 	PASID_SUPPORT=0
@@ -409,6 +422,8 @@ function gen-vfio() {
 function gen-other() {
 	pciaerh='include/linux/aer.h'
 	ush='include/linux/u64_stats_sync.h'
+	fsh='include/linux/fortify-string.h'
+	cth='include/linux/compiler_types.h'
 	gen HAVE_X86_STEPPING if struct cpuinfo_x86 matches x86_stepping in arch/x86/include/asm/processor.h
 	gen HAVE_PCI_ENABLE_PCIE_ERROR_REPORTING if fun pci_enable_pcie_error_reporting in "$pciaerh"
 	gen NEED_PCI_AER_CLEAR_NONFATAL_STATUS if fun pci_aer_clear_nonfatal_status absent in "$pciaerh"
@@ -418,7 +433,17 @@ function gen-other() {
 	gen NEED_ASSIGN_BIT if fun assign_bit absent in include/linux/bitops.h
 	gen NEED_STATIC_ASSERT if macro static_assert absent in include/linux/build_bug.h
 	gen NEED_CLEANUP_API if macro __free absent in include/linux/cleanup.h
-	gen NEED___STRUCT_SIZE if macro __struct_size absent in include/linux/compiler_types.h include/linux/fortify-string.h
+	# special case for kernels 6.2 - 6.6 and __struct_size macro
+	# there is an implicit dependency on CONFIG_FORTIFY_SOURCE config option and inclusion
+	# of 'forify-string.h' header (which includes that macro definition).
+        __STRUCT_SIZE_NEEDED=0
+	if ! config_has CONFIG_FORTIFY_SOURCE && check macro __struct_size in "$fsh" ; then
+		__STRUCT_SIZE_NEEDED=1
+	fi
+	if [ ${__STRUCT_SIZE_NEEDED} -eq 0 ] && check macro __struct_size absent in "$cth" "$fsh"; then
+		__STRUCT_SIZE_NEEDED=1
+	fi
+	gen NEED___STRUCT_SIZE if string "${__STRUCT_SIZE_NEEDED}" equals 1
 	gen HAVE_COMPLETION_RAW_SPINLOCK if struct completion matches 'struct swait_queue_head' in include/linux/completion.h
 	gen NEED_IS_CONSTEXPR if macro __is_constexpr absent in include/linux/const.h include/linux/minmax.h include/linux/kernel.h
 	gen NEED_DEBUGFS_LOOKUP if fun debugfs_lookup absent in include/linux/debugfs.h
@@ -456,6 +481,7 @@ function gen-other() {
 	fi
 	gen NEED_MUL_U64_U64_DIV_U64 if string "${NEED_MUL_U64}" equals 1
 
+	gen NEED_DIV_U64_ROUND_CLOSEST if macro DIV_U64_ROUND_CLOSEST absent in include/linux/math64.h
 	gen NEED_DIV_U64_ROUND_UP if macro DIV_U64_ROUND_UP absent in include/linux/math64.h
 	gen NEED_ROUNDUP_U64 if fun roundup_u64 absent in include/linux/math64.h
 	gen HAVE_MDEV_GET_DRVDATA if fun mdev_get_drvdata in include/linux/mdev.h
@@ -480,6 +506,7 @@ function gen-other() {
 	gen NEED_STR_ENABLED_DISABLED if fun str_enabled_disabled absent in include/linux/string_choices.h include/linux/string_helpers.h
 	gen HAVE_STRING_HELPERS_H if enum string_size_units in include/linux/string_helpers.h
 	gen NEED_SYSFS_EMIT if fun sysfs_emit absent in include/linux/sysfs.h
+	gen NEED_TIMER_CONTAINER_OF if macro timer_container_of absent in include/linux/timer.h
 	gen NEED_TIMER_DELETE if fun timer_delete absent in include/linux/timer.h
 	gen HAVE_TRACE_ENABLED_SUPPORT if implementation of macro __DECLARE_TRACE matches 'trace_##name##_enabled' in include/linux/tracepoint.h
 	gen HAVE_TTY_OP_WRITE_SIZE_T if method write of tty_operations matches size_t in include/linux/tty_driver.h
@@ -491,6 +518,7 @@ function gen-other() {
 	gen HAVE_TC_FLOWER_ENC if enum flow_dissector_key_id matches FLOW_DISSECTOR_KEY_ENC_CONTROL in include/net/flow_dissector.h
 	gen HAVE_TC_FLOWER_VLAN_IN_TAGS if enum flow_dissector_key_id matches FLOW_DISSECTOR_KEY_VLANID in include/net/flow_dissector.h
 	gen HAVE_NET_RPS_H if macro RPS_NO_FILTER in include/net/rps.h
+	gen HAVE_UDP_TUNNEL_NIC_INFO_MAY_SLEEP if enum udp_tunnel_nic_info_flags matches UDP_TUNNEL_NIC_INFO_MAY_SLEEP in include/net/udp_tunnel.h
 	gen NEED_XDP_CONVERT_BUFF_TO_FRAME if fun xdp_convert_buff_to_frame absent in include/net/xdp.h
 	gen NEED_XSK_BUFF_DMA_SYNC_FOR_CPU_NO_POOL if fun xsk_buff_dma_sync_for_cpu matches 'struct xsk_buff_pool' in include/net/xdp_sock_drv.h
 	gen HAVE_ASSIGN_STR_2_PARAMS if macro __assign_str matches src in include/trace/stages/stage6_event_callback.h include/trace/trace_events.h include/trace/ftrace.h
@@ -544,6 +572,7 @@ function gen-all() {
 	gen-pci
 	gen-ptp
 	gen-stddef
+	gen-vdcm
 	gen-vfio
 	gen-other
 }
