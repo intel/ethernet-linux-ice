@@ -32,9 +32,9 @@
 
 #define DRV_VERSION_MAJOR 2
 #define DRV_VERSION_MINOR 3
-#define DRV_VERSION_BUILD 10
+#define DRV_VERSION_BUILD 14
 
-#define DRV_VERSION	"2.3.10"
+#define DRV_VERSION	"2.3.14"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -6607,7 +6607,7 @@ static int ice_init_dev(struct ice_pf *pf)
 		dev_err(dev, "ice_init_hw failed: %d\n", err);
 		return -EIO;
 	}
-	dev_info(dev, "fw %u.%u.%u api %u.%u.%u nvm %x.%x 0x%08x %u.%u.%u [%04x:%04x] [%04x:%04x]\n",
+	dev_info(dev, "fw %u.%u.%u api %u.%u.%u nvm %x.%02x 0x%08x %u.%u.%u [%04x:%04x] [%04x:%04x]\n",
 		 hw->fw_maj_ver, hw->fw_min_ver, hw->fw_patch, hw->api_maj_ver,
 		 hw->api_min_ver, hw->api_patch, hw->flash.nvm.major,
 		 hw->flash.nvm.minor, hw->flash.nvm.eetrack,

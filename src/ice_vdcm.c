@@ -556,15 +556,15 @@ static int ice_vdcm_sparse_mmap_cap(struct vfio_info_cap *caps,
 				    struct ice_adi *adi)
 {
 	struct vfio_region_info_cap_sparse_mmap *sparse;
-	int nr_areas = 0;
-	int ret = 0;
+	int nr_areas, ret, i;
 	size_t size;
-	int i = 0;
 
 	if (!caps)
 		return -EINVAL;
 
 	nr_areas = adi->get_sparse_mmap_num(adi);
+	if (nr_areas < 0)
+		return nr_areas;
 
 	size = sizeof(*sparse) + (nr_areas * sizeof(*sparse->areas));
 

@@ -10,8 +10,8 @@
 
 static DEFINE_IDA(ice_lag_ida);
 
-#define LACP_TRAIN_PKT_LEN		16
-static const u8 lacp_train_pkt[LACP_TRAIN_PKT_LEN] = { 0, 0, 0, 0, 0, 0,
+#define ICE_TRAIN_PKT_LEN		16
+static const u8 lacp_train_pkt[ICE_TRAIN_PKT_LEN] = { 0, 0, 0, 0, 0, 0,
 						       0, 0, 0, 0, 0, 0,
 						       0x88, 0x09, 0, 0 };
 
@@ -24,6 +24,10 @@ static const u8 ice_lport_rcp[ICE_RECIPE_LEN] = {
 	0x05, 0, 0, 0, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0x85, 0, 0x16, 0, 0, 0, 0xff, 0xff, 0x07, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0x30 };
+static const u8 ice_pfmac_rcp[ICE_RECIPE_LEN] = {
+	0x05, 0, 0, 0, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0x85, 0, 0x16, 0x05, 0x06, 0x07, 0xff, 0xff, 0x07, 0x00,
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0x30 };
 
 /**
  * netif_is_same_ice - determine if netdev is on the same ice NIC as local PF
@@ -109,6 +113,29 @@ ice_lag_find_hw_by_lport(struct ice_lag *lag, u8 lport)
 	}
 
 	return NULL;
+}
+
+/**
+ * ice_pkg_has_lport_extract - check if lport extraction supported
+ * @hw: HW struct
+ */
+static bool ice_pkg_has_lport_extract(struct ice_hw *hw)
+{
+	int i;
+
+	for (i = 0; i < hw->blk[ICE_BLK_SW].es.count; i++) {
+		u16 offset;
+		u8 fv_prot;
+
+		ice_find_prot_off(hw, ICE_BLK_SW, ICE_SW_DEFAULT_PROFILE, i,
+				  &fv_prot, &offset);
+
+		if (fv_prot == ICE_FV_PROT_MDID &&
+		    offset == ICE_LP_EXT_BUF_OFFSET)
+			return true;
+	}
+
+	return false;
 }
 
 /**
@@ -494,20 +521,22 @@ static void ice_lag_del_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 }
 
 /**
- * ice_lag_init_feature_support_flag - Check for NVM support for LAG
+ * ice_lag_init_feature_support_flag - Check for package and NVM support for LAG
  * @pf: PF struct
  */
 static void ice_lag_init_feature_support_flag(struct ice_pf *pf)
 {
 	struct ice_hw_common_caps *caps;
+	bool lport_extract;
 
+	lport_extract = ice_pkg_has_lport_extract(&pf->hw);
 	caps = &pf->hw.dev_caps.common_cap;
-	if (caps->roce_lag)
+	if (caps->roce_lag && lport_extract)
 		ice_set_feature_support(pf, ICE_F_ROCE_LAG);
 	else
 		ice_clear_feature_support(pf, ICE_F_ROCE_LAG);
 
-	if (caps->sriov_lag)
+	if (caps->sriov_lag && lport_extract)
 		ice_set_feature_support(pf, ICE_F_SRIOV_LAG);
 	else
 		ice_clear_feature_support(pf, ICE_F_SRIOV_LAG);
@@ -1250,7 +1279,7 @@ ice_lag_cfg_cp_fltr(struct ice_lag *lag, bool add)
 					  FIELD_PREP(ICE_SINGLE_ACT_VSI_ID_M,
 						     vsi->vsi_num));
 		s_rule->hdr_len = cpu_to_le16(ICE_LAG_SRIOV_TRAIN_PKT_LEN);
-		memcpy(s_rule->hdr_data, lacp_train_pkt, LACP_TRAIN_PKT_LEN);
+		memcpy(s_rule->hdr_data, lacp_train_pkt, ICE_TRAIN_PKT_LEN);
 		opc = ice_aqc_opc_add_sw_rules;
 	} else {
 		opc = ice_aqc_opc_remove_sw_rules;
@@ -1856,6 +1885,97 @@ static void ice_lag_unlink(struct ice_lag *lag)
 }
 
 /**
+ * ice_lag_cfg_pfmac_fltrs
+ * @lag: local lag info struct
+ * @link: is this a linking action
+ *
+ * Configure lport/MAC filters for this interfaces PF traffic in the
+ * current interface's SWID
+ */
+static void ice_lag_cfg_pfmac_fltrs(struct ice_lag *lag, bool link)
+{
+	struct ice_sw_rule_lkup_rx_tx *s_rule;
+	struct ice_vsi *vsi;
+	struct ice_hw *hw;
+	u16 s_rule_sz;
+	u8 lport;
+	u32 act;
+
+	if (!lag || !lag->upper_netdev)
+		return;
+
+	lport = lag->pf->hw.port_info->lport;
+	vsi = lag->pf->vsi[0];
+	hw = &lag->pf->hw;
+
+	act = ICE_FWD_TO_VSI | ICE_SINGLE_ACT_LAN_ENABLE |
+		ICE_SINGLE_ACT_VALID_BIT | FIELD_PREP(ICE_SINGLE_ACT_VSI_ID_M,
+		vsi->vsi_num);
+
+	s_rule_sz = ICE_SW_RULE_RX_TX_HDR_SIZE(s_rule, ICE_TRAIN_PKT_LEN);
+	s_rule = kzalloc(s_rule_sz, GFP_KERNEL);
+	if (!s_rule) {
+		netdev_warn(lag->netdev, "-ENOMEM error configuring PFMAC filters\n");
+		return;
+	}
+
+	if (link) {
+		u32 opc = ice_aqc_opc_add_sw_rules;
+
+		/* unicast */
+		memset(s_rule->hdr_data, 0, ICE_TRAIN_PKT_LEN);
+		ether_addr_copy(s_rule->hdr_data, lag->upper_netdev->dev_addr);
+		s_rule->recipe_id = cpu_to_le16(lag->pfmac_recipe);
+		s_rule->src = cpu_to_le16(lport);
+		s_rule->act = cpu_to_le32(act);
+		s_rule->hdr_len = cpu_to_le16(ICE_TRAIN_PKT_LEN);
+		s_rule->hdr.type = cpu_to_le16(ICE_AQC_SW_RULES_T_LKUP_RX);
+
+		if (ice_aq_sw_rules(hw, s_rule, s_rule_sz, ICE_LAG_NUM_RULES,
+				    opc, NULL)) {
+			netdev_warn(lag->netdev, "Error adding Unicast PFMAC rule for aggregate\n");
+			goto err_pfmac_free;
+		}
+
+		lag->pfmac_unicst_idx = le16_to_cpu(s_rule->index);
+
+		/* broadast */
+		memset(s_rule->hdr_data, 0, ICE_TRAIN_PKT_LEN);
+		eth_broadcast_addr(s_rule->hdr_data);
+		if (ice_aq_sw_rules(hw, s_rule, s_rule_sz, ICE_LAG_NUM_RULES,
+				    opc, NULL)) {
+			netdev_warn(lag->netdev, "Error adding Broadcast PFMAC rule for aggregate\n");
+			goto err_pfmac_free;
+		}
+
+		lag->pfmac_bdcst_idx = le16_to_cpu(s_rule->index);
+	} else {
+		u32 opc = ice_aqc_opc_remove_sw_rules;
+
+		/* unicast */
+		s_rule->index = cpu_to_le16(lag->pfmac_unicst_idx);
+		if (s_rule->index && ice_aq_sw_rules(hw, s_rule, s_rule_sz,
+						     ICE_LAG_NUM_RULES, opc,
+						     NULL))
+			netdev_warn(lag->netdev, "Error removing Unicast PFMAC rule for aggregate\n");
+
+		lag->pfmac_unicst_idx = 0;
+
+		/* broadcast */
+		s_rule->index = cpu_to_le16(lag->pfmac_bdcst_idx);
+		if (s_rule->index && ice_aq_sw_rules(hw, s_rule, s_rule_sz,
+						     ICE_LAG_NUM_RULES, opc,
+						     NULL))
+			netdev_warn(lag->netdev, "Error removing Broadcast PFMAC rule for aggregate\n");
+
+		lag->pfmac_bdcst_idx = 0;
+	}
+
+err_pfmac_free:
+	kfree(s_rule);
+}
+
+/**
  * ice_lag_link_unlink - helper function to call lag_link/unlink
  * @lag: lag info struct
  * @ptr: opaque pointer data
@@ -1868,10 +1988,13 @@ static void ice_lag_link_unlink(struct ice_lag *lag, void *ptr)
 	if (netdev != lag->netdev)
 		return;
 
-	if (info->linking)
+	if (info->linking) {
 		ice_lag_link(lag);
-	else
+		ice_lag_cfg_pfmac_fltrs(lag, true);
+	} else {
+		ice_lag_cfg_pfmac_fltrs(lag, false);
 		ice_lag_unlink(lag);
+	}
 }
 
 /**
@@ -2018,7 +2141,7 @@ static void ice_lag_rdma_changeupper_event(struct ice_lag *lag,
 		if (!lag->primary)
 			ice_lag_rdma_del_fltr(lag);
 		else
-			ida_simple_remove(&ice_lag_ida, lag->bond_id);
+			ida_free(&ice_lag_ida, lag->bond_id);
 
 		lag->bond_id = -1;
 		ice_lag_rdma_del_action(lag);
@@ -2303,19 +2426,18 @@ static void ice_lag_monitor_link(struct ice_lag *lag, void *ptr)
 		rcu_read_lock();
 		event_upper = netdev_master_upper_dev_get_rcu(event_netdev);
 		rcu_read_unlock();
-		if (prim_port == event_port && event_upper == lag->upper_netdev)
+		if (prim_port != event_port && event_upper == lag->upper_netdev)
 			ice_lag_add_prune_list(lag, event_pf);
 	} else {
-		if (prim_port == event_port) {
-			/* If un-linking port is the primary, then we need
-			 * to remove the primary's VSI from un-linking ports
-			 * prune list
+		if (prim_port != event_port) {
+			/* If un-linking port is not the primary, then we need
+			 * to remove its VSI from un-linking port's prune list
 			 */
 			ice_lag_del_prune_list(lag, event_pf);
 		} else {
 			struct list_head *tmp;
 
-			/* Secondary VSI leaving bond, need to remove its
+			/* Primary VSI leaving bond, need to remove its
 			 * VSI from all remaining interfaces prune lists
 			 */
 			list_for_each(tmp, lag->netdev_head) {
@@ -3358,7 +3480,7 @@ int ice_init_lag(struct ice_pf *pf)
 	u8 i;
 
 	ice_lag_init_feature_support_flag(pf);
-	if (!ice_is_feature_supported(pf, ICE_F_ROCE_LAG) ||
+	if (!ice_is_feature_supported(pf, ICE_F_ROCE_LAG) &&
 	    !ice_is_feature_supported(pf, ICE_F_SRIOV_LAG))
 		return 0;
 
@@ -3402,10 +3524,19 @@ int ice_init_lag(struct ice_pf *pf)
 	if (err)
 		goto free_rcp_res;
 
+	err = ice_create_lag_recipe(lag, &pf->hw, &lag->pfmac_recipe,
+				    ice_pfmac_rcp, 3);
+	if (err)
+		goto free_act_act_res;
+
 	ice_display_lag_info(lag);
 
 	dev_dbg(dev, "INIT LAG complete\n");
 	return 0;
+
+free_act_act_res:
+	ice_free_hw_res(&pf->hw, ICE_AQC_RES_TYPE_RECIPE, 1,
+			&lag->lport_recipe);
 
 free_rcp_res:
 	ice_free_hw_res(&pf->hw, ICE_AQC_RES_TYPE_RECIPE, 1,
@@ -3443,6 +3574,8 @@ void ice_deinit_lag(struct ice_pf *pf)
 			&pf->lag->pf_recipe);
 	ice_free_hw_res(&pf->hw, ICE_AQC_RES_TYPE_RECIPE, 1,
 			&pf->lag->lport_recipe);
+	ice_free_hw_res(&pf->hw, ICE_AQC_RES_TYPE_RECIPE, 1,
+			&pf->lag->pfmac_recipe);
 
 	kfree(lag);
 
