@@ -4251,13 +4251,13 @@ ice_vc_handle_mac_addr_msg(struct ice_vf *vf, u8 *msg, bool set)
 		goto handle_mac_exit;
 	}
 
-	/* If this VF is not privileged, then we can't add more than a
+	/* If this VF is not privileged, then we can't modify  more than a
 	 * limited number of addresses. Check to make sure that the
 	 * additions do not push us over the limit.
 	 */
-	if (set && !ice_is_vf_trusted(vf) &&
+	if (!ice_is_vf_trusted(vf) &&
 	    (vf->num_mac + al->num_elements) > ICE_MAX_MACADDR_PER_VF) {
-		dev_err(ice_pf_to_dev(pf), "Can't add more MAC addresses, because VF-%d is not trusted, switch the VF to trusted mode in order to add more functionalities\n",
+		dev_err(ice_pf_to_dev(pf), "Can't modify more MAC addresses, because VF-%d is not trusted, switch the VF to trusted mode in order to add more functionalities\n",
 			vf->vf_id);
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto handle_mac_exit;
@@ -6652,9 +6652,6 @@ ice_vc_validate_vlan_filter_list(struct virtchnl_vlan_filtering_caps *vfc,
 {
 	u16 i;
 
-	if (!vfl->num_elements)
-		return false;
-
 	for (i = 0; i < vfl->num_elements; i++) {
 		struct virtchnl_vlan_supported_caps *filtering_support =
 			&vfc->filtering_support;
@@ -6781,6 +6778,27 @@ ice_vc_del_vlans(struct ice_vf *vf, struct ice_vsi *vsi,
 }
 
 /**
+ * ice_vc_validate_del_vlan_filter_list - validate del filter list from the VF
+ * @vsi: VF VSI used to get number of existing VLAN filters
+ * @vfc: negotiated/supported VLAN filtering capabilities
+ * @vfl: VLAN filter list from VF to validate
+ *
+ * Validate number of VLANs to remove in the filter list from the VF during the
+ * VIRTCHNL_OP_DEL_VLAN_V2 opcode.
+ */
+static bool
+ice_vc_validate_del_vlan_filter_list(struct ice_vsi *vsi,
+				     struct virtchnl_vlan_filtering_caps *vfc,
+				     struct virtchnl_vlan_filter_list_v2 *vfl)
+{
+	if (!vfl->num_elements ||
+	    vfl->num_elements > ice_vsi_num_non_zero_vlans(vsi))
+		return false;
+
+	return ice_vc_validate_vlan_filter_list(vfc, vfl);
+}
+
+/**
  * ice_vc_remove_vlan_v2_msg - virtchnl handler for VIRTCHNL_OP_DEL_VLAN_V2
  * @vf: VF the message was received from
  * @msg: message received from the VF
@@ -6792,12 +6810,6 @@ static int ice_vc_remove_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct ice_vsi *vsi;
 
-	if (!ice_vc_validate_vlan_filter_list(&vf->vlan_v2_caps.filtering,
-					      vfl)) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		goto out;
-	}
-
 	if (!ice_vc_isvalid_vsi_id(vf, vfl->vport_id)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto out;
@@ -6805,6 +6817,13 @@ static int ice_vc_remove_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 
 	vsi = ice_get_vf_vsi(vf);
 	if (!vsi) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto out;
+	}
+
+	if (!ice_vc_validate_del_vlan_filter_list(vsi,
+						  &vf->vlan_v2_caps.filtering,
+						  vfl)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto out;
 	}
@@ -6891,10 +6910,13 @@ ice_vc_validate_add_vlan_filter_list(struct ice_vsi *vsi,
 				     struct virtchnl_vlan_filtering_caps *vfc,
 				     struct virtchnl_vlan_filter_list_v2 *vfl)
 {
-	u16 num_requested_filters = ice_vsi_num_non_zero_vlans(vsi) +
-		vfl->num_elements;
+	u16 num_req_fltr;
 
-	if (num_requested_filters > vfc->max_filters)
+	if (!vfl->num_elements)
+		return false;
+
+	num_req_fltr = ice_vsi_num_non_zero_vlans(vsi) + vfl->num_elements;
+	if (num_req_fltr > vfc->max_filters)
 		return false;
 
 	return ice_vc_validate_vlan_filter_list(vfc, vfl);

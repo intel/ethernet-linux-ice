@@ -127,6 +127,7 @@ function gen-devlink() {
 	gen NEED_DEVLINK_TO_DEV if fun devlink_to_dev absent in "$dh"
 	gen NEED_DEVLINK_UNLOCKED_RESOURCE if fun devl_resource_size_get absent in "$dh"
 	gen NEED_DEVL_HEALTH_REPORTER_CREATE if fun devl_health_reporter_create absent in "$dh"
+	gen NEED_DEVL_HEALTH_REPORTER_CREATE_REMOVE_GRACEFUL_PERIOD if fun devl_health_reporter_create matches graceful_period in "$dh"
 	gen NEED_DEVL_LOCK if fun devl_lock absent in "$dh"
 	gen NEED_DEVL_PARAMS_REGISTER if fun devl_params_register absent in "$dh"
 	gen NEED_DEVL_PORT_REGISTER if fun devl_port_register absent in "$dh"
@@ -161,14 +162,19 @@ function gen-dpll() {
 	gen HAVE_DPLL_ESYNC if method esync_get of dpll_pin_ops in "$dh"
 	gen HAVE_DPLL_LOCK_STATUS_ERROR if method lock_status_get of dpll_device_ops matches status_error in "$dh"
 	gen HAVE_DPLL_PHASE_OFFSET if method phase_offset_get of dpll_pin_ops in "$dh"
+	gen HAVE_DPLL_PHASE_OFFSET_MONITOR if method phase_offset_monitor_set of dpll_device_ops in "$dh"
 	gen NEED_DPLL_NETDEV_PIN_SET if fun dpll_netdev_pin_set absent in "$dh"
 }
 
 function gen-ethtool() {
 	eth='include/linux/ethtool.h'
+	nleth='include/linux/ethtool_netlink.h'
 	ueth='include/uapi/linux/ethtool.h'
+	unleth='include/uapi/linux/ethtool_netlink.h'
+	unlgeth='include/uapi/linux/ethtool_netlink_generated.h'
 	gen HAVE_ETHTOOL_COALESCE_EXTACK if method get_coalesce of ethtool_ops matches 'struct kernel_ethtool_coalesce \\*' in "$eth"
 	gen HAVE_ETHTOOL_EXTENDED_RINGPARAMS if method get_ringparam of ethtool_ops matches 'struct kernel_ethtool_ringparam \\*' in "$eth"
+	gen HAVE_ETHTOOL_FEC_HIST if method get_fec_stats of ethtool_ops matches 'struct ethtool_fec_hist \\*' in "$eth"
 	gen HAVE_ETHTOOL_GET_FEC_STATS_OPS if struct ethtool_ops matches '\\*get_fec_stats' in "$eth"
 	gen HAVE_ETHTOOL_KEEE if struct ethtool_keee in "$eth"
 	gen HAVE_ETHTOOL_KERNEL_TS_INFO if struct kernel_ethtool_ts_info in "$eth"
@@ -181,6 +187,13 @@ function gen-ethtool() {
 	gen HAVE_ETHTOOL_FLOW_RSS if macro FLOW_RSS in "$ueth"
 	gen HAVE_ETHTOOL_LINK_MODE_FEC_NONE_BIT if enum ethtool_link_mode_bit_indices matches ETHTOOL_LINK_MODE_FEC_NONE_BIT in "$ueth"
 	gen NEED_ETHTOOL_LINK_MODE_BIT_INDICES if enum ethtool_link_mode_bit_indices absent in "$ueth"
+
+	ETHTOOL_TCP_DATA_SPLIT=0
+	if check anonymous enum matches ETHTOOL_TCP_DATA_SPLIT_UNKNOWN in "$unleth" ||
+		check enum ethtool_tcp_data_split matches ETHTOOL_TCP_DATA_SPLIT_UNKNOWN in "$unlgeth"; then
+		ETHTOOL_TCP_DATA_SPLIT=1
+	fi
+	gen HAVE_ETHTOOL_SUPPORT_TCP_DATA_SPLIT if string "$ETHTOOL_TCP_DATA_SPLIT" equals 1
 }
 
 function gen-exported-symbols() {
@@ -372,6 +385,8 @@ function gen-ptp() {
 	gen HAVE_PTP_CLOCK_INFO_GETTIME64 if method gettime64 of ptp_clock_info in "$clockh"
 	gen HAVE_PTP_CLOCK_INFO_GETTIMEX64 if method gettimex64 of ptp_clock_info in "$clockh"
 	gen HAVE_PTP_FIND_PIN_UNLOCKED if fun ptp_find_pin_unlocked in "$clockh"
+	gen HAVE_PTP_SUPPORTED_EXTTS_FLAGS if struct ptp_clock_info matches supported_extts_flags in "$clockh"
+	gen HAVE_PTP_SUPPORTED_PEROUT_FLAGS if struct ptp_clock_info matches supported_perout_flags in "$clockh"
 	gen NEED_DIFF_BY_SCALED_PPM if fun diff_by_scaled_ppm absent in "$clockh"
 	gen NEED_PTP_SYSTEM_TIMESTAMP if fun ptp_read_system_prets absent in "$clockh"
 	gen HAVE_PTP_SYS_COUNTERVAL_CSID if struct system_counterval_t matches clocksource_ids in "$timekeepingh"

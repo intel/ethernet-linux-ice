@@ -10,6 +10,9 @@
 
 #define ICE_LAG_INVALID_PORT		0xFF
 #define ICE_LAG_RESET_RETRIES		5
+#define ICE_SW_DEFAULT_PROFILE		0
+#define ICE_FV_PROT_MDID		255
+#define ICE_LP_EXT_BUF_OFFSET		32
 #define ICE_LAG_SINGLE_FILTER_SIZE	0xC
 
 #define ICE_PRI_IDX 0x0
@@ -41,6 +44,11 @@ struct ice_lag {
 	u8 primary:1; /* this is primary */
 	u16 pf_recipe;
 	u16 lport_recipe;
+
+	u16 pfmac_recipe;
+	u16 pfmac_unicst_idx;
+	u16 pfmac_bdcst_idx;
+
 	u16 pf_rx_rule_id;
 	u16 pf_tx_rule_id;
 	u16 cp_rule_idx;

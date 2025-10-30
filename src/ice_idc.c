@@ -1083,7 +1083,7 @@ int ice_init_aux_devices(struct ice_pf *pf)
 
 		cdev_info = kzalloc(sizeof(*cdev_info), GFP_KERNEL);
 		if (!cdev_info) {
-			ida_simple_remove(&ice_cdev_info_ida, pf->aux_idx);
+			ida_free(&ice_cdev_info_ida, pf->aux_idx);
 			pf->aux_idx = -1;
 			return -ENOMEM;
 		}

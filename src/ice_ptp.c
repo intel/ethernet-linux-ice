@@ -380,7 +380,9 @@ static ssize_t ice_ptp_sma_cfg_store(struct device *dev, const char *buf,
 		return err;
 
 	pf->hw.ptp.sma_cfg[pin] = fun;
+	ice_dpll_pin_update_lock(pf);
 	ice_ptp_set_sma_cfg(&pf->hw);
+	ice_dpll_pin_update_unlock(pf, true, ICE_DPLL_PIN_TYPE_SOFTWARE, pin);
 
 	return len;
 
@@ -5869,8 +5871,10 @@ err_exit:
 void ice_ptp_release(struct ice_pf *pf)
 {
 	struct ice_ptp *ptp = &pf->ptp;
-	if (ptp->state != ICE_PTP_READY)
+	if (ptp->state != ICE_PTP_READY) {
+		ice_ptp_cleanup_pf(pf);
 		return;
+	}
 
 	ptp->state = ICE_PTP_UNINIT;
 	if (ice_pf_src_tmr_owned(pf) && pf->hw.mac_type == ICE_MAC_GENERIC)

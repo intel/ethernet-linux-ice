@@ -4226,12 +4226,12 @@ static int
 ice_sched_bw_to_rl_profile(struct ice_hw *hw, u32 bw,
 			   struct ice_aqc_rl_profile_elem *profile)
 {
+	u32 ts_freq = hw->psm_clk_freq / ICE_RL_PROF_TS_MULTIPLIER;
 	s64 bytes_per_sec, ts_rate, mv_tmp;
-	int status = -EINVAL;
+	int i, status = -EINVAL;
 	bool found = false;
 	s32 encode = 0;
 	s64 mv = 0;
-	s32 i;
 
 	/* Bw settings range is from 0.5Mb/sec to 100Gb/sec */
 	if (bw < ICE_SCHED_MIN_BW || bw > ICE_SCHED_MAX_BW)
@@ -4244,8 +4244,7 @@ ice_sched_bw_to_rl_profile(struct ice_hw *hw, u32 bw,
 	for (i = 0; i < 64; i++) {
 		u64 pow_result = BIT_ULL(i);
 
-		ts_rate = div64_long((s64)hw->psm_clk_freq,
-				     pow_result * ICE_RL_PROF_TS_MULTIPLIER);
+		ts_rate = div64_long((s64)ts_freq, pow_result);
 		if (ts_rate <= 0)
 			continue;
 

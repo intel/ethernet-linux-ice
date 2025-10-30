@@ -3761,6 +3761,19 @@ ice_dpll_find_pin(struct ice_pf *pf, enum ice_dpll_pin_type pin_type,
 		if (pin_idx >= pf->dplls.num_outputs)
 			return NULL;
 		return &pf->dplls.outputs[pin_idx];
+	case ICE_DPLL_PIN_TYPE_SOFTWARE:
+		switch (pin_idx) {
+		case SMA_SMA1:
+			return &pf->dplls.sma[ICE_DPLL_PIN_SW_1_IDX];
+		case SMA_UFL1:
+			return &pf->dplls.ufl[ICE_DPLL_PIN_SW_1_IDX];
+		case SMA_SMA2:
+			return &pf->dplls.sma[ICE_DPLL_PIN_SW_2_IDX];
+		case SMA_UFL2:
+			return &pf->dplls.ufl[ICE_DPLL_PIN_SW_2_IDX];
+		default:
+			return NULL;
+		}
 	default:
 		return NULL;
 	}

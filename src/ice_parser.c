@@ -282,6 +282,9 @@ err:
  */
 void ice_parser_destroy(struct ice_parser *psr)
 {
+	if (!psr)
+		return;
+
 	kfree(psr->imem_table);
 	kfree(psr->mi_table);
 	kfree(psr->pg_cam_table);

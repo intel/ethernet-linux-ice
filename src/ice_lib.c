@@ -92,6 +92,9 @@ static int ice_vsi_ctrl_all_rx_rings(struct ice_vsi *vsi, bool ena)
 	int ret = 0;
 	u16 i;
 
+	if (!vsi->rxq_map)
+		return -ENODEV;
+
 	ice_for_each_rxq(vsi, i)
 		ice_vsi_ctrl_one_rx_ring(vsi, ena, i, false);
 
@@ -3981,7 +3984,7 @@ ice_vsi_rebuild_set_coalesce(struct ice_vsi *vsi,
  */
 int ice_vsi_rebuild(struct ice_vsi *vsi, u32 flags)
 {
-	struct ice_coalesce_stored *coalesce;
+	struct ice_coalesce_stored *coalesce = NULL;
 	enum ice_vsi_type vtype;
 	int prev_num_q_vectors;
 	struct ice_pf *pf;
@@ -4004,12 +4007,14 @@ int ice_vsi_rebuild(struct ice_vsi *vsi, u32 flags)
 	ice_vsi_decfg(vsi);
 	ret = ice_vsi_cfg_def(vsi);
 	if (ret)
-		goto err_vsi_cfg;
+		goto err_vsi_cfg_tc_lan;
 
 	coalesce = kcalloc(vsi->num_q_vectors,
 			   sizeof(struct ice_coalesce_stored), GFP_KERNEL);
-	if (!coalesce)
-		return -ENOMEM;
+	if (!coalesce) {
+		ret = -ENOMEM;
+		goto err_vsi_cfg_tc_lan;
+	}
 
 	prev_num_q_vectors = ice_vsi_rebuild_get_coalesce(vsi, coalesce);
 

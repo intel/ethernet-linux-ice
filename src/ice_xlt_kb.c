@@ -149,12 +149,17 @@ static struct ice_xlt_kb *_xlt_kb_get(struct ice_hw *hw, u32 sect_type)
 	if (!data) {
 		ice_debug(hw, ICE_DBG_PARSER, "failed to find section type %d.\n",
 			  sect_type);
-		return NULL;
+		goto err_find_section;
 	}
 
 	_parse_kb_data(hw, kb, data);
 
 	return kb;
+
+err_find_section:
+	kfree(kb);
+
+	return NULL;
 }
 
 /**

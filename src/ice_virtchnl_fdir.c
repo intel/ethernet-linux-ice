@@ -2233,7 +2233,7 @@ ice_vc_fdir_parse_raw(struct ice_vf *vf,
 	pkt_buf = kzalloc(pkt_len, GFP_KERNEL);
 	msk_buf = kzalloc(pkt_len, GFP_KERNEL);
 	if (!pkt_buf || !msk_buf)
-		goto err_pkt_msk_buf_alloc;
+		goto err_parser_prep;
 
 	memcpy(pkt_buf, proto->raw.spec, pkt_len);
 	memcpy(msk_buf, proto->raw.mask, pkt_len);
@@ -2241,17 +2241,20 @@ ice_vc_fdir_parse_raw(struct ice_vf *vf,
 	hw = &pf->hw;
 	/* Get raw profile info via Parser Lib */
 	if (ice_parser_create(hw, &psr))
-		goto err_parser_process;
+		goto err_parser_prep;
+
 	ice_parser_dvm_set(psr, ice_is_dvm_ena(hw));
 	if (ice_get_open_tunnel_port(hw, TNL_VXLAN, &udp_port))
 		ice_parser_vxlan_tunnel_set(psr, udp_port, true);
-	if (ice_parser_run(psr, pkt_buf, pkt_len, &rslt))
-		goto err_parser_process;
+	if (ice_parser_run(psr, pkt_buf, pkt_len, &rslt)) {
+		ice_parser_destroy(psr);
+		goto err_parser_prep;
+	}
 	ice_parser_destroy(psr);
 
 	conf->prof = kzalloc(sizeof(*conf->prof), GFP_KERNEL);
 	if (!conf->prof)
-		goto err_conf_prof_alloc;
+		goto err_parser_prep;
 
 	err = ice_parser_profile_init(&rslt, pkt_buf, msk_buf,
 				      pkt_len, ICE_BLK_FD, true,
@@ -2270,10 +2273,7 @@ ice_vc_fdir_parse_raw(struct ice_vf *vf,
 
 err_parser_profile_init:
 	kfree(conf->prof);
-err_conf_prof_alloc:
-err_parser_process:
-	ice_parser_destroy(psr);
-err_pkt_msk_buf_alloc:
+err_parser_prep:
 	kfree(msk_buf);
 	kfree(pkt_buf);
 	return err;
@@ -4038,6 +4038,8 @@ int ice_vc_add_fdir_fltr(struct ice_vf *vf, u8 *msg)
 	if (fltr->validate_only) {
 		v_ret = VIRTCHNL_STATUS_SUCCESS;
 		stat->status = VIRTCHNL_FDIR_SUCCESS;
+		kfree(conf->prof);
+		kfree(conf->pkt_buf);
 		kfree(conf);
 		ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER,
 					    v_ret, (u8 *)stat, len);
@@ -4102,6 +4104,8 @@ err_clr_irq:
 err_rem_entry:
 	ice_vc_fdir_remove_entry(vf, conf, conf->flow_id);
 err_free_conf:
+	kfree(conf->prof);
+	kfree(conf->pkt_buf);
 	kfree(conf);
 err_exit:
 	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER, v_ret,

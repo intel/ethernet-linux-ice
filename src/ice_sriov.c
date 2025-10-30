@@ -320,7 +320,7 @@ static void ice_ena_vf_q_mappings(struct ice_vf *vf, u16 max_txq, u16 max_rxq)
 	struct ice_hw *hw = &vf->pf->hw;
 	u32 reg;
 
-	if (WARN_ON(!vsi))
+	if (WARN_ON(!vsi) || !vsi->txq_map || !vsi->rxq_map)
 		return;
 
 	/* set regardless of mapping mode */

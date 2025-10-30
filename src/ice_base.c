@@ -186,7 +186,10 @@ static void ice_free_q_vector(struct ice_vsi *vsi, int v_idx)
 	struct device *dev;
 
 	dev = ice_pf_to_dev(pf);
-	if (!vsi->q_vectors[v_idx]) {
+	if (!vsi->q_vectors) {
+		dev_dbg(dev, "Queue vectors array not initialized\n");
+		return;
+	} else if (!vsi->q_vectors[v_idx]) {
 		dev_dbg(dev, "Queue vector at index %d not found\n", v_idx);
 		return;
 	}
@@ -936,6 +939,9 @@ void ice_vsi_map_rings_to_vectors(struct ice_vsi *vsi)
 void ice_vsi_free_q_vectors(struct ice_vsi *vsi)
 {
 	int v_idx;
+
+	if (!vsi->q_vectors)
+		return;
 
 	ice_for_each_q_vector(vsi, v_idx)
 		ice_free_q_vector(vsi, v_idx);
