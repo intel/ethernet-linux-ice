@@ -2148,7 +2148,8 @@ ice_dpll_rclk_state_on_pin_set(const struct dpll_pin *pin, void *pin_priv,
 			       struct netlink_ext_ack *extack)
 {
 	struct ice_dpll_pin *p = pin_priv;
-	const struct ice_dpll_pin *parent = parent_pin_priv;
+	const struct ice_dpll_pin *parent =
+			parent_pin_priv;
 	bool enable = state == DPLL_PIN_STATE_CONNECTED;
 	struct ice_pf *pf = p->pf;
 	int ret = -EINVAL;

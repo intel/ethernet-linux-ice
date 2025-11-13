@@ -3410,7 +3410,8 @@ void ice_ptp_link_change(struct ice_pf *pf, bool linkup)
 		return;
 	case ICE_MAC_GENERIC:
 	case ICE_MAC_GENERIC_3K_E825:
-		ice_ptp_port_phy_restart(ptp_port);
+		if (linkup)
+			ice_ptp_port_phy_restart(ptp_port);
 		return;
 	default:
 		dev_warn(ice_pf_to_dev(pf), "%s: Unknown PHY type\n", __func__);
