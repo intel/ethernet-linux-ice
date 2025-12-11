@@ -2962,139 +2962,6 @@ ice_aq_get_vsi_params(struct ice_hw *hw, struct ice_vsi_ctx *vsi_ctx,
 }
 
 /**
- * ice_aq_add_update_mir_rule - add/update a mirror rule
- * @hw: pointer to the HW struct
- * @rule_type: Rule Type
- * @dest_vsi: VSI number to which packets will be mirrored
- * @count: length of the list
- * @mr_buf: buffer for list of mirrored VSI numbers
- * @cd: pointer to command details structure or NULL
- * @rule_id: Rule ID
- *
- * Add/Update Mirror Rule (0x260).
- */
-int
-ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
-			   u16 count, struct ice_mir_rule_buf *mr_buf,
-			   struct ice_sq_cd *cd, u16 *rule_id)
-{
-	struct ice_aqc_add_update_mir_rule *cmd;
-	struct ice_aq_desc desc;
-	__le16 *mr_list = NULL;
-	u16 buf_size = 0;
-	int status;
-
-	switch (rule_type) {
-	case ICE_AQC_RULE_TYPE_VPORT_INGRESS:
-	case ICE_AQC_RULE_TYPE_VPORT_EGRESS:
-		/* Make sure count and mr_buf are set for these rule_types */
-		if (!(count && mr_buf))
-			return -EINVAL;
-
-		buf_size = count * sizeof(__le16);
-		mr_list = kzalloc(buf_size, GFP_KERNEL);
-		if (!mr_list)
-			return -ENOMEM;
-		break;
-	case ICE_AQC_RULE_TYPE_PPORT_INGRESS:
-	case ICE_AQC_RULE_TYPE_PPORT_EGRESS:
-		/* Make sure count and mr_buf are not set for these
-		 * rule_types
-		 */
-		if (count || mr_buf)
-			return -EINVAL;
-		break;
-	default:
-		ice_debug(hw, ICE_DBG_SW, "Error due to unsupported rule_type %u\n", rule_type);
-		return -EIO;
-	}
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_add_update_mir_rule);
-
-	/* Pre-process 'mr_buf' items for add/update of virtual port
-	 * ingress/egress mirroring (but not physical port ingress/egress
-	 * mirroring)
-	 */
-	if (mr_buf) {
-		int i;
-
-		for (i = 0; i < count; i++) {
-			u16 id;
-
-			id = mr_buf[i].vsi_idx & ICE_AQC_RULE_MIRRORED_VSI_M;
-
-			/* Validate specified VSI number, make sure it is less
-			 * than ICE_MAX_VSI, if not return with error.
-			 */
-			if (id >= ICE_MAX_VSI) {
-				ice_debug(hw, ICE_DBG_SW, "Error VSI index (%u) out-of-range\n",
-					  id);
-				kfree(mr_list);
-				return -EIO;
-			}
-
-			/* add VSI to mirror rule */
-			if (mr_buf[i].add)
-				mr_list[i] =
-					cpu_to_le16(id | ICE_AQC_RULE_ACT_M);
-			else /* remove VSI from mirror rule */
-				mr_list[i] = cpu_to_le16(id);
-		}
-
-		desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
-	}
-
-	cmd = &desc.params.add_update_rule;
-	if ((*rule_id) != ICE_INVAL_MIRROR_RULE_ID)
-		cmd->rule_id = cpu_to_le16(((*rule_id) & ICE_AQC_RULE_ID_M) |
-					   ICE_AQC_RULE_ID_VALID_M);
-	cmd->rule_type = cpu_to_le16(rule_type & ICE_AQC_RULE_TYPE_M);
-	cmd->num_entries = cpu_to_le16(count);
-	cmd->dest = cpu_to_le16(dest_vsi);
-
-	status = ice_aq_send_cmd(hw, &desc, mr_list, buf_size, cd);
-	if (!status)
-		*rule_id = le16_to_cpu(cmd->rule_id) & ICE_AQC_RULE_ID_M;
-
-	kfree(mr_list);
-
-	return status;
-}
-
-/**
- * ice_aq_delete_mir_rule - delete a mirror rule
- * @hw: pointer to the HW struct
- * @rule_id: Mirror rule ID (to be deleted)
- * @keep_allocd: if set, the VSI stays part of the PF allocated res,
- *		 otherwise it is returned to the shared pool
- * @cd: pointer to command details structure or NULL
- *
- * Delete Mirror Rule (0x261).
- */
-int
-ice_aq_delete_mir_rule(struct ice_hw *hw, u16 rule_id, bool keep_allocd,
-		       struct ice_sq_cd *cd)
-{
-	struct ice_aqc_delete_mir_rule *cmd;
-	struct ice_aq_desc desc;
-
-	/* rule_id should be in the range 0...63 */
-	if (rule_id >= ICE_MAX_NUM_MIRROR_RULES)
-		return -EIO;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_del_mir_rule);
-
-	cmd = &desc.params.del_rule;
-	rule_id |= ICE_AQC_RULE_ID_VALID_M;
-	cmd->rule_id = cpu_to_le16(rule_id);
-
-	if (keep_allocd)
-		cmd->flags = cpu_to_le16(ICE_AQC_FLAG_KEEP_ALLOCD_M);
-
-	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
-}
-
-/**
  * ice_aq_alloc_free_vsi_list
  * @hw: pointer to the HW struct
  * @vsi_list_id: VSI list ID returned or used for lookup
@@ -3156,68 +3023,6 @@ ice_aq_alloc_free_vsi_list(struct ice_hw *hw, u16 *vsi_list_id,
 
 ice_aq_alloc_free_vsi_list_exit:
 	kfree(sw_buf);
-	return status;
-}
-
-/**
- * ice_aq_set_storm_ctrl - Sets storm control configuration
- * @hw: pointer to the HW struct
- * @bcast_thresh: represents the upper threshold for broadcast storm control
- * @mcast_thresh: represents the upper threshold for multicast storm control
- * @ctl_bitmask: storm control knobs
- *
- * Sets the storm control configuration (0x0280)
- */
-int
-ice_aq_set_storm_ctrl(struct ice_hw *hw, u32 bcast_thresh, u32 mcast_thresh,
-		      u32 ctl_bitmask)
-{
-	struct ice_aqc_storm_cfg *cmd;
-	struct ice_aq_desc desc;
-
-	cmd = &desc.params.storm_conf;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_set_storm_cfg);
-
-	cmd->bcast_thresh_size = cpu_to_le32(bcast_thresh & ICE_AQ_THRESHOLD_M);
-	cmd->mcast_thresh_size = cpu_to_le32(mcast_thresh & ICE_AQ_THRESHOLD_M);
-	cmd->storm_ctrl_ctrl = cpu_to_le32(ctl_bitmask);
-
-	return ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
-}
-
-/**
- * ice_aq_get_storm_ctrl - gets storm control configuration
- * @hw: pointer to the HW struct
- * @bcast_thresh: represents the upper threshold for broadcast storm control
- * @mcast_thresh: represents the upper threshold for multicast storm control
- * @ctl_bitmask: storm control knobs
- *
- * Gets the storm control configuration (0x0281)
- */
-int
-ice_aq_get_storm_ctrl(struct ice_hw *hw, u32 *bcast_thresh, u32 *mcast_thresh,
-		      u32 *ctl_bitmask)
-{
-	struct ice_aq_desc desc;
-	int status;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_storm_cfg);
-
-	status = ice_aq_send_cmd(hw, &desc, NULL, 0, NULL);
-	if (!status) {
-		struct ice_aqc_storm_cfg *resp = &desc.params.storm_conf;
-
-		if (bcast_thresh)
-			*bcast_thresh = le32_to_cpu(resp->bcast_thresh_size) &
-				ICE_AQ_THRESHOLD_M;
-		if (mcast_thresh)
-			*mcast_thresh = le32_to_cpu(resp->mcast_thresh_size) &
-				ICE_AQ_THRESHOLD_M;
-		if (ctl_bitmask)
-			*ctl_bitmask = le32_to_cpu(resp->storm_ctrl_ctrl);
-	}
-
 	return status;
 }
 
@@ -3867,8 +3672,8 @@ ice_dump_all_sw_rules(struct ice_hw *hw, enum ice_sw_lkup_type lkup,
 				 fi->l_data.vlan.vlan_id,
 				 fi->l_data.vlan.tpid_valid ? fi->l_data.vlan.tpid : ETH_P_8021Q,
 				 fm_entry->vsi_count, fi->fwd_id.vsi_list_id,
-				 fi->flag, fi->lb_en, fi->lan_en,
-				 fi->fltr_act, fi->fltr_rule_id);
+				 fi->flag, fi->fltr_act,
+				 fi->lb_en, fi->lan_en, fi->fltr_rule_id);
 		}
 		mutex_unlock(rule_lock);
 		break;
@@ -6672,27 +6477,32 @@ ice_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
 }
 
 /**
- * _ice_set_vlan_vsi_promisc
+ * ice_set_vlan_vsi_promisc
  * @hw: pointer to the hardware structure
  * @vsi_handle: VSI handle to configure
  * @promisc_mask: pointer to mask of promiscuous config bits
  * @rm_vlan_promisc: Clear VLANs VSI promisc mode
- * @lport: logical port number to configure promisc mode
- * @sw: pointer to switch info struct for which function add rule
  *
  * Configure VSI with all associated VLANs to given promiscuous mode(s)
  */
-static int
-_ice_set_vlan_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
-			  unsigned long *promisc_mask, bool rm_vlan_promisc,
-			  u8 lport, struct ice_switch_info *sw)
+int
+ice_set_vlan_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
+			 unsigned long *promisc_mask, bool rm_vlan_promisc)
 {
 	struct ice_fltr_list_entry *list_itr, *tmp;
 	struct list_head vsi_list_head;
 	struct list_head *vlan_head;
+	struct ice_switch_info *sw;
 	struct mutex *vlan_lock; /* Lock to protect filter rule list */
-	int status;
 	u16 vlan_id;
+	int status;
+	u8 lport;
+
+	if (!hw || !promisc_mask)
+		return -EINVAL;
+
+	sw = hw->switch_info;
+	lport = hw->port_info->lport;
 
 	INIT_LIST_HEAD(&vsi_list_head);
 	vlan_lock = &sw->recp_list[ICE_SW_LKUP_VLAN].filt_rule_lock;
@@ -6732,27 +6542,6 @@ free_fltr_list:
 		kfree(list_itr);
 	}
 	return status;
-}
-
-/**
- * ice_set_vlan_vsi_promisc
- * @hw: pointer to the hardware structure
- * @vsi_handle: VSI handle to configure
- * @promisc_mask: mask of promiscuous config bits
- * @rm_vlan_promisc: Clear VLANs VSI promisc mode
- *
- * Configure VSI with all associated VLANs to given promiscuous mode(s)
- */
-int
-ice_set_vlan_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
-			 unsigned long *promisc_mask, bool rm_vlan_promisc)
-{
-	if (!hw || !promisc_mask)
-		return -EINVAL;
-
-	return _ice_set_vlan_vsi_promisc(hw, vsi_handle, promisc_mask,
-					 rm_vlan_promisc, hw->port_info->lport,
-					 hw->switch_info);
 }
 
 /**

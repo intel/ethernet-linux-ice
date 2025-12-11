@@ -648,7 +648,8 @@ int ice_vc_flow_sub_fltr(struct ice_vf *vf, u8 *msg)
 		goto err_exit;
 	}
 
-	if (fltr->proto_hdrs.count >= VIRTCHNL_MAX_NUM_PROTO_HDRS) {
+	if (fltr->proto_hdrs.count > VIRTCHNL_MAX_NUM_PROTO_HDRS +
+	    VIRTCHNL_MAX_NUM_PROTO_HDRS_W_MSK) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		dev_dbg(dev, "Invalid protocol header count for VF %d\n",
 			vf->vf_id);

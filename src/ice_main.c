@@ -6,7 +6,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include "ice.h"
-#include "kcompat_generated_defs.h"
 
 #include <linux/crash_dump.h>
 #include "ice_base.h"
@@ -31,10 +30,10 @@
 #include "ice_ieps.h"
 
 #define DRV_VERSION_MAJOR 2
-#define DRV_VERSION_MINOR 3
-#define DRV_VERSION_BUILD 15
+#define DRV_VERSION_MINOR 4
+#define DRV_VERSION_BUILD 5
 
-#define DRV_VERSION	"2.3.15"
+#define DRV_VERSION	"2.4.5"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -2000,6 +1999,15 @@ static void ice_set_dflt_mib(struct ice_pf *pf)
 
 	buf = tlv->tlvinfo;
 	buf[0] = ICE_IEEE_ETS_IS_WILLING;
+
+	/* If 4 PFs are enabled on the device, then up to 8 TCs
+	 * are allowed to be programmed for LFC, however if 8
+	 * PFs are enabled, then only 4 TCs are allowed to be
+	 * programmed for LFC.
+	 */
+#define MAX_PFS_PER_DEVICE_FOR_MIB 8
+	if (hw->dev_caps.num_funcs == MAX_PFS_PER_DEVICE_FOR_MIB)
+		buf[0] |= ICE_IEEE_ETS_PRIO_1_S;
 
 	/* ETS CFG all UPs map to TC 0. Next 4 (1 - 4) Octets = 0.
 	 * Octets 5 - 12 are BW values, set octet 5 to 100% BW.
@@ -4271,6 +4279,27 @@ void ice_map_xdp_rings(struct ice_vsi *vsi)
 }
 
 /**
+ * ice_unmap_xdp_rings - Unmap XDP rings from interrupt vectors
+ * @vsi: the VSI with XDP rings being unmapped
+ */
+static void ice_unmap_xdp_rings(struct ice_vsi *vsi)
+{
+	int v_idx;
+
+	ice_for_each_q_vector(vsi, v_idx) {
+		struct ice_q_vector *q_vector = vsi->q_vectors[v_idx];
+		struct ice_tx_ring *ring;
+
+		ice_for_each_tx_ring(ring, q_vector->tx)
+			if (!ring->tx_buf || !ice_ring_is_xdp(ring))
+				break;
+
+		/* restore the value of last node prior to XDP setup */
+		q_vector->tx.tx_ring = ring;
+	}
+}
+
+/**
  * ice_prepare_xdp_rings - Allocate, configure and setup Tx rings for XDP
  * @vsi: VSI to bring up Tx rings used by XDP
  * @prog: bpf program that will be assigned to VSI
@@ -4332,11 +4361,13 @@ int ice_prepare_xdp_rings(struct ice_vsi *vsi, struct bpf_prog *prog,
 	if (err) {
 		dev_err(dev, "Failed VSI LAN queue config for XDP, error: %d\n",
 			err);
-		goto clear_xdp_rings;
+		goto unmap_xdp_rings;
 	}
 	ice_vsi_assign_bpf_prog(vsi, prog);
 
 	return 0;
+unmap_xdp_rings:
+	ice_unmap_xdp_rings(vsi);
 clear_xdp_rings:
 	for (i = 0; i < vsi->num_xdp_txq; i++)
 		if (vsi->xdp_rings[i]) {
@@ -4353,6 +4384,7 @@ err_map_xdp:
 	mutex_unlock(&pf->avail_q_mutex);
 
 	devm_kfree(dev, vsi->xdp_rings);
+	vsi->xdp_rings = NULL;
 err_alloc_rings:
 	vsi->num_xdp_txq = 0;
 	return err;
@@ -4370,7 +4402,7 @@ int ice_destroy_xdp_rings(struct ice_vsi *vsi, enum ice_xdp_cfg cfg_type)
 {
 	u16 max_txqs[ICE_MAX_TRAFFIC_CLASS] = { 0 };
 	struct ice_pf *pf = vsi->back;
-	int i, v_idx;
+	int i;
 
 	/* q_vectors are freed in reset path so there's no point in detaching
 	 * rings; in case of rebuild being triggered not from reset bits
@@ -4380,17 +4412,7 @@ int ice_destroy_xdp_rings(struct ice_vsi *vsi, enum ice_xdp_cfg cfg_type)
 	if (cfg_type == ICE_XDP_CFG_PART)
 		goto free_qmap;
 
-	ice_for_each_q_vector(vsi, v_idx) {
-		struct ice_q_vector *q_vector = vsi->q_vectors[v_idx];
-		struct ice_tx_ring *ring;
-
-		ice_for_each_tx_ring(ring, q_vector->tx)
-			if (!ring->tx_buf || !ice_ring_is_xdp(ring))
-				break;
-
-		/* restore the value of last node prior to XDP setup */
-		q_vector->tx.tx_ring = ring;
-	}
+	ice_unmap_xdp_rings(vsi);
 
 free_qmap:
 	mutex_lock(&pf->avail_q_mutex);
@@ -4460,8 +4482,8 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 		   struct netlink_ext_ack *extack)
 {
 	int frame_size = vsi->netdev->mtu + ICE_ETH_PKT_HDR_PAD;
-	bool if_running = netif_running(vsi->netdev);
 	int ret = 0, xdp_ring_err = 0;
+	bool if_running;
 
 	if (frame_size > vsi->rx_buf_len) {
 		NL_SET_ERR_MSG_MOD(extack, "MTU too large for loading XDP");
@@ -4474,8 +4496,11 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 		return 0;
 	}
 
+	if_running = netif_running(vsi->netdev) &&
+		     !test_and_set_bit(ICE_VSI_DOWN, vsi->state);
+
 	/* need to stop netdev while setting up the program for Rx rings */
-	if (if_running && !test_and_set_bit(ICE_VSI_DOWN, vsi->state)) {
+	if (if_running) {
 		ret = ice_down(vsi);
 		if (ret) {
 			NL_SET_ERR_MSG_MOD(extack, "Preparing device for XDP attach failed");
@@ -4486,8 +4511,10 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 	if (!ice_is_xdp_ena_vsi(vsi) && prog) {
 		xdp_ring_err = ice_prepare_xdp_rings(vsi, prog,
 						     ICE_XDP_CFG_FULL);
-		if (xdp_ring_err)
+		if (xdp_ring_err) {
 			NL_SET_ERR_MSG_MOD(extack, "Setting up XDP Tx resources failed");
+			goto resume_if;
+		}
 #ifdef ICE_ADD_PROBES
 		ice_clear_xdp_stats(vsi);
 #endif /* ICE_ADD_PROBES */
@@ -4511,6 +4538,7 @@ ice_xdp_setup_prog(struct ice_vsi *vsi, struct bpf_prog *prog,
 #endif /* HAVE_XSK_BATCHED_RX_ALLOC */
 	}
 
+resume_if:
 	if (if_running)
 		ret = ice_up(vsi);
 
@@ -6215,7 +6243,6 @@ ice_config_health_events(struct ice_pf *pf, bool enable)
 static int
 ice_init_tx_topology(struct ice_hw *hw, const struct firmware *firmware)
 {
-	u8 num_tx_sched_layers = hw->num_tx_sched_layers;
 	struct ice_pf *pf = hw->back;
 	struct device *dev;
 	int err;
@@ -6224,20 +6251,23 @@ ice_init_tx_topology(struct ice_hw *hw, const struct firmware *firmware)
 	err = ice_cfg_tx_topo(hw, firmware->data, firmware->size);
 	if (!err) {
 		dev_info(dev, "Tx scheduling layers switching feature %s\n",
-			 str_enabled_disabled(hw->num_tx_sched_layers <=
-					      num_tx_sched_layers));
-
-		/* if there was a change in topology ice_cfg_tx_topo triggered
-		 * a CORER and we need to re-init hw
+			 str_enabled_disabled(hw->num_tx_sched_layers ==
+					      ICE_SCHED_5_LAYERS));
+		return 0;
+	} else if (err == -ENODEV) {
+		/* If we failed to re-initialize the device, we can no longer
+		 * continue loading.
 		 */
-		ice_deinit_hw(hw);
-		err = ice_init_hw(hw);
-
+		dev_warn(dev, "Failed to initialize hardware after applying Tx scheduling configuration.\n");
 		return err;
 	} else if (err == -EIO) {
 		dev_info(dev, "DDP package does not support Tx scheduling layers switching feature - please update to the latest DDP package and try again\n");
+		return 0;
 	}
 
+	/* Do not treat this as a fatal error. */
+	dev_info(dev, "Failed to apply Tx scheduling configuration, err %d\n",
+		 err);
 	return 0;
 }
 
@@ -6686,6 +6716,7 @@ err_init_interrupt_scheme:
 	ice_deinit_pf(pf);
 err_init_pf:
 	ice_deinit_hw(hw);
+	ice_free_seg(hw);
 	return err;
 }
 
@@ -6697,6 +6728,7 @@ static void ice_deinit_dev(struct ice_pf *pf)
 
 	ice_deinit_pf(pf);
 	ice_deinit_hw(&pf->hw);
+	ice_free_seg(&pf->hw);
 
 	/* Service task is already stopped, so call reset directly. */
 	ice_reset(&pf->hw, ICE_RESET_PFR);
@@ -6737,9 +6769,15 @@ static int ice_init_features(struct ice_pf *pf)
 #if IS_ENABLED(CONFIG_DPLL)
 	err = ice_is_health_status_code_supported(&pf->hw, code,
 						  &pf->dplls.unmanaged);
+	if (err)
+		pf->dplls.unmanaged = false;
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
+	if (!ice_is_unmanaged_cgu_in_netlist(&pf->hw))
+		pf->dplls.unmanaged = false;
+#endif /* CONFIG_PTP_1588_CLOCK */
 	if (((ice_is_feature_supported(pf, ICE_F_CGU) ||
 	      ice_is_feature_supported(pf, ICE_F_PHY_RCLK)) &&
-	      pf->hw.mac_type == ICE_MAC_E810) || (!err && pf->dplls.unmanaged))
+	      pf->hw.mac_type == ICE_MAC_E810) || pf->dplls.unmanaged)
 		ice_dpll_init(pf);
 #endif /* IS_ENABLED(CONFIG_DPLL) */
 	if (ice_init_fdir(pf))
@@ -8175,7 +8213,11 @@ static void ice_set_rx_mode(struct net_device *netdev)
 	struct ice_netdev_priv *np = netdev_priv(netdev);
 	struct ice_vsi *vsi = np->vsi;
 
+#if IS_ENABLED(CONFIG_NET_DEVLINK)
+	if (!vsi || ice_is_switchdev_running(vsi->back))
+#else
 	if (!vsi)
+#endif /* ESWITCH_SUPPORT && CONFIG_NET_DEVLINK */
 		return;
 
 	/* Set the flags to synchronize filters
@@ -8322,7 +8364,7 @@ ice_fdb_del(struct ndmsg *ndm, __always_unused struct nlattr *tb[],
 {
 	int err;
 
-	if (ndm->ndm_state & NUD_PERMANENT) {
+	if (!(ndm->ndm_state & NUD_PERMANENT)) {
 		netdev_err(dev, "FDB only supports static addresses\n");
 		return -EINVAL;
 	}
@@ -10196,6 +10238,50 @@ static void ice_update_pf_netdev_link(struct ice_pf *pf)
 	}
 }
 
+static int ice_rebuild_ddp(struct ice_pf *pf, enum ice_reset_req reset_type)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	int err;
+
+	if (ice_is_safe_mode(pf))
+		return 0;
+	/* reload the SW DB of filter tables */
+	if (reset_type == ICE_RESET_PFR) {
+		ice_fill_blk_tbls(hw);
+		return 0;
+	}
+
+	/* reload the Tx Topology on EMPR */
+	if (reset_type == ICE_RESET_EMPR) {
+		ice_sched_cleanup_all(hw);
+		err = ice_sched_query_res_alloc(hw);
+		if (err) {
+			dev_warn(dev, "ice_sched_query_res_alloc() failed with err=%d\n",
+				 err);
+			return err;
+		}
+
+		err = ice_cfg_tx_topo(hw, hw->pkg_copy, hw->pkg_size);
+		if (err) {
+			dev_err(dev, "Tx topology init failed: %d\n", err);
+			return err;
+		}
+	}
+
+	/* reload DDP Package after CORER/GLOBR/EMPR reset */
+	ice_load_pkg(NULL, pf);
+	if (ice_is_safe_mode(pf)) {
+		dev_err(dev, "failed to reload DDP Package, continuing in Safe Mode\n");
+		if (ice_prepare_for_safe_mode(pf)) {
+			dev_err(dev, "could not transition to safe mode\n");
+			return -EBADF;
+		}
+	}
+
+	return 0;
+}
+
 /**
  * ice_rebuild - rebuild after reset
  * @pf: PF to rebuild
@@ -10230,37 +10316,22 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 		msleep(ICE_EMP_RESET_SLEEP_MS);
 	}
 
-	err = ice_init_all_ctrlq(hw);
-	if (err) {
-		dev_err(dev, "control queues init failed %d\n", err);
-		goto err_init_ctrlq;
-	}
-
-	if (hw->fwlog_cfg.options & ICE_FWLOG_OPTION_IS_REGISTERED) {
-		err = ice_fwlog_register(hw);
-		if (err)
-			hw->fwlog_cfg.options &=
-				~ICE_FWLOG_OPTION_IS_REGISTERED;
-	}
-
-	/* if DDP was previously loaded successfully */
-	if (!ice_is_safe_mode(pf)) {
-		/* reload the SW DB of filter tables */
-		if (reset_type == ICE_RESET_PFR) {
-			ice_fill_blk_tbls(hw);
-		} else {
-			/* Reload DDP Package after CORER/GLOBR reset */
-			ice_load_pkg(NULL, pf);
-
-			/* check if package reloaded */
-			if (ice_is_safe_mode(pf)) {
-				dev_err(dev, "failed to reload DDP Package\n");
-				if (ice_prepare_for_safe_mode(pf)) {
-					dev_err(dev, "could not transition to safe mode\n");
-					goto err_init_ctrlq;
-				}
-			}
+	scoped_guard(whole_device, pf) {
+		err = ice_init_all_ctrlq(hw);
+		if (err) {
+			dev_err(dev, "control queues init failed %d\n", err);
+			goto err_init_ctrlq;
 		}
+
+		if (hw->fwlog_cfg.options & ICE_FWLOG_OPTION_IS_REGISTERED) {
+			err = ice_fwlog_register(hw);
+			if (err)
+				hw->fwlog_cfg.options &=
+					~ICE_FWLOG_OPTION_IS_REGISTERED;
+		}
+		err = ice_rebuild_ddp(pf, reset_type);
+		if (err)
+			goto err_init_ctrlq;
 	}
 
 	/* Restore necessary config for Scalable IOV */
@@ -10298,6 +10369,7 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	}
 
 	dvm = ice_is_dvm_ena(hw);
+
 
 	pf->max_qps = ice_is_safe_mode(pf) ? 1 :  num_online_cpus();
 	err = ice_aq_set_port_params(pf->hw.port_info, 0, false, false, dvm,

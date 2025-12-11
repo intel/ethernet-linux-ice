@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2025 Intel Corporation */
 
+#include "ice.h"
 #include "ice_pf_vsi_vlan_ops.h"
 #include "ice_vf_vsi_vlan_ops.h"
 #include "ice_lib.h"
-#include "ice.h"
 
 static int
 op_unsupported_vlan_arg(struct ice_vsi * __always_unused vsi,

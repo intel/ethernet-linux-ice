@@ -326,6 +326,7 @@ enum ice_feature {
 	ICE_F_GCS,
 	ICE_F_ROCE_LAG,
 	ICE_F_SRIOV_LAG,
+	ICE_F_SRIOV_AA_LAG,
 	ICE_F_MBX_LIMIT,
 	ICE_F_MAX
 };
@@ -1167,6 +1168,10 @@ struct ice_pf {
 	struct device *hwmon_dev;
 #endif
 };
+
+DEFINE_GUARD(whole_device, struct ice_pf *,
+	     mutex_lock(&_T->adapter->whole_dev_lock),
+	     mutex_unlock(&_T->adapter->whole_dev_lock));
 
 extern struct ice_pf *
 ice_get_peer_pf(struct ice_pf *pf);

@@ -2452,7 +2452,13 @@ ice_get_set_tx_topo(struct ice_hw *hw, u8 *buf, u16 buf_size,
  * The function will apply the new Tx topology from the package buffer
  * if available.
  *
- * Return: zero when update was successful, negative values otherwise.
+ * Return:
+ * * 0 - Successfully applied topology configuration.
+ * * -EBUSY - Failed to acquire global configuration lock.
+ * * -EEXIST - Topology configuration has already been applied.
+ * * -EIO - Unable to apply topology configuration.
+ * * -ENODEV - Failed to re-initialize device after applying configuration.
+ * * Other negative error codes indicate unexpected failures.
  */
 int ice_cfg_tx_topo(struct ice_hw *hw, const void *buf, u32 len)
 {
@@ -2460,10 +2466,10 @@ int ice_cfg_tx_topo(struct ice_hw *hw, const void *buf, u32 len)
 	const struct ice_run_time_cfg_seg *seg;
 	const struct ice_buf_hdr *section;
 	const struct ice_pkg_hdr *pkg_hdr;
+	int status, wanted_layers;
 	enum ice_ddp_state state;
 	u16 offset, size = 0;
 	u32 reg = 0;
-	int status;
 	u8 flags;
 
 	static_assert(ICE_PKG_BUF_SIZE == ICE_AQ_MAX_BUF_LEN);
@@ -2484,36 +2490,27 @@ int ice_cfg_tx_topo(struct ice_hw *hw, const void *buf, u32 len)
 	/* Get the current Tx topology flags */
 	status = ice_get_set_tx_topo(hw, topo, ICE_AQ_MAX_BUF_LEN, NULL, &flags,
 				     false);
-
 	if (status) {
 		ice_debug(hw, ICE_DBG_INIT, "Get current topology is failed\n");
-		return status;
+		return -EIO;
 	}
+	wanted_layers = flags & ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW ?
+			ICE_SCHED_5_LAYERS : ICE_SCHED_9_LAYERS;
 
-	/* Is default topology already applied ? */
-	if (!(flags & ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW) &&
-	    hw->num_tx_sched_layers == ICE_SCHED_9_LAYERS) {
-		ice_debug(hw, ICE_DBG_INIT, "Default topology already applied\n");
-		return -EEXIST;
-	}
-
-	/* Is new topology already applied ? */
-	if ((flags & ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW) &&
-	    hw->num_tx_sched_layers == ICE_SCHED_5_LAYERS) {
-		ice_debug(hw, ICE_DBG_INIT, "New topology already applied\n");
-		return -EEXIST;
-	}
+	/* Is wanted topology already applied ? */
+	if (wanted_layers == hw->num_tx_sched_layers)
+		return 0;
 
 	/* Setting topology already issued? */
 	if (flags & ICE_AQC_TX_TOPO_FLAGS_ISSUED) {
 		ice_debug(hw, ICE_DBG_INIT, "Update Tx topology was done by another PF\n");
 		/* add a small delay before exiting */
 		msleep(2000);
-		return -EEXIST;
+		return 0;
 	}
 
 	/* Change the topology from new to default (5 to 9) */
-	if (!(flags & ICE_AQC_TX_TOPO_FLAGS_LOAD_NEW) &&
+	if (wanted_layers == ICE_SCHED_9_LAYERS &&
 	    hw->num_tx_sched_layers == ICE_SCHED_5_LAYERS) {
 		ice_debug(hw, ICE_DBG_INIT, "Change topology from 5 to 9 layers\n");
 		goto update_topo;
@@ -2573,31 +2570,46 @@ update_topo:
 				 ICE_GLOBAL_CFG_LOCK_TIMEOUT);
 	if (status) {
 		ice_debug(hw, ICE_DBG_INIT, "Failed to acquire global lock\n");
-		return status;
+		return -EBUSY;
 	}
 
 	/* Check if reset was triggered already. */
 	reg = rd32(hw, GLGEN_RSTAT);
 	if (reg & GLGEN_RSTAT_DEVSTATE_M) {
-		/* Reset is in progress, re-init the HW again */
 		ice_debug(hw, ICE_DBG_INIT, "Reset is in progress. Layer topology might be applied already\n");
 		ice_check_reset(hw);
-		return 0;
+		/* Reset is in progress, re-init the HW again */
+		goto reinit_hw;
 	}
 
 	/* Set new topology */
 	status = ice_get_set_tx_topo(hw, new_topo, size, NULL, NULL, true);
 	if (status) {
-		ice_debug(hw, ICE_DBG_INIT, "Failed setting Tx topology\n");
-		return status;
+		ice_debug(hw, ICE_DBG_INIT, "Failed to set Tx topology, status %d\n",
+			  status);
+		/* only report -EIO here as the caller checks the error value
+		 * and reports an informational error message informing that
+		 * the driver failed to program Tx topology.
+		 */
+		status = -EIO;
 	}
 
-	/* New topology is updated, delay 1 second before issuing the CORER */
+	/* Even if Tx topology config failed, we need to CORE reset here to
+	 * clear the global configuration lock. Delay 1 second to allow
+	 * hardware to settle then issue a CORER
+	 */
 	msleep(1000);
 	ice_reset(hw, ICE_RESET_CORER);
-	/* CORER will clear the global lock, so no explicit call
-	 * required for release
-	 */
+	ice_check_reset(hw);
 
-	return 0;
+reinit_hw:
+	/* Since we triggered a CORER, re-initialize hardware */
+	ice_deinit_hw(hw);
+	if (ice_init_hw(hw)) {
+		ice_free_seg(hw);
+		dev_err(ice_hw_to_dev(hw), "Failed to re-init hardware after setting Tx topology\n");
+		return -ENODEV;
+	}
+
+	return status;
 }

@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2025 Intel Corporation */
 
+#include "ice_migration.h"
+
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/types.h>
 
 #include <linux/vfio_pci_core.h>
-#include "ice_migration.h"
 
 #define DRIVER_DESC     "ICE VFIO PCI - User Level meta-driver for Intel E800 device family"
 

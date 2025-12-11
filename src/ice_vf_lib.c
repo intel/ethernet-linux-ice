@@ -889,7 +889,7 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 		 * setup only when iAVF creates its first FDIR rule.
 		 */
 		if (vf->ctrl_vsi_idx != ICE_NO_VSI)
-			ice_vf_ctrl_invalidate_vsi(vf);
+			ice_vf_ctrl_vsi_release(vf);
 
 		ice_vf_fsub_exit(vf);
 		ice_vf_fsub_init(vf);
@@ -950,20 +950,15 @@ static void ice_notify_vf_reset(struct ice_vf *vf)
 int ice_reset_vf(struct ice_vf *vf, u32 flags)
 {
 	struct ice_pf *pf = vf->pf;
-#ifdef HAVE_NETDEV_UPPER_INFO
-	struct ice_lag *lag;
-	u8 act_prt, pri_prt;
-#endif /* HAVE_NETDEV_UPPER_INFO */
 	struct ice_vsi *vsi;
 	struct device *dev;
 	int err = 0;
+#ifdef HAVE_NETDEV_UPPER_INFO
+	u8 act_prt;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	bool rsd;
 
 	dev = ice_pf_to_dev(pf);
-#ifdef HAVE_NETDEV_UPPER_INFO
-	act_prt = ICE_LAG_INVALID_PORT;
-	pri_prt = pf->hw.port_info->lport;
-#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if (flags & ICE_VF_RESET_NOTIFY)
 		ice_notify_vf_reset(vf);
@@ -983,20 +978,11 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 		lockdep_assert_held(&vf->cfg_lock);
 #ifdef HAVE_NETDEV_UPPER_INFO
 
-	lag = pf->lag;
 	if (flags & ICE_VF_RESET_NO_LAG_LOCK)
 		lockdep_assert_held(&pf->lag_mutex);
 	else
 		mutex_lock(&pf->lag_mutex);
-
-	if (lag && lag->bonded && lag->primary) {
-		act_prt = lag->active_port;
-		if (act_prt != pri_prt && act_prt != ICE_LAG_INVALID_PORT &&
-		    lag->upper_netdev)
-			ice_lag_move_vf_nodes_cfg(lag, act_prt, pri_prt);
-		else
-			act_prt = ICE_LAG_INVALID_PORT;
-	}
+	act_prt = ice_lag_prepare_vf_reset(pf->lag);
 #endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if (ice_is_vf_disabled(vf)) {
@@ -1147,10 +1133,7 @@ out_clear_state:
 	clear_bit(ICE_VF_STATE_IN_RESET, vf->vf_states);
 out_unlock:
 #ifdef HAVE_NETDEV_UPPER_INFO
-	if (lag && lag->bonded && lag->primary &&
-	    act_prt != ICE_LAG_INVALID_PORT)
-		ice_lag_move_vf_nodes_cfg(lag, pri_prt, act_prt);
-
+	ice_lag_complete_vf_reset(pf->lag, act_prt);
 	if (!(flags & ICE_VF_RESET_NO_LAG_LOCK))
 		mutex_unlock(&pf->lag_mutex);
 

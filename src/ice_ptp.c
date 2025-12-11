@@ -250,41 +250,23 @@ static int ice_ptp_verify_sma_cfg(struct ice_hw *hw, enum ice_sma_pins pin,
 
 	switch (pin) {
 	case SMA_SMA1:
-		if (fun == PTP_PF_EXTTS && sma_pins[SMA_UFL1] == PTP_PF_NONE) {
-			dev_warn(ice_hw_to_dev(hw), "SMA1 set to Rx. U.FL1 automatically enabled as Tx.\n");
-			sma_pins[SMA_UFL1] = PTP_PF_PEROUT;
-		} else if (fun == PTP_PF_PEROUT &&
-			   sma_pins[SMA_UFL1] != PTP_PF_NONE) {
-			dev_warn(ice_hw_to_dev(hw), "SMA1 set to Tx. U.FL1 automatically disabled.\n");
+		if (fun != PTP_PF_EXTTS && sma_pins[SMA_UFL1]) {
 			sma_pins[SMA_UFL1] = PTP_PF_NONE;
-		}
-		break;
-	case SMA_SMA2:
-		if (fun == PTP_PF_PEROUT && sma_pins[SMA_UFL2] == PTP_PF_NONE) {
-			dev_warn(ice_hw_to_dev(hw), "SMA2 set to Tx. U.FL2 automatically enabled as Rx.\n");
-			sma_pins[SMA_UFL2] = PTP_PF_EXTTS;
-		} else if (fun == PTP_PF_EXTTS &&
-			   sma_pins[SMA_UFL2] != PTP_PF_NONE) {
-			dev_warn(ice_hw_to_dev(hw), "SMA2 set to Rx. U.FL2 automatically disabled.\n");
-			sma_pins[SMA_UFL2] = PTP_PF_NONE;
+
+			if (fun)
+				dev_warn(ice_hw_to_dev(hw), "SMA1 set to Tx. U.FL1 automatically disabled.\n");
+			else
+				dev_warn(ice_hw_to_dev(hw), "SMA1 disabled. U.FL1 automatically disabled.\n");
 		}
 		break;
 	case SMA_UFL1:
-		if (fun == PTP_PF_PEROUT &&
-		    sma_pins[SMA_SMA1] != PTP_PF_EXTTS) {
+		if (fun && sma_pins[SMA_SMA1] != PTP_PF_EXTTS) {
 			dev_warn(ice_hw_to_dev(hw), "U.FL1 set to Tx. SMA1 automatically enabled as Rx.\n");
 			sma_pins[SMA_SMA1] = PTP_PF_EXTTS;
 		}
 		break;
-	case SMA_UFL2:
-		if (fun == PTP_PF_EXTTS &&
-		    sma_pins[SMA_SMA2] != PTP_PF_PEROUT) {
-			dev_warn(ice_hw_to_dev(hw), "U.FL2 set to Rx. SMA2 automatically enabled as Tx.\n");
-			sma_pins[SMA_SMA2] = PTP_PF_PEROUT;
-		}
-		break;
 	default:
-		return -ERANGE;
+		break;
 	}
 
 	return 0;
@@ -310,29 +292,20 @@ static int ice_ptp_set_sma_cfg(struct ice_hw *hw)
 	/* Set the right state based on the desired configuration.
 	 * When bit is set, functionality is disabled.
 	 */
-	data &= ~ICE_ALL_SMA_MASK;
-	if (!sma_pins[SMA_UFL1]) {
-		if (sma_pins[SMA_SMA1] == PTP_PF_EXTTS)
-			data |= ICE_SMA1_TX_EN;
-		else if (sma_pins[SMA_SMA1] == PTP_PF_PEROUT)
-			data |= ICE_SMA1_DIR_EN;
-		else
-			data |= ICE_SMA1_MASK;
-	}
+	data |= ICE_ALL_SMA_MASK;
+	if (sma_pins[SMA_SMA1] == PTP_PF_PEROUT)
+		data &= ~ICE_SMA1_TX_EN;
+	else if (sma_pins[SMA_SMA1] == PTP_PF_EXTTS)
+		data &= ~ICE_SMA1_DIR_EN;
+	if (sma_pins[SMA_UFL1] == PTP_PF_PEROUT)
+		data &= ~(ICE_SMA1_DIR_EN | ICE_SMA1_TX_EN);
 
-	if (!sma_pins[SMA_UFL2]) {
-		if (sma_pins[SMA_SMA2] == PTP_PF_EXTTS)
-			data |= ICE_SMA2_TX_EN | ICE_SMA2_UFL2_RX_DIS;
-		else if (sma_pins[SMA_SMA2] == PTP_PF_PEROUT)
-			data |= ICE_SMA2_DIR_EN | ICE_SMA2_UFL2_RX_DIS;
-		else
-			data |= ICE_SMA2_MASK;
-	} else {
-		if (!sma_pins[SMA_SMA2])
-			data |= ICE_SMA2_DIR_EN | ICE_SMA2_TX_EN;
-		else
-			data |= ICE_SMA2_DIR_EN;
-	}
+	if (sma_pins[SMA_SMA2] == PTP_PF_PEROUT)
+		data &= ~ICE_SMA2_TX_EN;
+	else if (sma_pins[SMA_SMA2] == PTP_PF_EXTTS)
+		data &= ~ICE_SMA2_DIR_EN;
+	if (sma_pins[SMA_UFL2] == PTP_PF_EXTTS)
+		data &= ~ICE_SMA2_UFL2_RX_EN;
 
 	return ice_write_sma_ctrl(hw, data);
 }
@@ -3409,6 +3382,8 @@ void ice_ptp_link_change(struct ice_pf *pf, bool linkup)
 		/* Do not reconfigure E810 or E830 PHY */
 		return;
 	case ICE_MAC_GENERIC:
+		ice_ptp_port_phy_restart(ptp_port);
+		return;
 	case ICE_MAC_GENERIC_3K_E825:
 		if (linkup)
 			ice_ptp_port_phy_restart(ptp_port);
@@ -3633,12 +3608,14 @@ static int ice_ptp_cfg_extts(struct ice_pf *pf, struct ptp_extts_request *rq,
 	int pin_desc_idx;
 	u8 tmr_idx;
 
+#ifndef HAVE_PTP_SUPPORTED_EXTTS_FLAGS
 	/* Reject requests with unsupported flags */
 	if (rq->flags & ~(PTP_ENABLE_FEATURE |
 			  PTP_RISING_EDGE |
 			  PTP_FALLING_EDGE |
 			  PTP_STRICT_FLAGS))
 		return -EOPNOTSUPP;
+#endif /* !HAVE_PTP_SUUPPORTED_EXTTS_FLAGS */
 
 	if (pf->hw.ptp.src_tmr_mode == ICE_SRC_TMR_MODE_LOCKED) {
 		dev_err(ice_pf_to_dev(pf), "Locked mode EXTTS not supported\n");
@@ -3819,8 +3796,10 @@ static int ice_ptp_cfg_perout(struct ice_pf *pf, struct ptp_perout_request *rq,
 	struct ice_hw *hw = &pf->hw;
 	int pin_desc_idx;
 
+#ifndef HAVE_PTP_SUPPORTED_PEROUT_FLAGS
 	if (rq->flags & ~PTP_PEROUT_PHASE)
 		return -EOPNOTSUPP;
+#endif /* !HAVE_PTP_SUPPORTED_PEROUT_FLAGS */
 
 	pin_desc_idx = ice_ptp_find_pin_idx(pf, PTP_PF_PEROUT, rq->index);
 	if (pin_desc_idx < 0)
@@ -5096,6 +5075,15 @@ static void ice_ptp_set_caps(struct ice_pf *pf)
 	info->do_aux_work = ice_ptp_periodic_work;
 #endif /* HAVE_PTP_CANCEL_WORKER_SYNC */
 
+#ifdef HAVE_PTP_SUPPORTED_EXTTS_FLAGS
+	info->supported_extts_flags = PTP_RISING_EDGE |
+				      PTP_FALLING_EDGE |
+				      PTP_STRICT_FLAGS;
+#endif /* HAVE_PTP_SUPPORTED_EXTTS_FLAGS */
+#ifdef HAVE_PTP_SUPPORTED_PEROUT_FLAGS
+	info->supported_perout_flags = PTP_PEROUT_PHASE;
+#endif /* HAVE_PTP_SUPPORTED_PEROUT_FLAGS */
+
 	switch (pf->hw.mac_type) {
 	case ICE_MAC_E810:
 		ice_ptp_set_funcs_e810(pf);
@@ -5830,7 +5818,7 @@ void ice_ptp_init(struct ice_pf *pf)
 
 	err = ice_ptp_init_port(pf, &ptp->port);
 	if (err)
-		goto err_exit;
+		goto err_exit_clean_pf;
 
 	/* Start the PHY timestamping block */
 	ice_ptp_reset_phy_timestamping(pf);
@@ -5852,13 +5840,16 @@ void ice_ptp_init(struct ice_pf *pf)
 	dev_info(ice_pf_to_dev(pf), "PTP init successful\n");
 	return;
 
+err_exit_clean_pf:
+	mutex_destroy(&ptp->port.ps_lock);
+	ice_ptp_cleanup_pf(pf);
 err_exit:
 	/* If we registered a PTP clock, release it */
 	if (pf->ptp.clock) {
 		ptp_clock_unregister(ptp->clock);
 		pf->ptp.clock = NULL;
 	}
-	ptp->state = ICE_PTP_ERROR;
+	ptp->state = ICE_PTP_UNINIT;
 	dev_err(ice_pf_to_dev(pf), "PTP failed %d\n", err);
 }
 
@@ -5872,8 +5863,15 @@ err_exit:
 void ice_ptp_release(struct ice_pf *pf)
 {
 	struct ice_ptp *ptp = &pf->ptp;
+	if (ptp->state == ICE_PTP_UNINIT)
+		return;
+
 	if (ptp->state != ICE_PTP_READY) {
 		ice_ptp_cleanup_pf(pf);
+		mutex_destroy(&ptp->port.ps_lock);
+		ice_ptp_sysfs_release(pf);
+		if (ptp->clock)
+			ptp_clock_unregister(ptp->clock);
 		return;
 	}
 

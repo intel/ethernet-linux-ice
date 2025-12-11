@@ -679,8 +679,9 @@ struct ice_hw_common_caps {
 	u8 ieee_1588;
 	u8 mgmt_cem;
 	u8 iwarp;
-	u8 roce_lag;
-	u8 sriov_lag;
+	bool roce_lag;
+	bool sriov_lag;
+	bool sriov_aa_lag;
 
 	/* WoL and APM support */
 #define ICE_WOL_SUPPORT_M		BIT(0)
@@ -1397,12 +1398,12 @@ enum ice_e810_c827_idx {
 /* SMA controller pin control. */
 #define ICE_SMA1_DIR_EN		BIT(4)
 #define ICE_SMA1_TX_EN		BIT(5)
-#define ICE_SMA2_UFL2_RX_DIS	BIT(3)
+#define ICE_SMA2_UFL2_RX_EN	BIT(3)
 #define ICE_SMA2_DIR_EN		BIT(6)
 #define ICE_SMA2_TX_EN		BIT(7)
 
 #define ICE_SMA1_MASK		(ICE_SMA1_DIR_EN | ICE_SMA1_TX_EN)
-#define ICE_SMA2_MASK		(ICE_SMA2_UFL2_RX_DIS | ICE_SMA2_DIR_EN | \
+#define ICE_SMA2_MASK		(ICE_SMA2_UFL2_RX_EN | ICE_SMA2_DIR_EN | \
 				 ICE_SMA2_TX_EN)
 #define ICE_ALL_SMA_MASK	(ICE_SMA1_MASK | ICE_SMA2_MASK)
 #define ICE_SMA2_INACTIVE_MASK	(ICE_SMA2_DIR_EN | ICE_SMA2_TX_EN)
@@ -1584,7 +1585,6 @@ struct ice_hw {
 	struct ice_pkg_ver active_pkg_ver;
 	u32 pkg_seg_id;
 	u32 pkg_sign_type;
-#define ICE_TRACK_ID_LAG 0xC0000008
 	u32 active_track_id;
 	u8 active_pkg_name[ICE_PKG_NAME_SIZE];
 	u8 active_pkg_in_nvm;

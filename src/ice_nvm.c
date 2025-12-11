@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2025 Intel Corporation */
 
-#include <linux/vmalloc.h>
 #include "ice_common.h"
+#include <linux/vmalloc.h>
 
 #define GL_MNG_DEF_DEVID 0x000B611C
 

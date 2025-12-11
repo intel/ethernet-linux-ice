@@ -164,8 +164,9 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_DYN_FLATTENING			0x008A
 #define ICE_AQC_CAPS_OROM_RECOVERY_UPDATE		0x0090
 #define ICE_AQC_CAPS_FW_LAG_SUPPORT			0x0092
-#define ICE_AQC_BIT_ROCEV2_LAG				0x01
-#define ICE_AQC_BIT_SRIOV_LAG				0x02
+#define ICE_AQC_BIT_ROCEV2_LAG				BIT(0)
+#define ICE_AQC_BIT_SRIOV_LAG				BIT(1)
+#define ICE_AQC_BIT_SRIOV_AA_LAG			BIT(2)
 #define ICE_AQC_CAPS_NEXT_CLUSTER_ID			0x0096
 
 	u8 major_ver;
@@ -2113,6 +2114,7 @@ struct ice_aqc_get_link_topo {
 #define ICE_AQC_GET_LINK_TOPO_NODE_NR_PCA9575			0x21
 #define ICE_AQC_GET_LINK_TOPO_NODE_NR_ZL30632_80032		0x24
 #define ICE_AQC_GET_LINK_TOPO_NODE_NR_SI5383_5384		0x25
+#define ICE_AQC_GET_LINK_TOPO_NODE_NR_ZL80640			0x27
 #define ICE_AQC_GET_LINK_TOPO_NODE_NR_E822_PHY			0x30
 #define ICE_AQC_GET_LINK_TOPO_NODE_NR_C827			0x31
 #define ICE_AQC_GET_LINK_TOPO_NODE_NR_GEN_CLK_MUX		0x47
@@ -3366,6 +3368,10 @@ struct ice_aqc_cfg_txqs {
 #define ICE_AQC_Q_CFG_SRC_PRT_M		0x7
 #define ICE_AQC_Q_CFG_DST_PRT_S		3
 #define ICE_AQC_Q_CFG_DST_PRT_M		(0x7 << ICE_AQC_Q_CFG_DST_PRT_S)
+#define ICE_AQC_Q_CFG_MODE_M		GENMASK(7, 6)
+#define ICE_AQC_Q_CFG_MODE_SAME_PF	0x0
+#define ICE_AQC_Q_CFG_MODE_GIVE_OWN	0x1
+#define ICE_AQC_Q_CFG_MODE_KEEP_OWN	0x2
 	u8 time_out;
 #define ICE_AQC_Q_CFG_TIMEOUT_S		2
 #define ICE_AQC_Q_CFG_TIMEOUT_M		(0x3F << ICE_AQC_Q_CFG_TIMEOUT_S)
@@ -3384,8 +3390,8 @@ struct ice_aqc_cfg_txq_perq {
 
 /* The buffer for Move/Reconfigure Tx LAN Queues (indirect 0x0C32) */
 struct ice_aqc_cfg_txqs_buf {
-	__le32 src_teid;
-	__le32 dest_teid;
+	__le32 src_parent_teid;
+	__le32 dst_parent_teid;
 	struct ice_aqc_cfg_txq_perq queue_info[];
 };
 
@@ -3567,6 +3573,24 @@ struct ice_aqc_event_cgu_err {
 #define ICE_AQC_CGU_ERR_TIMESYNC_LOCK_LOSS	BIT(2)
 	u8 rsvd[15];
 };
+
+#ifdef HAVE_DPLL_PHASE_OFFSET_MONITOR
+#define ICE_CGU_INPUT_PHASE_OFFSET_BYTES	6
+
+struct ice_cgu_input_measure {
+	u8 phase_offset[ICE_CGU_INPUT_PHASE_OFFSET_BYTES];
+	__le32 freq;
+} __packed __aligned(sizeof(__le16));
+
+#define ICE_AQC_GET_CGU_IN_MEAS_DPLL_IDX_M	ICE_M(0xf, 0)
+
+/* Get CGU input measure command response data structure (indirect 0x0C59) */
+struct ice_aqc_get_cgu_input_measure {
+	u8 dpll_idx_opt;
+	u8 length;
+	u8 rsvd[6];
+};
+#endif /* HAVE_DPLL_PHASE_OFFSET_MONITOR */
 
 #define ICE_AQC_GET_CGU_MAX_PHASE_ADJ  GENMASK(30, 0)
 
@@ -3939,6 +3963,13 @@ struct ice_aqc_get_supported_health_status_codes {
 	__le32 addr_low;
 };
 
+/* Get Health Status response buffer entry, (0xFF21)
+ * repeated per reported health status
+ */
+struct ice_aqc_health_status_supp_elem {
+	__le16 health_status_code;
+};
+
 /* Get Health Status (indirect 0xFF22) */
 struct ice_aqc_get_health_status {
 	__le16 health_status_count;
@@ -4140,6 +4171,9 @@ struct ice_aq_desc {
 		struct ice_aqc_get_pkg_info_list get_pkg_info_list;
 		struct ice_aqc_cfg_cgu_err config_cgu_err;
 		struct ice_aqc_event_cgu_err cgu_err;
+#ifdef HAVE_DPLL_PHASE_OFFSET_MONITOR
+		struct ice_aqc_get_cgu_input_measure get_cgu_input_measure;
+#endif /* HAVE_DPLL_PHASE_OFFSET_MONITOR */
 		struct ice_aqc_set_cgu_input_config set_cgu_input_config;
 		struct ice_aqc_get_cgu_input_config get_cgu_input_config;
 		struct ice_aqc_set_cgu_output_config set_cgu_output_config;
@@ -4462,6 +4496,9 @@ enum ice_adminq_opc {
 	/* 1588/SyncE commands/events */
 	ice_aqc_opc_cfg_cgu_err				= 0x0C60,
 	ice_aqc_opc_event_cgu_err			= 0x0C60,
+#ifdef HAVE_DPLL_PHASE_OFFSET_MONITOR
+	ice_aqc_opc_get_cgu_input_measure		= 0x0C59,
+#endif /* HAVE_DPLL_PHASE_OFFSET_MONITOR */
 	ice_aqc_opc_get_cgu_abilities			= 0x0C61,
 	ice_aqc_opc_set_cgu_input_config		= 0x0C62,
 	ice_aqc_opc_get_cgu_input_config		= 0x0C63,

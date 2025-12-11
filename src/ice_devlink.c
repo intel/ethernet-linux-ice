@@ -443,11 +443,17 @@ enum ice_devlink_param_id {
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to get
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns: zero on success, or an error code on failure.
  */
 static int
-ice_devlink_minsrev_get(struct devlink *devlink, u32 id, struct devlink_param_gset_ctx *ctx)
+ice_devlink_minsrev_get(struct devlink *devlink, u32 id,
+			struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_GET_EXTACK
+			, struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct device *dev = ice_pf_to_dev(pf);
@@ -670,6 +676,7 @@ exit_release_res:
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to store the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Reads user's preference for Tx Scheduler Topology Tree from PFA TLV.
  *
@@ -677,7 +684,11 @@ exit_release_res:
  */
 static int ice_devlink_tx_sched_layers_get(struct devlink *devlink,
 					   u32 __always_unused id,
-					   struct devlink_param_gset_ctx *ctx)
+					   struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_GET_EXTACK
+					   , struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	struct ice_aqc_nvm_tx_topo_user_sel usr_sel = {};
 	struct ice_pf *pf = devlink_priv(devlink);
@@ -822,11 +833,16 @@ static int ice_devlink_loopback_str_to_mode(const char *mode_str)
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to set
  * @ctx: context to store the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns zero on success.
  */
 static int ice_devlink_loopback_get(struct devlink *devlink, u32 id,
-				    struct devlink_param_gset_ctx *ctx)
+				    struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_GET_EXTACK
+				    , struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_port_info *pi = pf->hw.port_info;
@@ -1793,10 +1809,8 @@ int ice_devlink_rate_init_tx_topology(struct devlink *devlink, struct ice_vsi *v
 
 	tc_node = pi->root->children[0];
 	mutex_lock(&pi->sched_lock);
-	devl_lock(devlink);
 	for (i = 0; i < tc_node->num_children; i++)
 		ice_traverse_tx_tree(devlink, tc_node->children[i], tc_node, pf);
-	devl_unlock(devlink);
 	mutex_unlock(&pi->sched_lock);
 
 	return 0;
@@ -2944,12 +2958,17 @@ ice_get_tc_param_ch_vsi(struct ice_pf *pf, u32 id, u32 start_id)
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to get
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns: zero on success, or an error code on failure.
  */
 static int
 ice_devlink_tc_inline_fd_get(struct devlink *devlink, u32 id,
-			     struct devlink_param_gset_ctx *ctx)
+			     struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_GET_EXTACK
+			     , struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_vsi *vsi = pf->vsi[0];
@@ -3039,12 +3058,17 @@ ice_devlink_tc_inline_fd_set(struct devlink *devlink, u32 id,
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to get
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns: zero on success, or an error code on failure.
  */
 static int
 ice_devlink_tc_qps_per_poller_get(struct devlink *devlink, u32 id,
-				  struct devlink_param_gset_ctx *ctx)
+				  struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_GET_EXTACK
+				  , struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_vsi *ch_vsi;
@@ -3141,12 +3165,17 @@ ice_devlink_tc_qps_per_poller_set(struct devlink *devlink, u32 id,
  * @devlink: pointer to the devlink instance
  * @id: the parameter ID to get
  * @ctx: context to return the parameter value
+ * @extack: netlink extended ACK structure
  *
  * Returns: zero on success, or an error code on failure.
  */
 static int
 ice_devlink_tc_poller_timeout_get(struct devlink *devlink, u32 id,
-				  struct devlink_param_gset_ctx *ctx)
+				  struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_GET_EXTACK
+				  , struct netlink_ext_ack __always_unused *extack
+#endif
+)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
 	struct ice_vsi *ch_vsi;

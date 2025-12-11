@@ -32,6 +32,9 @@ struct ice_port_list {
  * @refcount: Reference count. struct ice_pf objects hold the references.
  * @ctrl_pf: Control PF of the adapter
  * @ports: Ports list
+ * @whole_dev_lock: the lock that should be used to serialize FW/HW
+ *                  re/configuration, or any other operation that requires
+ *                  to be serialized over whole device (all PFs on given card)
  */
 struct ice_adapter {
 	refcount_t refcount;
@@ -40,6 +43,8 @@ struct ice_adapter {
 
 	struct ice_pf *ctrl_pf;
 	struct ice_port_list ports;
+
+	struct mutex whole_dev_lock;
 };
 
 struct ice_adapter *ice_adapter_get(const struct pci_dev *pdev);
