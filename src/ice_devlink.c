@@ -2273,7 +2273,7 @@ struct ice_pf *ice_allocate_pf(struct device *dev)
 		return NULL;
 	}
 
-	return (struct ice_pf *)devlink_priv(devlink);
+	return devlink_priv(devlink);
 }
 
 /**

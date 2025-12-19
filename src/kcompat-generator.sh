@@ -280,8 +280,10 @@ function gen-gnss() {
 	gen NEED_CLASS_CREATE_WITHOUT_OWNER if string "$NEED_CLASS_CREATE" equals 1
 
 	HAVE_GNSS_MODULE=0
-	if ! config_has CONFIG_SUSE_KERNEL && check struct gnss_device in "$gh" ; then
-		HAVE_GNSS_MODULE=1
+	if check struct gnss_device in "$gh" ; then
+		if ! config_has CONFIG_SUSE_KERNEL || config_has CONFIG_SUSE_PRODUCT_SLFO ; then
+			HAVE_GNSS_MODULE=1
+		fi
 	fi
 	gen HAVE_GNSS_MODULE if string "$HAVE_GNSS_MODULE" equals 1
 
