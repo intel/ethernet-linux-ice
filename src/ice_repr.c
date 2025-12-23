@@ -454,9 +454,7 @@ ice_repr_reg_netdev(struct net_device *netdev)
 #ifdef HAVE_DEVLINK_RATE_NODE_CREATE
 static void ice_repr_remove_node(struct devlink_port *devlink_port)
 {
-	devl_lock(devlink_port->devlink);
 	devl_rate_leaf_destroy(devlink_port);
-	devl_unlock(devlink_port->devlink);
 }
 #endif /* HAVE_DEVLINK_RATE_NODE_CREATE */
 #endif /* CONFIG_NET_DEVLINK */

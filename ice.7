@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "November 13, 2025" "" "Linux ice readme"
+.TH "ICE" "7" "December 11, 2025" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -868,7 +868,23 @@ VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
 LAG and SR\-IOV are compatible only if all the following are true:
 .INDENT 0.0
 .IP \(bu 2
-The bond is in active\-backup mode
+The bond is in one of the supported modes. Remaining modes are not compatible
+.UNINDENT
+.INDENT 0.0
+.TP
+.B with bridges:
+.INDENT 7.0
+.IP \(bu 2
+active\-backup (1)
+.IP \(bu 2
+balance\-xor (2)
+.IP \(bu 2
+broadcast (3)
+.IP \(bu 2
+802.3ad (4)
+.UNINDENT
+.UNINDENT
+.INDENT 0.0
 .IP \(bu 2
 The bond comprises of exactly two ports from the same NIC MAC chip
 .IP \(bu 2
@@ -879,10 +895,26 @@ Both bond ports have identical DCB configurations
 .IP \(bu 2
 The FW LLDP Agent is disabled on both bond ports (see \fI\%FW\-LLDP (Firmware Link Layer Discovery Protocol)\fP)
 .IP \(bu 2
-Firmware supports LAN VF LAG capability \- version 4.30 or newer
+.INDENT 2.0
+.TP
+.B Firmware supports LAN VF LAG capability:
+.INDENT 7.0
+.IP \(bu 2
+For active\-backup mode: version 4.30 or newer
+.IP \(bu 2
+For other modes: version 4.80 or newer
+.UNINDENT
+.UNINDENT
 .IP \(bu 2
 The ice_lag DDP package is loaded
 .UNINDENT
+.sp
+In modes other than active\-backup (1), splitting traffic is achieved through
+queue\-balancing.\ Half of each VFs queues are configured to utilize the
+secondary uplink when it is active.\ When a link failure is detected, all queues
+are reconfigured to utilize the remaining uplink. Association of VF queues to
+uplinks is deterministic, therefore after restoring link after failover, queues
+return to the original uplink.
 .sp
 In order to configure SR\-IOV LAG:
 .INDENT 0.0
@@ -911,7 +943,8 @@ echo 2 > /sys/class/net/$PF1/device/sriov_numvfs
 .UNINDENT
 .UNINDENT
 .IP 3. 3
-Create a bond interface and configure it to active\-backup mode:
+Create a bond interface and configure it to one of the supported modes (see
+above):
 .INDENT 3.0
 .INDENT 3.5
 .sp
@@ -939,10 +972,41 @@ ip link set $PF2 master bond0
 .fi
 .UNINDENT
 .UNINDENT
+.IP 5. 3
+Add a Linux bridge. Add bond and port representors to it:
+.INDENT 3.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ip link add $BR type bridge
+ip link set $BOND master $BR
+ip link set $VF1_PR master $BR
+ip link set $VF2_PR master $BR
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
 .UNINDENT
 .sp
-In the above example \fB$PF1\fP is the primary port and \fB$PF2\fP is the secondary
+Note: in this example \fB$PF1\fP is the primary port and \fB$PF2\fP is the secondary
 port.
+.SS Link aggregation with both SR\-IOV and RDMA
+.sp
+It is possible to use both SR\-IOV VFs and RDMA at the same time. In this
+configuration bridge is not supported (tc filters should be configured to enable
+VF connectivity \- see \fI\%Switchdev Mode\fP) and promiscuous mode should be
+enabled on the secondary uplink:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+ip link set promisc on $PF2
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
 .SS Application Device Queues (ADQ)
 .sp
 Application Device Queues (ADQ) allow you to dedicate one or more queues to a
@@ -5720,7 +5784,7 @@ bound to a PF:
 .sp
 .nf
 .ft C
-devlink resource set <pci/D:b:d.f> msix/<parameter> size <num>
+devlink resource set <pci/D:b:d.f> path msix/<parameter> size <num>
 .ft P
 .fi
 .UNINDENT
@@ -5753,7 +5817,7 @@ For example, to set a PF to use 320 MSI\-X vectors:
 .sp
 .nf
 .ft C
-devlink resource set pci/0000:31:00.1 msix/msix_eth size 320
+devlink resource set pci/0000:31:00.1 path msix/msix_eth size 320
 .ft P
 .fi
 .UNINDENT

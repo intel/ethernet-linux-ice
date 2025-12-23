@@ -351,11 +351,11 @@ ice_alloc_rdma_multi_qsets(struct iidc_core_dev_info *cdev_info,
 	if (lag && lag->bonded && cdev_info->bond_aa) {
 		mutex_lock(&pf->lag_mutex);
 		lag->rdma_qsets[qset->tc] = *qset;
-		/* ice_lag_aa_failover has the logic that will determine if
+		/* ice_lag_rdma_aa_failover has the logic that will determine if
 		 * some, all or none of the qsets need to move to secondary port
 		 */
-		ice_lag_aa_failover(lag, cdev_info, IIDC_RDMA_SECONDARY_PORT,
-				    true);
+		ice_lag_rdma_aa_failover(lag, cdev_info,
+					 IIDC_RDMA_SECONDARY_PORT, true);
 		mutex_unlock(&pf->lag_mutex);
 	}
 #endif /* HAVE_NETDEV_UPPER_INFO */
@@ -462,31 +462,31 @@ ice_lag_aa_reclaim_nodes(struct iidc_core_dev_info *cdev,
 	struct iidc_rdma_multi_qset_params *r_qsets;
 	struct ice_pf *pf;
 
-	if (cdev->rdma_ports[ICE_PRI_IDX] == IIDC_RDMA_INVALID_PORT ||
-	    cdev->rdma_ports[ICE_SEC_IDX] == IIDC_RDMA_INVALID_PORT)
+	if (cdev->rdma_ports[ICE_LAGP_IDX] == IIDC_RDMA_INVALID_PORT ||
+	    cdev->rdma_ports[ICE_LAGS_IDX] == IIDC_RDMA_INVALID_PORT)
 		return;
 
 	pf = pci_get_drvdata(cdev->pdev);
 	r_qsets = pf->lag->rdma_qsets;
 
-	if (qset->teid[ICE_PRI_IDX] &&
-	    r_qsets[qset->tc].qset_port[ICE_PRI_IDX] !=
+	if (qset->teid[ICE_LAGP_IDX] &&
+	    r_qsets[qset->tc].qset_port[ICE_LAGP_IDX] !=
 	    IIDC_RDMA_PRIMARY_PORT &&
-	    !ice_lag_move_node(pf->lag, cdev->rdma_ports[ICE_SEC_IDX],
-			       cdev->rdma_ports[ICE_PRI_IDX], qset->tc,
-			       qset->teid[ICE_PRI_IDX],
-			       qset->qs_handle[ICE_PRI_IDX]))
-		r_qsets[qset->tc].qset_port[ICE_PRI_IDX] =
+	    !ice_lag_move_node(pf->lag, cdev->rdma_ports[ICE_LAGS_IDX],
+			       cdev->rdma_ports[ICE_LAGP_IDX], qset->tc,
+			       qset->teid[ICE_LAGP_IDX],
+			       qset->qs_handle[ICE_LAGP_IDX]))
+		r_qsets[qset->tc].qset_port[ICE_LAGP_IDX] =
 			IIDC_RDMA_PRIMARY_PORT;
 
-	if (qset->teid[ICE_SEC_IDX] &&
-	    r_qsets[qset->tc].qset_port[ICE_SEC_IDX] !=
+	if (qset->teid[ICE_LAGS_IDX] &&
+	    r_qsets[qset->tc].qset_port[ICE_LAGS_IDX] !=
 	    IIDC_RDMA_PRIMARY_PORT &&
-	    !ice_lag_move_node(pf->lag, cdev->rdma_ports[ICE_SEC_IDX],
-			       cdev->rdma_ports[ICE_PRI_IDX], qset->tc,
-			       qset->teid[ICE_SEC_IDX],
-			       qset->qs_handle[ICE_SEC_IDX]))
-		r_qsets[qset->tc].qset_port[ICE_SEC_IDX] =
+	    !ice_lag_move_node(pf->lag, cdev->rdma_ports[ICE_LAGS_IDX],
+			       cdev->rdma_ports[ICE_LAGP_IDX], qset->tc,
+			       qset->teid[ICE_LAGS_IDX],
+			       qset->qs_handle[ICE_LAGS_IDX]))
+		r_qsets[qset->tc].qset_port[ICE_LAGS_IDX] =
 			IIDC_RDMA_PRIMARY_PORT;
 }
 
@@ -1119,9 +1119,9 @@ int ice_init_aux_devices(struct ice_pf *pf)
 #ifdef HAVE_NETDEV_UPPER_INFO
 			cdev_info->rdma_active_port = IIDC_RDMA_INVALID_PORT;
 			cdev_info->main_pf_port = pf->hw.port_info->lport;
-			cdev_info->rdma_ports[ICE_PRI_IDX] =
+			cdev_info->rdma_ports[ICE_LAGP_IDX] =
 				IIDC_RDMA_INVALID_PORT;
-			cdev_info->rdma_ports[ICE_SEC_IDX] =
+			cdev_info->rdma_ports[ICE_LAGS_IDX] =
 				IIDC_RDMA_INVALID_PORT;
 			cdev_info->bond_aa = 0;
 			cdev_info->rdma_port_bitmap = 0;

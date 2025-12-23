@@ -74,6 +74,24 @@ function gen-bitfield() {
 	gen NEED_BITFIELD_FIELD_MAX if macro FIELD_MAX absent in "$bf"
 }
 
+function gen-cleanup() {
+	ch='include/linux/cleanup.h'
+	dh='include/net/devlink.h'
+	mh='include/linux/mutex.h'
+	sh='include/linux/spinlock.h'
+	slabh='include/linux/slab.h'
+	rcuh='include/linux/rcupdate.h'
+	gen NEED_DEFINE_FREE if macro DEFINE_FREE absent in "$ch"
+	gen NEED___DEFINE_CLASS_IS_CONDITIONAL if macro __DEFINE_CLASS_IS_CONDITIONAL absent in "$ch"
+	gen NEED_DEFINE_GUARD_MUTEX if invocation of macro DEFINE_GUARD absent or lacks mutex_lock in "$mh"
+	gen NEED_LOCK_GUARD_FOR_RCU if invocation of macro DEFINE_LOCK_GUARD_0 absent or lacks rcu in "$rcuh"
+	gen NEED_DEFINE_FREE_KFREE if invocation of macro DEFINE_FREE absent or lacks kfree in "$slabh"
+	gen NEED_DEFINE_FREE_KVFREE if invocation of macro DEFINE_FREE absent or lacks kvfree in "$slabh"
+	gen NEED_LOCK_GUARD_FOR_SPINLOCK if invocation of macro DEFINE_LOCK_GUARD_1 absent or lacks spinlock in "$sh"
+	gen NEED_LOCK_GUARD_FOR_SPINLOCK_BH if invocation of macro DEFINE_LOCK_GUARD_1 absent or lacks spinlock_bh in "$sh"
+	gen NEED_DEFINE_GUARD_DEVLINK if invocation of macro DEFINE_GUARD absent or lacks devl_lock in "$dh"
+}
+
 function gen-device() {
 	dh='include/linux/device.h'
 	dph='include/linux/dev_printk.h'
@@ -92,6 +110,7 @@ function gen-devlink() {
 	gen HAVE_DEVLINK_HEALTH_OPS_EXTACK if method dump of devlink_health_reporter_ops matches extack in "$dh"
 	gen HAVE_DEVLINK_INFO_DRIVER_NAME_PUT if fun devlink_info_driver_name_put in "$dh"
 	gen HAVE_DEVLINK_PARAMS if method validate of devlink_param matches extack in "$dh"
+	gen HAVE_DEVLINK_PARAMS_GET_EXTACK if method get of devlink_param matches extack in "$dh"
 	gen HAVE_DEVLINK_PARAMS_PUBLISH if fun devlink_params_publish in "$dh"
 	gen HAVE_DEVLINK_PARAMS_SET_EXTACK if method set of devlink_param matches extack in "$dh"
 	gen HAVE_DEVLINK_PORT_NEW if method port_new of devlink_ops in "$dh"
@@ -449,7 +468,6 @@ function gen-other() {
 	gen NEED_BITMAP_TO_ARR32 if fun bitmap_to_arr32 absent in include/linux/bitmap.h
 	gen NEED_ASSIGN_BIT if fun assign_bit absent in include/linux/bitops.h
 	gen NEED_STATIC_ASSERT if macro static_assert absent in include/linux/build_bug.h
-	gen NEED_CLEANUP_API if macro __free absent in include/linux/cleanup.h
 	# special case for kernels 6.2 - 6.6 and __struct_size macro
 	# there is an implicit dependency on CONFIG_FORTIFY_SOURCE config option and inclusion
 	# of 'forify-string.h' header (which includes that macro definition).
@@ -505,6 +523,8 @@ function gen-other() {
 	gen HAVE_MDEV_REGISTER_PARENT if fun mdev_register_parent in include/linux/mdev.h
 	gen HAVE_VM_FLAGS_API if fun vm_flags_init in include/linux/mm.h
 	gen HAVE_NL_SET_ERR_MSG_FMT if macro NL_SET_ERR_MSG_FMT in include/linux/netlink.h
+	gen NEED_DEFINE_SIMPLE_DEV_OPS if macro DEFINE_SIMPLE_DEV_OPS absent in include/linux/pm.h
+	gen NEED_PM_SLEEP_PTR if macro pm_sleep_ptr absent in include/linux/pm.h
 	gen NEED_DEV_PM_DOMAIN_ATTACH if fun dev_pm_domain_attach absent in include/linux/pm_domain.h include/linux/pm.h
 	gen NEED_DEV_PM_DOMAIN_DETACH if fun dev_pm_domain_detach absent in include/linux/pm_domain.h include/linux/pm.h
 	gen NEED_RADIX_TREE_EMPTY if fun radix_tree_empty absent in include/linux/radix-tree.h
@@ -523,6 +543,7 @@ function gen-other() {
 	gen NEED_STR_ENABLED_DISABLED if fun str_enabled_disabled absent in include/linux/string_choices.h include/linux/string_helpers.h
 	gen HAVE_STRING_HELPERS_H if enum string_size_units in include/linux/string_helpers.h
 	gen NEED_SYSFS_EMIT if fun sysfs_emit absent in include/linux/sysfs.h
+	gen HAVE_NON_CONST_CYCLECOUNTER if method read of cyclecounter lacks const in include/linux/timecounter.h
 	gen NEED_TIMER_CONTAINER_OF if macro timer_container_of absent in include/linux/timer.h
 	gen NEED_TIMER_DELETE if fun timer_delete absent in include/linux/timer.h
 	gen HAVE_TRACE_ENABLED_SUPPORT if implementation of macro __DECLARE_TRACE matches 'trace_##name##_enabled' in include/linux/tracepoint.h
@@ -572,6 +593,7 @@ function gen-all() {
 	fi
 	gen-aux
 	gen-bitfield
+	gen-cleanup
 	gen-device
 	gen-devres
 	gen-dma

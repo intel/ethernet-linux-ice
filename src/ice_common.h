@@ -4,11 +4,12 @@
 #ifndef _ICE_COMMON_H_
 #define _ICE_COMMON_H_
 
+#include "ice.h"
+
 #ifdef HAVE_INCLUDE_BITFIELD
 #include <linux/bitfield.h>
 #endif /* HAVE_INCLUDE_BITFIELD */
 
-#include "ice.h"
 #include "ice_type.h"
 #include "ice_adminq_cmd.h"
 #include "ice_nvm.h"
@@ -123,7 +124,7 @@ ice_aq_set_rss_key(struct ice_hw *hw, u16 vsi_handle,
 int
 ice_aq_cfg_lan_txq(struct ice_hw *hw, struct ice_aqc_cfg_txqs_buf *buf,
 		   u16 buf_size, u16 num_qs, u8 oldport, u8 newport,
-		   struct ice_sq_cd *cd);
+		   u8 mode, struct ice_sq_cd *cd);
 int
 ice_aq_move_recfg_lan_txq(struct ice_hw *hw, u8 num_qs, bool is_move,
 			  bool is_tc_change, bool subseq_call, bool flush_pipe,
@@ -293,6 +294,11 @@ void ice_replay_post(struct ice_hw *hw);
 struct ice_q_ctx *
 ice_get_lan_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 q_handle);
 int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flag);
+#ifdef HAVE_DPLL_PHASE_OFFSET_MONITOR
+int ice_aq_get_cgu_input_pin_measure(struct ice_hw *hw, u8 dpll_idx,
+				     struct ice_cgu_input_measure *meas,
+				     u16 meas_num);
+#endif /* HAVE_DPLL_PHASE_OFFSET_MONITOR */
 int
 ice_aq_cfg_cgu_err(struct ice_hw *hw, bool ena_event_report, bool ena_err_report,
 		   struct ice_sq_cd *cd);

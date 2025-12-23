@@ -3420,9 +3420,14 @@ void ice_vsi_decfg(struct ice_vsi *vsi)
 	struct ice_pf *pf = vsi->back;
 	int err = 0;
 
-	/* Preserve VF's VSI node config during reset. */
-	if (!vsi->vf || !test_bit(ICE_VF_STATE_IN_RESET, vsi->vf->vf_states))
+#if   defined(HAVE_DEVLINK_RATE_NODE_CREATE)
+	/* Preserve VF's VSI node config during reset, if in switchdev mode */
+	if (!vsi->vf || !test_bit(ICE_VF_STATE_IN_RESET, vsi->vf->vf_states) ||
+	    !ice_is_switchdev_running(pf))
 		err = ice_rm_vsi_lan_cfg(vsi->port_info, vsi->idx);
+#else
+	err = ice_rm_vsi_lan_cfg(vsi->port_info, vsi->idx);
+#endif
 	if (err)
 		dev_err(ice_pf_to_dev(pf), "Failed to remove VSI %u LAN TxQs cfg, err %d\n",
 			vsi->vsi_num, err);
@@ -4951,22 +4956,46 @@ int ice_vsi_add_vlan_zero(struct ice_vsi *vsi)
 int ice_vsi_del_vlan_zero(struct ice_vsi *vsi)
 {
 	struct ice_vsi_vlan_ops *vlan_ops = ice_get_compat_vsi_vlan_ops(vsi);
+#ifdef HAVE_NETDEV_UPPER_INFO
+	struct ice_pf *pf = vsi->back;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	struct ice_vlan vlan;
 	int err;
 
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag && pf->lag->primary) {
+		dev_dbg(ice_pf_to_dev(pf), "Interface is primary in aggregate - not deleting prune list\n");
+	} else {
+		vlan = ICE_VLAN(0, 0, 0, ICE_FWD_TO_VSI);
+		err = vlan_ops->del_vlan(vsi, &vlan);
+		if (err && err != -EEXIST)
+			return err;
+	}
+#else /* HAVE_NETDEV_UPPER_INFO */
 	vlan = ICE_VLAN(0, 0, 0, ICE_FWD_TO_VSI);
 	err = vlan_ops->del_vlan(vsi, &vlan);
 	if (err && err != -EEXIST)
 		return err;
-
+#endif /* HAVE_NETDEV_UPPER_INFO */
 	/* in SVM both VLAN 0 filters are identical */
 	if (!ice_is_dvm_ena(&vsi->back->hw))
 		return 0;
 
-	vlan = ICE_VLAN(ETH_P_8021Q, 0, 0, ICE_FWD_TO_VSI);
+#ifdef HAVE_NETDEV_UPPER_INFO
+	if (pf->lag && pf->lag->primary) {
+		dev_dbg(ice_pf_to_dev(pf), "Interface is primary in aggregate - not deleting QinQ prune list\n");
+	} else {
+		vlan = ICE_VLAN(ETH_P_8021Q, 0, 0, ICE_FWD_TO_VSI);
+		err = vlan_ops->del_vlan(vsi, &vlan);
+		if (err && err != -EEXIST)
+			return err;
+	}
+#else /* HAVE_NETDEV_UPPER_INFO */
+	vlan = ICE_VLAN(0, 0, 0, ICE_FWD_TO_VSI);
 	err = vlan_ops->del_vlan(vsi, &vlan);
 	if (err && err != -EEXIST)
 		return err;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	do {
 		DECLARE_BITMAP(mask, ICE_PROMISC_MAX) = {};

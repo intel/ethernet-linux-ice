@@ -429,19 +429,6 @@ void ice_clear_all_vsi_ctx(struct ice_hw *hw);
 int
 ice_aq_get_vsi_params(struct ice_hw *hw, struct ice_vsi_ctx *vsi_ctx,
 		      struct ice_sq_cd *cd);
-int
-ice_aq_add_update_mir_rule(struct ice_hw *hw, u16 rule_type, u16 dest_vsi,
-			   u16 count, struct ice_mir_rule_buf *mr_buf,
-			   struct ice_sq_cd *cd, u16 *rule_id);
-int
-ice_aq_delete_mir_rule(struct ice_hw *hw, u16 rule_id, bool keep_allocd,
-		       struct ice_sq_cd *cd);
-int
-ice_aq_get_storm_ctrl(struct ice_hw *hw, u32 *bcast_thresh, u32 *mcast_thresh,
-		      u32 *ctl_bitmask);
-int
-ice_aq_set_storm_ctrl(struct ice_hw *hw, u32 bcast_thresh, u32 mcast_thresh,
-		      u32 ctl_bitmask);
 /* Switch config */
 int
 ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp_elem *buf,

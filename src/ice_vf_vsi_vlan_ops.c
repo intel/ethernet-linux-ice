@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (C) 2018-2025 Intel Corporation */
 
+#include "ice.h"
 #include "ice_vsi_vlan_ops.h"
 #include "ice_vsi_vlan_lib.h"
 #include "ice_vlan_mode.h"
-#include "ice.h"
 #include "ice_vf_vsi_vlan_ops.h"
 #include "ice_sriov.h"
 #include "ice_lib.h"

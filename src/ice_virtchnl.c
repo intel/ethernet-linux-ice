@@ -815,7 +815,7 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	    vf->vf_ops->cfg_rdma_irq_map && vf->vf_ops->clear_rdma_irq_map &&
 	    ice_is_aux_ena(pf) && ice_is_rdma_ena(pf) &&
 #if defined(HAVE_NETDEV_UPPER_INFO)
-	    ice_is_rdma_aux_loaded(pf) && pf->lag && !pf->lag->sriov_enabled)
+	    (!pf->lag || !pf->lag->sriov_enabled) && ice_is_rdma_aux_loaded(pf))
 #else
 	    ice_is_rdma_aux_loaded(pf))
 #endif /* LAG_SUPPORT && HAVE_NETDEV_UPPER_INFO */
@@ -3757,26 +3757,13 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 	struct virtchnl_queue_pair_info *qpi;
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi = NULL;
-#ifdef HAVE_NETDEV_UPPER_INFO
-	struct ice_lag *lag;
-	u8 act_prt, pri_prt;
-#endif /* HAVE_NETDEV_UPPER_INFO */
 	u16 queue_id_tmp, tc;
 	int i = -1, q_idx;
 #ifdef HAVE_NETDEV_UPPER_INFO
+	u8 act_prt;
 
-	lag = pf->lag;
 	mutex_lock(&pf->lag_mutex);
-	act_prt = ICE_LAG_INVALID_PORT;
-	pri_prt = pf->hw.port_info->lport;
-	if (lag && lag->bonded && lag->primary) {
-		act_prt = lag->active_port;
-		if (act_prt != pri_prt && act_prt != ICE_LAG_INVALID_PORT &&
-		    lag->upper_netdev)
-			ice_lag_move_vf_nodes_cfg(lag, act_prt, pri_prt);
-		else
-			act_prt = ICE_LAG_INVALID_PORT;
-	}
+	act_prt = ice_lag_prepare_vf_reset(pf->lag);
 #endif /* HAVE_NETDEV_UPPER_INFO */
 
 	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
@@ -3938,9 +3925,7 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 #ifdef HAVE_NETDEV_UPPER_INFO
 
-	if (lag && lag->bonded && lag->primary &&
-	    act_prt != ICE_LAG_INVALID_PORT)
-		ice_lag_move_vf_nodes_cfg(lag, pri_prt, act_prt);
+	ice_lag_complete_vf_reset(pf->lag, act_prt);
 	mutex_unlock(&pf->lag_mutex);
 #endif /* HAVE_NETDEV_UPPER_INFO */
 
@@ -3968,12 +3953,8 @@ error_param:
 	}
 #ifdef HAVE_NETDEV_UPPER_INFO
 
-	if (lag && lag->bonded && lag->primary &&
-	    act_prt != ICE_LAG_INVALID_PORT)
-		ice_lag_move_vf_nodes_cfg(lag, pri_prt, act_prt);
+	ice_lag_complete_vf_reset(pf->lag, act_prt);
 	mutex_unlock(&pf->lag_mutex);
-
-	ice_lag_move_new_vf_nodes(vf);
 #endif /* HAVE_NETDEV_UPPER_INFO */
 
 	/* send the response to the VF */

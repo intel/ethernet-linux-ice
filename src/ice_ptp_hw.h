@@ -343,6 +343,7 @@ int ice_ena_dis_clk_ref(struct ice_hw *hw, int phy,
 			enum ice_e825c_ref_clk clk, bool enable);
 int ice_cgu_get_pin_num(struct ice_hw *hw, bool input);
 bool ice_is_cgu_in_netlist(struct ice_hw *hw);
+bool ice_is_unmanaged_cgu_in_netlist(struct ice_hw *hw);
 const char *ice_cgu_state_to_name(enum dpll_lock_status state);
 const char *ice_cgu_get_pin_name(const struct ice_hw *hw, u8 pin, bool input);
 #if defined(CONFIG_DPLL)

@@ -154,6 +154,19 @@ function find-macro-implementation-decl() {
 	find-decl "$what" "$end" "$@"
 }
 
+# yield all first lines of $1 macro invocations,
+# heuristic for DEFINE_GUARD()-like macros
+function find-macro-invocation-decl() {
+	test $# -ge 2
+	local what end
+	# only unindented defines, only whole-word match, with opening brace
+	# on the first line
+	what="/^${1}$WB*\(/"
+	end=1 # only first line
+	shift
+	find-decl "$what" "$end" "$@"
+}
+
 # yield first line of $1 typedef definition
 # This only handles typedefs where the name is on first line
 function find-typedef-decl() {
@@ -315,13 +328,35 @@ function gen() {
 		[ "$kind" != macro ] && die 30 "$src_line: implementation only supports 'macro', '$kind' given"
 		kind=macro-implementation
 	;;
+	invocation)
+		test $# -ge 5 || die 32 "$src_line: too few arguments, $orig_args_cnt given, at least 8 needed"
+		of_kw="$1"
+		kind="$2"
+		name="$3"
+		shift 3
+		[ "$of_kw" != of ] && die 33 "$src_line: 'of' keyword expected, '$of_kw' given"
+		[ "$kind" != macro ] && die 34 "$src_line: invocation only supports 'macro', '$kind' given"
+		kind=macro-invocation
+	;;
 	*) die 24 "$src_line: unknown KIND ($kind) to look for" ;;
 	esac
 	operator="$1"
 	case "$operator" in
 	absent)
-		pattern='.'
-		in_kw="$2"
+		local next_kw next_op
+		next_kw="$2"
+		in_kw="$next_kw"
+		next_op="$3"
+		if [[ "$next_kw" = or && "$next_op" = lacks ]]; then
+			# intentionally keeping $operator as 'absent'...
+			# but setting 'pattern' to something (not just '.')
+			shift 3
+			test $# -ge 3 || die 39 "$src_line: too few parameters following 'absent or lacks' operator composition, pattern, 'in' keyword and filename needed"
+			pattern="$1"
+			in_kw="$2"
+		else
+			pattern='.'
+		fi
 		shift 2
 	;;
 	matches|lacks)

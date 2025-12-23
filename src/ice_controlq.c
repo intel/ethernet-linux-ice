@@ -151,8 +151,8 @@ ice_alloc_rq_bufs(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 	/* We'll be allocating the buffer info memory first, then we can
 	 * allocate the mapped buffers for the event processing
 	 */
-	cq->rq.dma_head = kcalloc(cq->num_rq_entries, sizeof(cq->rq.desc_buf),
-				  GFP_KERNEL);
+	cq->rq.dma_head = kcalloc(cq->num_rq_entries,
+				     sizeof(cq->rq.desc_buf), GFP_KERNEL);
 	if (!cq->rq.dma_head)
 		return -ENOMEM;
 	cq->rq.r.rq_bi = (struct ice_dma_mem *)cq->rq.dma_head;
@@ -221,8 +221,8 @@ ice_alloc_sq_bufs(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 	int i;
 
 	/* No mapped memory needed yet, just the buffer info structures */
-	cq->sq.dma_head = kcalloc(cq->num_sq_entries, sizeof(cq->sq.desc_buf),
-				  GFP_KERNEL);
+	cq->sq.dma_head = kcalloc(cq->num_sq_entries,
+				     sizeof(cq->sq.desc_buf), GFP_KERNEL);
 	if (!cq->sq.dma_head)
 		return -ENOMEM;
 	cq->sq.r.sq_bi = (struct ice_dma_mem *)cq->sq.dma_head;

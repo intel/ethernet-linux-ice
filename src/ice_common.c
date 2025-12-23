@@ -779,7 +779,8 @@ static int ice_init_fltr_mgmt_struct(struct ice_hw *hw)
 	struct ice_switch_info *sw;
 	int status;
 
-	hw->switch_info = kzalloc(sizeof(*hw->switch_info), GFP_KERNEL);
+	hw->switch_info = (struct ice_switch_info *)
+			  kzalloc(sizeof(*hw->switch_info), GFP_KERNEL);
 	sw = hw->switch_info;
 
 	if (!sw)
@@ -1028,7 +1029,8 @@ int ice_init_hw(struct ice_hw *hw)
 		goto err_unroll_cqinit;
 
 	if (!hw->port_info)
-		hw->port_info = kzalloc(sizeof(*hw->port_info), GFP_KERNEL);
+		hw->port_info = (struct ice_port_info *)
+			kzalloc(sizeof(*hw->port_info), GFP_KERNEL);
 	if (!hw->port_info) {
 		status = -ENOMEM;
 		goto err_unroll_cqinit;
@@ -1066,7 +1068,8 @@ int ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_sched;
 
-	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
+	pcaps = (struct ice_aqc_get_phy_caps_data *)
+		kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps) {
 		status = -ENOMEM;
 		goto err_unroll_sched;
@@ -1104,8 +1107,9 @@ int ice_init_hw(struct ice_hw *hw)
 
 	/* Get MAC information */
 	/* A single port can report up to two (LAN and WoL) addresses */
-	mac_buf = kcalloc(2, sizeof(struct ice_aqc_manage_mac_read_resp),
-			  GFP_KERNEL);
+	mac_buf = kcalloc(2,
+			     sizeof(struct ice_aqc_manage_mac_read_resp),
+			     GFP_KERNEL);
 	mac_buf_len = 2 * sizeof(struct ice_aqc_manage_mac_read_resp);
 
 	if (!mac_buf) {
@@ -1165,7 +1169,6 @@ void ice_deinit_hw(struct ice_hw *hw)
 
 	ice_sched_cleanup_all(hw);
 	ice_sched_clear_agg(hw);
-	ice_free_seg(hw);
 	ice_free_hw_tbls(hw);
 	mutex_destroy(&hw->tnl_lock);
 
@@ -2751,12 +2754,15 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		ice_debug(hw, ICE_DBG_INIT, "%s: iwarp = %d\n", prefix, caps->iwarp);
 		break;
 	case ICE_AQC_CAPS_FW_LAG_SUPPORT:
-		caps->roce_lag = !!(number & ICE_AQC_BIT_ROCEV2_LAG);
+		caps->roce_lag = number & ICE_AQC_BIT_ROCEV2_LAG;
 		ice_debug(hw, ICE_DBG_INIT, "%s: roce_lag = %d\n",
 			  prefix, caps->roce_lag);
-		caps->sriov_lag = !!(number & ICE_AQC_BIT_SRIOV_LAG);
+		caps->sriov_lag = number & ICE_AQC_BIT_SRIOV_LAG;
 		ice_debug(hw, ICE_DBG_INIT, "%s: sriov_lag = %u\n",
 			  prefix, caps->sriov_lag);
+		caps->sriov_aa_lag = number & ICE_AQC_BIT_SRIOV_AA_LAG;
+		ice_debug(hw, ICE_DBG_INIT, "%s: sriov_aa_lag = %u\n",
+			  prefix, caps->sriov_aa_lag);
 		break;
 	case ICE_AQC_CAPS_LED:
 		if (phys_id < ICE_MAX_SUPPORTED_GPIO_LED) {
@@ -5237,24 +5243,22 @@ do_aq:
 }
 
 /**
- * ice_aq_cfg_lan_txq - Move/Configure LAN Tx queue (0x0C32)
+ * ice_aq_cfg_lan_txq - send AQ command 0x0C32 to FW
  * @hw: pointer to the hardware structure
  * @buf: buffer for command
  * @buf_size: size of buffer in bytes
  * @num_qs: number of queues being configured
  * @oldport: origination lport
  * @newport: destination lport
+ * @mode: cmd_type for move to use
  * @cd: pointer to command details structure or NULL
  *
- * There is a better AQ command to use for moving nodes, so only coding
- * this one for configuring the node.
- *
- * Return: 0 on success, error code on failure.
+ * Return: Zero on success, associated error code on failure.
  */
 int
 ice_aq_cfg_lan_txq(struct ice_hw *hw, struct ice_aqc_cfg_txqs_buf *buf,
 		   u16 buf_size, u16 num_qs, u8 oldport, u8 newport,
-		   struct ice_sq_cd *cd)
+		   u8 mode, struct ice_sq_cd *cd)
 {
 	struct ice_aqc_cfg_txqs *cmd;
 	struct ice_aq_desc desc;
@@ -5267,10 +5271,12 @@ ice_aq_cfg_lan_txq(struct ice_hw *hw, struct ice_aqc_cfg_txqs_buf *buf,
 	if (!buf)
 		return -EINVAL;
 
-	cmd->cmd_type = ICE_AQC_Q_CFG_TC_CHNG;
+	cmd->cmd_type = mode;
 	cmd->num_qs = num_qs;
 	cmd->port_num_chng = (oldport & ICE_AQC_Q_CFG_SRC_PRT_M);
 	cmd->port_num_chng |= FIELD_PREP(ICE_AQC_Q_CFG_DST_PRT_M, newport);
+	cmd->port_num_chng |= FIELD_PREP(ICE_AQC_Q_CFG_MODE_M,
+					 ICE_AQC_Q_CFG_MODE_KEEP_OWN);
 	cmd->time_out = FIELD_PREP(ICE_AQC_Q_CFG_TIMEOUT_M, 5);
 	cmd->blocked_cgds = 0;
 
@@ -6729,6 +6735,34 @@ ice_dis_vsi_rdma_qset(struct ice_port_info *pi, u16 count, u32 *qset_teid,
 	return status;
 }
 
+#ifdef HAVE_DPLL_PHASE_OFFSET_MONITOR
+/**
+ * ice_aq_get_cgu_input_pin_measure - get input pin signal measurements
+ * @hw: pointer to the HW struct
+ * @dpll_idx: index of dpll to be measured
+ * @meas: array to be filled with results
+ * @meas_num: max number of results array can hold
+ *
+ * Get CGU measurements (0x0C59) of phase and frequency offsets for input
+ * pins on given dpll.
+ *
+ * Return: 0 on success or negative value on failure.
+ */
+int ice_aq_get_cgu_input_pin_measure(struct ice_hw *hw, u8 dpll_idx,
+				     struct ice_cgu_input_measure *meas,
+				     u16 meas_num)
+{
+	struct ice_aqc_get_cgu_input_measure *cmd;
+	struct ice_aq_desc desc;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_cgu_input_measure);
+	cmd = &desc.params.get_cgu_input_measure;
+	cmd->dpll_idx_opt = dpll_idx & ICE_AQC_GET_CGU_IN_MEAS_DPLL_IDX_M;
+
+	return ice_aq_send_cmd(hw, &desc, meas, meas_num * sizeof(*meas), NULL);
+}
+#endif /* HAVE_DPLL_PHASE_OFFSET_MONITOR */
+
 /**
  * ice_aq_cfg_cgu_err
  * @hw: pointer to the HW struct
@@ -8090,7 +8124,7 @@ bool ice_is_fw_health_report_supported(struct ice_hw *hw)
  */
 static int
 ice_aq_get_health_status_supported(struct ice_hw *hw,
-				   struct ice_aqc_health_status_elem *buff,
+				   struct ice_aqc_health_status_supp_elem *buff,
 				   int num)
 {
 	u16 code = ice_aqc_opc_get_supported_health_status_codes;
@@ -8162,7 +8196,7 @@ ice_aq_set_health_status_config(struct ice_hw *hw, u8 event_source,
 int ice_is_health_status_code_supported(struct ice_hw *hw, u16 code,
 					bool *supported)
 {
-	struct ice_aqc_health_status_elem *buff __free(kfree) = NULL;
+	struct ice_aqc_health_status_supp_elem *buff __free(kfree) = NULL;
 	const int BUFF_SIZE = ICE_AQC_HEALTH_STATUS_CODE_NUM;
 	int ret;
 

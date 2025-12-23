@@ -56,6 +56,7 @@ static struct ice_adapter *ice_adapter_new(void)
 	spin_lock_init(&adapter->ptp_gltsyn_time_lock);
 	refcount_set(&adapter->refcount, 1);
 
+	mutex_init(&adapter->whole_dev_lock);
 	mutex_init(&adapter->ports.lock);
 	INIT_LIST_HEAD(&adapter->ports.ports);
 
@@ -65,6 +66,7 @@ static struct ice_adapter *ice_adapter_new(void)
 static void ice_adapter_free(struct ice_adapter *adapter)
 {
 	WARN_ON(!list_empty(&adapter->ports.ports));
+	mutex_destroy(&adapter->whole_dev_lock);
 	mutex_destroy(&adapter->ports.lock);
 
 	kfree(adapter);

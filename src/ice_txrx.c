@@ -651,6 +651,9 @@ int ice_setup_rx_ring(struct ice_rx_ring *rx_ring)
 
 	rx_ring->next_to_use = 0;
 	rx_ring->next_to_clean = 0;
+#ifndef CONFIG_ICE_USE_SKB
+	rx_ring->skb = NULL;
+#endif /* !CONFIG_ICE_USE_SKB */
 
 #ifdef HAVE_XDP_SUPPORT
 	if (ice_is_xdp_ena_vsi(rx_ring->vsi))

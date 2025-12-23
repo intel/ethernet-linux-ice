@@ -177,6 +177,14 @@ ice_sched_add_node(struct ice_port_info *pi, u8 layer,
 			  le32_to_cpu(info->parent_teid));
 		return -EINVAL;
 	}
+	/* After NVM update FW will (in some cases) not return proper
+	 * topology, bail out early in such cases
+	 * (as there is a need of platform reboot anyway).
+	 */
+	if (!parent->children) {
+		dev_warn(ice_hw_to_dev(hw), "Parent Node children array not initialized\n");
+		return -ENOSPC;
+	}
 
 	/* query the current node information from FW before adding it
 	 * to the SW DB
@@ -1346,8 +1354,15 @@ int ice_sched_init_port(struct ice_port_info *pi)
 	/* Query default scheduling tree topology */
 	status = ice_aq_get_dflt_topo(hw, pi->lport, buf, ICE_AQ_MAX_BUF_LEN,
 				      &num_branches, NULL);
-	if (status)
+	if (status) {
+		if (hw->num_tx_sched_layers == ICE_SCHED_5_LAYERS) {
+			status = 0;
+			goto skip_default_topo_processing;
+		}
+		dev_err(ice_hw_to_dev(hw), "Failed to get default tx sched topology via AQ, err: %d\n",
+			status);
 		goto err_init_port;
+	}
 
 	/* num_branches should be between 1-8 */
 	if (num_branches < 1 || num_branches > ICE_TXSCHED_MAX_BRANCHES) {
@@ -1406,6 +1421,7 @@ int ice_sched_init_port(struct ice_port_info *pi)
 	if (pi->root)
 		ice_sched_rm_dflt_nodes(pi);
 
+skip_default_topo_processing:
 	/* initialize the port for handling the scheduler tree */
 	pi->port_state = ICE_SCHED_PORT_STATE_READY;
 	mutex_init(&pi->sched_lock);
@@ -1460,9 +1476,6 @@ int ice_sched_query_res_alloc(struct ice_hw *hw)
 	__le16 max_sibl;
 	int status = 0;
 	u16 i;
-
-	if (hw->layer_info)
-		return status;
 
 	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
 	if (!buf)
@@ -1761,16 +1774,16 @@ static bool ice_sched_check_node(struct ice_hw *hw, struct ice_sched_node *node)
 /**
  * ice_sched_calc_vsi_child_nodes - calculate number of VSI child nodes
  * @hw: pointer to the HW struct
- * @num_qs: number of queues
+ * @num_new_qs: number of new queues that will be added to the tree
  * @num_nodes: num nodes array
  *
  * This function calculates the number of VSI child nodes based on the
  * number of queues.
  */
 static void
-ice_sched_calc_vsi_child_nodes(struct ice_hw *hw, u16 num_qs, u16 *num_nodes)
+ice_sched_calc_vsi_child_nodes(struct ice_hw *hw, u16 num_new_qs, u16 *num_nodes)
 {
-	u16 num = num_qs;
+	u16 num = num_new_qs;
 	u8 i, qgl, vsil;
 
 	qgl = ice_sched_get_qgrp_layer(hw);
@@ -2021,8 +2034,9 @@ ice_sched_update_vsi_child_nodes(struct ice_port_info *pi, u16 vsi_handle,
 			return status;
 	}
 
-	if (new_numqs)
-		ice_sched_calc_vsi_child_nodes(hw, new_numqs, new_num_nodes);
+	ice_sched_calc_vsi_child_nodes(hw, new_numqs - prev_numqs,
+				       new_num_nodes);
+
 	/* Keep the max number of queue configuration all the time. Update the
 	 * tree only if number of queues > previous number of queues. This may
 	 * leave some extra nodes in the tree if number of queues < previous
@@ -2188,7 +2202,8 @@ ice_sched_rm_vsi_cfg(struct ice_port_info *pi, u16 vsi_handle, u8 owner)
 
 	ice_debug(pi->hw, ICE_DBG_SCHED, "removing VSI %d\n", vsi_handle);
 	if (!ice_is_vsi_valid(pi->hw, vsi_handle))
-		return status;
+		return 0; /* already removed/not added at all */
+
 	mutex_lock(&pi->sched_lock);
 	vsi_ctx = ice_get_vsi_ctx(pi->hw, vsi_handle);
 	if (!vsi_ctx)
@@ -2527,8 +2542,8 @@ ice_sched_move_leaves(struct ice_port_info *pi, struct ice_sched_node *parent,
 			goto move_err_exit;
 		}
 
-		buf->src_teid = old_parent->info.node_teid;
-		buf->dest_teid = parent->info.node_teid;
+		buf->src_parent_teid = old_parent->info.node_teid;
+		buf->dst_parent_teid = parent->info.node_teid;
 		buf->queue_info[0].q_handle = cpu_to_le16(leaf->tx_queue_id);
 		buf->queue_info[0].tc = 0;
 		buf->queue_info[0].q_teid = leaf->info.node_teid;

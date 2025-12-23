@@ -3626,4 +3626,12 @@ void _kc_eventfd_signal(struct eventfd_ctx *ctx)
 #define TCP_MIN_MSS 88U
 #endif
 
+#ifdef NEED_DEFINE_SIMPLE_DEV_OPS
+#define DEFINE_SIMPLE_DEV_OPS(name, suspend_fn, resume_fn) \
+    SIMPLE_DEV_PM_OPS(name, suspend_fn, resume_fn)
+#endif /* NEED_DEFINE_SIMPLE_DEV_OPS */
+
+#ifdef NEED_PM_SLEEP_PTR
+#define pm_sleep_ptr(_ptr) (_ptr)
+#endif /* NEED_PM_SLEEP_PTR */
 #endif /* _KCOMPAT_IMPL_H_ */
