@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2018-2025 Intel Corporation
+# Copyright (C) 2018-2026 Intel Corporation
 
 # When the make command line has the goal 'all' or no goal specified (i.e.
 # when compiling the driver) a sub-make of the kernel's Makefile includes

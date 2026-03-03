@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #include "ice_dcb_lib.h"
 #include "ice_dcb_nl.h"
@@ -675,6 +675,9 @@ int ice_dcb_sw_dflt_cfg(struct ice_pf *pf, bool ets_willing, bool locked)
 	kfree(dcbcfg);
 	if (ret)
 		return ret;
+
+	/* init desired_dcbx_cfg from local_dcbx_cfg */
+	pi->qos_cfg.desired_dcbx_cfg = pi->qos_cfg.local_dcbx_cfg;
 
 	return ice_query_port_ets(pi, &buf, sizeof(buf), NULL);
 }

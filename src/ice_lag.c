@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 /* Link Aggregation code */
 
@@ -326,8 +326,8 @@ ice_lag_cfg_pf_fltrs_act_bkup(struct ice_lag *lag,
 static void
 ice_lag_cfg_lp_fltr(struct ice_lag *lag, bool add, bool cp)
 {
+	struct ice_vsi *vsi = ice_get_main_vsi(lag->pf);
 	struct ice_sw_rule_lkup_rx_tx *s_rule;
-	struct ice_vsi *vsi = lag->pf->vsi[0];
 	u16 buf_len, opc;
 
 	buf_len = ICE_SW_RULE_RX_TX_HDR_SIZE(s_rule, ICE_TRAIN_PKT_LEN);
@@ -1881,8 +1881,8 @@ ice_lag_reclaim_node(struct ice_lag *lag, struct ice_hw *active_hw, u8 tc)
 	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
 	new_parent = ice_sched_get_free_qparent(prim_hw->port_info,
-						lag->pf->vsi[0]->idx, tc,
-						ICE_SCHED_NODE_OWNER_RDMA);
+						ice_get_main_vsi(lag->pf)->idx,
+						tc, ICE_SCHED_NODE_OWNER_RDMA);
 	if (!new_parent) {
 		dev_warn(ice_pf_to_dev(lag->pf), "Could not find free qparent\n");
 		return -EINVAL;
@@ -2198,7 +2198,7 @@ static void ice_lag_cfg_pfmac_fltrs(struct ice_lag *lag, bool link)
 		return;
 
 	lport = lag->pf->hw.port_info->lport;
-	vsi = lag->pf->vsi[0];
+	vsi = ice_get_main_vsi(lag->pf);
 	hw = &lag->pf->hw;
 
 	act = ICE_FWD_TO_VSI | ICE_SINGLE_ACT_LAN_ENABLE |
@@ -2427,8 +2427,8 @@ static void ice_lag_add_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 	struct device *dev;
 
 	dev = ice_pf_to_dev(lag->pf);
-	event_vsi_num = event_pf->vsi[0]->vsi_num;
-	prim_vsi_idx = lag->pf->vsi[0]->idx;
+	event_vsi_num = ice_get_main_vsi(event_pf)->vsi_num;
+	prim_vsi_idx = ice_get_main_vsi(lag->pf)->idx;
 	recp_list = &lag->pf->hw.switch_info->recp_list[ICE_SW_LKUP_VLAN];
 
 	if (!ice_find_vsi_list_entry(recp_list, prim_vsi_idx, &vsi_list_id)) {
@@ -2465,8 +2465,8 @@ static void ice_lag_del_prune_list(struct ice_lag *lag, struct ice_pf *event_pf)
 	struct device *dev;
 
 	dev = ice_pf_to_dev(lag->pf);
-	vsi_num = event_pf->vsi[0]->vsi_num;
-	vsi_idx = lag->pf->vsi[0]->idx;
+	vsi_num = ice_get_main_vsi(event_pf)->vsi_num;
+	vsi_idx = ice_get_main_vsi(lag->pf)->idx;
 	recp_list = &lag->pf->hw.switch_info->recp_list[ICE_SW_LKUP_VLAN];
 
 	if (!ice_find_vsi_list_entry(recp_list, vsi_idx, &vsi_list_id)) {

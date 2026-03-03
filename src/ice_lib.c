@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #include "ice.h"
 #include "ice_base.h"
@@ -2961,9 +2961,14 @@ void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create)
 		status = eth_fltr(vsi, ETH_P_LLDP, ICE_FLTR_TX,
 				  ICE_DROP_PACKET);
 	} else {
+		/* Try new LLDP filter control API first if FW supports it */
 		if (ice_fw_supports_lldp_fltr_ctrl(&pf->hw)) {
 			status = ice_lldp_fltr_add_remove(&pf->hw, vsi->vsi_num,
 							  create);
+			/* Fall back to legacy method if new API fails */
+			if (status)
+				status = eth_fltr(vsi, ETH_P_LLDP, ICE_FLTR_RX,
+						  ICE_FWD_TO_VSI);
 		} else {
 			status = eth_fltr(vsi, ETH_P_LLDP, ICE_FLTR_RX,
 					  ICE_FWD_TO_VSI);

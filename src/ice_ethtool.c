@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 /* ethtool support for ice */
 
@@ -3374,8 +3374,9 @@ ice_get_link_ksettings(struct net_device *netdev,
 		 */
 	}
 
-	/* flow control is symmetric and always supported */
+	/* flow control is symmetric or asymmetric and always supported */
 	ethtool_link_ksettings_add_link_mode(ks, supported, Pause);
+	ethtool_link_ksettings_add_link_mode(ks, supported, Asym_Pause);
 
 	caps = kzalloc(sizeof(*caps), GFP_KERNEL);
 	if (!caps)
@@ -4181,8 +4182,8 @@ static int ice_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 
 	ecmd->transceiver = XCVR_EXTERNAL;
 
-	/* flow control is symmetric and always supported */
-	ecmd->supported |= SUPPORTED_Pause;
+	/* flow control is symmetric or asymmetric and always supported */
+	ecmd->supported |= SUPPORTED_Pause | SUPPORTED_Asym_Pause;
 
 	switch (vsi->port_info->fc.req_mode) {
 	case ICE_FC_RX_PAUSE:

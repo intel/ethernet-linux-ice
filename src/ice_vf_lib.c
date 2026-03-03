@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #include "ice.h"
 #include "ice_vf_lib_private.h"
@@ -739,18 +739,15 @@ ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 		       unsigned long *promisc_m)
 {
 	struct ice_hw *hw = &vsi->back->hw;
-	u8 lport = vsi->port_info->lport;
 	int status;
 
 	if (ice_vf_is_port_vlan_ena(vf))
 		status = ice_fltr_set_vsi_promisc(hw, vsi->idx, promisc_m,
-						  ice_vf_get_port_vlan_id(vf),
-						  lport);
+						  ice_vf_get_port_vlan_id(vf));
 	else if (ice_vsi_has_non_zero_vlans(vsi))
 		status = ice_fltr_set_vlan_vsi_promisc(hw, vsi, promisc_m);
 	else
-		status = ice_fltr_set_vsi_promisc(hw, vsi->idx, promisc_m, 0,
-						  lport);
+		status = ice_fltr_set_vsi_promisc(hw, vsi->idx, promisc_m, 0);
 
 	if (status && status != -EEXIST) {
 		dev_err(ice_pf_to_dev(vsi->back), "enable Tx/Rx filter promiscuous mode on VF-%u failed, error: %d\n",
@@ -772,18 +769,16 @@ ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 			 unsigned long *promisc_m)
 {
 	struct ice_hw *hw = &vsi->back->hw;
-	u8 lport = vsi->port_info->lport;
 	int status;
 
 	if (ice_vf_is_port_vlan_ena(vf))
-		status = ice_fltr_clear_vsi_promisc(hw, vsi->idx, promisc_m,
-						    ice_vf_get_port_vlan_id(vf),
-						    lport);
+		status =
+			ice_fltr_clear_vsi_promisc(hw, vsi->idx, promisc_m,
+						   ice_vf_get_port_vlan_id(vf));
 	else if (ice_vsi_has_non_zero_vlans(vsi))
 		status = ice_fltr_clear_vlan_vsi_promisc(hw, vsi, promisc_m);
 	else
-		status = ice_fltr_clear_vsi_promisc(hw, vsi->idx, promisc_m, 0,
-						    lport);
+		status = ice_fltr_clear_vsi_promisc(hw, vsi->idx, promisc_m, 0);
 
 	if (status && status != -ENOENT) {
 		dev_err(ice_pf_to_dev(vsi->back), "disable Tx/Rx filter promiscuous mode on VF-%u failed, error: %d\n",

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -5441,6 +5441,10 @@ void ice_ptp_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 	int err;
 	u32 val;
 
+	if (ptp->state == ICE_PTP_UNINIT) {
+		dev_dbg(ice_pf_to_dev(pf), "PTP was not initialized, skipping rebuild\n");
+		return;
+	}
 	val = rd32(&pf->hw, PF_SB_REM_DEV_CTL);
 	wr32(&pf->hw, PF_SB_REM_DEV_CTL, val | BIT(phy_0_peer) | BIT(cgu_peer));
 

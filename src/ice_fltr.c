@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #include "ice.h"
 #include "ice_fltr.h"
@@ -100,11 +100,10 @@ ice_fltr_clear_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi,
  * @vsi_handle: VSI handle to clear mode
  * @promisc_mask: mask of promiscuous config bits to clear
  * @vid: VLAN ID to clear VLAN promiscuous
- * @lport: logical port number to clear mode
  */
 int
 ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
-			   unsigned long *promisc_mask, u16 vid, u8 lport)
+			   unsigned long *promisc_mask, u16 vid)
 {
 	struct ice_pf *pf = hw->back;
 	int result;
@@ -124,11 +123,10 @@ ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
  * @vsi_handle: VSI handle to configure
  * @promisc_mask: mask of promiscuous config bits
  * @vid: VLAN ID to set VLAN promiscuous
- * @lport: logical port number to set promiscuous mode
  */
 int
 ice_fltr_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
-			 unsigned long *promisc_mask, u16 vid, u8 lport)
+			 unsigned long *promisc_mask, u16 vid)
 {
 	struct ice_pf *pf = hw->back;
 	int result;
