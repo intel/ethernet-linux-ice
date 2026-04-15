@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 /* Inter-Driver Communication */
 #include "ice.h"
@@ -427,10 +427,13 @@ ice_free_rdma_qsets(struct iidc_core_dev_info *cdev_info,
 					continue;
 
 				if (cdev_info->rdma_active_port ==
-				    tmp_hw->port_info->lport)
+				    tmp_hw->port_info->lport) {
+					struct ice_vsi *main_vsi;
+
+					main_vsi = ice_get_main_vsi(pf);
 					ice_lag_move_node_sync(tmp_hw, &pf->hw,
-							       pf->vsi[0],
-							       qset);
+							       main_vsi, qset);
+				}
 			}
 			rcu_read_unlock();
 		}
@@ -1050,7 +1053,7 @@ static void ice_cdev_init_rdma_qos_info(struct ice_pf *pf,
  */
 int ice_init_aux_devices(struct ice_pf *pf)
 {
-	struct ice_vsi *vsi = pf->vsi[0];
+	struct ice_vsi *vsi = ice_get_main_vsi(pf);
 	struct pci_dev *pdev = pf->pdev;
 	struct device *dev = &pdev->dev;
 	unsigned int i;

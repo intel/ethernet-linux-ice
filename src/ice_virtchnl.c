@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #include "ice.h"
 #include "ice_virtchnl.h"
@@ -4450,7 +4450,7 @@ ice_vf_ena_vlan_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 		return 0;
 
 	status = ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m,
-					  vlan->vid, vsi->port_info->lport);
+					  vlan->vid);
 	if (status && status != -EEXIST)
 		return status;
 
@@ -4477,7 +4477,7 @@ ice_vf_dis_vlan_promisc(struct ice_vf *vf, struct ice_vsi *vsi,
 	ice_set_mcast_promisc_bits(promisc_m);
 
 	status = ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, promisc_m,
-					    vlan->vid, vsi->port_info->lport);
+					    vlan->vid);
 	if (status && status != -ENOENT)
 		return status;
 

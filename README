@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-December 11, 2025
+March 02, 2026
 
 
 Contents
@@ -87,6 +87,8 @@ The driver is compatible with devices based on the following:
 * Intel(R) Ethernet Connection E825-C
 
 * Intel(R) Ethernet Controller E830
+
+* Intel(R) Ethernet Controller E835
 
 For information on how to identify your adapter, and for the latest
 Intel network drivers, refer to the Intel Support website at
@@ -709,6 +711,16 @@ with bridges:
      * For other modes: version 4.80 or newer
 
 * The ice_lag DDP package is loaded
+
+* Firmware supports LAN VF LAG capability (minimal version):
+
++---------------+-----------------+---------------+
+| Device        | active-backup   | Other modes   |
+|===============|=================|===============|
+| E810          | 4.30            | 4.80          |
++---------------+-----------------+---------------+
+| E83x Series   | 1.00            | 1.20          |
++---------------+-----------------+---------------+
 
 In modes other than active-backup (1), splitting traffic is achieved
 through queue-balancing. Half of each VFs queues are configured to
@@ -2929,7 +2941,7 @@ Dumping the DPLL devices
 Earliest TxTime First (ETF) Offloads
 ------------------------------------
 
-Intel Ethernet 830 Series devices support Earliest TxTime First (ETF)
+Intel Ethernet E83x Series devices support Earliest TxTime First (ETF)
 offloads. ETF offloads enable precise packet transmission scheduling,
 which is crucial for time-sensitive network applications that require
 strict timing control. The ice driver uses the "SO_TXTIME" socket
@@ -2973,7 +2985,8 @@ following:
 
    ethtool -K <ethX> [tx|rx] [on|off]
 
-Intel Ethernet 830 Series devices support generic Tx and Rx checksums.
+Intel Ethernet E83x Series devices support generic Tx and Rx
+checksums.
 
 * To change generic Rx checksum offloads, use the above Rx checksum
   enable/disable command.
@@ -2984,7 +2997,7 @@ Intel Ethernet 830 Series devices support generic Tx and Rx checksums.
 
 Note:
 
-  On Intel Ethernet 830 Series devices, the generic Tx checksum
+  On Intel Ethernet E83x Series devices, the generic Tx checksum
   offload feature (tx-checksum-ip-generic) cannot be enabled
   simultaneously with the following features:
 
@@ -3470,29 +3483,37 @@ a debug dump file in Linux, do the following:
 
         echo <cluster ID> > /sys/kernel/debug/ice/<pci_addr>/fw/dump_cluster_id
 
+     The cluster ID values vary depending on the Intel Ethernet
+     controller family. Use the appropriate reference table below
+     based on your device type.
+
      Possible values for "<cluster ID>" are:
 
-        * 0 - Switch
-
-        * 1 - ACL
-
-        * 2 - Tx Scheduler
-
-        * 3 - Profile Configuration
-
-        * 4 - EMP DRAM
-
-        * 5 - Link
-
-        * 7 - DCB
-
-        * 8 - L2P
-
-        * 9 - Queue Manageability
-
-        * 21 - CSR Space
-
-        * 22 - Manageability Transactions
+     +---------------------------------+-------------+---------------+
+     | Cluster Function                | E810/E82x   | E83x Series   |
+     |=================================|=============|===============|
+     | Switch                          | 0           | 100           |
+     +---------------------------------+-------------+---------------+
+     | ACL                             | 1           | 101           |
+     +---------------------------------+-------------+---------------+
+     | Tx Scheduler                    | 2           | 102           |
+     +---------------------------------+-------------+---------------+
+     | Profile Configuration           | 3           | 103           |
+     +---------------------------------+-------------+---------------+
+     | EMP DRAM                        | 4           | 104           |
+     +---------------------------------+-------------+---------------+
+     | Link                            | 5           | 105           |
+     +---------------------------------+-------------+---------------+
+     | DCB                             | 7           | 107           |
+     +---------------------------------+-------------+---------------+
+     | L2P                             | 8           | 108           |
+     +---------------------------------+-------------+---------------+
+     | Queue Manageability             | 9           | 109           |
+     +---------------------------------+-------------+---------------+
+     | CSR Space                       | 21          | 121           |
+     +---------------------------------+-------------+---------------+
+     | Manageability Transactions      | 22          | 122           |
+     +---------------------------------+-------------+---------------+
 
    For example, to dump the CSR space, use the following:
 

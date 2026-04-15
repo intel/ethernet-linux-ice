@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #include "ice.h"
 #include "ice_lib.h"
@@ -2971,9 +2971,10 @@ ice_devlink_tc_inline_fd_get(struct devlink *devlink, u32 id,
 )
 {
 	struct ice_pf *pf = devlink_priv(devlink);
-	struct ice_vsi *vsi = pf->vsi[0];
-	struct ice_vsi *ch_vsi;
+	struct ice_vsi *vsi, *ch_vsi;
 	int err = 0;
+
+	vsi = ice_get_main_vsi(pf);
 
 	err = ice_validate_tc_params_id(id, ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD,
 					vsi->num_tc_devlink_params);
@@ -3006,9 +3007,10 @@ ice_devlink_tc_inline_fd_validate(struct devlink *devlink, u32 id,
 				  struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
-	struct ice_vsi *vsi = pf->vsi[0];
-	struct ice_vsi *ch_vsi;
+	struct ice_vsi *vsi, *ch_vsi;
 	int err = 0;
+
+	vsi = ice_get_main_vsi(pf);
 
 	err = ice_validate_tc_params_id(id, ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD,
 					vsi->num_tc_devlink_params);
@@ -3043,9 +3045,9 @@ ice_devlink_tc_inline_fd_set(struct devlink *devlink, u32 id,
 #endif /* HAVE_DEVLINK_PARAMS_SET_EXTACK */
 {
 	struct ice_pf *pf = devlink_priv(devlink);
-	struct ice_vsi *vsi = pf->vsi[0];
-	struct ice_vsi *ch_vsi;
+	struct ice_vsi *vsi, *ch_vsi;
 
+	vsi = ice_get_main_vsi(pf);
 	ch_vsi = vsi->tc_map_vsi[id - ICE_DEVLINK_PARAM_ID_TC1_INLINE_FD + 1];
 	ch_vsi->ch->inline_fd = ctx->val.vbool;
 

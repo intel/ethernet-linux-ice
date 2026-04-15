@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 /* Intel(R) Ethernet Connection E800 Series Linux Driver */
 
@@ -30,10 +30,10 @@
 #include "ice_ieps.h"
 
 #define DRV_VERSION_MAJOR 2
-#define DRV_VERSION_MINOR 4
-#define DRV_VERSION_BUILD 5
+#define DRV_VERSION_MINOR 5
+#define DRV_VERSION_BUILD 4
 
-#define DRV_VERSION	"2.4.5"
+#define DRV_VERSION	"2.5.4"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -43,7 +43,7 @@
 
 const char ice_drv_ver[] = DRV_VERSION DRV_VERSION_EXTRA;
 static const char ice_driver_string[] = DRV_SUMMARY;
-static const char ice_copyright[] = "Copyright (C) 2018-2025 Intel Corporation";
+static const char ice_copyright[] = "Copyright (C) 2018-2026 Intel Corporation";
 
 /* DDP Package file located in firmware search paths (e.g. /lib/firmware/) */
 #if UTS_UBUNTU_RELEASE_ABI
@@ -546,8 +546,7 @@ static int ice_set_promisc(struct ice_vsi *vsi, unsigned long *promisc_m)
 						       promisc_m);
 	} else {
 		status = ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx,
-						  promisc_m, 0,
-						  vsi->port_info->lport);
+						  promisc_m, 0);
 	}
 
 	if (status && status != -EEXIST)
@@ -578,8 +577,7 @@ static int ice_clear_promisc(struct ice_vsi *vsi, unsigned long *promisc_m)
 							 promisc_m);
 	} else {
 		status = ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx,
-						    promisc_m, 0,
-						    vsi->port_info->lport);
+						    promisc_m, 0);
 	}
 
 	netdev_dbg(vsi->netdev, "clear promisc filter bits for VSI %i: 0x%*pb\n",
@@ -5258,8 +5256,8 @@ ice_vlan_rx_add_vid(struct net_device *netdev, __be16 proto, u16 vid)
 	 */
 	if (vsi->current_netdev_flags & IFF_ALLMULTI) {
 		ret = ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, mask,
-					       vid, vsi->port_info->lport);
-		if (ret)
+					       vid);
+		if (ret && ret != -EEXIST)
 			goto finish;
 	}
 
@@ -5281,10 +5279,8 @@ ice_vlan_rx_add_vid(struct net_device *netdev, __be16 proto, u16 vid)
 	    ice_vsi_num_non_zero_vlans(vsi) == 1) {
 		bitmap_zero(mask, ICE_PROMISC_MAX);
 		ice_set_mcast_promisc_bits(mask);
-		ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, mask, 0,
-					   vsi->port_info->lport);
-		ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, mask, 0,
-					 vsi->port_info->lport);
+		ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, mask, 0);
+		ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, mask, 0);
 	}
 
 finish:
@@ -5330,8 +5326,7 @@ ice_vlan_rx_kill_vid(struct net_device *netdev, __be16 proto, u16 vid)
 	ice_set_mcast_vlan_promisc_bits(mask);
 
 	if (vsi->current_netdev_flags & IFF_ALLMULTI)
-		ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, mask, vid,
-					   vsi->port_info->lport);
+		ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx, mask, vid);
 
 	if (!ice_vsi_has_non_zero_vlans(vsi)) {
 		/* Update look-up type of multicast promisc rule for VLAN 0
@@ -5340,12 +5335,11 @@ ice_vlan_rx_kill_vid(struct net_device *netdev, __be16 proto, u16 vid)
 		 */
 		if (vsi->current_netdev_flags & IFF_ALLMULTI) {
 			ice_fltr_clear_vsi_promisc(&vsi->back->hw, vsi->idx,
-						   mask, 0,
-						   vsi->port_info->lport);
+						   mask, 0);
 			bitmap_zero(mask, ICE_PROMISC_MAX);
 			ice_set_mcast_promisc_bits(mask);
 			ice_fltr_set_vsi_promisc(&vsi->back->hw, vsi->idx, mask,
-						 0, vsi->port_info->lport);
+						 0);
 		}
 	}
 
@@ -6852,6 +6846,9 @@ static void ice_deinit_features(struct ice_pf *pf)
 		ice_dpll_deinit(pf);
 #endif /* IS_ENABLED(CONFIG_DPLL) */
 	ice_remove_arfs(pf);
+#ifdef HAVE_HWMON_DEVICE_REGISTER_WITH_INFO
+	ice_hwmon_exit(pf);
+#endif /* HAVE_HWMON_DEVICE_REGISTER_WITH_INFO */
 }
 
 static void ice_init_wakeup(struct ice_pf *pf)
@@ -7526,10 +7523,6 @@ static void ice_remove(struct pci_dev *pdev)
 		msleep(100);
 	}
 
-#ifdef HAVE_HWMON_DEVICE_REGISTER_WITH_INFO
-	ice_hwmon_exit(pf);
-#endif /* HAVE_HWMON_DEVICE_REGISTER_WITH_INFO */
-
 	if (test_bit(ICE_FLAG_SRIOV_ENA, pf->flags)) {
 		set_bit(ICE_VF_RESETS_DISABLED, pf->state);
 		ice_free_vfs(pf);
@@ -7981,6 +7974,15 @@ static const struct pci_device_id ice_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E830_L_QSFP), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E830C_SFP), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E830_L_SFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835CC_BACKPLANE), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835CC_QSFP56), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835CC_SFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835C_BACKPLANE), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835C_QSFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835C_SFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835_L_BACKPLANE), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835_L_QSFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835_L_SFP), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E822_SI_DFLT), 0 },
 	/* required last entry */
 	{ 0, }
@@ -12658,8 +12660,8 @@ ice_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 						  &ice_block_cb_list,
 						  ice_setup_tc_block_cb,
 						  np, np, true);
-#ifdef HAVE_TC_ETF_QOPT_OFFLOAD
 	case TC_SETUP_QDISC_ETF:
+#ifdef HAVE_TC_ETF_QOPT_OFFLOAD
 		return ice_offload_txtime(netdev, type_data);
 #else
 		return -EOPNOTSUPP;

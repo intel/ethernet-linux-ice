@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 // SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
 /* Copyright 2016-2018 NXP

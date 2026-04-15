@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (C) 2018-2025 Intel Corporation */
+/* Copyright (C) 2018-2026 Intel Corporation */
 
 #ifndef _ICE_FLTR_H_
 #define _ICE_FLTR_H_
@@ -15,10 +15,10 @@ ice_fltr_clear_vlan_vsi_promisc(struct ice_hw *hw, struct ice_vsi *vsi,
 				unsigned long *promisc_mask);
 int
 ice_fltr_clear_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
-			   unsigned long *promisc_mask, u16 vid, u8 lport);
+			   unsigned long *promisc_mask, u16 vid);
 int
 ice_fltr_set_vsi_promisc(struct ice_hw *hw, u16 vsi_handle,
-			 unsigned long *promisc_mask, u16 vid, u8 lport);
+			 unsigned long *promisc_mask, u16 vid);
 int
 ice_fltr_add_mac_to_list(struct ice_vsi *vsi, struct list_head *list,
 			 const u8 *mac, enum ice_sw_fwd_act_type action);
