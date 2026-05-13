@@ -14,15 +14,15 @@
 void ice_migration_save_vf_msg(struct ice_vf *vf,
 			       struct ice_rq_event_info *event);
 void ice_migration_fix_msg_vsi(struct ice_vf *vf, u32 v_opcode, u8 *msg);
-u32 ice_migration_supported_caps(void);
+void ice_migration_set_supported_caps(unsigned long *driver_caps);
 #else
 static inline void
 ice_migration_save_vf_msg(struct ice_vf *vf,
 			  struct ice_rq_event_info *event) { }
-static inline u32
-ice_migration_supported_caps(void)
+static inline void
+ice_migration_set_supported_caps(unsigned long *driver_caps)
 {
-	return 0xFFFFFFFF;
+	bitmap_set(driver_caps, 0, VIRTCHNL_VF_CAPS_MAX);
 }
 #endif /* CONFIG_VFIO_PCI_CORE && HAVE_LMV1_SUPPORT */
 

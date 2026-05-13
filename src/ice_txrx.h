@@ -348,6 +348,16 @@ struct ice_xdp_stats {
 #endif
 #endif
 
+struct ice_tstamp_ring {
+	struct ice_tx_ring *tx_ring;	/* Backreference to associated ring */
+	dma_addr_t dma;			/* physical address of ring */
+	struct rcu_head rcu;            /* to avoid race on free */
+	u8 __iomem *tail;
+	void *desc;
+	u16 next_to_use;
+	u16 count;
+} ____cacheline_internodealigned_in_smp;
+
 /* descriptor ring, associated with a VSI */
 struct ice_rx_ring {
 	/* CL1 - 1st cacheline starts here */
@@ -465,6 +475,7 @@ struct ice_tx_ring {
 #define ICE_TX_FLAGS_TXTIME			BIT(5)
 	u8 flags;
 	u8 dcb_tc;			/* Traffic class of ring */
+	struct ice_tstamp_ring *tstamp_ring;
 } ____cacheline_internodealigned_in_smp;
 
 static inline bool ice_ring_uses_build_skb(struct ice_rx_ring *ring)
@@ -578,12 +589,12 @@ u16 ice_select_queue(struct net_device *dev, struct sk_buff *skb,
 		     select_queue_fallback_t fallback);
 #endif /* HAVE_NDO_SELECT_QUEUE_FALLBACK_REMOVED */
 #endif /* HAVE_NDO_SELECT_QUEUE_SB_DEV */
-int ice_setup_tstamp_ring(struct ice_tx_ring *tstamp_ring);
-void ice_clean_tstamp_ring(struct ice_tx_ring *tstamp_ring);
-void ice_free_tstamp_ring(struct ice_tx_ring *tstamp_ring);
 void ice_free_tx_ring(struct ice_tx_ring *tx_ring);
 void ice_clean_tx_ring(struct ice_tx_ring *tx_ring);
 void ice_clean_rx_ring(struct ice_rx_ring *rx_ring);
+void ice_free_tx_tstamp_ring(struct ice_tx_ring *tx_ring);
+void ice_free_tstamp_ring(struct ice_tx_ring *tx_ring);
+int ice_alloc_setup_tstamp_ring(struct ice_tx_ring *tx_ring);
 int ice_setup_tx_ring(struct ice_tx_ring *tx_ring);
 int ice_setup_rx_ring(struct ice_rx_ring *rx_ring);
 void ice_free_rx_ring(struct ice_rx_ring *rx_ring);

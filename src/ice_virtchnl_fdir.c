@@ -180,7 +180,7 @@ ice_vc_fdir_param_check(struct ice_vf *vf, u16 vsi_id)
 	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states))
 		return -EINVAL;
 
-	if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_FDIR_PF))
+	if (!test_bit(VIRTCHNL_VF_OFFLOAD_FDIR_PF, vf->driver_caps))
 		return -EINVAL;
 
 	if (!ice_vc_isvalid_vsi_id(vf, vsi_id))
@@ -1627,7 +1627,7 @@ ice_vc_fdir_write_flow_prof(struct ice_vf *vf,
 	}
 
 	ret = ice_flow_add_prof(hw, ICE_BLK_FD, ICE_FLOW_RX, seg,
-				tun + 1, NULL, 0, &prof);
+				tun + 1, NULL, 0, &prof, false);
 	if (ret) {
 		dev_dbg(dev, "Could not add VSI flow 0x%x for VF %d\n",
 			flow, vf->vf_id);
@@ -3099,6 +3099,34 @@ ice_vc_validate_fdir_fltr(struct ice_vf *vf,
 }
 
 /**
+ * ice_vc_fdir_comp_raw
+ * @conf_a: FDIR configuration for filter a
+ * @conf_b: FDIR configuration for filter b
+ *
+ * Compare if two raw filter rules have the same value
+ *
+ * Return: true if filters have the same value, false otherwise.
+ */
+static bool
+ice_vc_fdir_comp_raw(struct virtchnl_fdir_fltr_conf *conf_a,
+		     struct virtchnl_fdir_fltr_conf *conf_b)
+{
+	if (!conf_a->pkt_buf && !conf_b->pkt_buf)
+		return true;
+
+	if (!conf_a->pkt_buf || !conf_b->pkt_buf)
+		return false;
+
+	if (conf_a->pkt_len != conf_b->pkt_len)
+		return false;
+
+	if (memcmp(conf_a->pkt_buf, conf_b->pkt_buf, conf_a->pkt_len) != 0)
+		return false;
+
+	return true;
+}
+
+/**
  * ice_vc_fdir_comp_rules - compare if two filter rules have the same value
  * @conf_a: FDIR configuration for filter a
  * @conf_b: FDIR configuration for filter b
@@ -3114,6 +3142,13 @@ ice_vc_fdir_comp_rules(struct virtchnl_fdir_fltr_conf *conf_a,
 
 	if (conf_a->ttype != conf_b->ttype)
 		return false;
+
+	if (conf_a->parser_ena != conf_b->parser_ena)
+		return false;
+
+	if (conf_a->parser_ena && conf_b->parser_ena)
+		return ice_vc_fdir_comp_raw(conf_a, conf_b);
+
 	return ice_fdir_comp_rules_extended(a, b);
 }
 
@@ -3917,8 +3952,22 @@ ice_vc_add_fdir_raw(struct ice_vf *vf,
 					   ctrl_vsi->idx, conf->prof,
 					   ICE_BLK_FD);
 
-		if (ret)
+		if (ret) {
+			v_ret = VIRTCHNL_STATUS_SUCCESS;
+			stat->status = VIRTCHNL_FDIR_FAILURE_RULE_NORESOURCE;
+			dev_err(dev, "VF %d: HW Profile set failed\n",
+				vf->vf_id);
 			goto err_free_conf;
+		}
+	}
+
+	ret = ice_vc_fdir_is_dup_fltr(vf, conf);
+	if (ret) {
+		v_ret = VIRTCHNL_STATUS_SUCCESS;
+		stat->status = VIRTCHNL_FDIR_FAILURE_RULE_EXIST;
+		dev_dbg(dev, "VF %d: duplicated FDIR rule detected\n",
+			vf->vf_id);
+		goto err_free_conf;
 	}
 
 	ret = ice_vc_fdir_insert_entry(vf, conf, &conf->flow_id);

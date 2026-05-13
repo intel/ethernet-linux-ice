@@ -849,10 +849,9 @@ static void ice_sched_clear_rl_prof(struct ice_port_info *pi)
 void ice_sched_clear_agg(struct ice_hw *hw)
 {
 	struct ice_sched_agg_info *agg_info;
-	struct ice_sched_agg_info *atmp;
+	unsigned long index;
 
-	list_for_each_entry_safe(agg_info, atmp, &hw->agg_list,
-				 list_entry) {
+	xa_for_each(&hw->agg_list, index, agg_info) {
 		struct ice_sched_agg_vsi_info *agg_vsi_info;
 		struct ice_sched_agg_vsi_info *vtmp;
 
@@ -862,7 +861,7 @@ void ice_sched_clear_agg(struct ice_hw *hw)
 			list_del(&agg_vsi_info->list_entry);
 			kfree(agg_vsi_info);
 		}
-		list_del(&agg_info->list_entry);
+		xa_erase(&hw->agg_list, index);
 		kfree(agg_info);
 	}
 }
@@ -2149,10 +2148,9 @@ ice_sched_cfg_vsi(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u16 maxqs,
 static void ice_sched_rm_agg_vsi_info(struct ice_port_info *pi, u16 vsi_handle)
 {
 	struct ice_sched_agg_info *agg_info;
-	struct ice_sched_agg_info *atmp;
+	unsigned long index;
 
-	list_for_each_entry_safe(agg_info, atmp, &pi->hw->agg_list,
-				 list_entry) {
+	xa_for_each(&pi->hw->agg_list, index, agg_info) {
 		struct ice_sched_agg_vsi_info *agg_vsi_info;
 		struct ice_sched_agg_vsi_info *vtmp;
 
@@ -2331,26 +2329,6 @@ ice_aq_query_node_to_root(struct ice_hw *hw, u32 node_teid,
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_query_node_to_root);
 	cmd->teid = cpu_to_le32(node_teid);
 	return ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
-}
-
-/**
- * ice_get_agg_info - get the aggregator ID
- * @hw: pointer to the hardware structure
- * @agg_id: aggregator ID
- *
- * This function validates aggregator ID. The function returns info if
- * aggregator ID is present in list otherwise it returns null.
- */
-static struct ice_sched_agg_info *
-ice_get_agg_info(struct ice_hw *hw, u32 agg_id)
-{
-	struct ice_sched_agg_info *agg_info;
-
-	list_for_each_entry(agg_info, &hw->agg_list, list_entry)
-		if (agg_info->agg_id == agg_id)
-			return agg_info;
-
-	return NULL;
 }
 
 /**
@@ -2810,7 +2788,7 @@ ice_save_agg_tc_bitmap(struct ice_port_info *pi, u32 agg_id,
 {
 	struct ice_sched_agg_info *agg_info;
 
-	agg_info = ice_get_agg_info(pi->hw, agg_id);
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
 	if (!agg_info)
 		return -EINVAL;
 	bitmap_copy(agg_info->replay_tc_bitmap, tc_bitmap,
@@ -2902,54 +2880,76 @@ ice_sched_add_agg_cfg(struct ice_port_info *pi, u32 agg_id, u8 tc)
 }
 
 /**
- * ice_sched_cfg_agg - configure aggregator node
- * @pi: port information structure
- * @agg_id: aggregator ID
- * @agg_type: aggregator type queue, VSI, or aggregator group
- * @tc_bitmap: bits TC bitmap
+ * ice_alloc_agg_info - Allocate aggregator info structure
+ * @hw: pointer to the HW structure
+ * @min_id: the minimum ID to allocate
+ * @max_id: the maximum ID to allocate
+ * @agg_type: the aggregator node type
  *
- * It registers a unique aggregator node into scheduler services. It
- * allows a user to register with a unique ID to track it's resources.
- * The aggregator type determines if this is a queue group, VSI group
- * or aggregator group. It then creates the aggregator node(s) for requested
- * TC(s) or removes an existing aggregator node including its configuration
- * if indicated via tc_bitmap. Call ice_rm_agg_cfg to release aggregator
- * resources and remove aggregator ID.
- * This function needs to be called with scheduler lock held.
+ * Allocates a new aggregator info structure with an ID between min_id and
+ * max_id, inserting it into the agg_list xarray. If an exact ID is required,
+ * use the same value for both min_id and max_id.
+ *
+ * Context: Must be called while holding the scheduler lock.
+ *
+ * Return: the allocated aggregator info structure pointer, or an ERR_PTR on
+ * failure.
  */
-static int
-ice_sched_cfg_agg(struct ice_port_info *pi, u32 agg_id,
-		  enum ice_agg_type agg_type, unsigned long *tc_bitmap)
+static struct ice_sched_agg_info *
+ice_alloc_agg_info(struct ice_hw *hw, u32 min_id, u32 max_id,
+		   enum ice_agg_type agg_type)
 {
 	struct ice_sched_agg_info *agg_info;
-	struct ice_hw *hw = pi->hw;
-	int status = 0;
+	u32 agg_id;
+	int status;
+
+	/* Create new entry for new aggregator ID */
+	agg_info = kzalloc(sizeof(*agg_info), GFP_KERNEL);
+	if (!agg_info)
+		return (struct ice_sched_agg_info *)ERR_PTR(-ENOMEM);
+
+	agg_info->agg_type = agg_type;
+	agg_info->tc_bitmap[0] = 0;
+
+	/* Initialize the aggregator VSI list head */
+	INIT_LIST_HEAD(&agg_info->agg_vsi_list);
+
+	status = xa_alloc(&hw->agg_list, &agg_id, agg_info,
+			  XA_LIMIT(min_id, max_id), GFP_KERNEL);
+	if (status) {
+		kfree(agg_info);
+		return (struct ice_sched_agg_info *)ERR_PTR(status);
+	}
+	agg_info->agg_id = agg_id;
+
+	return agg_info;
+}
+
+/**
+ * ice_sched_cfg_agg - configure aggregator node
+ * @pi: port information structure
+ * @agg_info: pointer to aggregator node to configure
+ * @tc_bitmap: bits TC bitmap
+ *
+ * Configure an aggregator node's traffic classes according to the provided
+ * tc_bitmap.
+ *
+ * Context: Must be called with scheduler lock held.
+ */
+static int ice_sched_cfg_agg(struct ice_port_info *pi,
+			     struct ice_sched_agg_info *agg_info,
+			     unsigned long *tc_bitmap)
+{
+	int status;
 	u8 tc;
 
-	agg_info = ice_get_agg_info(hw, agg_id);
-	if (!agg_info) {
-		/* Create new entry for new aggregator ID */
-		agg_info = kzalloc(sizeof(*agg_info), GFP_KERNEL);
-		if (!agg_info)
-			return -ENOMEM;
-
-		agg_info->agg_id = agg_id;
-		agg_info->agg_type = agg_type;
-		agg_info->tc_bitmap[0] = 0;
-
-		/* Initialize the aggregator VSI list head */
-		INIT_LIST_HEAD(&agg_info->agg_vsi_list);
-
-		/* Add new entry in aggregator list */
-		list_add(&agg_info->list_entry, &hw->agg_list);
-	}
 	/* Create aggregator node(s) for requested TC(s) */
 	ice_for_each_traffic_class(tc) {
 		if (!ice_is_tc_ena(*tc_bitmap, tc)) {
 			/* Delete aggregator cfg TC if it exists previously */
 			status = ice_rm_agg_cfg_tc(pi, agg_info, tc, false);
 			if (status)
-				break;
+				return status;
 			continue;
 		}
 
@@ -2958,41 +2958,15 @@ ice_sched_cfg_agg(struct ice_port_info *pi, u32 agg_id,
 			continue;
 
 		/* Create new aggregator node for TC */
-		status = ice_sched_add_agg_cfg(pi, agg_id, tc);
+		status = ice_sched_add_agg_cfg(pi, agg_info->agg_id, tc);
 		if (status)
-			break;
+			return status;
 
 		/* Save aggregator node's TC information */
 		set_bit(tc, agg_info->tc_bitmap);
 	}
 
-	return status;
-}
-
-/**
- * ice_cfg_agg - config aggregator node
- * @pi: port information structure
- * @agg_id: aggregator ID
- * @agg_type: aggregator type queue, VSI, or aggregator group
- * @tc_bitmap: bits TC bitmap
- *
- * This function configures aggregator node(s).
- */
-int
-ice_cfg_agg(struct ice_port_info *pi, u32 agg_id, enum ice_agg_type agg_type,
-	    u8 tc_bitmap)
-{
-	unsigned long bitmap = tc_bitmap;
-	int status;
-
-	mutex_lock(&pi->sched_lock);
-	status = ice_sched_cfg_agg(pi, agg_id, agg_type,
-				   (unsigned long *)&bitmap);
-	if (!status)
-		status = ice_save_agg_tc_bitmap(pi, agg_id,
-						(unsigned long *)&bitmap);
-	mutex_unlock(&pi->sched_lock);
-	return status;
+	return 0;
 }
 
 /**
@@ -3029,8 +3003,9 @@ static struct ice_sched_agg_info *
 ice_get_vsi_agg_info(struct ice_hw *hw, u16 vsi_handle)
 {
 	struct ice_sched_agg_info *agg_info;
+	unsigned long index;
 
-	list_for_each_entry(agg_info, &hw->agg_list, list_entry) {
+	xa_for_each(&hw->agg_list, index, agg_info) {
 		struct ice_sched_agg_vsi_info *agg_vsi_info;
 
 		agg_vsi_info = ice_get_agg_vsi_info(agg_info, vsi_handle);
@@ -3057,7 +3032,7 @@ ice_save_agg_vsi_tc_bitmap(struct ice_port_info *pi, u32 agg_id, u16 vsi_handle,
 	struct ice_sched_agg_vsi_info *agg_vsi_info;
 	struct ice_sched_agg_info *agg_info;
 
-	agg_info = ice_get_agg_info(pi->hw, agg_id);
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
 	if (!agg_info)
 		return -EINVAL;
 	/* check if entry already exist */
@@ -3093,7 +3068,7 @@ ice_sched_assoc_vsi_to_agg(struct ice_port_info *pi, u32 agg_id,
 
 	if (!ice_is_vsi_valid(pi->hw, vsi_handle))
 		return -EINVAL;
-	agg_info = ice_get_agg_info(hw, agg_id);
+	agg_info = xa_load(&hw->agg_list, agg_id);
 	if (!agg_info)
 		return -EINVAL;
 	/* If the vsi is already part of another aggregator then update
@@ -3277,6 +3252,113 @@ ice_move_vsi_to_agg(struct ice_port_info *pi, u32 agg_id, u16 vsi_handle,
 }
 
 /**
+ * ice_find_available_agg - Find or create aggregator node
+ * @hw: pointer to the HW structure
+ * @min_id: minimum aggregator node ID to use
+ * @max_id: maximum aggregator node ID to use
+ * @agg_type: The aggregator node type
+ *
+ * Check the existing xarray of aggregator nodes. Find the first one between
+ * min_id and max_id which has fewer than ICE_MAX_VSIS_IN_AGG_NODE (64) VSIs
+ * in use. If there is no aggregator node that fits this criteria, create
+ * a new one between that range.
+ *
+ * Context: Must be called while holding the scheduler lock.
+ *
+ * Return: A pointer to the aggregator info structure, or an ERR_PTR on
+ * failure.
+ */
+static struct ice_sched_agg_info *
+ice_find_available_agg(struct ice_hw *hw, u32 min_id, u32 max_id,
+		       enum ice_agg_type agg_type)
+{
+	struct ice_sched_agg_info *agg_info;
+	unsigned long agg_id;
+
+	xa_for_each_range(&hw->agg_list, agg_id, agg_info, min_id, max_id) {
+		unsigned int num_vsis;
+
+		if (agg_info->agg_type != agg_type)
+			continue;
+
+		num_vsis = list_count_nodes(&agg_info->agg_vsi_list);
+		if (num_vsis < ICE_MAX_VSIS_IN_AGG_NODE)
+			return agg_info;
+	}
+
+	/* No aggregator node exists with space */
+	return ice_alloc_agg_info(hw, min_id, max_id, agg_type);
+}
+
+/**
+ * ice_cfg_vsi_agg - Configure a VSI to an aggregator node
+ * @pi: port information structure
+ * @vsi_handle: software VSI handle
+ * @min_id: the minimum aggregator node ID to associate with
+ * @max_id: the maximum aggregator node ID to associate with
+ * @tc_bitmap: TC bitmap of enabled TC(s)
+ *
+ * Locate a suitable aggregator node for this VSI, creating a new one if
+ * necessary. Configure the aggregator node if necessary, and move the VSI
+ * into it.
+ *
+ * Context: Acquires the scheduler lock.
+ *
+ * Return: A pointer to the aggregator node info structure, or an ERR_PTR on
+ * failure.
+ */
+struct ice_sched_agg_info *
+ice_cfg_vsi_agg(struct ice_port_info *pi, u16 vsi_handle,
+		u32 min_id, u32 max_id, u8 tc_bitmap)
+{
+	struct ice_sched_agg_info *agg_info;
+	unsigned long bitmap = tc_bitmap;
+	struct ice_hw *hw = pi->hw;
+	int status;
+
+	mutex_lock(&pi->sched_lock);
+
+	/* Locate an aggregator node to use */
+	agg_info = ice_find_available_agg(hw, min_id, max_id, ICE_AGG_TYPE_AGG);
+	if (IS_ERR(agg_info))
+		goto out_unlock;
+
+	/* Configure the aggregator node */
+	status = ice_sched_cfg_agg(pi, agg_info, &bitmap);
+	if (status) {
+		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+		goto out_unlock;
+	}
+
+	/* Save the TC bitmap for this aggregator node */
+	status = ice_save_agg_tc_bitmap(pi, agg_info->agg_id, &bitmap);
+	if (status) {
+		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+		goto out_unlock;
+	}
+
+	/* Associate the VSI with this aggregator node */
+	status = ice_sched_assoc_vsi_to_agg(pi, agg_info->agg_id, vsi_handle,
+					    &bitmap);
+	if (status) {
+		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+		goto out_unlock;
+	}
+
+	/* Save the VSI handle to the aggregator TC bitmap */
+	status = ice_save_agg_vsi_tc_bitmap(pi, agg_info->agg_id, vsi_handle,
+					    &bitmap);
+	if (status) {
+		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+		goto out_unlock;
+	}
+
+out_unlock:
+	mutex_unlock(&pi->sched_lock);
+	return agg_info;
+}
+
+/**
  * ice_rm_agg_cfg - remove aggregator configuration
  * @pi: port information structure
  * @agg_id: aggregator ID
@@ -3291,7 +3373,7 @@ int ice_rm_agg_cfg(struct ice_port_info *pi, u32 agg_id)
 	u8 tc;
 
 	mutex_lock(&pi->sched_lock);
-	agg_info = ice_get_agg_info(pi->hw, agg_id);
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
 	if (!agg_info) {
 		status = -ENOENT;
 		goto exit_ice_rm_agg_cfg;
@@ -3309,7 +3391,7 @@ int ice_rm_agg_cfg(struct ice_port_info *pi, u32 agg_id)
 	}
 
 	/* Safe to delete entry now */
-	list_del(&agg_info->list_entry);
+	xa_erase(&pi->hw->agg_list, agg_info->agg_id);
 	kfree(agg_info);
 
 	/* Remove unused RL profile IDs from HW and SW DB */
@@ -3544,7 +3626,7 @@ ice_sched_save_agg_bw_alloc(struct ice_port_info *pi, u32 agg_id, u8 tc,
 {
 	struct ice_sched_agg_info *agg_info;
 
-	agg_info = ice_get_agg_info(pi->hw, agg_id);
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
 	if (!agg_info)
 		return -EINVAL;
 	if (!ice_is_tc_ena(agg_info->tc_bitmap[0], tc))
@@ -3578,7 +3660,7 @@ ice_sched_save_agg_bw(struct ice_port_info *pi, u32 agg_id, u8 tc,
 {
 	struct ice_sched_agg_info *agg_info;
 
-	agg_info = ice_get_agg_info(pi->hw, agg_id);
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
 	if (!agg_info)
 		return -EINVAL;
 	if (!ice_is_tc_ena(agg_info->tc_bitmap[0], tc))
@@ -4003,18 +4085,13 @@ ice_cfg_agg_vsi_priority_per_tc(struct ice_port_info *pi, u32 agg_id,
 	struct ice_sched_agg_vsi_info *agg_vsi_info;
 	struct ice_sched_node *tc_node, *agg_node;
 	struct ice_sched_agg_info *agg_info;
-	bool agg_id_present = false;
 	struct ice_hw *hw = pi->hw;
 	int status = -EINVAL;
 	u16 i;
 
 	mutex_lock(&pi->sched_lock);
-	list_for_each_entry(agg_info, &hw->agg_list, list_entry)
-		if (agg_info->agg_id == agg_id) {
-			agg_id_present = true;
-			break;
-		}
-	if (!agg_id_present)
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
+	if (!agg_info)
 		goto exit_agg_priority_per_tc;
 
 	tc_node = ice_sched_get_tc_node(pi, tc);
@@ -4141,18 +4218,13 @@ ice_cfg_agg_bw_alloc(struct ice_port_info *pi, u32 agg_id, u8 ena_tcmap,
 		     enum ice_rl_type rl_type, u8 *bw_alloc)
 {
 	struct ice_sched_agg_info *agg_info;
-	bool agg_id_present = false;
 	struct ice_hw *hw = pi->hw;
 	int status = 0;
 	u8 tc;
 
 	mutex_lock(&pi->sched_lock);
-	list_for_each_entry(agg_info, &hw->agg_list, list_entry)
-		if (agg_info->agg_id == agg_id) {
-			agg_id_present = true;
-			break;
-		}
-	if (!agg_id_present) {
+	agg_info = xa_load(&hw->agg_list, agg_id);
+	if (!agg_info) {
 		status = -EINVAL;
 		goto exit_cfg_agg_bw_alloc;
 	}
@@ -5349,16 +5421,11 @@ ice_sched_validate_agg_srl_node(struct ice_port_info *pi, u32 agg_id)
 {
 	u8 sel_layer = ICE_SCHED_INVAL_LAYER_NUM;
 	struct ice_sched_agg_info *agg_info;
-	bool agg_id_present = false;
 	int status = 0;
 	u8 tc;
 
-	list_for_each_entry(agg_info, &pi->hw->agg_list, list_entry)
-		if (agg_info->agg_id == agg_id) {
-			agg_id_present = true;
-			break;
-		}
-	if (!agg_id_present)
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
+	if (!agg_info)
 		return -EINVAL;
 	/* Return success if no nodes are present across TC */
 	ice_for_each_traffic_class(tc) {
@@ -5402,22 +5469,14 @@ static int
 ice_sched_validate_agg_id(struct ice_port_info *pi, u32 agg_id)
 {
 	struct ice_sched_agg_info *agg_info;
-	struct ice_sched_agg_info *tmp;
-	bool agg_id_present = false;
 	int status;
 
 	status = ice_sched_validate_agg_srl_node(pi, agg_id);
 	if (status)
 		return status;
 
-	list_for_each_entry_safe(agg_info, tmp, &pi->hw->agg_list,
-				 list_entry)
-		if (agg_info->agg_id == agg_id) {
-			agg_id_present = true;
-			break;
-		}
-
-	if (!agg_id_present)
+	agg_info = xa_load(&pi->hw->agg_list, agg_id);
+	if (!agg_info)
 		return -EINVAL;
 
 	return 0;
@@ -5774,7 +5833,8 @@ ice_sched_replay_agg_bw(struct ice_hw *hw, struct ice_sched_agg_info *agg_info)
 	if (!agg_info)
 		return -EINVAL;
 	ice_for_each_traffic_class(tc) {
-		if (bitmap_empty(agg_info->bw_t_info[tc].bw_t_bitmap, ICE_BW_TYPE_CNT))
+		if (bitmap_empty(agg_info->bw_t_info[tc].bw_t_bitmap,
+				 ICE_BW_TYPE_CNT))
 			continue;
 		tc_node = ice_sched_get_tc_node(hw->port_info, tc);
 		if (!tc_node) {
@@ -5806,8 +5866,7 @@ ice_sched_replay_agg_bw(struct ice_hw *hw, struct ice_sched_agg_info *agg_info)
  * scheduler lock held.
  */
 static void
-ice_sched_get_ena_tc_bitmap(struct ice_port_info *pi,
-			    unsigned long *tc_bitmap,
+ice_sched_get_ena_tc_bitmap(struct ice_port_info *pi, unsigned long *tc_bitmap,
 			    unsigned long *ena_tc_bitmap)
 {
 	u8 tc;
@@ -5831,15 +5890,15 @@ void ice_sched_replay_agg(struct ice_hw *hw)
 {
 	struct ice_port_info *pi = hw->port_info;
 	struct ice_sched_agg_info *agg_info;
+	unsigned long index;
 
 	mutex_lock(&pi->sched_lock);
-	list_for_each_entry(agg_info, &hw->agg_list, list_entry)
+	xa_for_each(&hw->agg_list, index, agg_info) {
 		/* replay aggregator (re-create aggregator node) */
 		if (!bitmap_equal(agg_info->tc_bitmap,
 				  agg_info->replay_tc_bitmap,
 				  ICE_MAX_TRAFFIC_CLASS)) {
-			DECLARE_BITMAP(replay_bitmap,
-					   ICE_MAX_TRAFFIC_CLASS);
+			DECLARE_BITMAP(replay_bitmap, ICE_MAX_TRAFFIC_CLASS);
 			int status;
 
 			bitmap_zero(replay_bitmap, ICE_MAX_TRAFFIC_CLASS);
@@ -5847,9 +5906,7 @@ void ice_sched_replay_agg(struct ice_hw *hw)
 						    agg_info->replay_tc_bitmap,
 						    replay_bitmap);
 			status = ice_sched_cfg_agg(hw->port_info,
-						   agg_info->agg_id,
-						   ICE_AGG_TYPE_AGG,
-						   replay_bitmap);
+						   agg_info, replay_bitmap);
 			if (status) {
 				dev_info(ice_hw_to_dev(hw),
 					 "Replay agg id[%d] failed\n",
@@ -5864,6 +5921,7 @@ void ice_sched_replay_agg(struct ice_hw *hw)
 					 "Replay agg bw [id=%d] failed\n",
 					 agg_info->agg_id);
 		}
+	}
 	mutex_unlock(&pi->sched_lock);
 }
 
@@ -5878,9 +5936,10 @@ void ice_sched_replay_agg_vsi_preinit(struct ice_hw *hw)
 {
 	struct ice_port_info *pi = hw->port_info;
 	struct ice_sched_agg_info *agg_info;
+	unsigned long index;
 
 	mutex_lock(&pi->sched_lock);
-	list_for_each_entry(agg_info, &hw->agg_list, list_entry) {
+	xa_for_each(&hw->agg_list, index, agg_info) {
 		struct ice_sched_agg_vsi_info *agg_vsi_info;
 
 		agg_info->tc_bitmap[0] = 0;
@@ -6010,8 +6069,7 @@ ice_sched_replay_vsi_agg(struct ice_hw *hw, u16 vsi_handle)
 	ice_sched_get_ena_tc_bitmap(pi, agg_info->replay_tc_bitmap,
 				    replay_bitmap);
 	/* Replay aggregator node associated to vsi_handle */
-	status = ice_sched_cfg_agg(hw->port_info, agg_info->agg_id,
-				   ICE_AGG_TYPE_AGG, replay_bitmap);
+	status = ice_sched_cfg_agg(hw->port_info, agg_info, replay_bitmap);
 	if (status)
 		return status;
 	/* Replay aggregator node BW (restore aggregator BW) */

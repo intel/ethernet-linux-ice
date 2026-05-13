@@ -44,7 +44,7 @@ ice_vc_fsub_param_check(struct ice_vf *vf, u16 vsi_id)
 		return -EPERM;
 	}
 
-	if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_FSUB_PF)) {
+	if (!test_bit(VIRTCHNL_VF_OFFLOAD_FSUB_PF, vf->driver_caps)) {
 		dev_dbg(dev, "Invalid VF capability flag for VF: %d\n",
 			vf->vf_id);
 		return -EACCES;
@@ -502,10 +502,22 @@ ice_vc_parse_fsub_action(struct ice_vf *vf,
 			break;
 		case VIRTCHNL_ACTION_QUEUE:
 			rule_info->sw_act.fltr_act = ICE_FWD_TO_Q;
+			if (action->act_conf.queue.index >= vsi->num_rxq) {
+				dev_dbg(dev, "Invalid queue index %d for VF %d\n",
+					action->act_conf.queue.index,
+					vf->vf_id);
+				return -EINVAL;
+			}
 			rxq_id = action->act_conf.queue.index;
 			break;
 		case VIRTCHNL_ACTION_Q_REGION:
 			rule_info->sw_act.fltr_act = ICE_FWD_TO_QGRP;
+			if (action->act_conf.queue.index >= vsi->num_rxq) {
+				dev_dbg(dev, "Invalid queue index %d for VF %d\n",
+					action->act_conf.queue.index,
+					vf->vf_id);
+				return -EINVAL;
+			}
 			rxq_id = action->act_conf.queue.index;
 			rule_info->sw_act.qgrp_size =
 					action->act_conf.queue.region;

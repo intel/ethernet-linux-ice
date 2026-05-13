@@ -24,8 +24,8 @@
  * the version check fails, the auxiliary driver should fail the probe and log
  * an appropriate message.
  */
-#define IIDC_MAJOR_VER		10
-#define IIDC_MINOR_VER		4
+#define IIDC_MAJOR_VER		11
+#define IIDC_MINOR_VER		0
 
 enum iidc_event_type {
 	IIDC_EVENT_BEFORE_MTU_CHANGE,
@@ -245,13 +245,20 @@ enum iidc_function_type {
 struct iidc_core_dev_info {
 	struct pci_dev *pdev; /* PCI device of corresponding to main function */
 	struct auxiliary_device *adev;
+	/* Current active RDMA protocol */
+	enum iidc_rdma_protocol rdma_protocol;
+	/* Opaque pointer for core driver specific data tracking. This memory
+	 * will be alloc'd and freed by the core driver and used for
+	 * private data accessible only to the specific auxiliary driver.
+	 */
+	void *iidc_priv;
+	struct iidc_ver_info ver;
+
 	/* KVA / Linear address corresponding to BAR0 of underlying
 	 * pci_device.
 	 */
 	u8 __iomem *hw_addr;
 	int cdev_info_id;
-	struct iidc_ver_info ver;
-
 	/* Opaque pointer for aux driver specific data tracking. This memory
 	 * will be alloc'd and freed by the auxiliary driver and used for
 	 * private data accessible only to the specific auxiliary driver.
@@ -263,8 +270,6 @@ struct iidc_core_dev_info {
 
 	enum iidc_function_type ftype;
 	u16 vport_id;
-	/* Current active RDMA protocol */
-	enum iidc_rdma_protocol rdma_protocol;
 
 	struct iidc_qos_params qos_info;
 	struct net_device *netdev;

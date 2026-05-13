@@ -142,8 +142,8 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP = VIRTCHNL_OP_RELEASE_IWARP_IRQ_MAP,
 	VIRTCHNL_OP_CONFIG_RSS_KEY = 23,
 	VIRTCHNL_OP_CONFIG_RSS_LUT = 24,
-	VIRTCHNL_OP_GET_RSS_HENA_CAPS = 25,
-	VIRTCHNL_OP_SET_RSS_HENA = 26,
+	VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS = 25,
+	VIRTCHNL_OP_SET_RSS_HASHCFG = 26,
 	VIRTCHNL_OP_ENABLE_VLAN_STRIPPING = 27,
 	VIRTCHNL_OP_DISABLE_VLAN_STRIPPING = 28,
 	VIRTCHNL_OP_REQUEST_QUEUES = 29,
@@ -214,6 +214,7 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_HQOS_ELEMS_DEL = 133,
 	VIRTCHNL_OP_HQOS_ELEMS_MOVE = 134,
 	VIRTCHNL_OP_HQOS_ELEMS_CONF = 135,
+	VIRTCHNL_OP_GET_VF_CAPS2 = 136,
 	VIRTCHNL_OP_MAX,
 };
 
@@ -266,10 +267,10 @@ static inline const char *virtchnl_op_str(enum virtchnl_ops v_opcode)
 		return "VIRTCHNL_OP_CONFIG_RSS_KEY";
 	case VIRTCHNL_OP_CONFIG_RSS_LUT:
 		return "VIRTCHNL_OP_CONFIG_RSS_LUT";
-	case VIRTCHNL_OP_GET_RSS_HENA_CAPS:
-		return "VIRTCHNL_OP_GET_RSS_HENA_CAPS";
-	case VIRTCHNL_OP_SET_RSS_HENA:
-		return "VIRTCHNL_OP_SET_RSS_HENA";
+	case VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS:
+		return "VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS";
+	case VIRTCHNL_OP_SET_RSS_HASHCFG:
+		return "VIRTCHNL_OP_SET_RSS_HASHCFG";
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING:
 		return "VIRTCHNL_OP_ENABLE_VLAN_STRIPPING";
 	case VIRTCHNL_OP_DISABLE_VLAN_STRIPPING:
@@ -497,47 +498,54 @@ struct virtchnl_vsi_resource {
 
 VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 
-/* VF capability flags
- * VIRTCHNL_VF_OFFLOAD_L2 flag is inclusive of base mode L2 offloads including
- * TX/RX Checksum offloading and TSO for non-tunnelled packets.
- */
-#define VIRTCHNL_VF_OFFLOAD_L2			BIT(0)
-#define VIRTCHNL_VF_OFFLOAD_IWARP		BIT(1)
-#define VIRTCHNL_VF_CAP_RDMA			VIRTCHNL_VF_OFFLOAD_IWARP
-	/* BIT(2) is reserved to extend caps */
-#define VIRTCHNL_VF_OFFLOAD_RSS_AQ		BIT(3)
-#define VIRTCHNL_VF_OFFLOAD_RSS_REG		BIT(4)
-#define VIRTCHNL_VF_OFFLOAD_WB_ON_ITR		BIT(5)
-#define VIRTCHNL_VF_OFFLOAD_REQ_QUEUES		BIT(6)
-/* used to negotiate communicating link speeds in Mbps */
-#define VIRTCHNL_VF_CAP_ADV_LINK_SPEED		BIT(7)
-	/* BIT(8) is reserved */
-#define VIRTCHNL_VF_LARGE_NUM_QPAIRS		BIT(9)
-#define VIRTCHNL_VF_OFFLOAD_CRC			BIT(10)
-#define VIRTCHNL_VF_OFFLOAD_QGRPS		BIT(12)
-#define VIRTCHNL_VF_OFFLOAD_FLOW_STEER_TO_QGRP	BIT(13)
-#define VIRTCHNL_VF_OFFLOAD_FSUB_PF		BIT(14)
-#define VIRTCHNL_VF_OFFLOAD_VLAN_V2		BIT(15)
-#define VIRTCHNL_VF_OFFLOAD_VLAN		BIT(16)
-#define VIRTCHNL_VF_OFFLOAD_RX_POLLING		BIT(17)
-#define VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2	BIT(18)
-#define VIRTCHNL_VF_OFFLOAD_RSS_PF		BIT(19)
-#define VIRTCHNL_VF_OFFLOAD_ENCAP		BIT(20)
-#define VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM		BIT(21)
-#define VIRTCHNL_VF_OFFLOAD_RX_ENCAP_CSUM	BIT(22)
-#define VIRTCHNL_VF_OFFLOAD_ADQ			BIT(23)
-#define VIRTCHNL_VF_OFFLOAD_ADQ_V2		BIT(24)
-#define VIRTCHNL_VF_OFFLOAD_USO			BIT(25)
-#define VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC	BIT(26)
-#define VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF		BIT(27)
-#define VIRTCHNL_VF_OFFLOAD_FDIR_PF		BIT(28)
-#define VIRTCHNL_VF_OFFLOAD_QOS			BIT(29)
-#define VIRTCHNL_VF_CAP_DCF			BIT(30)
-#define VIRTCHNL_VF_CAP_PTP			BIT(31)
+/* Base (first 32) + extended VF capability flags */
+enum virtchnl_vf_caps_bitnr {
+	/* Inclusive of base mode L2 offloads including TX/RX Checksum
+	 * offloading and TSO for non-tunnelled packets.
+	 */
+	VIRTCHNL_VF_OFFLOAD_L2 = 0,
+	VIRTCHNL_VF_OFFLOAD_RDMA = 1,
+	VIRTCHNL_VF_CAPS2 = 2,
+	VIRTCHNL_VF_OFFLOAD_RSS_AQ = 3,
+	VIRTCHNL_VF_OFFLOAD_RSS_REG = 4,
+	VIRTCHNL_VF_OFFLOAD_WB_ON_ITR = 5,
+	VIRTCHNL_VF_OFFLOAD_REQ_QUEUES = 6,
+	/* Used to negotiate communicating link speeds in Mbps */
+	VIRTCHNL_VF_CAP_ADV_LINK_SPEED = 7,
+	/* 8 is reserved */
+	VIRTCHNL_VF_LARGE_NUM_QPAIRS = 9,
+	VIRTCHNL_VF_OFFLOAD_CRC = 10,
+	VIRTCHNL_VF_OFFLOAD_TC_U32 = 11,
+	VIRTCHNL_VF_OFFLOAD_QGRPS = 12,
+	VIRTCHNL_VF_OFFLOAD_FLOW_STEER_TO_QGRP = 13,
+	VIRTCHNL_VF_OFFLOAD_FSUB_PF = 14,
+	VIRTCHNL_VF_OFFLOAD_VLAN_V2 = 15,
+	VIRTCHNL_VF_OFFLOAD_VLAN = 16,
+	VIRTCHNL_VF_OFFLOAD_RX_POLLING = 17,
+	VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2 = 18,
+	VIRTCHNL_VF_OFFLOAD_RSS_PF = 19,
+	VIRTCHNL_VF_OFFLOAD_ENCAP = 20,
+	VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM = 21,
+	VIRTCHNL_VF_OFFLOAD_RX_ENCAP_CSUM = 22,
+	VIRTCHNL_VF_OFFLOAD_ADQ = 23,
+	VIRTCHNL_VF_OFFLOAD_ADQ_V2 = 24,
+	VIRTCHNL_VF_OFFLOAD_USO = 25,
+	VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC = 26,
+	VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF = 27,
+	VIRTCHNL_VF_OFFLOAD_FDIR_PF = 28,
+	VIRTCHNL_VF_OFFLOAD_QOS = 29,
+	VIRTCHNL_VF_CAP_DCF = 30,
+	VIRTCHNL_VF_CAP_PTP = 31,
 
-#define VF_BASE_MODE_OFFLOADS (VIRTCHNL_VF_OFFLOAD_L2 | \
-			       VIRTCHNL_VF_OFFLOAD_VLAN | \
-			       VIRTCHNL_VF_OFFLOAD_RSS_PF)
+	/* Flags greater than 31 are only available via virtchnl_vf_caps2 */
+	VIRTCHNL_VF_OFFLOAD_TXTIME = 32,
+
+	VIRTCHNL_VF_CAPS_MAX /* must be last */
+};
+
+#define VF_BASE_MODE_OFFLOADS (BIT(VIRTCHNL_VF_OFFLOAD_L2) | \
+			       BIT(VIRTCHNL_VF_OFFLOAD_VLAN) | \
+			       BIT(VIRTCHNL_VF_OFFLOAD_RSS_PF))
 
 struct virtchnl_vf_resource {
 	u16 num_vsis;
@@ -545,7 +553,14 @@ struct virtchnl_vf_resource {
 	u16 max_vectors;
 	u16 max_mtu;
 
+	/* If both sides support VIRTCHNL_VF_CAPS2, extended flags, along with
+	 * flags from this structure will be sent in VIRTCHNL_OP_GET_VF_CAPS2.
+	 * Drivers should store capabilities negotiated this way in a bitmap,
+	 * instead of directly reading flags from this structure, in order to
+	 * have a unified interface for checking capabilities.
+	 */
 	u32 vf_cap_flags;
+
 	u32 rss_key_size;
 	u32 rss_lut_size;
 
@@ -554,6 +569,8 @@ struct virtchnl_vf_resource {
 
 VIRTCHNL_CHECK_STRUCT_LEN(20, virtchnl_vf_resource);
 #define virtchnl_vf_resource_LEGACY_SIZEOF	36
+
+#define VIRTCHNL_MAX_TXTIME_FETCH_TX_DESC 16
 
 /* VIRTCHNL_OP_CONFIG_TX_QUEUE
  * VF sends this message to set up parameters for one TX queue.
@@ -566,9 +583,15 @@ struct virtchnl_txq_info {
 	u16 vsi_id;
 	u16 queue_id;
 	u16 ring_len;		/* number of descriptors, multiple of 8 */
-	u16 headwb_enabled; /* deprecated with AVF 1.0 */
+	union {
+		u16 headwb_enabled; /* deprecated with AVF 1.0 */
+		u16 flags;	/* see virtchnl_txq_info_flags */
+	};
 	u64 dma_ring_addr;
-	u64 dma_headwb_addr; /* deprecated with AVF 1.0 */
+	union {
+		u64 dma_headwb_addr; /* deprecated with AVF 1.0 */
+		u64 dma_txtime_addr; /* address of the txtime buffer */
+	};
 };
 
 VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_txq_info);
@@ -623,6 +646,18 @@ enum virtchnl_rxq_info_flags {
 	 * reserved and they may be extended in the future.
 	 */
 	VIRTCHNL_PTP_RX_TSTAMP = BIT(0),
+};
+
+/* virtchnl_txq_info_flags - definition of bits in the flags field of the
+ *			     virtchnl_txq_info structure.
+ *
+ * @VIRTCHNL_TXQ_FLAG_TXTIME_ENABLED: request to enable TXTIME offload
+ *
+ * Other flag bits are currently reserved and they may be extended in the
+ * future.
+ */
+enum virtchnl_txq_info_flags {
+	VIRTCHNL_TXQ_FLAG_TXTIME_ENABLED = BIT(0),
 };
 
 /* VIRTCHNL_OP_CONFIG_RX_QUEUE
@@ -685,7 +720,8 @@ VIRTCHNL_CHECK_STRUCT_LEN(64, virtchnl_queue_pair_info);
 struct virtchnl_vsi_queue_config_info {
 	u16 vsi_id;
 	u16 num_queue_pairs;
-	u32 pad;
+	u16 txtime_txqs; /* bitmap of TX queues with txtime enabled */
+	u16 pad;
 	struct virtchnl_queue_pair_info qpair[];
 };
 
@@ -923,6 +959,7 @@ enum virtchnl_vlan_support {
 	VIRTCHNL_VLAN_ETHERTYPE_8100 =		0x00000001,
 	VIRTCHNL_VLAN_ETHERTYPE_88A8 =		0x00000002,
 	VIRTCHNL_VLAN_ETHERTYPE_9100 =		0x00000004,
+	VIRTCHNL_VLAN_ETHERTYPE_88E7 =		0x00000008,
 	VIRTCHNL_VLAN_TAG_LOCATION_L2TAG1 =	0x00000100,
 	VIRTCHNL_VLAN_TAG_LOCATION_L2TAG2 =	0x00000200,
 	VIRTCHNL_VLAN_TAG_LOCATION_L2TAG2_2 =	0x00000400,
@@ -1353,19 +1390,19 @@ enum virtchnl_hash_filter {
 
 #define VIRTCHNL_HASH_FILTER_INVALID	(0)
 
-/* VIRTCHNL_OP_GET_RSS_HENA_CAPS
- * VIRTCHNL_OP_SET_RSS_HENA
- * VF sends these messages to get and set the hash filter enable bits for RSS.
+/* VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS
+ * VIRTCHNL_OP_SET_RSS_HASHCFG
+ * VF sends these messages to get and set the hash filter configuration for RSS.
  * By default, the PF sets these to all possible traffic types that the
  * hardware supports. The VF can query this value if it wants to change the
  * traffic types that are hashed by the hardware.
  */
-struct virtchnl_rss_hena {
+struct virtchnl_rss_hashcfg {
 	/* see enum virtchnl_hash_filter */
-	u64 hena;
+	u64 hashcfg;
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_rss_hena);
+VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_rss_hashcfg);
 
 /* Type of RSS algorithm */
 enum virtchnl_rss_algorithm {
@@ -2123,6 +2160,9 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_fdir_del);
 #define virtchnl_ss_rss_lut(p, m, c)				      \
 	virtchnl_ss_byone(p, m, c, virtchnl_rss_lut)
 
+#define virtchnl_ss_queue_vector_maps(p, m, c)			      \
+	__vss_full(p, m, c, virtchnl_queue_vector_maps_LEGACY_SIZEOF)
+
 /* Status returned to VF after VF requests FSUB commands
  * VIRTCHNL_FSUB_SUCCESS
  * VF FLOW related request is successfully done by PF
@@ -2337,10 +2377,11 @@ struct virtchnl_queue_vector_maps {
 	u16 vport_id;
 	u16 num_qv_maps;
 	u8 pad[4];
-	struct virtchnl_queue_vector qv_maps[1];
+	struct virtchnl_queue_vector qv_maps[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_queue_vector_maps);
+VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_queue_vector_maps);
+#define virtchnl_queue_vector_maps_LEGACY_SIZEOF 24
 
 struct virtchnl_quanta_cfg {
 	u16 quanta_size;
@@ -3566,6 +3607,36 @@ struct virtchnl_gnss_read_i2c_resp {
 
 VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_gnss_read_i2c_resp);
 
+/**
+ * virtchnl_vf_caps2 - generic extended capability flags
+ *
+ * VF sends this message to negotiate an extended set of capability flags if
+ * VIRTCHNL_VF_CAPS2 is set in virtchnl_vf_resource::vf_cap_flags.
+ *
+ * On send, VF sets what capabilities it requests. On reply, PF indicates what
+ * has been enabled for this VF. The PF shall not set bits which were not
+ * requested by the VF.
+ *
+ * Defines capabilities available to the VF, including the 32 original ones from
+ * vf_cap_flags on the same positions, plus the ones that didn't fit there.
+ * Drivers should construct a bitmap from this message, instead of checking the
+ * first 32 bits sent in VIRTCHNL_OP_GET_VF_RESOURCES, for consistency.
+ *
+ * The VF sends VIRTCHNL_OP_GET_VF_CAPS2 and fills the vf_cap_flags bitmap,
+ * indicating what capabilities it is requesting. The PF responds with the same
+ * message, indicating what is enabled for the VF.
+ */
+struct virtchnl_vf_caps2 {
+	u32 flags_len;
+#ifdef __counted_by
+	u32 vf_cap_flags[] __counted_by(flags_len);
+#else
+	u32 vf_cap_flags[];
+#endif /* __counted_by */
+};
+
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_vf_caps2);
+
 /*
  * VIRTCHNL_OP_HQOS_READ_TREE
  * VIRTCHNL_OP_HQOS_ELEM_ADD
@@ -3811,10 +3882,10 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 	case VIRTCHNL_OP_CONFIG_RSS_HFUNC:
 		valid_len = sizeof(struct virtchnl_rss_hfunc);
 		break;
-	case VIRTCHNL_OP_GET_RSS_HENA_CAPS:
+	case VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS:
 		break;
-	case VIRTCHNL_OP_SET_RSS_HENA:
-		valid_len = sizeof(struct virtchnl_rss_hena);
+	case VIRTCHNL_OP_SET_RSS_HASHCFG:
+		valid_len = sizeof(struct virtchnl_rss_hashcfg);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING:
 	case VIRTCHNL_OP_DISABLE_VLAN_STRIPPING:
@@ -4044,7 +4115,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		}
 		break;
 	case VIRTCHNL_OP_MAP_QUEUE_VECTOR:
-		valid_len = sizeof(struct virtchnl_queue_vector_maps);
+		valid_len = virtchnl_queue_vector_maps_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_queue_vector_maps *v_qp =
 				(struct virtchnl_queue_vector_maps *)msg;
@@ -4053,8 +4124,8 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 				err_msg_format = true;
 				break;
 			}
-			valid_len += (v_qp->num_qv_maps - 1) *
-				      sizeof(struct virtchnl_queue_vector);
+			valid_len = virtchnl_ss_queue_vector_maps(v_qp, qv_maps,
+								  v_qp->num_qv_maps);
 		}
 		break;
 	case VIRTCHNL_OP_HQOS_ELEMS_ADD:
@@ -4075,6 +4146,21 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		}
 		break;
 	case VIRTCHNL_OP_HQOS_TREE_READ:
+		break;
+	case VIRTCHNL_OP_GET_VF_CAPS2: {
+		struct virtchnl_vf_caps2 *caps2 =
+			(struct virtchnl_vf_caps2 *)msg;
+
+		/* Require at least 1 element */
+		if (msglen < struct_size(caps2, vf_cap_flags, 1) ||
+		    msglen != struct_size(caps2, vf_cap_flags,
+					  caps2->flags_len)) {
+			err_msg_format = true;
+			break;
+		}
+
+		valid_len = struct_size(caps2, vf_cap_flags, caps2->flags_len);
+		}
 		break;
 	/* These are always errors coming from the VF. */
 	case VIRTCHNL_OP_EVENT:

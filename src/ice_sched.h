@@ -77,9 +77,10 @@ struct ice_sched_agg_vsi_info {
 	DECLARE_BITMAP(replay_tc_bitmap, ICE_MAX_TRAFFIC_CLASS);
 };
 
+#define ICE_MAX_VSIS_IN_AGG_NODE	64
+
 struct ice_sched_agg_info {
 	struct list_head agg_vsi_list;
-	struct list_head list_entry;
 	DECLARE_BITMAP(tc_bitmap, ICE_MAX_TRAFFIC_CLASS);
 	u32 agg_id;
 	enum ice_agg_type agg_type;
@@ -191,11 +192,11 @@ ice_aq_query_node_to_root(struct ice_hw *hw, u32 node_teid,
 
 /* Tx scheduler rate limiter functions */
 int
-ice_cfg_agg(struct ice_port_info *pi, u32 agg_id,
-	    enum ice_agg_type agg_type, u8 tc_bitmap);
-int
 ice_move_vsi_to_agg(struct ice_port_info *pi, u32 agg_id, u16 vsi_handle,
 		    u8 tc_bitmap);
+struct ice_sched_agg_info *
+ice_cfg_vsi_agg(struct ice_port_info *pi, u16 vsi_handle,
+		u32 min_id, u32 max_id, u8 tc_bitmap);
 int ice_rm_agg_cfg(struct ice_port_info *pi, u32 agg_id);
 int
 ice_cfg_q_bw_lmt(struct ice_port_info *pi, u16 vsi_handle, u8 tc,

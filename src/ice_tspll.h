@@ -109,6 +109,9 @@ int ice_tspll_cfg_synce_ethdiv_e825c(struct ice_hw *hw, u8 *divider,
 				     enum ice_synce_clk output);
 int ice_tspll_ena_pps_out_e825c(struct ice_hw *hw, bool ena);
 int ice_tspll_cfg_cgu_err_reporting(struct ice_hw *hw, bool enable);
+#ifdef ICE_TSPLL_FALLBACK_ON_UNLOAD
+void ice_tspll_set_txco(struct ice_hw *hw);
+#endif /* ICE_TSPLL_FALLBACK_ON_UNLOAD */
 int ice_tspll_init(struct ice_hw *hw);
 void ice_tspll_process_cgu_err(struct ice_hw *hw,
 			       struct ice_rq_event_info *event);

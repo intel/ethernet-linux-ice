@@ -69,7 +69,6 @@ const char *ice_vsi_type_str(enum ice_vsi_type vsi_type)
 static int ice_vsi_requires_vf(enum ice_vsi_type vsi_type)
 {
 	switch (vsi_type) {
-	case ICE_VSI_ADI:
 	case ICE_VSI_VF:
 		return true;
 	default:
@@ -149,15 +148,6 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 	if (!vsi->tx_rings)
 		return -ENOMEM;
 
-	if (vsi->type == ICE_VSI_PF &&
-	    test_bit(ICE_FLAG_TXTIME, pf->flags)) {
-		vsi->tstamp_rings = devm_kcalloc(dev, vsi->alloc_txq,
-						 sizeof(*vsi->tstamp_rings),
-						 GFP_KERNEL);
-		if (!vsi->tstamp_rings)
-			goto err_tstamp_rings;
-	}
-
 	vsi->rx_rings = devm_kcalloc(dev, vsi->alloc_rxq,
 				     sizeof(*vsi->rx_rings), GFP_KERNEL);
 	if (!vsi->rx_rings)
@@ -194,7 +184,15 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 	if (!vsi->q_vectors)
 		goto err_vectors;
 
+	if (ice_is_feature_supported(pf, ICE_F_TXTIME)) {
+		vsi->txtime_txqs = bitmap_zalloc(vsi->alloc_txq, GFP_KERNEL);
+		if (!vsi->txtime_txqs)
+			goto err_txtime_txqs;
+	}
 	return 0;
+
+err_txtime_txqs:
+	bitmap_free(vsi->txtime_txqs);
 err_vectors:
 	devm_kfree(dev, vsi->rxq_map);
 err_rxq_map:
@@ -202,8 +200,6 @@ err_rxq_map:
 err_txq_map:
 	devm_kfree(dev, vsi->rx_rings);
 err_rings:
-	devm_kfree(dev, vsi->tstamp_rings);
-err_tstamp_rings:
 	devm_kfree(dev, vsi->tx_rings);
 	return -ENOMEM;
 }
@@ -217,7 +213,6 @@ static void ice_vsi_set_num_desc(struct ice_vsi *vsi)
 	switch (vsi->type) {
 	case ICE_VSI_PF:
 	case ICE_VSI_OFFLOAD_MACVLAN:
-	case ICE_VSI_ADI:
 	case ICE_VSI_VMDQ2:
 	case ICE_VSI_CTRL:
 	case ICE_VSI_LB:
@@ -308,15 +303,6 @@ static void ice_vsi_set_num_qs(struct ice_vsi *vsi)
 		vsi->alloc_txq = ICE_DFLT_TXQ_VMDQ_VSI;
 		vsi->alloc_rxq = ICE_DFLT_RXQ_VMDQ_VSI;
 		vsi->num_q_vectors = ICE_DFLT_VEC_VMDQ_VSI;
-		break;
-	case ICE_VSI_ADI:
-		vsi->alloc_txq = pf->vfs.num_qps_per;
-		vsi->alloc_rxq = pf->vfs.num_qps_per;
-
-		/* For SIOV VFs, we reserve vectors required for Qs and 1 extra
-		 * for OICR.
-		 */
-		vsi->num_q_vectors = pf->vfs.num_msix_per;
 		break;
 	case ICE_VSI_VF:
 		/* vf->num_msix includes (VF miscellaneous vector +
@@ -452,10 +438,6 @@ static void ice_vsi_free_arrays(struct ice_vsi *vsi)
 		devm_kfree(dev, vsi->rx_rings);
 		vsi->rx_rings = NULL;
 	}
-	if (vsi->tstamp_rings) {
-		devm_kfree(dev, vsi->tstamp_rings);
-		vsi->tstamp_rings = NULL;
-	}
 	if (vsi->txq_map) {
 		devm_kfree(dev, vsi->txq_map);
 		vsi->txq_map = NULL;
@@ -463,6 +445,10 @@ static void ice_vsi_free_arrays(struct ice_vsi *vsi)
 	if (vsi->rxq_map) {
 		devm_kfree(dev, vsi->rxq_map);
 		vsi->rxq_map = NULL;
+	}
+	if (vsi->txtime_txqs) {
+		bitmap_free(vsi->txtime_txqs);
+		vsi->txtime_txqs = NULL;
 	}
 }
 
@@ -862,7 +848,6 @@ static int ice_vsi_alloc_def(struct ice_vsi *vsi)
 
 	switch (vsi->type) {
 	case ICE_VSI_OFFLOAD_MACVLAN:
-	case ICE_VSI_ADI:
 	case ICE_VSI_VMDQ2:
 	case ICE_VSI_PF:
 		if (ice_vsi_alloc_arrays(vsi))
@@ -1273,7 +1258,6 @@ static void ice_vsi_set_dflt_rss_params(struct ice_vsi *vsi)
 		vsi->rss_lut_type = ICE_LUT_PF;
 		break;
 	case ICE_VSI_OFFLOAD_MACVLAN:
-	case ICE_VSI_ADI:
 	case ICE_VSI_VMDQ2:
 		vsi->rss_table_size = ICE_LUT_VSI_SIZE;
 		vsi->rss_size = min_t(u16, num_online_cpus(), max_rss_size);
@@ -1641,7 +1625,6 @@ static int ice_vsi_init(struct ice_vsi *vsi)
 	case ICE_VSI_CHNL:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
-	case ICE_VSI_ADI:
 		ctxt->flags = ICE_AQ_VSI_TYPE_VMDQ2;
 		break;
 	case ICE_VSI_VF:
@@ -1902,15 +1885,6 @@ static void ice_vsi_clear_rings(struct ice_vsi *vsi)
 		}
 	}
 
-	if (vsi->tstamp_rings) {
-		ice_for_each_alloc_txq(vsi, i) {
-			if (vsi->tstamp_rings[i]) {
-				kfree_rcu(vsi->tstamp_rings[i], rcu);
-				WRITE_ONCE(vsi->tstamp_rings[i], NULL);
-			}
-		}
-	}
-
 	if (vsi->rx_rings) {
 		ice_for_each_alloc_rxq(vsi, i) {
 			if (vsi->rx_rings[i]) {
@@ -1957,24 +1931,6 @@ static int ice_vsi_alloc_rings(struct ice_vsi *vsi)
 		if (ice_is_feature_supported(pf, ICE_F_GCS))
 			ring->flags |= ICE_TXRX_FLAGS_GCS_ENA;
 		WRITE_ONCE(vsi->tx_rings[i], ring);
-
-		if (vsi->type == ICE_VSI_PF &&
-		    test_bit(ICE_FLAG_TXTIME, pf->flags)) {
-			struct ice_tx_ring *tstamp_ring;
-
-			tstamp_ring = kzalloc(sizeof(*ring), GFP_KERNEL);
-			if (!tstamp_ring)
-				goto err_out;
-
-			tstamp_ring->q_index = i;
-			tstamp_ring->reg_idx = vsi->txq_map[i];
-			tstamp_ring->vsi = vsi;
-			tstamp_ring->dev = dev;
-			tstamp_ring->count =
-				       ice_calc_ts_ring_count(&pf->hw,
-							      vsi->num_tx_desc);
-			WRITE_ONCE(vsi->tstamp_rings[i], tstamp_ring);
-		}
 	}
 
 	/* Allocate Rx rings */
@@ -2199,7 +2155,7 @@ static void ice_vsi_set_vf_rss_flow_fld(struct ice_vsi *vsi)
 		return;
 	}
 
-	status = ice_add_avf_rss_cfg(&pf->hw, vsi->idx, ICE_DEFAULT_RSS_HENA);
+	status = ice_add_avf_rss_cfg(&pf->hw, vsi->idx, ICE_DEFAULT_RSS_HASHCFG);
 	if (status)
 		dev_dbg(dev, "ice_add_avf_rss_cfg failed for vsi = %d, error = %d\n",
 			vsi->vsi_num, status);
@@ -2207,34 +2163,36 @@ static void ice_vsi_set_vf_rss_flow_fld(struct ice_vsi *vsi)
 
 static const struct ice_rss_hash_cfg default_rss_cfgs[] = {
 	/* configure RSS for IPv4 with input set IP src/dst */
-	{ICE_FLOW_SEG_HDR_IPV4, ICE_FLOW_HASH_IPV4, ICE_RSS_ANY_HEADERS, false},
+	{ICE_FLOW_SEG_HDR_IPV4,
+		ICE_FLOW_HASH_IPV4, ICE_RSS_ANY_HEADERS, false, true},
 	/* configure RSS for IPv6 with input set IPv6 src/dst */
-	{ICE_FLOW_SEG_HDR_IPV6, ICE_FLOW_HASH_IPV6, ICE_RSS_ANY_HEADERS, false},
+	{ICE_FLOW_SEG_HDR_IPV6,
+		ICE_FLOW_HASH_IPV6, ICE_RSS_ANY_HEADERS, false, true},
 	/* configure RSS for tcp4 with input set IP src/dst, TCP src/dst */
 	{ICE_FLOW_SEG_HDR_TCP | ICE_FLOW_SEG_HDR_IPV4,
-				ICE_HASH_TCP_IPV4,  ICE_RSS_ANY_HEADERS, false},
+		ICE_HASH_TCP_IPV4, ICE_RSS_ANY_HEADERS, false, true},
 	/* configure RSS for udp4 with input set IP src/dst, UDP src/dst */
 	{ICE_FLOW_SEG_HDR_UDP | ICE_FLOW_SEG_HDR_IPV4,
-				ICE_HASH_UDP_IPV4,  ICE_RSS_ANY_HEADERS, false},
+		ICE_HASH_UDP_IPV4, ICE_RSS_ANY_HEADERS, false, true},
 	/* configure RSS for sctp4 with input set IP src/dst - only support
 	 * RSS on SCTPv4 on outer headers (non-tunneled)
 	 */
 	{ICE_FLOW_SEG_HDR_SCTP | ICE_FLOW_SEG_HDR_IPV4,
-		ICE_HASH_SCTP_IPV4, ICE_RSS_OUTER_HEADERS, false},
+		ICE_HASH_SCTP_IPV4, ICE_RSS_OUTER_HEADERS, false, true},
 	/* configure RSS for tcp6 with input set IPv6 src/dst, TCP src/dst */
 	{ICE_FLOW_SEG_HDR_TCP | ICE_FLOW_SEG_HDR_IPV6,
-				ICE_HASH_TCP_IPV6,  ICE_RSS_ANY_HEADERS, false},
+		ICE_HASH_TCP_IPV6, ICE_RSS_ANY_HEADERS, false, true},
 	/* configure RSS for udp6 with input set IPv6 src/dst, UDP src/dst */
 	{ICE_FLOW_SEG_HDR_UDP | ICE_FLOW_SEG_HDR_IPV6,
-				ICE_HASH_UDP_IPV6,  ICE_RSS_ANY_HEADERS, false},
+		ICE_HASH_UDP_IPV6, ICE_RSS_ANY_HEADERS, false, true},
 	/* configure RSS for sctp6 with input set IPv6 src/dst - only support
 	 * RSS on SCTPv6 on outer headers (non-tunneled)
 	 */
 	{ICE_FLOW_SEG_HDR_SCTP | ICE_FLOW_SEG_HDR_IPV6,
-		ICE_HASH_SCTP_IPV6, ICE_RSS_OUTER_HEADERS, false},
+		ICE_HASH_SCTP_IPV6, ICE_RSS_OUTER_HEADERS, false, true},
 	/* configure RSS for IPSEC ESP SPI with input set MAC_IPV4_SPI */
 	{ICE_FLOW_SEG_HDR_ESP,
-		ICE_FLOW_HASH_ESP_SPI, ICE_RSS_OUTER_HEADERS, false },
+		ICE_FLOW_HASH_ESP_SPI, ICE_RSS_OUTER_HEADERS, false, true},
 };
 
 /**
@@ -2269,9 +2227,9 @@ static void ice_vsi_set_rss_flow_fld(struct ice_vsi *vsi)
 
 		status = ice_add_rss_cfg(hw, vsi_handle, cfg);
 		if (status)
-			dev_dbg(dev, "ice_add_rss_cfg failed, addl_hdrs = %x, hash_flds = %llx, hdr_type = %d, symm = %d\n",
+			dev_dbg(dev, "ice_add_rss_cfg failed, addl_hdrs = %x, hash_flds = %llx, hdr_type = %d, symm = %d, shared = %s\n",
 				cfg->addl_hdrs, cfg->hash_flds, cfg->hdr_type,
-				cfg->symm);
+				cfg->symm, str_yes_no(cfg->shared));
 	}
 }
 
@@ -2438,29 +2396,7 @@ int ice_vsi_cfg_single_txq(struct ice_vsi *vsi, struct ice_tx_ring **tx_rings, u
 
 	qg_buf->num_txqs = 1;
 
-	if (!vsi->tstamp_rings) {
-		err = ice_vsi_cfg_txq(vsi, tx_rings[q_idx],
-				      NULL, qg_buf, NULL);
-	} else {
-		struct ice_tx_ring **tstamp_rings = vsi->tstamp_rings;
-		struct ice_aqc_set_txtime_qgrp *txtime_qg_buf;
-
-		txtime_qg_buf = kzalloc(struct_size(txtime_qg_buf, txtimeqs, 1),
-					GFP_KERNEL);
-		if (!txtime_qg_buf) {
-			err = -ENOMEM;
-			goto err_cfg;
-		}
-
-		err = ice_vsi_cfg_txq(vsi, tx_rings[q_idx],
-				      tstamp_rings[q_idx], qg_buf,
-				      txtime_qg_buf);
-		kfree(txtime_qg_buf);
-
-		if (err)
-			goto err_cfg;
-	}
-err_cfg:
+	err = ice_vsi_cfg_txq(vsi, tx_rings[q_idx], qg_buf);
 	kfree(qg_buf);
 	return err;
 }
@@ -2496,17 +2432,14 @@ setup_rings:
  * ice_vsi_cfg_txqs - Configure the VSI for Tx
  * @vsi: the VSI being configured
  * @rings: Tx ring array to be configured
- * @tstamp_rings: time stamp ring array to be configured
  * @count: number of Tx ring array elements
  *
  * Return 0 on success and a negative value on error
  * Configure the Tx VSI for operation.
  */
 static int
-ice_vsi_cfg_txqs(struct ice_vsi *vsi, struct ice_tx_ring **rings,
-		 struct ice_tx_ring **tstamp_rings, u16 count)
+ice_vsi_cfg_txqs(struct ice_vsi *vsi, struct ice_tx_ring **rings, u16 count)
 {
-	struct ice_aqc_set_txtime_qgrp *txtime_qg_buf = NULL;
 	struct ice_aqc_add_tx_qgrp *qg_buf;
 	u16 q_idx = 0;
 	int err = 0;
@@ -2517,30 +2450,12 @@ ice_vsi_cfg_txqs(struct ice_vsi *vsi, struct ice_tx_ring **rings,
 
 	qg_buf->num_txqs = 1;
 
-	if (tstamp_rings) {
-		txtime_qg_buf = kzalloc(struct_size(txtime_qg_buf, txtimeqs, 1),
-					GFP_KERNEL);
-		if (!txtime_qg_buf) {
-			err = -ENOMEM;
-			goto err_cfg_txqs;
-		}
-	}
-
 	for (q_idx = 0; q_idx < count; q_idx++) {
-		/* If tstamp_rings is allocated, configure used tstamp queue */
-		if (tstamp_rings)
-			err = ice_vsi_cfg_txq(vsi, rings[q_idx],
-					      tstamp_rings[q_idx], qg_buf,
-					      txtime_qg_buf);
-		else
-			err = ice_vsi_cfg_txq(vsi, rings[q_idx],
-					      NULL, qg_buf, NULL);
+		err = ice_vsi_cfg_txq(vsi, rings[q_idx], qg_buf);
 		if (err)
 			break;
 	}
 
-	kfree(txtime_qg_buf);
-err_cfg_txqs:
 	kfree(qg_buf);
 	return err;
 }
@@ -2554,8 +2469,7 @@ err_cfg_txqs:
  */
 int ice_vsi_cfg_lan_txqs(struct ice_vsi *vsi)
 {
-	return ice_vsi_cfg_txqs(vsi, vsi->tx_rings, vsi->tstamp_rings,
-				vsi->num_txq);
+	return ice_vsi_cfg_txqs(vsi, vsi->tx_rings, vsi->num_txq);
 }
 
 #ifdef HAVE_XDP_SUPPORT
@@ -2573,8 +2487,7 @@ int ice_vsi_cfg_xdp_txqs(struct ice_vsi *vsi)
 	int i;
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
 
-	ret = ice_vsi_cfg_txqs(vsi, vsi->xdp_rings, vsi->tstamp_rings,
-			       vsi->num_xdp_txq);
+	ret = ice_vsi_cfg_txqs(vsi, vsi->xdp_rings, vsi->num_xdp_txq);
 	if (ret)
 		return ret;
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
@@ -2993,14 +2906,8 @@ void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create)
 static void ice_set_agg_vsi(struct ice_vsi *vsi)
 {
 	struct device *dev = ice_pf_to_dev(vsi->back);
-	struct ice_agg_node *agg_node_iter = NULL;
-	u32 agg_id = ICE_INVALID_AGG_NODE_ID;
-	struct ice_agg_node *agg_node = NULL;
-	int node_offset, max_agg_nodes = 0;
-	struct ice_port_info *port_info;
-	struct ice_pf *pf = vsi->back;
-	u32 agg_node_id_start = 0;
-	int status;
+	struct ice_sched_agg_info *agg_node;
+	u32 min_id, max_id;
 
 	/* create (as needed) scheduler aggregator node and move VSI into
 	 * corresponding aggregator node
@@ -3008,39 +2915,23 @@ static void ice_set_agg_vsi(struct ice_vsi *vsi)
 	 * - MACVLAN aggregator node to contain MACVLAN VSIs only
 	 * - VF aggregator nodes will contain VF VSI including VF ADQ VSIs
 	 */
-	port_info = pf->hw.port_info;
-	if (!port_info)
-		return;
-
 	switch (vsi->type) {
 	case ICE_VSI_CTRL:
 	case ICE_VSI_CHNL:
 	case ICE_VSI_LB:
 	case ICE_VSI_PF:
 	case ICE_VSI_VMDQ2:
-		max_agg_nodes = ICE_MAX_PF_AGG_NODES;
-		agg_node_id_start = ICE_PF_AGG_NODE_ID_START;
-		agg_node_iter = &pf->pf_agg_node[0];
+		min_id = ICE_PF_AGG_NODE_ID_START;
+		max_id = ICE_PF_AGG_NODE_ID_END;
 		break;
 	case ICE_VSI_VF:
-		/* user can create 'n' VFs on a given PF, but since max children
-		 * per aggregator node can be only 64. Following code handles
-		 * aggregator(s) for VF VSIs, either selects a agg_node which
-		 * was already created provided num_vsis < 64, otherwise
-		 * select next available node, which will be created
-		 */
-		max_agg_nodes = ICE_MAX_VF_AGG_NODES;
-		agg_node_id_start = ICE_VF_AGG_NODE_ID_START;
-		agg_node_iter = &pf->vf_agg_node[0];
+		min_id = ICE_VF_AGG_NODE_ID_START;
+		max_id = ICE_VF_AGG_NODE_ID_END;
 		break;
 #ifdef HAVE_NDO_DFWD_OPS
 	case ICE_VSI_OFFLOAD_MACVLAN:
-		/* there can be 'n' offloaded NACVLAN, hence select the desired
-		 * aggregator node for offloaded MACVLAN VSI
-		 */
-		max_agg_nodes = ICE_MAX_MACVLAN_AGG_NODES;
-		agg_node_id_start = ICE_MACVLAN_AGG_NODE_ID_START;
-		agg_node_iter = &pf->macvlan_agg_node[0];
+		min_id = ICE_MACVLAN_AGG_NODE_ID_START;
+		max_id = ICE_MACVLAN_AGG_NODE_ID_END;
 		break;
 #endif
 	default:
@@ -3050,70 +2941,18 @@ static void ice_set_agg_vsi(struct ice_vsi *vsi)
 		return;
 	}
 
-	/* find the appropriate aggregator node */
-	for (node_offset = 0; node_offset < max_agg_nodes; node_offset++) {
-		/* see if we can find space in previously created
-		 * node if num_vsis < 64, otherwise skip
-		 */
-		if (agg_node_iter->num_vsis &&
-		    agg_node_iter->num_vsis == ICE_MAX_VSIS_IN_AGG_NODE) {
-			agg_node_iter++;
-			continue;
-		}
-
-		if (agg_node_iter->valid &&
-		    agg_node_iter->agg_id != ICE_INVALID_AGG_NODE_ID) {
-			agg_id = agg_node_iter->agg_id;
-			agg_node = agg_node_iter;
-			break;
-		}
-
-		/* find unclaimed agg_id */
-		if (agg_node_iter->agg_id == ICE_INVALID_AGG_NODE_ID) {
-			agg_id = node_offset + agg_node_id_start;
-			agg_node = agg_node_iter;
-			break;
-		}
-		/* move to next agg_node */
-		agg_node_iter++;
-	}
-
-	if (!agg_node)
-		return;
-
-	/* if selected aggregator node was not created, create it */
-	if (!agg_node->valid) {
-		status = ice_cfg_agg(port_info, agg_id, ICE_AGG_TYPE_AGG,
-				     (u8)vsi->tc_cfg.ena_tc);
-		if (status) {
-			dev_err(dev, "unable to create aggregator node with agg_id %u\n",
-				agg_id);
-			return;
-		}
-		/* aggregator node is created, store the needed info */
-		agg_node->valid = true;
-		agg_node->agg_id = agg_id;
-	}
-
-	/* move VSI to corresponding aggregator node */
-	status = ice_move_vsi_to_agg(port_info, agg_id, vsi->idx,
-				     (u8)vsi->tc_cfg.ena_tc);
-	if (status) {
-		dev_err(dev, "unable to move VSI idx %u into aggregator %u node",
-			vsi->idx, agg_id);
+	agg_node = ice_cfg_vsi_agg(vsi->back->hw.port_info, vsi->idx, min_id,
+				   max_id, (u8)vsi->tc_cfg.ena_tc);
+	if (IS_ERR(agg_node)) {
+		dev_err(dev, "Unable to associate VSI with an aggregator node, %pe\n",
+			agg_node);
 		return;
 	}
 
-	/* keep active children count for aggregator node */
-	agg_node->num_vsis++;
-
-	/* cache the 'agg_id' in VSI, so that after reset - VSI will be moved
-	 * to aggregator node
-	 */
 	vsi->agg_node = agg_node;
-	dev_dbg(dev, "successfully moved VSI idx %u tc_bitmap 0x%x) into aggregator node %d which has num_vsis %u\n",
+	dev_dbg(dev, "successfully moved VSI idx %u (tc_bitmap 0x%x) into aggregator node %d which has num_vsis %lu\n",
 		vsi->idx, vsi->tc_cfg.ena_tc, vsi->agg_node->agg_id,
-		vsi->agg_node->num_vsis);
+		list_count_nodes(&vsi->agg_node->agg_vsi_list));
 }
 
 static int ice_vsi_cfg_tc_lan(struct ice_pf *pf, struct ice_vsi *vsi)
@@ -3290,7 +3129,6 @@ static int ice_vsi_cfg_def(struct ice_vsi *vsi)
 	switch (vsi->type) {
 	case ICE_VSI_CTRL:
 	case ICE_VSI_OFFLOAD_MACVLAN:
-	case ICE_VSI_ADI:
 	case ICE_VSI_VMDQ2:
 	case ICE_VSI_PF:
 		ret = ice_vsi_alloc_q_vectors(vsi, 0);
@@ -3453,15 +3291,6 @@ void ice_vsi_decfg(struct ice_vsi *vsi)
 	ice_vsi_put_qs(vsi);
 	ice_vsi_free_arrays(vsi);
 	ice_vsi_free_rss_global_lut(vsi);
-
-	/* SR-IOV determines needed MSIX resources all at once instead of per
-	 * VSI since when VFs are spawned we know how many VFs there are and how
-	 * many interrupts each VF needs. SR-IOV MSIX resources are also
-	 * cleared in the same manner.
-	 */
-	if (vsi->type == ICE_VSI_VF &&
-	    vsi->agg_node && vsi->agg_node->valid)
-		vsi->agg_node->num_vsis--;
 }
 
 /**
@@ -3630,12 +3459,9 @@ void ice_vsi_free_tx_rings(struct ice_vsi *vsi)
 	if (!vsi->tx_rings)
 		return;
 
-	ice_for_each_txq(vsi, i) {
+	ice_for_each_txq(vsi, i)
 		if (vsi->tx_rings[i] && vsi->tx_rings[i]->desc)
 			ice_free_tx_ring(vsi->tx_rings[i]);
-		if (vsi->tstamp_rings && vsi->tstamp_rings[i])
-			ice_free_tstamp_ring(vsi->tstamp_rings[i]);
-	}
 }
 
 /**

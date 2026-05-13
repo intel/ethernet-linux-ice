@@ -111,63 +111,55 @@ DEFINE_PRINT_MSG_EVENT(ice_print_netdev_info);
 DEFINE_PRINT_MSG_EVENT(ice_print_peer_err);
 
 /* Events related to DIM, q_vectors and ring containers */
-DECLARE_EVENT_CLASS(ice_rx_dim_template,
-		    TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
-		    TP_ARGS(q_vector, dim),
-		    TP_STRUCT__entry(__field(struct ice_q_vector *, q_vector)
-				     __field(struct dim *, dim)
-				     __string(devname, q_vector->rx.rx_ring->netdev->name)),
+TRACE_EVENT(ice_rx_dim_work,
+	    TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
+	    TP_ARGS(q_vector, dim),
+	    TP_STRUCT__entry(__field(struct ice_q_vector *, q_vector)
+			     __field(struct dim *, dim)
+			     __string(devname, q_vector->rx.rx_ring->netdev->name)),
 
-		    TP_fast_assign(__entry->q_vector = q_vector;
-				   __entry->dim = dim;
+	    TP_fast_assign(__entry->q_vector = q_vector;
+			   __entry->dim = dim;
 #ifdef HAVE_ASSIGN_STR_2_PARAMS
-				   __assign_str(devname, q_vector->rx.rx_ring->netdev->name);),
+			   __assign_str(devname, q_vector->rx.rx_ring->netdev->name);),
 #else
-				   __assign_str(devname);),
+	    __assign_str(devname);),
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
-		    TP_printk("netdev: %s Rx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
-			      __get_str(devname),
-			      __entry->q_vector->rx.rx_ring->q_index,
-			      __entry->dim->state,
-			      __entry->dim->profile_ix,
-			      __entry->dim->tune_state,
-			      __entry->dim->steps_right,
-			      __entry->dim->steps_left,
-			      __entry->dim->tired));
+	TP_printk("netdev: %s Rx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
+		  __get_str(devname),
+		  __entry->q_vector->rx.rx_ring->q_index,
+		  __entry->dim->state,
+		  __entry->dim->profile_ix,
+		  __entry->dim->tune_state,
+		  __entry->dim->steps_right,
+		  __entry->dim->steps_left,
+		  __entry->dim->tired));
 
-DEFINE_EVENT(ice_rx_dim_template, ice_rx_dim_work,
-	     TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
-	     TP_ARGS(q_vector, dim));
+TRACE_EVENT(ice_tx_dim_work,
+	    TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
+	    TP_ARGS(q_vector, dim),
+	    TP_STRUCT__entry(__field(struct ice_q_vector *, q_vector)
+			     __field(struct dim *, dim)
+			     __string(devname, q_vector->tx.tx_ring->netdev->name)),
 
-DECLARE_EVENT_CLASS(ice_tx_dim_template,
-		    TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
-		    TP_ARGS(q_vector, dim),
-		    TP_STRUCT__entry(__field(struct ice_q_vector *, q_vector)
-				     __field(struct dim *, dim)
-				     __string(devname, q_vector->tx.tx_ring->netdev->name)),
-
-		    TP_fast_assign(__entry->q_vector = q_vector;
-				   __entry->dim = dim;
+	    TP_fast_assign(__entry->q_vector = q_vector;
+			   __entry->dim = dim;
 #ifdef HAVE_ASSIGN_STR_2_PARAMS
-				   __assign_str(devname, q_vector->tx.tx_ring->netdev->name);),
+			   __assign_str(devname, q_vector->tx.tx_ring->netdev->name);),
 #else
-				   __assign_str(devname);),
+	    __assign_str(devname);),
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
-		    TP_printk("netdev: %s Tx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
-			      __get_str(devname),
-			      __entry->q_vector->rx.rx_ring->q_index,
-			      __entry->dim->state,
-			      __entry->dim->profile_ix,
-			      __entry->dim->tune_state,
-			      __entry->dim->steps_right,
-			      __entry->dim->steps_left,
-			      __entry->dim->tired));
-
-DEFINE_EVENT(ice_tx_dim_template, ice_tx_dim_work,
-	     TP_PROTO(struct ice_q_vector *q_vector, struct dim *dim),
-	     TP_ARGS(q_vector, dim));
+	TP_printk("netdev: %s Tx-Q: %d dim-state: %d dim-profile: %d dim-tune: %d dim-st-right: %d dim-st-left: %d dim-tired: %d",
+		  __get_str(devname),
+		  __entry->q_vector->tx.tx_ring->q_index,
+		  __entry->dim->state,
+		  __entry->dim->profile_ix,
+		  __entry->dim->tune_state,
+		  __entry->dim->steps_right,
+		  __entry->dim->steps_left,
+		  __entry->dim->tired));
 
 /* Events related to a vsi & ring */
 DECLARE_EVENT_CLASS(ice_tx_template,
@@ -203,56 +195,48 @@ DEFINE_TX_TEMPLATE_OP_EVENT(ice_clean_tx_irq);
 DEFINE_TX_TEMPLATE_OP_EVENT(ice_clean_tx_irq_unmap);
 DEFINE_TX_TEMPLATE_OP_EVENT(ice_clean_tx_irq_unmap_eop);
 
-DECLARE_EVENT_CLASS(ice_rx_template,
-		    TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc),
+TRACE_EVENT(ice_clean_rx_irq,
+	    TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc),
 
-		    TP_ARGS(ring, desc),
+	    TP_ARGS(ring, desc),
 
-		    TP_STRUCT__entry(__field(void *, ring)
-				     __field(void *, desc)
-				     __string(devname, ring->netdev->name)),
+	    TP_STRUCT__entry(__field(void *, ring)
+			     __field(void *, desc)
+			     __string(devname, ring->netdev->name)),
 
-		    TP_fast_assign(__entry->ring = ring;
-				   __entry->desc = desc;
+	    TP_fast_assign(__entry->ring = ring;
+			   __entry->desc = desc;
 #ifdef HAVE_ASSIGN_STR_2_PARAMS
-				   __assign_str(devname, ring->netdev->name);),
+			   __assign_str(devname, ring->netdev->name);),
 #else
-				   __assign_str(devname);),
+	    __assign_str(devname);),
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
-		    TP_printk("netdev: %s ring: %p desc: %p", __get_str(devname),
-			      __entry->ring, __entry->desc));
-DEFINE_EVENT(ice_rx_template, ice_clean_rx_irq,
-	     TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc),
-	     TP_ARGS(ring, desc));
+	TP_printk("netdev: %s ring: %p desc: %p", __get_str(devname),
+		  __entry->ring, __entry->desc));
 
-DECLARE_EVENT_CLASS(ice_rx_indicate_template,
-		    TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc,
-			     struct sk_buff *skb),
+TRACE_EVENT(ice_clean_rx_irq_indicate,
+	    TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc,
+		     struct sk_buff *skb),
 
-		    TP_ARGS(ring, desc, skb),
+	    TP_ARGS(ring, desc, skb),
 
-		    TP_STRUCT__entry(__field(void *, ring)
-				     __field(void *, desc)
-				     __field(void *, skb)
-				     __string(devname, ring->netdev->name)),
+	    TP_STRUCT__entry(__field(void *, ring)
+			     __field(void *, desc)
+			     __field(void *, skb)
+			     __string(devname, ring->netdev->name)),
 
-		    TP_fast_assign(__entry->ring = ring;
-				   __entry->desc = desc;
-				   __entry->skb = skb;
+	    TP_fast_assign(__entry->ring = ring;
+			   __entry->desc = desc;
+			   __entry->skb = skb;
 #ifdef HAVE_ASSIGN_STR_2_PARAMS
-				   __assign_str(devname, ring->netdev->name);),
+			   __assign_str(devname, ring->netdev->name);),
 #else
-				   __assign_str(devname);),
+	    __assign_str(devname);),
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 
-		    TP_printk("netdev: %s ring: %p desc: %p skb %p", __get_str(devname),
-			      __entry->ring, __entry->desc, __entry->skb));
-
-DEFINE_EVENT(ice_rx_indicate_template, ice_clean_rx_irq_indicate,
-	     TP_PROTO(struct ice_rx_ring *ring, union ice_32b_rx_flex_desc *desc,
-		      struct sk_buff *skb),
-	     TP_ARGS(ring, desc, skb));
+	TP_printk("netdev: %s ring: %p desc: %p skb %p", __get_str(devname),
+		  __entry->ring, __entry->desc, __entry->skb));
 
 DECLARE_EVENT_CLASS(ice_xmit_template,
 		    TP_PROTO(struct ice_tx_ring *ring, struct sk_buff *skb),
@@ -321,7 +305,7 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_template,
 				   __entry->init = tx->init;
 				   __entry->calibrating = tx->calibrating;),
 
-		    TP_printk("dev=%s netdev=%s skb=%pK sequence_id=%d block=%d offset=%d len=%d in_use=%d init=%d calibrating=%d idx=%d",
+		    TP_printk("dev=%s netdev=%s skb=%p sequence_id=%d block=%d offset=%d len=%d in_use=%d init=%d calibrating=%d idx=%d",
 			      __get_str(dev_name), __get_str(netdev_name),
 			      __entry->skb, __entry->seq,
 			      __entry->block, __entry->offset, __entry->len,
@@ -336,13 +320,132 @@ DEFINE_EVENT(ice_tx_tstamp_template, name, \
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_request);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_tracker_down);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_idx_full);
-DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_complete);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_req);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_done);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_timeout);
-DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_invalid);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_stale);
-DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_dropped);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_flushed);
+
+DECLARE_EVENT_CLASS(ice_tx_tstamp_with_value_template,
+		    TP_PROTO(struct device *dev, struct ice_ptp_tx *tx,
+			     struct sk_buff *skb, int idx,
+			     u64 raw_tstamp, u64 tstamp),
+
+		    TP_ARGS(dev, tx, skb, idx, raw_tstamp, tstamp),
+
+		    TP_STRUCT__entry(__string(dev_name, dev_name(dev))
+				     __string(netdev_name,
+					      netdev_name(skb->dev))
+				     __field(void *, skb)
+				     __field(u64, raw_tstamp)
+				     __field(u64, tstamp)
+				     __field(int, seq)
+				     __field(int, idx)
+				     __field(int, block)
+				     __field(int, offset)
+				     __field(int, len)
+				     __field(int, in_use)
+				     __field(u8, init)
+				     __field(u8, calibrating)),
+
+		    TP_fast_assign(lockdep_assert_held(&tx->lock);
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
+				   __assign_str(dev_name, dev_name(dev));
+				   __assign_str(netdev_name,
+						netdev_name(skb->dev));
+#else
+				   __assign_str(dev_name);
+				   __assign_str(netdev_name);
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
+				   __entry->skb = skb;
+				   __entry->seq = ice_ptp_get_seq_id(skb);
+				   __entry->raw_tstamp = raw_tstamp;
+				   __entry->tstamp = tstamp;
+				   __entry->idx = idx;
+				   __entry->block = tx->block;
+				   __entry->offset = tx->offset;
+				   __entry->len = tx->len;
+				   __entry->in_use = bitmap_weight(tx->in_use,
+								   tx->len);
+				   __entry->init = tx->init;
+				   __entry->calibrating = tx->calibrating;),
+
+		    TP_printk("dev=%s netdev=%s skb=%p sequence_id=%d raw_tstamp=%llu tstamp=%llu block=%d offset=%d len=%d in_use=%d init=%d calibrating=%d idx=%d",
+			      __get_str(dev_name), __get_str(netdev_name),
+			      __entry->skb, __entry->seq,
+			      __entry->raw_tstamp, __entry->tstamp,
+			      __entry->block, __entry->offset, __entry->len,
+			      __entry->in_use, __entry->init,
+			      __entry->calibrating, __entry->idx));
+
+#define DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(name) \
+DEFINE_EVENT(ice_tx_tstamp_with_value_template, name, \
+	     TP_PROTO(struct device *dev, struct ice_ptp_tx *tx, \
+		      struct sk_buff *skb, int tracker_idx, \
+		      u64 raw_tstamp, u64 tstamp), \
+	     TP_ARGS(dev, tx, skb, tracker_idx, raw_tstamp, tstamp))
+
+DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(ice_tx_tstamp_complete);
+DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(ice_tx_tstamp_invalid);
+DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(ice_tx_tstamp_dropped);
+
+/* Trace events for the miscellaneous (OICR) interrupt handler */
+TRACE_EVENT(ice_misc_intr_begin,
+	    TP_PROTO(struct ice_pf *pf, u32 oicr, u32 ena_mask),
+
+	    TP_ARGS(pf, oicr, ena_mask),
+
+	    TP_STRUCT__entry(__string(dev_name, dev_name(ice_pf_to_dev(pf)))
+			     __string(int_name, pf->int_name)
+			     __field(u32, oicr)
+			     __field(u32, ena_mask)),
+
+	    TP_fast_assign(
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
+			   __assign_str(dev_name, dev_name(ice_pf_to_dev(pf)));
+			   __assign_str(int_name, pf->int_name);
+#else
+			   __assign_str(dev_name);
+			   __assign_str(int_name);
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
+			   __entry->oicr = oicr;
+			   __entry->ena_mask = ena_mask;),
+
+	    TP_printk("dev=%s int_name=%s oicr=0x%08x ena_mask=0x%08x\n",
+		      __get_str(dev_name), __get_str(int_name),
+		      __entry->oicr, __entry->ena_mask));
+
+DECLARE_EVENT_CLASS(ice_misc_intr_template,
+		    TP_PROTO(struct ice_pf *pf),
+
+		    TP_ARGS(pf),
+
+		    TP_STRUCT__entry(__string(dev_name, dev_name(ice_pf_to_dev(pf)))
+				     __string(int_name, pf->int_name)
+				     __bitmask(misc_thread, ICE_MISC_THREAD_NBITS)),
+
+		    TP_fast_assign(
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
+				   __assign_str(dev_name, dev_name(ice_pf_to_dev(pf)));
+				   __assign_str(int_name, pf->int_name);
+#else
+				   __assign_str(dev_name);
+				   __assign_str(int_name);
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
+				   __assign_bitmask(misc_thread, pf->misc_thread, ICE_MISC_THREAD_NBITS);),
+
+		    TP_printk("dev=%s int_name=%s misc_thread=%s\n",
+			      __get_str(dev_name), __get_str(int_name),
+			      __get_bitmask(misc_thread)));
+
+#define DEFINE_MISC_INTR_EVENT(name) \
+DEFINE_EVENT(ice_misc_intr_template, name, \
+	     TP_PROTO(struct ice_pf *pf), \
+	     TP_ARGS(pf))
+
+DEFINE_MISC_INTR_EVENT(ice_misc_intr_end);
+DEFINE_MISC_INTR_EVENT(ice_misc_intr_thread_fn_begin);
+DEFINE_MISC_INTR_EVENT(ice_misc_intr_thread_fn_end);
 
 DECLARE_EVENT_CLASS(ice_switch_stats_template,
 		    TP_PROTO(struct ice_switch_info *sw_info,

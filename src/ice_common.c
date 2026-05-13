@@ -1105,7 +1105,7 @@ int ice_init_hw(struct ice_hw *hw)
 		status = -EIO;
 		goto err_unroll_sched;
 	}
-	INIT_LIST_HEAD(&hw->agg_list);
+	xa_init_flags(&hw->agg_list, XA_FLAGS_ALLOC);
 	/* Initialize max burst size */
 	if (!hw->max_burst_size)
 		ice_cfg_rl_burst_size(hw, ICE_SCHED_DFLT_BURST_SIZE);
@@ -1186,6 +1186,8 @@ void ice_deinit_hw(struct ice_hw *hw)
 
 	/* Clear VSI contexts if not already cleared */
 	ice_clear_all_vsi_ctx(hw);
+
+	xa_destroy(&hw->agg_list);
 }
 
 /**
@@ -1943,6 +1945,7 @@ static bool ice_should_retry_sq_send_cmd(u16 opcode)
 	case ice_aqc_opc_dnl_set_breakpoints:
 	case ice_aqc_opc_dnl_read_log:
 	case ice_aqc_opc_get_link_topo:
+	case ice_aqc_opc_sff_eeprom:
 	case ice_aqc_opc_lldp_stop:
 	case ice_aqc_opc_lldp_start:
 	case ice_aqc_opc_lldp_filter_ctrl:
@@ -1973,6 +1976,7 @@ ice_sq_send_cmd_retry(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 {
 	struct ice_aq_desc desc_cpy;
 	bool is_cmd_for_retry;
+	u8 *buf_cpy = NULL;
 	u8 idx = 0;
 	u16 opcode;
 	int status;
@@ -1982,8 +1986,12 @@ ice_sq_send_cmd_retry(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	memset(&desc_cpy, 0, sizeof(desc_cpy));
 
 	if (is_cmd_for_retry) {
-		/* All retryable cmds are direct, without buf. */
-		WARN_ON(buf);
+		if (buf) {
+			buf_cpy = kmemdup(buf, buf_size,
+					  ice_vlock_alloc_type(&cq->sq_lock));
+			if (!buf_cpy)
+				return -ENOMEM;
+		}
 
 		memcpy(&desc_cpy, desc, sizeof(desc_cpy));
 	}
@@ -1995,12 +2003,14 @@ ice_sq_send_cmd_retry(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 		    hw->adminq.sq_last_status != ICE_AQ_RC_EBUSY)
 			break;
 
+		if (buf_cpy)
+			memcpy(buf, buf_cpy, buf_size);
 		memcpy(desc, &desc_cpy, sizeof(desc_cpy));
-
 		ice_vlock_fsleep(&cq->sq_lock, ICE_SQ_SEND_DELAY_TIME_MS,
 				 ICE_SQ_SEND_ATOMIC_DELAY_TIME_US);
 	} while (++idx < ICE_SQ_SEND_MAX_EXECUTE);
 
+	kfree(buf_cpy);
 	return status;
 }
 
@@ -2398,6 +2408,40 @@ ice_aq_alloc_free_res(struct ice_hw *hw, u16 num_entries,
 }
 
 /**
+ * ice_subscribe_hw_res - subscribe to an existing resource
+ * @hw: pointer to the HW struct
+ * @type: type of resource
+ * @res: resource index to subscribe to
+ *
+ * Return: zero on success, or a negative error code on failure.
+ */
+int
+ice_subscribe_hw_res(struct ice_hw *hw, u16 type, u16 res)
+{
+	struct ice_aqc_alloc_free_res_elem *buf;
+	const uint num_elems = 1;
+	u16 buf_len;
+	int err;
+
+	buf_len = struct_size(buf, elem, num_elems);
+	buf =
+kzalloc(buf_len, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	/* Prepare buffer to subscribe to resource. */
+	buf->num_elems = cpu_to_le16(num_elems);
+	buf->res_type = cpu_to_le16(type | ICE_AQC_RES_TYPE_FLAG_DEDICATED);
+	buf->elem->e.sw_resp = cpu_to_le16(res);
+
+	err = ice_aq_alloc_free_res(hw, num_elems, buf, buf_len,
+				    ice_aqc_opc_alloc_res, NULL);
+
+	kfree(buf);
+	return err;
+}
+
+/**
  * ice_alloc_hw_res - allocate resource
  * @hw: pointer to the HW struct
  * @type: type of resource
@@ -2482,7 +2526,8 @@ static u32 ice_get_num_per_func(struct ice_hw *hw, u32 max)
 	u8 funcs;
 
 #define ICE_CAPS_VALID_FUNCS_M	0xFF
-	funcs = hweight8(hw->dev_caps.common_cap.valid_functions & ICE_CAPS_VALID_FUNCS_M);
+	funcs = hweight8(hw->dev_caps.common_cap.valid_functions &
+			 ICE_CAPS_VALID_FUNCS_M);
 
 	if (!funcs)
 		return 0;
@@ -5406,45 +5451,6 @@ ice_aq_set_txtimeq(struct ice_hw *hw, u16 txtimeq, u8 q_count,
 	cmd->q_id = cpu_to_le16(txtimeq);
 	cmd->q_amount = cpu_to_le16(q_count);
 	return ice_aq_send_cmd(hw, &desc, txtime_qg, buf_size, cd);
-}
-
-/**
- * ice_aq_ena_dis_txtimeq - enable/disable Tx time queue
- * @hw: pointer to the hardware structure
- * @txtimeq: first Tx time queue id to configure
- * @q_count: number of queues to configure
- * @q_ena: enable/disable Tx time queue
- * @txtime_qg: holds the first Tx time queue that failed enable/disable on
- * response
- * @cd: pointer to command details structure or NULL
- *
- * Enable/disable Tx Time queue (0x0C37)
- */
-int
-ice_aq_ena_dis_txtimeq(struct ice_hw *hw, u16 txtimeq, u16 q_count, bool q_ena,
-		       struct ice_aqc_ena_dis_txtime_qgrp *txtime_qg,
-		       struct ice_sq_cd *cd)
-{
-	struct ice_aqc_ena_dis_txtimeqs *cmd;
-	struct ice_aq_desc desc;
-
-	if (!txtime_qg || txtimeq > ICE_TXTIME_MAX_QUEUE ||
-	    q_count < 1 || q_count > ICE_OP_TXTIME_MAX_Q_AMOUNT)
-		return -EINVAL;
-
-	cmd = &desc.params.operate_txtimeqs;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_ena_dis_txtimeqs);
-
-	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
-
-	cmd->q_id = cpu_to_le16(txtimeq);
-	cmd->q_amount = cpu_to_le16(q_count);
-
-	if (q_ena)
-		cmd->cmd_type |= ICE_AQC_TXTIME_CMD_TYPE_Q_ENA;
-
-	return ice_aq_send_cmd(hw, &desc, txtime_qg, sizeof(*txtime_qg), cd);
 }
 
 /**
@@ -8534,6 +8540,22 @@ bool ice_fw_supports_fec_dis_auto(struct ice_hw *hw)
 				 ICE_FW_FEC_DIS_AUTO_MAJ_E82X,
 				 ICE_FW_FEC_DIS_AUTO_MIN_E82X,
 				 ICE_FW_FEC_DIS_AUTO_PATCH_E82X);
+}
+
+/**
+ * ice_is_fw_vf_txtime_supported_e83x
+ * @hw: pointer to the hardware structure
+ *
+ * Checks if the firmware supports VF Tx Time feature
+ */
+bool ice_is_fw_vf_txtime_supported_e83x(struct ice_hw *hw)
+{
+	if (hw->mac_type != ICE_MAC_E830)
+		return false;
+
+	return ice_is_fw_api_min_ver(hw, ICE_FW_API_VF_TXTIME_MAJ_E83X,
+				     ICE_FW_API_VF_TXTIME_MIN_E83X,
+				     ICE_FW_API_VF_TXTIME_PATCH_E83X);
 }
 
 /**

@@ -212,13 +212,12 @@ static int ice_adq_max_qps(struct ice_pf *pf)
  * Step [1]: Enable MSI-X vectors with eswitch support disabled
  *
  * Step [2]: Enable MSI-X vectors with the number of vectors reserved for
- * MACVLAN and Scalable IOV support reduced by a factor of 2.
+ * MACVLAN support reduced by a factor of 2.
  *
  * Step [3]: Enable MSI-X vectors with the number of vectors reserved for
- * MACVLAN and Scalable IOV support reduced by a factor of 4.
+ * MACVLAN support reduced by a factor of 4.
  *
- * Step [4]: Enable MSI-X vectors with MACVLAN and Scalable IOV support
- * disabled.
+ * Step [4]: Enable MSI-X vectors with MACVLAN support disabled.
  *
  * Step [5]: Enable MSI-X vectors with the number of pf->num_lan_msix reduced
  * by a factor of 2 from the previous step (i.e. num_online_cpus() / 2).
@@ -304,13 +303,6 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		0, 0, 0, 0, 0, 0, 0,
 		ICE_ESWITCH_MSIX,
 	};
-	int scalable_adj_vec[ICE_ADJ_VEC_STEPS] = {
-		0, 0, 0, 0,
-		(ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL) / 4,
-		(ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL) / 2,
-		ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL,
-		ICE_MAX_SCALABLE * ICE_NUM_VF_MSIX_SMALL,
-	};
 	int adj_step = ICE_ADJ_VEC_BEST_CASE;
 	int total_msix = 0;
 	int err = -ENOSPC;
@@ -351,14 +343,6 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	} else {
 		ice_adj_vec_clear(fdir_adj_vec, ICE_ADJ_VEC_STEPS);
 	}
-
-	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags)) {
-		needed += scalable_adj_vec[ICE_ADJ_VEC_BEST_CASE];
-		ice_adj_vec_sum(adj_vec, scalable_adj_vec, ICE_ADJ_VEC_STEPS);
-	} else {
-		ice_adj_vec_clear(scalable_adj_vec, ICE_ADJ_VEC_STEPS);
-	}
-
 	v_actual = ice_ena_msix(pf, needed);
 	if (v_actual < 0) {
 		err = v_actual;
@@ -399,13 +383,6 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	pf->max_adq_qps = !ice_is_safe_mode(pf) ? lan_adj_vec[adj_step] : 1;
 #endif /* DEVLINK_SUPPORT && HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 	pf->msix.misc += fdir_adj_vec[ICE_ADJ_VEC_BEST_CASE];
-	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags) &&
-	    !scalable_adj_vec[adj_step]) {
-		dev_warn(dev, "Not enough MSI-X for Scalable IOV support, disabling feature\n");
-		clear_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags);
-	}
-	pf->msix.siov += scalable_adj_vec[adj_step];
-	total_msix += pf->msix.siov;
 	total_msix += pf->msix.misc;
 
 	return total_msix;

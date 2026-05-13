@@ -20,19 +20,6 @@
 #define GLGEN_SWITCH_MODE_CONFIG	0x000B81E0 /* Reset Source: POR */
 #define GL_MNG_FWSM_FW_MODES_M		E800_GL_MNG_FWSM_FW_MODES_M
 #define GL_RDPU_CNTRL				0x00052054 /* Reset Source: CORER */
-#define PF0INT_DYN_CTL(_i)			(0x03000000 + ((_i) * 4096)) /* _i=0...2047 */ /* Reset Source: CORER */
-#define QRX_TAIL_PAGE(_QRX)			(0x03800000 + ((_QRX) * 4096)) /* _i=0...2047 */ /* Reset Source: CORER */
-#define QTX_COMM_DBELL_PAGE(_DBQM)		(0x04000000 + ((_DBQM) * 4096)) /* _i=0...16383 */ /* Reset Source: CORER */
-#define VSI_MBX_ARQBAH(_VSI)			(0x02000018 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSI_MBX_ARQBAL(_VSI)			(0x02000014 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSI_MBX_ARQH(_VSI)			(0x02000020 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSI_MBX_ARQLEN(_VSI)			(0x0200001C + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: PFR */
-#define VSI_MBX_ARQT(_VSI)			(0x02000024 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSI_MBX_ATQBAH(_VSI)			(0x02000004 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSI_MBX_ATQBAL(_VSI)			(0x02000000 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSI_MBX_ATQH(_VSI)			(0x0200000C + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSI_MBX_ATQLEN(_VSI)			(0x02000008 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: PFR */
-#define VSI_MBX_ATQT(_VSI)			(0x02000010 + ((_VSI) * 4096)) /* _i=0...767 */ /* Reset Source: CORER */
 #define GLCOMM_QTX_CNTX_CTL			0x002D2DC8 /* Reset Source: CORER */
 #define GLCOMM_QTX_CNTX_CTL_QUEUE_ID_M		ICE_M(0x3FFF, 0)
 #define GLCOMM_QTX_CNTX_CTL_CMD_EXEC_M		BIT(19)
@@ -53,8 +40,6 @@
 #define QTX_COMM_HEAD(_DBQM)			(0x000E0000 + ((_DBQM) * 4)) /* _i=0...16383 */ /* Reset Source: CORER */
 #define QTX_COMM_HEAD_MAX_INDEX			16383
 #define QTX_COMM_HEAD_HEAD_M			ICE_M(0x1FFF, 0)
-#define GL_MBX_PASID				0x00231EC0 /* Reset Source: CORER */
-#define GL_MBX_PASID_PASID_MODE_M		BIT(0)
 #define PF_FW_ARQBAH				0x00080180 /* Reset Source: EMPR */
 #define PF_FW_ARQBAH_ARQBAH_S			0
 #define PF_FW_ARQBAH_ARQBAH_M			ICE_M(0xFFFFFFFF, 0)
@@ -295,10 +280,6 @@
 #define VPGEN_VFRSTAT_VFRD_M			BIT(0)
 #define VPGEN_VFRTRIG(_VF)			(0x00090000 + ((_VF) * 4)) /* _i=0...255 */ /* Reset Source: CORER */
 #define VPGEN_VFRTRIG_VFSWR_M			BIT(0)
-#define VSIGEN_RSTAT(_VSI)			(0x00092800 + ((_VSI) * 4)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSIGEN_RSTAT_VMRD_M			BIT(0)
-#define VSIGEN_RTRIG(_VSI)			(0x00091800 + ((_VSI) * 4)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VSIGEN_RTRIG_VMSWR_M			BIT(0)
 #define GLINT_CEQCTL(_INT)			(0x0015C000 + ((_INT) * 4)) /* _i=0...2047 */ /* Reset Source: CORER */
 #define GLINT_CEQCTL_MSIX_INDX_M		ICE_M(0x7FF, 0)
 #define GLINT_CEQCTL_ITR_INDX_M			ICE_M(0x3, 11)
@@ -379,7 +360,6 @@
 #define VPINT_ALLOC_PCI_LAST_M			ICE_M(0x7FF, 12)
 #define VPINT_ALLOC_PCI_VALID_M			BIT(31)
 #define VPINT_MBX_CTL(_VSI)			(0x0016A000 + ((_VSI) * 4)) /* _i=0...767 */ /* Reset Source: CORER */
-#define VPINT_MBX_CTL_MSIX_INDX_M		ICE_M(0x7FF, 0)
 #define VPINT_MBX_CTL_CAUSE_ENA_M		BIT(30)
 #define PFLAN_RX_QALLOC				0x001D2500 /* Reset Source: CORER */
 #define PFLAN_RX_QALLOC_FIRSTQ_M		ICE_M(0x7FF, 0)
@@ -467,8 +447,6 @@
 #define PF_PCI_CIAA				0x0009E580 /* Reset Source: FLR */
 #define PF_PCI_CIAA_VF_NUM_S			12
 #define PF_PCI_CIAD				0x0009E500 /* Reset Source: FLR */
-#define PFPCI_VMINDEX				0x0009E600 /* Reset Source: PCIR */
-#define PFPCI_VMPEND				0x0009E800 /* Reset Source: PCIR */
 #define GL_PWR_MODE_CTL				0x000B820C /* Reset Source: POR */
 #define GL_PWR_MODE_CTL_CAR_MAX_BW_M		ICE_M(0x3, 30)
 #define GLQF_FD_CNT				0x00460018 /* Reset Source: CORER */
@@ -630,22 +608,6 @@
 #define PFPM_WUS_MAG_M				BIT(1)
 #define PFPM_WUS_MNG_M				BIT(3)
 #define PFPM_WUS_FW_RST_WK_M			BIT(31)
-#define VF_MBX_ARQBAH1				0x00006000 /* Reset Source: CORER */
-#define VF_MBX_ARQBAL1				0x00006C00 /* Reset Source: CORER */
-#define VF_MBX_ARQH1				0x00007400 /* Reset Source: CORER */
-#define VF_MBX_ARQLEN1				0x00008000 /* Reset Source: PFR */
-#define VF_MBX_ARQT1				0x00007000 /* Reset Source: CORER */
-#define VF_MBX_ATQBAH1				0x00007800 /* Reset Source: CORER */
-#define VF_MBX_ATQBAL1				0x00007C00 /* Reset Source: CORER */
-#define VF_MBX_ATQH1				0x00006400 /* Reset Source: CORER */
-#define VF_MBX_ATQLEN1				0x00006800 /* Reset Source: PFR */
-#define VF_MBX_ATQT1				0x00008400 /* Reset Source: CORER */
-#define VFGEN_RSTAT1				0x00008800 /* Reset Source: VFR */
-#define VFINT_DYN_CTL0				0x00005C00 /* Reset Source: CORER */
-#define VFINT_DYN_CTLN(_i)			(0x00003800 + ((_i) * 4)) /* _i=0...63 */ /* Reset Source: CORER */
-#define VFINT_ITR0(_i)				(0x00004C00 + ((_i) * 4)) /* _i=0...2 */ /* Reset Source: CORER */
-#define QRX_TAIL1(_QRX)				(0x00002000 + ((_QRX) * 4)) /* _i=0...255 */ /* Reset Source: CORER */
-#define QTX_TAIL(_DBQM)				(0x00000000 + ((_DBQM) * 4)) /* _i=0...255 */ /* Reset Source: CORER */
 #define E830_GLQTX_TXTIME_DBELL_LSB(_DBQM)	(0x002E0000 + ((_DBQM) * 8)) /* _i=0...16383 */ /* Reset Source: CORER */
 #define E830_GLTXTIME_FETCH_PROFILE(_i, _j)	(0x002D3500 + ((_i) * 4 + (_j) * 64)) /* _i=0...15, _j=0...15 */ /* Reset Source: CORER */
 #define E830_GLTXTIME_FETCH_PROFILE_FETCH_TS_DESC_M ICE_M(0x1FF, 0)

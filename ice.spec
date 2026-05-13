@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 2.5.4
+Version: 2.6.4
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
@@ -97,7 +97,7 @@ cd %{buildroot}
 %{!?privkey: %define privkey %{_sysconfdir}/pki/SECURE-BOOT-KEY.priv}
 %{!?pubkey: %define pubkey %{_sysconfdir}/pki/SECURE-BOOT-KEY.der}
 %{!?_signfile: %define _signfile ${_ksrc}/scripts/sign-file}
-systemctl restart kerberos || echo Unable to restart kerberos >&2
+systemctl --no-ask-password restart kerberos || echo kerberos not restarted
 for module in `find . -type f -name \*.ko`; do
 	strip --strip-debug ${module}
 	KSRC=${_ksrc} %{_signfile} sha512 %{privkey} %{pubkey} ${module}
@@ -110,7 +110,7 @@ done
 rm -rf %{buildroot}
 
 %files -f file.list
-/lib/firmware/updates/intel/ice/ddp/ice-1.3.56.0.pkg
+/lib/firmware/updates/intel/ice/ddp/ice-1.3.59.0.pkg
 /lib/firmware/updates/intel/ice/ddp/ice.pkg
 /lib/firmware/updates/intel/ice/ddp/LICENSE
 

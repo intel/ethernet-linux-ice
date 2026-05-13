@@ -9,6 +9,8 @@
 #include <linux/ptp_clock_kernel.h>
 #include <linux/ptp_classify.h>
 #include <linux/highuid.h>
+#include <linux/xarray.h>
+#include <linux/kref.h>
 #include "kcompat_kthread.h"
 #include "ice_ptp_hw.h"
 
@@ -157,7 +159,7 @@ struct ice_ptp_tx {
  * ready for PTP functionality. It is used to track the port initialization
  * and determine when the port's PHY offset is valid.
  *
- * @list_node: list member structure
+ * @ref: reference counter for use with adapter ports xarray
  * @tx: Tx timestamp tracking for this port
  * @aux_dev: auxiliary device associated with this port
  * @ov_work: delayed work for tracking when PHY offset is valid
@@ -165,11 +167,11 @@ struct ice_ptp_tx {
  * @link_up: indicates whether the link is up
  * @tx_fifo_busy_cnt: number of times the Tx FIFO was busy
  * @port_num: the port number this structure represents
- * @tx_clk: Tx reference clock source
- * @tx_clk_prev: previously set Tx reference clock source
+ * @tx_clk: currently active Tx reference clock source
+ * @tx_clk_req: requested Tx reference clock source (new target)
  */
 struct ice_ptp_port {
-	struct list_head list_node;
+	struct kref ref;
 	struct ice_ptp_tx tx;
 	struct delayed_work ov_work;
 	struct mutex ps_lock; /* protects overall PTP PHY start procedure */
@@ -178,7 +180,7 @@ struct ice_ptp_port {
 	u8 port_num;
 	u8 rx_calibrating : 1;
 	enum ice_e825c_ref_clk tx_clk;
-	enum ice_e825c_ref_clk tx_clk_prev;
+	enum ice_e825c_ref_clk tx_clk_req;
 };
 
 enum ice_ptp_state {
@@ -385,13 +387,21 @@ bool ice_is_ptp_supported(struct ice_pf *pf);
 struct ice_pf;
 int ice_ptp_set_ts_config(struct ice_pf *pf, struct ifreq *ifr);
 int ice_ptp_get_ts_config(struct ice_pf *pf, struct ifreq *ifr);
+#ifdef HAVE_NDO_HWTSTAMP
+int ice_ptp_hwtstamp_get(struct net_device *netdev,
+			 struct kernel_hwtstamp_config *config);
+int ice_ptp_hwtstamp_set(struct net_device *netdev,
+			 struct kernel_hwtstamp_config *config,
+			 struct netlink_ext_ack *extack);
+#endif /* HAVE_NDO_HWTSTAMP */
 void ice_block_ptp_workthreads_global(struct ice_pf *pf, bool block_enable);
 void ice_ptp_restore_timestamp_mode(struct ice_pf *pf);
 
 void ice_ptp_extts_event(struct ice_pf *pf);
 s8 ice_ptp_request_ts(struct ice_ptp_tx *tx, struct sk_buff *skb);
-enum ice_tx_tstamp_work ice_ptp_process_ts(struct ice_pf *pf);
-irqreturn_t ice_ptp_ts_irq(struct ice_pf *pf);
+void ice_ptp_process_ts(struct ice_pf *pf);
+void ice_ptp_ts_irq(struct ice_pf *pf);
+bool ice_ptp_tx_tstamps_pending(struct ice_pf *pf);
 void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx);
 void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx);
 
@@ -433,6 +443,23 @@ static inline int ice_ptp_get_ts_config(struct ice_pf *pf, struct ifreq *ifr)
 	return -EOPNOTSUPP;
 }
 
+#ifdef HAVE_NDO_HWTSTAMP
+static inline int
+ice_ptp_hwtstamp_get(struct net_device *netdev,
+		     struct kernel_hwtstamp_config *config)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int
+ice_ptp_hwtstamp_set(struct net_device *netdev,
+		     struct kernel_hwtstamp_config *config,
+		     struct netlink_ext_ack *extack)
+{
+	return -EOPNOTSUPP;
+}
+#endif /* HAVE_NDO_HWTSTAMP */
+
 static inline void
 ice_block_ptp_workthreads_global(struct ice_pf *pf, bool block_enable) { }
 
@@ -444,14 +471,13 @@ ice_ptp_request_ts(struct ice_ptp_tx *tx, struct sk_buff *skb)
 	return -1;
 }
 
-static inline bool ice_ptp_process_ts(struct ice_pf *pf)
-{
-	return true;
-}
+static inline void ice_ptp_process_ts(struct ice_pf *pf) { }
 
-static inline irqreturn_t ice_ptp_ts_irq(struct ice_pf *pf)
+static inline void ice_ptp_ts_irq(struct ice_pf *pf) { }
+
+static inline bool ice_ptp_tx_tstamps_pending(struct ice_pf *pf)
 {
-	return IRQ_HANDLED;
+	return false;
 }
 
 static inline void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)

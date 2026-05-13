@@ -1059,7 +1059,6 @@ static void ice_devlink_read_resources_size(struct ice_pf *pf)
 
 	pf->req_msix.all_host = pf->req_msix.eth +
 			       pf->req_msix.rdma +
-			       pf->req_msix.siov +
 			       pf->req_msix.misc;
 }
 

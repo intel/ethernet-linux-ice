@@ -317,6 +317,7 @@ void ice_ptp_reset_ts_memory(struct ice_hw *hw);
 int ice_ptp_init_phc(struct ice_hw *hw);
 bool refsync_pin_id_valid(struct ice_hw *hw, u8 id);
 int ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready);
+int ice_check_phy_tx_tstamp_ready(struct ice_hw *hw);
 int ice_ptp_one_port_cmd(struct ice_hw *hw, u8 configured_port,
 			 enum ice_ptp_tmr_cmd configured_cmd);
 int ice_ptp_config_sfd(struct ice_hw *hw, bool sfd_ena);
@@ -369,6 +370,8 @@ ice_set_dpll_ref_sw_status(struct ice_hw *hw, u8 dpll_num, u8 monitor,
 /* ETH56G family functions */
 int ice_write_phy_eth56g(struct ice_hw *hw, u8 port, u32 addr, u32 val);
 int ice_read_phy_eth56g(struct ice_hw *hw, u8 port, u32 addr, u32 *val);
+int ice_get_serdes_ref_sel_e825c(struct ice_hw *hw, u8 port,
+				 enum ice_e825c_ref_clk *clk);
 int ice_cgu_set_pps_out(struct ice_hw *hw, bool ena, u8 amp);
 int ice_ptp_read_tx_hwtstamp_status_eth56g(struct ice_hw *hw, u32 *ts_status);
 int ice_stop_phy_timer_eth56g(struct ice_hw *hw, u8 port, bool soft_reset);
@@ -377,6 +380,7 @@ int ice_phy_cfg_tx_offset_eth56g(struct ice_hw *hw, u8 port);
 int ice_phy_cfg_rx_offset_eth56g(struct ice_hw *hw, u8 port);
 int ice_phy_cfg_intr_eth56g(struct ice_hw *hw, u8 port, bool ena, u8 threshold);
 int ice_phy_cfg_ptp_1step_eth56g(struct ice_hw *hw, u8 port);
+int ice_ptp_phy_soft_reset_eth56g(struct ice_hw *hw, u8 port);
 
 #define ICE_ETH56G_NOMINAL_INCVAL	0x140000000ULL
 #define ICE_ETH56G_NOMINAL_PCS_REF_TUS	0x100000000ULL
@@ -659,6 +663,9 @@ static inline u64 ice_get_base_incval(const struct ice_hw *hw,
 #define ICE_P0_GNSS_PRSNT_N	BIT(4)
 
 /* ETH56G PHY register addresses */
+#define PHY_REG_GLOBAL			0x0
+#define PHY_REG_GLOBAL_SOFT_RESET_M	BIT(11)
+
 /* Timestamp PHY incval registers */
 #define PHY_REG_TIMETUS_L		0x8
 #define PHY_REG_TIMETUS_U		0xC
@@ -764,5 +771,30 @@ static inline u64 ice_get_base_incval(const struct ice_hw *hw,
 #define PHY_PTP_1STEP_PD_DELAY_M	ICE_M(0x3fffffff, 1)
 #define PHY_PTP_1STEP_PD_DLY_V_M	ICE_M(0x1, 31)
 #define PHY_REG_SD_BIT_SLIP(_quad_lane)	(0x29C + 4 * (_quad_lane))
+
+#define SERDES_IP_IF_LN_FLXM_GENERAL(n, m) \
+	(0x32B800 + (m) * 0x100000 + (n) * 0x8000)
+#define CFG_RESERVED0_1                         GENMASK(1, 0)
+#define CFG_ICTL_PCS_MODE_NT                    BIT(2)
+#define CFG_ICTL_PCS_RCOMP_SLAVE_EN_NT          BIT(3)
+#define CFG_ICTL_PCS_CMN_FORCE_PUP_A            BIT(4)
+#define CFG_ICTL_PCS_RCOMP_SLAVE_VALID_A        BIT(5)
+#define CFG_ICTL_PCS_REF_SEL_RX_NT              GENMASK(9, 6)
+#define REF_SEL_NT_ENET				0
+#define REF_SEL_NT_EREF0			1
+#define REF_SEL_NT_SYNCE			2
+#define CFG_IDAT_DFX_OBS_DIG_                   GENMASK(11, 10)
+#define CFG_IRST_APB_MEM_B                      BIT(12)
+#define CFG_ICTL_PCS_DISCONNECT_NT              BIT(13)
+#define CFG_ICTL_PCS_ISOLATE_NT                 BIT(14)
+#define CFG_RESERVED15_15                       BIT(15)
+#define CFG_IRST_PCS_TSTBUS_B_A                 BIT(16)
+#define CFG_ICTL_PCS_REF_TERM_HIZ_EN_NT         BIT(17)
+#define CFG_RESERVED18_19                       GENMASK(19, 18)
+#define CFG_ICTL_PCS_SYNTHLCSLOW_FORCE_PUP_A    BIT(20)
+#define CFG_ICTL_PCS_SYNTHLCFAST_FORCE_PUP_A    BIT(21)
+#define CFG_RESERVED22_24                       GENMASK(24, 22)
+#define CFG_ICTL_PCS_REF_SEL_TX_NT              GENMASK(28, 25)
+#define CFG_RESERVED29_31                       GENMASK(31, 29)
 
 #endif /* _ICE_PTP_HW_H_ */

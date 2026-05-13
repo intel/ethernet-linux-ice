@@ -328,7 +328,6 @@ ice_set_txq_ctx_vmvf(struct ice_tx_ring *ring, u8 *vmvf_type, u16 *vmvf_num)
 		*vmvf_num = hw->func_caps.vf_base_id + vsi->vf->vf_id;
 		*vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VF;
 		break;
-	case ICE_VSI_ADI:
 	case ICE_VSI_OFFLOAD_MACVLAN:
 	case ICE_VSI_VMDQ2:
 		*vmvf_type = ICE_TLAN_CTX_VMVF_TYPE_VMQ;
@@ -350,12 +349,15 @@ ice_set_txq_ctx_vmvf(struct ice_tx_ring *ring, u8 *vmvf_type, u16 *vmvf_num)
  * @pf_q: queue index in the PF space
  *
  * Configure the Tx descriptor ring in TLAN context.
+ *
+ * Return: 0 on success and a negative value on error.
  */
-static void
+static int
 ice_setup_tx_ctx(struct ice_tx_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf_q)
 {
 	struct ice_vsi *vsi = ring->vsi;
 	struct ice_hw *hw;
+	int err;
 
 	hw = &vsi->back->hw;
 	tlan_ctx->base = ring->dma >> ICE_TLAN_CTX_BASE_S;
@@ -369,9 +371,10 @@ ice_setup_tx_ctx(struct ice_tx_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf
 	/* PF number */
 	tlan_ctx->pf_num = hw->pf_id;
 
-	if (ice_set_txq_ctx_vmvf(ring, &tlan_ctx->vmvf_type,
-				 &tlan_ctx->vmvf_num))
-		return;
+	err = ice_set_txq_ctx_vmvf(ring, &tlan_ctx->vmvf_type,
+				   &tlan_ctx->vmvf_num);
+	if (err)
+		return err;
 
 	/* make sure the context is associated with the right VSI */
 	if (ring->ch)
@@ -397,58 +400,64 @@ ice_setup_tx_ctx(struct ice_tx_ring *ring, struct ice_tlan_ctx *tlan_ctx, u16 pf
 	 * 1: Legacy Host Interface
 	 */
 	tlan_ctx->legacy_int = ICE_TX_LEGACY;
+
+	return 0;
 }
 
 /**
  * ice_setup_txtime_ctx - setup a struct ice_txtime_ctx instance
  * @ring: The tstamp ring to configure
  * @txtime_ctx: Pointer to the Tx time queue context structure to be initialized
- * @txtime_ena: Tx time enable flag, set to true if Tx time should be enabled
+ *
+ * Return: 0 on success and a negative value on error.
  */
-static void
-ice_setup_txtime_ctx(struct ice_tx_ring *ring,
-		     struct ice_txtime_ctx *txtime_ctx, bool txtime_ena)
+static int
+ice_setup_txtime_ctx(const struct ice_tstamp_ring *ring,
+		     struct ice_txtime_ctx *txtime_ctx)
 {
-	struct ice_vsi *vsi = ring->vsi;
-	struct ice_hw *hw;
+	struct ice_tx_ring *tx_ring = ring->tx_ring;
+	struct ice_vsi *vsi = tx_ring->vsi;
+	struct ice_hw *hw = &vsi->back->hw;
+	int err;
 
-	hw = &vsi->back->hw;
 	txtime_ctx->base = ring->dma >> ICE_TXTIME_CTX_BASE_S;
 
 	/* Tx time Queue Length */
 	txtime_ctx->qlen = ring->count;
-
-	if (txtime_ena)
-		txtime_ctx->txtime_ena_q = 1;
+	txtime_ctx->txtime_ena_q = 1;
 
 	/* PF number */
 	txtime_ctx->pf_num = hw->pf_id;
 
-	if (ice_set_txq_ctx_vmvf(ring, &txtime_ctx->vmvf_type,
-				 &txtime_ctx->vmvf_num))
-		return;
+	err = ice_set_txq_ctx_vmvf(tx_ring, &txtime_ctx->vmvf_type,
+				   &txtime_ctx->vmvf_num);
+	if (err)
+		return err;
 
 	/* make sure the context is associated with the right VSI */
-	if (ring->ch)
-		txtime_ctx->src_vsi = ring->ch->vsi_num;
+	if (tx_ring->ch)
+		txtime_ctx->src_vsi = tx_ring->ch->vsi_num;
 	else
 		txtime_ctx->src_vsi = ice_get_hw_vsi_num(hw, vsi->idx);
 
 	txtime_ctx->ts_res = ICE_TXTIME_CTX_RESOLUTION_128NS;
 	txtime_ctx->drbell_mode_32 = ICE_TXTIME_CTX_DRBELL_MODE_32;
 	txtime_ctx->ts_fetch_prof_id = ICE_TXTIME_CTX_FETCH_PROF_ID_0;
+
+	return 0;
 }
 
 /**
  * ice_calc_ts_ring_count - Calculate the number of timestamp descriptors
- * @hw: pointer to the hardware structure
- * @tx_desc_count: number of Tx descriptors in the ring
+ * @tx_ring: the Tx ring associated with the tstamp ring
  *
  * Return: the number of timestamp descriptors
  */
-u16 ice_calc_ts_ring_count(struct ice_hw *hw, u16 tx_desc_count)
+u16 ice_calc_ts_ring_count(struct ice_tx_ring *tx_ring)
 {
 	u16 prof = ICE_TXTIME_CTX_FETCH_PROF_ID_0;
+	struct ice_vsi *vsi = tx_ring->vsi;
+	struct ice_hw *hw = &vsi->back->hw;
 	u16 max_fetch_desc = 0, fetch, i;
 	u32 reg;
 
@@ -464,7 +473,7 @@ u16 ice_calc_ts_ring_count(struct ice_hw *hw, u16 tx_desc_count)
 
 	max_fetch_desc = ALIGN(max_fetch_desc, ICE_REQ_DESC_MULTIPLE);
 
-	return tx_desc_count + max_fetch_desc;
+	return tx_ring->count + max_fetch_desc;
 }
 
 /**
@@ -585,10 +594,6 @@ static int ice_setup_rx_ctx(struct ice_rx_ring *ring)
 	switch (vsi->type) {
 	case ICE_VSI_VF:
 		break;
-	case ICE_VSI_ADI:
-		ice_write_qrxflxp_cntxt(hw, pf_q, ICE_RXDID_LEGACY_1, 0x3,
-					false);
-		break;
 	default:
 		ice_write_qrxflxp_cntxt(hw, pf_q, rxdid, 0x3, true);
 	}
@@ -601,7 +606,7 @@ static int ice_setup_rx_ctx(struct ice_rx_ring *ring)
 		return -EIO;
 	}
 
-	if (vsi->type == ICE_VSI_VF || vsi->type == ICE_VSI_ADI)
+	if (vsi->type == ICE_VSI_VF)
 		return 0;
 
 	/* configure Rx buffer alignment */
@@ -950,18 +955,60 @@ void ice_vsi_free_q_vectors(struct ice_vsi *vsi)
 }
 
 /**
+ * ice_cfg_tstamp - Configure Tx time stamp queue
+ * @tx_ring: Tx ring to be configured with timestamping
+ *
+ * Return: 0 on success and a negative value on error.
+ */
+static int
+ice_cfg_tstamp(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+	struct ice_aqc_set_txtime_qgrp *txtime_qg_buf;
+	struct ice_txtime_ctx txtime_ctx = {};
+	struct ice_vsi *vsi = tx_ring->vsi;
+	struct ice_pf *pf = vsi->back;
+	struct ice_hw *hw = &pf->hw;
+	u16 pf_q = tx_ring->reg_idx;
+	u8 txtime_buf_len;
+	int err;
+
+	txtime_qg_buf = kzalloc(struct_size(txtime_qg_buf, txtimeqs, 1),
+				GFP_KERNEL);
+	if (!txtime_qg_buf)
+		return -ENOMEM;
+
+	txtime_buf_len = struct_size(txtime_qg_buf, txtimeqs, 1);
+	err = ice_setup_txtime_ctx(tstamp_ring, &txtime_ctx);
+	if (err) {
+		dev_err(ice_pf_to_dev(pf), "Failed to setup Tx time queue context for queue %d, error: %d\n",
+			pf_q, err);
+		goto err_setup_txtime;
+	}
+	ice_set_ctx(hw, (u8 *)&txtime_ctx,
+		    txtime_qg_buf->txtimeqs[0].txtime_ctx,
+		    ice_txtime_ctx_info);
+	tstamp_ring->tail = (u8 __iomem *)
+			 ice_get_hw_addr(hw, E830_GLQTX_TXTIME_DBELL_LSB(pf_q));
+	err = ice_aq_set_txtimeq(hw, pf_q, 1, txtime_qg_buf,
+				 txtime_buf_len, NULL);
+
+err_setup_txtime:
+	kfree(txtime_qg_buf);
+	return err;
+}
+
+/**
  * ice_vsi_cfg_txq - Configure single Tx queue
  * @vsi: the VSI that queue belongs to
  * @ring: Tx ring to be configured
- * @tstamp_ring: Time stamp ring to be configured
  * @qg_buf: queue group buffer
- * @txtime_qg_buf: Tx Time queue group buffer
+ *
+ * Return 0 on success and a negative value on error.
  */
 int
 ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
-		struct ice_tx_ring *tstamp_ring,
-		struct ice_aqc_add_tx_qgrp *qg_buf,
-		struct ice_aqc_set_txtime_qgrp *txtime_qg_buf)
+		struct ice_aqc_add_tx_qgrp *qg_buf)
 {
 	u8 buf_len = struct_size(qg_buf, txqs, 1);
 	struct ice_tlan_ctx tlan_ctx = { 0 };
@@ -969,15 +1016,20 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 	struct ice_aqc_add_txqs_perq *txq;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
+	u32 pf_q, vsi_idx;
 	int status;
-	u16 pf_q;
 	u8 tc;
 
 	/* Configure XPS */
 	ice_cfg_xps_tx_ring(ring);
 
 	pf_q = ring->reg_idx;
-	ice_setup_tx_ctx(ring, &tlan_ctx, pf_q);
+	status = ice_setup_tx_ctx(ring, &tlan_ctx, pf_q);
+	if (status) {
+		dev_err(ice_pf_to_dev(pf), "Failed to setup Tx context for queue %d, error: %d\n",
+			pf_q, status);
+		return status;
+	}
 	/* copy context contents into the qg_buf */
 	qg_buf->txqs[0].txq_id = cpu_to_le16(pf_q);
 	ice_set_ctx(hw, (u8 *)&tlan_ctx, qg_buf->txqs[0].txq_ctx,
@@ -997,14 +1049,15 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 	 */
 	ring->q_handle = ice_calc_txq_handle(vsi, ring, tc);
 
-	if (ch)
-		status = ice_ena_vsi_txq(vsi->port_info, ch->ch_vsi->idx, 0,
-					 ring->q_handle, 1, qg_buf, buf_len,
-					 NULL);
-	else
-		status = ice_ena_vsi_txq(vsi->port_info, vsi->idx, tc,
-					 ring->q_handle, 1, qg_buf, buf_len,
-					 NULL);
+	if (ch) {
+		tc = 0;
+		vsi_idx = ch->ch_vsi->idx;
+	} else {
+		vsi_idx = vsi->idx;
+	}
+
+	status = ice_ena_vsi_txq(vsi->port_info, vsi_idx, tc, ring->q_handle,
+				 1, qg_buf, buf_len, NULL);
 	if (status) {
 		dev_err(ice_pf_to_dev(pf), "Failed to set LAN Tx queue context, error: %d\n",
 			status);
@@ -1019,29 +1072,34 @@ ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 	if (pf_q == le16_to_cpu(txq->txq_id))
 		ring->txq_teid = le32_to_cpu(txq->q_teid);
 
-	if (tstamp_ring) {
-		u8 txtime_buf_len = struct_size(txtime_qg_buf, txtimeqs, 1);
-		struct ice_txtime_ctx txtime_ctx = { 0 };
+	if (ice_is_txtime_ena(ring)) {
+		if (!ring->tstamp_ring) {
+			status = ice_alloc_setup_tstamp_ring(ring);
+			if (status) {
+				dev_err(ice_pf_to_dev(pf),
+					"Failed to allocate Tx timestamp ring, error: %d\n",
+					status);
+				goto err_setup_tstamp;
+			}
+		}
 
-		ice_setup_txtime_ctx(tstamp_ring, &txtime_ctx,
-				     !!(ring->flags & ICE_TX_FLAGS_TXTIME));
-		ice_set_ctx(hw, (u8 *)&txtime_ctx,
-			    txtime_qg_buf->txtimeqs[0].txtime_ctx,
-			    ice_txtime_ctx_info);
-
-		tstamp_ring->tail =
-			ice_get_hw_addr(hw, E830_GLQTX_TXTIME_DBELL_LSB(pf_q));
-
-		status = ice_aq_set_txtimeq(hw, pf_q, 1, txtime_qg_buf,
-					    txtime_buf_len, NULL);
+		status = ice_cfg_tstamp(ring);
 		if (status) {
 			dev_err(ice_pf_to_dev(pf), "Failed to set Tx Time queue context, error: %d\n",
 				status);
-			return status;
+			goto err_cfg_tstamp;
 		}
 	}
-
 	return 0;
+
+err_cfg_tstamp:
+	ice_free_tx_tstamp_ring(ring);
+err_setup_tstamp:
+	ice_dis_vsi_txq(vsi->port_info, vsi_idx, tc, 1, &ring->q_handle,
+			&ring->reg_idx, &ring->txq_teid, ICE_NO_RESET,
+			tlan_ctx.vmvf_num, NULL);
+
+	return status;
 }
 
 /**
@@ -1136,6 +1194,296 @@ void ice_trigger_sw_intr(struct ice_hw *hw, struct ice_q_vector *q_vector)
 {
 	wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx), (ICE_ITR_NONE << GLINT_DYN_CTL_ITR_INDX_S) |
 	     GLINT_DYN_CTL_SWINT_TRIG_M | GLINT_DYN_CTL_INTENA_M);
+}
+
+/**
+ * ice_qvec_toggle_napi - Enables/disables NAPI for a given q_vector
+ * @vsi: VSI that has netdev
+ * @q_vector: q_vector that has NAPI context
+ * @enable: true for enable, false for disable
+ */
+static void
+ice_qvec_toggle_napi(struct ice_vsi *vsi, struct ice_q_vector *q_vector,
+		     bool enable)
+{
+	if (!vsi->netdev || !q_vector)
+		return;
+
+	if (enable)
+		napi_enable(&q_vector->napi);
+	else
+		napi_disable(&q_vector->napi);
+}
+
+/**
+ * ice_qvec_dis_irq - Mask off queue interrupt generation on given ring
+ * @vsi: the VSI that contains queue vector being un-configured
+ * @rx_ring: Rx ring that will have its IRQ disabled
+ * @q_vector: queue vector
+ */
+static void
+ice_qvec_dis_irq(struct ice_vsi *vsi, struct ice_rx_ring *rx_ring,
+		 struct ice_q_vector *q_vector)
+{
+	struct ice_pf *pf = vsi->back;
+	struct ice_hw *hw = &pf->hw;
+	u16 reg;
+	u32 val;
+
+	/* QINT_TQCTL is being cleared in ice_vsi_stop_tx_ring, so handle
+	 * here only QINT_RQCTL
+	 */
+	reg = rx_ring->reg_idx;
+	val = rd32(hw, QINT_RQCTL(reg));
+	val &= ~QINT_RQCTL_CAUSE_ENA_M;
+	wr32(hw, QINT_RQCTL(reg), val);
+
+	if (q_vector) {
+		wr32(hw, GLINT_DYN_CTL(q_vector->reg_idx), 0);
+
+		ice_flush(hw);
+		synchronize_irq(q_vector->irq.virq);
+	}
+}
+
+/**
+ * ice_qvec_cfg_msix - Enable IRQ for given queue vector
+ * @vsi: the VSI that contains queue vector
+ * @q_vector: queue vector
+ */
+static void
+ice_qvec_cfg_msix(struct ice_vsi *vsi, struct ice_q_vector *q_vector)
+{
+	u16 reg_idx = q_vector->reg_idx;
+	struct ice_pf *pf = vsi->back;
+	struct ice_hw *hw = &pf->hw;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
+
+	ice_cfg_itr(hw, q_vector);
+
+	ice_for_each_tx_ring(tx_ring, q_vector->tx)
+		ice_cfg_txq_interrupt(vsi, tx_ring->reg_idx, reg_idx,
+				      q_vector->tx.itr_idx);
+
+	ice_for_each_rx_ring(rx_ring, q_vector->rx)
+		ice_cfg_rxq_interrupt(vsi, rx_ring->reg_idx, reg_idx,
+				      q_vector->rx.itr_idx);
+
+	ice_flush(hw);
+}
+
+/**
+ * ice_qvec_ena_irq - Enable IRQ for given queue vector
+ * @vsi: the VSI that contains queue vector
+ * @q_vector: queue vector
+ */
+static void ice_qvec_ena_irq(struct ice_vsi *vsi, struct ice_q_vector *q_vector)
+{
+	struct ice_pf *pf = vsi->back;
+	struct ice_hw *hw = &pf->hw;
+
+	ice_irq_dynamic_ena(hw, vsi, q_vector);
+
+	ice_flush(hw);
+}
+
+/**
+ * ice_qp_reset_stats - Resets all stats for rings of given index
+ * @vsi: VSI that contains rings of interest
+ * @q_idx: ring index in array
+ */
+static void ice_qp_reset_stats(struct ice_vsi *vsi, u16 q_idx)
+{
+	struct ice_vsi_stats *vsi_stat;
+	struct ice_pf *pf;
+
+	pf = vsi->back;
+
+	if (!pf->vsi_stats)
+		return;
+
+	vsi_stat = pf->vsi_stats[vsi->idx];
+
+	if (!vsi_stat)
+		return;
+
+	memset(&vsi_stat->rx_ring_stats[q_idx]->rx_stats, 0,
+	       sizeof(vsi_stat->rx_ring_stats[q_idx]->rx_stats));
+	memset(&vsi_stat->tx_ring_stats[q_idx]->stats, 0,
+	       sizeof(vsi_stat->tx_ring_stats[q_idx]->stats));
+#ifdef HAVE_XDP_SUPPORT
+	if (ice_is_xdp_ena_vsi(vsi))
+		memset(&vsi->xdp_rings[q_idx]->ring_stats->stats, 0,
+		       sizeof(vsi->xdp_rings[q_idx]->ring_stats->stats));
+#endif /* HAVE_XDP_SUPPORT */
+}
+
+/**
+ * ice_qp_clean_rings - Cleans all the rings of a given index
+ * @vsi: VSI that contains rings of interest
+ * @q_idx: ring index in array
+ */
+static void ice_qp_clean_rings(struct ice_vsi *vsi, u16 q_idx)
+{
+	ice_clean_tx_ring(vsi->tx_rings[q_idx]);
+#ifdef HAVE_XDP_SUPPORT
+	if (ice_is_xdp_ena_vsi(vsi))
+		ice_clean_tx_ring(vsi->xdp_rings[q_idx]);
+#endif /* HAVE_XDP_SUPPORT */
+
+	ice_clean_rx_ring(vsi->rx_rings[q_idx]);
+}
+
+/**
+ * ice_qp_dis - Disables a queue pair
+ * @vsi: VSI of interest
+ * @q_idx: ring index in array
+ *
+ * Disables a queue pair by stopping the Tx ring(s), disabling the Rx ring,
+ * and disabling interrupts. This function sets the ICE_CFG_BUSY flag and
+ * expects the caller to subsequently call ice_qp_ena() to clear it.
+ *
+ * Context: Sets ICE_CFG_BUSY flag. Caller must call ice_qp_ena() to clear
+ * ICE_CFG_BUSY, even if this function returns an error. Failing to call
+ * ice_qp_ena() will leave ICE_CFG_BUSY set permanently, blocking all future
+ * queue pair operations.
+ *
+ * Return: 0 on success, negative on failure.
+ */
+int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
+{
+	struct ice_txq_meta txq_meta = { };
+	struct ice_q_vector *q_vector;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
+	int timeout = 50;
+	int err;
+
+	if (q_idx >= vsi->num_rxq || q_idx >= vsi->num_txq)
+		return -EINVAL;
+
+	tx_ring = vsi->tx_rings[q_idx];
+	rx_ring = vsi->rx_rings[q_idx];
+	q_vector = rx_ring->q_vector;
+
+	while (test_and_set_bit(ICE_CFG_BUSY, vsi->back->state)) {
+		timeout--;
+		if (!timeout)
+			return -EBUSY;
+		usleep_range(1000, 2000);
+	}
+	netif_tx_stop_queue(netdev_get_tx_queue(vsi->netdev, q_idx));
+
+	ice_qvec_dis_irq(vsi, rx_ring, q_vector);
+
+	ice_fill_txq_meta(vsi, tx_ring, &txq_meta);
+	err = ice_vsi_stop_tx_ring(vsi, ICE_NO_RESET, 0, tx_ring, &txq_meta);
+	if (err)
+		return err;
+#ifdef HAVE_XDP_SUPPORT
+	if (ice_is_xdp_ena_vsi(vsi)) {
+		struct ice_tx_ring *xdp_ring = vsi->xdp_rings[q_idx];
+
+		memset(&txq_meta, 0, sizeof(txq_meta));
+		ice_fill_txq_meta(vsi, xdp_ring, &txq_meta);
+		err = ice_vsi_stop_tx_ring(vsi, ICE_NO_RESET, 0, xdp_ring,
+					   &txq_meta);
+		if (err)
+			return err;
+	}
+#endif /* HAVE_XDP_SUPPORT */
+	err = ice_vsi_ctrl_one_rx_ring(vsi, false, q_idx, true);
+	if (err)
+		return err;
+#ifdef HAVE_XSK_BATCHED_RX_ALLOC
+	ice_clean_rx_ring(rx_ring);
+#endif
+	ice_qvec_toggle_napi(vsi, q_vector, false);
+	ice_qp_clean_rings(vsi, q_idx);
+	ice_qp_reset_stats(vsi, q_idx);
+
+	return 0;
+}
+
+/**
+ * ice_qp_ena - Enables a queue pair
+ * @vsi: VSI of interest
+ * @q_idx: ring index in array
+ *
+ * Enables a queue pair by configuring the Tx and Rx rings, enabling interrupts,
+ * and starting the queues. This function clears the ICE_CFG_BUSY flag set by
+ * ice_qp_dis() on all code paths (success and failure).
+ *
+ * Context: Clears ICE_CFG_BUSY flag on all paths. Must be called after
+ * ice_qp_dis(), even if ice_qp_dis() failed, to clean up the ICE_CFG_BUSY flag.
+ *
+ * Return: 0 on success, negative on failure.
+ */
+int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
+{
+	struct ice_aqc_add_tx_qgrp *qg_buf;
+	struct ice_q_vector *q_vector;
+	struct ice_tx_ring *tx_ring;
+	struct ice_rx_ring *rx_ring;
+	u16 size;
+	int err;
+
+	if (q_idx >= vsi->num_rxq || q_idx >= vsi->num_txq) {
+		err = -EINVAL;
+		goto clear_busy;
+	}
+
+	size = struct_size(qg_buf, txqs, 1);
+	qg_buf = kzalloc(size, GFP_KERNEL);
+	if (!qg_buf) {
+		err = -ENOMEM;
+		goto clear_busy;
+	}
+
+	qg_buf->num_txqs = 1;
+
+	tx_ring = vsi->tx_rings[q_idx];
+	rx_ring = vsi->rx_rings[q_idx];
+	q_vector = rx_ring->q_vector;
+
+	err = ice_vsi_cfg_txq(vsi, tx_ring, qg_buf);
+	if (err)
+		goto free_buf;
+
+#ifdef HAVE_XDP_SUPPORT
+	if (ice_is_xdp_ena_vsi(vsi)) {
+		struct ice_tx_ring *xdp_ring = vsi->xdp_rings[q_idx];
+
+		memset(qg_buf, 0, size);
+		qg_buf->num_txqs = 1;
+		err = ice_vsi_cfg_txq(vsi, xdp_ring, qg_buf);
+		if (err)
+			goto free_buf;
+		ice_set_ring_xdp(xdp_ring);
+		xdp_ring->xsk_pool = ice_tx_xsk_pool(xdp_ring);
+	}
+#endif /* HAVE_XDP_SUPPORT */
+
+	err = ice_vsi_cfg_rxq(rx_ring);
+	if (err)
+		goto free_buf;
+
+	ice_qvec_cfg_msix(vsi, q_vector);
+
+	err = ice_vsi_ctrl_one_rx_ring(vsi, true, q_idx, true);
+	if (err)
+		goto free_buf;
+
+	ice_qvec_toggle_napi(vsi, q_vector, true);
+	ice_qvec_ena_irq(vsi, q_vector);
+
+	netif_tx_start_queue(netdev_get_tx_queue(vsi->netdev, q_idx));
+free_buf:
+	kfree(qg_buf);
+clear_busy:
+	clear_bit(ICE_CFG_BUSY, vsi->back->state);
+	return err;
 }
 
 /**

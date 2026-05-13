@@ -2109,8 +2109,8 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 				~ICE_AQ_RECIPE_RESULT_EN, result_bm);
 
 		/* get the first profile that is associated with rid */
-		prof = (u8) find_first_bit(recipe_to_profile[idx],
-					   ICE_MAX_NUM_PROFILES);
+		prof = (u8)find_first_bit(recipe_to_profile[idx],
+					  ICE_MAX_NUM_PROFILES);
 		for (i = 0; i < ICE_NUM_WORDS_RECIPE; i++) {
 			u8 lkup_indx = root_bufs.content.lkup_indx[i];
 			u16 lkup_mask = le16_to_cpu(root_bufs.content.mask[i]);
@@ -2126,7 +2126,8 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 			 */
 			if (!lkup_indx ||
 			    (lkup_indx & ICE_AQ_RECIPE_LKUP_IGNORE) ||
-			    test_bit(lkup_indx, hw->switch_info->prof_res_bm[prof]))
+			    test_bit(lkup_indx,
+				     hw->switch_info->prof_res_bm[prof]))
 				continue;
 
 			ice_find_prot_off(hw, ICE_BLK_SW, prof, lkup_indx,
@@ -3425,7 +3426,7 @@ static void ice_subscribable_recp_shared(struct ice_hw *hw, u16 rid)
 	for (i = 0; i < cnt; i++) {
 		u8 sub_rid;
 
-		sub_rid = (u8) find_first_bit(sub_bitmap, ICE_MAX_NUM_RECIPES);
+		sub_rid = (u8)find_first_bit(sub_bitmap, ICE_MAX_NUM_RECIPES);
 		ice_subscribe_recipe(hw, sub_rid);
 		clear_bit(sub_rid, sub_bitmap);
 	}
@@ -3447,12 +3448,12 @@ static int ice_release_recipe_res(struct ice_hw *hw,
 
 	num_recp = bitmap_weight(recp->r_bitmap, ICE_MAX_NUM_RECIPES);
 	for (i = 0; i < num_recp; i++) {
-		rid = (u8) find_first_bit(recp->r_bitmap, ICE_MAX_NUM_RECIPES);
+		rid = (u8)find_first_bit(recp->r_bitmap, ICE_MAX_NUM_RECIPES);
 		num_prof = bitmap_weight(recipe_to_profile[rid],
 					 ICE_MAX_NUM_PROFILES);
 		for (j = 0; j < num_prof; j++) {
-			prof = (u8) find_first_bit(recipe_to_profile[rid],
-						   ICE_MAX_NUM_PROFILES);
+			prof = (u8)find_first_bit(recipe_to_profile[rid],
+						  ICE_MAX_NUM_PROFILES);
 			status = ice_aq_get_recipe_to_profile(hw, prof,
 							      (u8 *)r_bitmap,
 							      NULL);
@@ -7483,8 +7484,8 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 
 		fill_recipe_template(&buf[i], rid, rm);
 
-		result_idx = (u8) find_first_bit(result_idx_bm,
-						 ICE_MAX_FV_WORDS);
+		result_idx = (u8)find_first_bit(result_idx_bm,
+						ICE_MAX_FV_WORDS);
 		/* Check if there really is a valid result index that can be
 		 * used.
 		 */
@@ -7844,8 +7845,7 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 err_free_recipe:
 	cnt = bitmap_weight(rm->r_bitmap, ICE_MAX_NUM_RECIPES);
 	for (i = 0; i < cnt; i++) {
-		rid_tmp = (u8) find_first_bit(rm->r_bitmap,
-					      ICE_MAX_NUM_RECIPES);
+		rid_tmp = (u8)find_first_bit(rm->r_bitmap, ICE_MAX_NUM_RECIPES);
 		if (hw->subscribable_recipes_supported) {
 			if (!ice_free_recipe_res(hw, rid_tmp))
 				clear_bit(rid_tmp, rm->r_bitmap);

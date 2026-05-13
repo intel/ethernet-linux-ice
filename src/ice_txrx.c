@@ -155,6 +155,56 @@ static struct netdev_queue *txring_txq(const struct ice_tx_ring *ring)
 }
 
 /**
+ * ice_clean_tstamp_ring - clean time stamp ring
+ * @tx_ring: Tx ring to clean the Time Stamp ring for
+ */
+static void ice_clean_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+	u32 size;
+
+	if (!tstamp_ring || !tstamp_ring->desc)
+		return;
+
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	memset(tstamp_ring->desc, 0, size);
+	tstamp_ring->next_to_use = 0;
+}
+
+/**
+ * ice_free_tstamp_ring - free time stamp resources per queue
+ * @tx_ring: Tx ring to free the Time Stamp ring for
+ */
+void ice_free_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+	u32 size;
+
+	if (!tstamp_ring || !tstamp_ring->desc)
+		return;
+
+	ice_clean_tstamp_ring(tx_ring);
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	dmam_free_coherent(tx_ring->dev, size, tstamp_ring->desc,
+			   tstamp_ring->dma);
+	tstamp_ring->desc = NULL;
+}
+
+/**
+ * ice_free_tx_tstamp_ring - free time stamp resources per Tx ring
+ * @tx_ring: Tx ring to free the Time Stamp ring for
+ */
+void ice_free_tx_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	ice_free_tstamp_ring(tx_ring);
+	kfree_rcu(tx_ring->tstamp_ring, rcu);
+	tx_ring->tstamp_ring = NULL;
+	tx_ring->flags &= ~ICE_TX_FLAGS_TXTIME;
+}
+
+/**
  * ice_clean_tx_ring - Free any empty Tx buffers
  * @tx_ring: ring to be cleaned
  */
@@ -197,6 +247,9 @@ tx_skip_free:
 
 	/* cleanup Tx queue statistics */
 	netdev_tx_reset_queue(txring_txq(tx_ring));
+
+	if (ice_is_txtime_cfg(tx_ring))
+		ice_free_tx_tstamp_ring(tx_ring);
 }
 
 /**
@@ -220,44 +273,6 @@ void ice_free_tx_ring(struct ice_tx_ring *tx_ring)
 				   tx_ring->desc, tx_ring->dma);
 		tx_ring->desc = NULL;
 	}
-}
-
-/**
- * ice_clean_tstamp_ring - clean time stamp ring
- * @tstamp_ring: ring to be cleaned
- */
-void ice_clean_tstamp_ring(struct ice_tx_ring *tstamp_ring)
-{
-	u32 size;
-
-	if (!tstamp_ring->desc)
-		return;
-
-	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
-		     PAGE_SIZE);
-	memset(tstamp_ring->desc, 0, size);
-	tstamp_ring->next_to_use = 0;
-	tstamp_ring->next_to_clean = 0;
-}
-
-/**
- * ice_free_tstamp_ring - Free time stamp resources per queue
- * @tstamp_ring: time stamp descriptor ring for a specific queue
- */
-void ice_free_tstamp_ring(struct ice_tx_ring *tstamp_ring)
-{
-	u32 size;
-
-	ice_clean_tstamp_ring(tstamp_ring);
-
-	if (!tstamp_ring->desc)
-		return;
-
-	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
-		     PAGE_SIZE);
-	dmam_free_coherent(tstamp_ring->dev, size, tstamp_ring->desc,
-			   tstamp_ring->dma);
-	tstamp_ring->desc = NULL;
 }
 
 /**
@@ -409,33 +424,80 @@ static bool ice_clean_tx_irq(struct ice_tx_ring *tx_ring, int napi_budget)
 }
 
 /**
- * ice_setup_tstamp_ring - Allocate the Time Stamp ring
- * @tstamp_ring: the time stamp ring to set up
+ * ice_alloc_tstamp_ring - allocate the Time Stamp ring
+ * @tx_ring: Tx ring to allocate the Time Stamp ring for
  *
- * Return 0 on success, negative on error
+ * Return: 0 on success, negative on error
  */
-int ice_setup_tstamp_ring(struct ice_tx_ring *tstamp_ring)
+static int ice_alloc_tstamp_ring(struct ice_tx_ring *tx_ring)
 {
-	struct device *dev = tstamp_ring->dev;
-	u32 size;
+	struct ice_tstamp_ring *tstamp_ring;
 
-	if (!dev)
+	/* allocate with kzalloc(), free with kfree_rcu() */
+	tstamp_ring = kzalloc(sizeof(*tstamp_ring), GFP_KERNEL);
+	if (!tstamp_ring)
 		return -ENOMEM;
+
+	tstamp_ring->tx_ring = tx_ring;
+	tx_ring->tstamp_ring = tstamp_ring;
+	tstamp_ring->desc = NULL;
+	tstamp_ring->count = ice_calc_ts_ring_count(tx_ring);
+	tx_ring->flags |= ICE_TX_FLAGS_TXTIME;
+	return 0;
+}
+
+/**
+ * ice_setup_tstamp_ring - allocate the Time Stamp ring
+ * @tx_ring: Tx ring to set up the Time Stamp ring for
+ *
+ * Return: 0 on success, negative on error
+ */
+static int ice_setup_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+	struct device *dev = tx_ring->dev;
+	u32 size;
 
 	/* round up to nearest page */
 	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
 		     PAGE_SIZE);
 	tstamp_ring->desc = dmam_alloc_coherent(dev, size, &tstamp_ring->dma,
 						GFP_KERNEL);
-
 	if (!tstamp_ring->desc) {
-		dev_err(dev, "Unable to allocate memory for Timstamp Ring, size=%d\n",
+		dev_err(dev, "Unable to allocate memory for Time stamp Ring, size=%d\n",
 			size);
 		return -ENOMEM;
 	}
 
 	tstamp_ring->next_to_use = 0;
-	tstamp_ring->next_to_clean = 0;
+	return 0;
+}
+
+/**
+ * ice_alloc_setup_tstamp_ring - Allocate and setup the Time Stamp ring
+ * @tx_ring: Tx ring to allocate and setup the Time Stamp ring for
+ *
+ * Return: 0 on success, negative on error
+ */
+int ice_alloc_setup_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct device *dev = tx_ring->dev;
+	int err;
+
+	err = ice_alloc_tstamp_ring(tx_ring);
+	if (err) {
+		dev_err(dev, "Unable to allocate Time stamp ring for Tx ring %d\n",
+			tx_ring->q_index);
+		return err;
+	}
+
+	err = ice_setup_tstamp_ring(tx_ring);
+	if (err) {
+		dev_err(dev, "Unable to setup Time stamp ring for Tx ring %d\n",
+			tx_ring->q_index);
+		ice_free_tx_tstamp_ring(tx_ring);
+		return err;
+	}
 	return 0;
 }
 
@@ -2763,7 +2825,6 @@ static int ice_maybe_stop_tx(struct ice_tx_ring *tx_ring, unsigned int size)
 /**
  * ice_tx_map - Build the Tx descriptor
  * @tx_ring: ring to send buffer on
- * @tstamp_ring: ring tied to tx_ring
  * @first: first buffer info buffer to use
  * @off: pointer to struct that holds offload parameters
  *
@@ -2773,7 +2834,7 @@ static int ice_maybe_stop_tx(struct ice_tx_ring *tx_ring, unsigned int size)
  */
 static void
 ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
-	   struct ice_tx_ring *tstamp_ring, struct ice_tx_offload_params *off)
+	   struct ice_tx_offload_params *off)
 {
 	u64 td_offset, td_tag, td_cmd;
 	u16 i = tx_ring->next_to_use;
@@ -2893,55 +2954,55 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 	/* notify HW of packet */
 	kick = __netdev_tx_sent_queue(txring_txq(tx_ring), first->bytecount,
 				      netdev_xmit_more());
-	if (kick) {
-		/* notify HW of packet */
-		if (tx_ring->flags & ICE_TX_FLAGS_TXTIME) {
-			u16 j = tstamp_ring->next_to_use;
-			struct ice_ts_desc *ts_desc;
-			struct timespec64 ts;
-			u32 tstamp;
+	if (!kick)
+		return;
 
-			ts = ktime_to_timespec64(first->skb->tstamp);
-			tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_128NS;
+	/* notify HW of packet */
+	if (ice_is_txtime_cfg(tx_ring)) {
+		struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+		u32 tstamp_count = tstamp_ring->count;
+		u32 j = tstamp_ring->next_to_use;
+		struct ice_ts_desc *ts_desc;
+		struct timespec64 ts;
+		u32 tstamp;
 
-			ts_desc = ICE_TS_DESC(tstamp_ring, j);
-			ts_desc->tx_desc_idx_tstamp =
-					ice_build_tstamp_desc(i, tstamp);
+		ts = ktime_to_timespec64(first->skb->tstamp);
+		tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_128NS;
 
-			j++;
-			if (j == tstamp_ring->count) {
-				int fetch = tstamp_ring->count - tx_ring->count;
+		ts_desc = ICE_TS_DESC(tstamp_ring, j);
+		ts_desc->tx_desc_idx_tstamp = ice_build_tstamp_desc(i, tstamp);
 
-				j = 0;
+		j++;
+		if (j == tstamp_count) {
+			u32 fetch = tstamp_count - tx_ring->count;
 
-				/* To prevent an MDD, when wrapping the tstamp
-				 * ring create additional TS descriptors equal
-				 * to the number of the fetch TS descriptors
-				 * value. HW will merge the TS descriptors with
-				 * the same timestamp value into a single
-				 * descriptor.
-				 */
-				for (; j < fetch; j++) {
-					ts_desc = ICE_TS_DESC(tstamp_ring, j);
-					ts_desc->tx_desc_idx_tstamp =
-					       ice_build_tstamp_desc(i, tstamp);
-				}
+			j = 0;
+
+			/* To prevent an MDD, when wrapping the tstamp
+			 * ring create additional TS descriptors equal
+			 * to the number of the fetch TS descriptors
+			 * value. HW will merge the TS descriptors with
+			 * the same timestamp value into a single
+			 * descriptor.
+			 */
+			for (; j < fetch; j++) {
+				ts_desc = ICE_TS_DESC(tstamp_ring, j);
+				ts_desc->tx_desc_idx_tstamp =
+				       ice_build_tstamp_desc(i, tstamp);
 			}
-			tstamp_ring->next_to_use = j;
-
-			writel_relaxed(tstamp_ring->next_to_use,
-				       tstamp_ring->tail);
-		} else {
-			writel_relaxed(i, tx_ring->tail);
 		}
+		tstamp_ring->next_to_use = j;
+		writel_relaxed(j, tstamp_ring->tail);
+	} else {
+		writel_relaxed(i, tx_ring->tail);
+	}
 #ifndef SPIN_UNLOCK_IMPLIES_MMIOWB
 
-		/* we need this if more than one processor can write to our tail
-		 * at a time, it synchronizes IO on IA64/Altix systems
-		 */
-		mmiowb();
+	/* we need this if more than one processor can write to our tail
+	 * at a time, it synchronizes IO on IA64/Altix systems
+	 */
+	mmiowb();
 #endif /* SPIN_UNLOCK_IMPLIES_MMIOWB */
-	}
 
 	return;
 
@@ -3838,13 +3899,11 @@ ice_tstamp(struct ice_tx_ring *tx_ring, struct sk_buff *skb,
  * ice_xmit_frame_ring - Sends buffer on Tx ring
  * @skb: send buffer
  * @tx_ring: ring to send buffer on
- * @tstamp_ring: ring tied to tx
  *
  * Returns NETDEV_TX_OK if sent, else an error code
  */
 static netdev_tx_t
-ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring,
-		    struct ice_tx_ring *tstamp_ring)
+ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring)
 {
 	struct ice_tx_offload_params offload = { 0 };
 	struct ice_vsi *vsi = tx_ring->vsi;
@@ -3957,7 +4016,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring,
 	if (ice_tx_ring_ch_enabled(tx_ring))
 		ice_chnl_inline_fd(tx_ring, skb, first->tx_flags);
 
-	ice_tx_map(tx_ring, first, tstamp_ring, &offload);
+	ice_tx_map(tx_ring, first, &offload);
 	return NETDEV_TX_OK;
 
 out_drop:
@@ -3976,7 +4035,6 @@ out_drop:
 netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_tx_ring *tstamp_ring = NULL;
 	struct ice_vsi *vsi = np->vsi;
 	struct ice_tx_ring *tx_ring;
 
@@ -3990,10 +4048,7 @@ netdev_tx_t ice_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	if (skb_put_padto(skb, ICE_MIN_TX_LEN))
 		return NETDEV_TX_OK;
 
-	if (tx_ring->flags & ICE_TX_FLAGS_TXTIME)
-		tstamp_ring = vsi->tstamp_rings[skb->queue_mapping];
-
-	return ice_xmit_frame_ring(skb, tx_ring, tstamp_ring);
+	return ice_xmit_frame_ring(skb, tx_ring);
 }
 
 /**

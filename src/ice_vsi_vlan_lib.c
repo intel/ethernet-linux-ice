@@ -24,7 +24,8 @@ static void print_invalid_tpid(struct ice_vsi *vsi, u16 tpid)
 static bool validate_vlan(struct ice_vsi *vsi, struct ice_vlan *vlan)
 {
 	if (vlan->tpid != ETH_P_8021Q && vlan->tpid != ETH_P_8021AD &&
-	    vlan->tpid != ETH_P_QINQ1 && (vlan->tpid || vlan->vid)) {
+	    vlan->tpid != ETH_P_QINQ1 && vlan->tpid != ETH_P_8021AH &&
+	    (vlan->tpid || vlan->vid)) {
 		print_invalid_tpid(vsi, vlan->tpid);
 		return false;
 	}

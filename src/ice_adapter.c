@@ -57,17 +57,16 @@ static struct ice_adapter *ice_adapter_new(void)
 	refcount_set(&adapter->refcount, 1);
 
 	mutex_init(&adapter->whole_dev_lock);
-	mutex_init(&adapter->ports.lock);
-	INIT_LIST_HEAD(&adapter->ports.ports);
+	xa_init(&adapter->ptp_ports);
 
 	return adapter;
 }
 
 static void ice_adapter_free(struct ice_adapter *adapter)
 {
-	WARN_ON(!list_empty(&adapter->ports.ports));
+	WARN_ON(!xa_empty(&adapter->ptp_ports));
+	xa_destroy(&adapter->ptp_ports);
 	mutex_destroy(&adapter->whole_dev_lock);
-	mutex_destroy(&adapter->ports.lock);
 
 	kfree(adapter);
 }

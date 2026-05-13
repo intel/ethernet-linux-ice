@@ -783,7 +783,7 @@ ice_vc_chnl_fltr_state_verify(struct ice_vf *vf, struct virtchnl_filter *vcf)
 	}
 
 	/* enforce supported flow_type based on negotiated capability */
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2) {
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ADQ_V2, vf->driver_caps)) {
 		if (!(vcf->flow_type == VIRTCHNL_TCP_V4_FLOW ||
 		      vcf->flow_type == VIRTCHNL_TCP_V6_FLOW ||
 		      vcf->flow_type == VIRTCHNL_UDP_V4_FLOW ||
@@ -829,6 +829,7 @@ ice_setup_fltr(struct ice_vf *vf, struct ice_tc_flower_fltr *fltr,
 	struct virtchnl_l4_spec *mask = &vcf->mask.tcp_spec;
 	struct virtchnl_l4_spec *tcf = &vcf->data.tcp_spec;
 	struct ice_tc_flower_lyr_2_4_hdrs *hdrs;
+	unsigned long *flags = fltr->flags;
 
 	memset(fltr, 0, sizeof(*fltr));
 
@@ -840,29 +841,29 @@ ice_setup_fltr(struct ice_vf *vf, struct ice_tc_flower_fltr *fltr,
 	ether_addr_copy(hdrs->l2_key.dst_mac, tcf->dst_mac);
 	ether_addr_copy(hdrs->l2_mask.dst_mac, mask->dst_mac);
 	if (!is_zero_ether_addr(hdrs->l2_key.dst_mac))
-		fltr->flags |= ICE_TC_FLWR_FIELD_DST_MAC;
+		__set_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags);
 
 	/* copy L2 source address and MAC mask */
 	ether_addr_copy(hdrs->l2_key.src_mac, tcf->src_mac);
 	ether_addr_copy(hdrs->l2_mask.src_mac, mask->src_mac);
 	if (!is_zero_ether_addr(hdrs->l2_key.src_mac))
-		fltr->flags |= ICE_TC_FLWR_FIELD_SRC_MAC;
+		__set_bit(ICE_TC_FLWR_FIELD_SRC_MAC, flags);
 
 	/* copy VLAN info */
 	hdrs->vlan_hdr.vlan_id = mask->vlan_id & tcf->vlan_id;
 	if (hdrs->vlan_hdr.vlan_id)
-		fltr->flags |= ICE_TC_FLWR_FIELD_VLAN;
+		__set_bit(ICE_TC_FLWR_FIELD_VLAN, flags);
 
 	/* copy L4 fields */
 	hdrs->l4_key.dst_port = mask->dst_port & tcf->dst_port;
 	hdrs->l4_mask.dst_port = mask->dst_port;
 	if (hdrs->l4_key.dst_port)
-		fltr->flags |= ICE_TC_FLWR_FIELD_DEST_L4_PORT;
+		__set_bit(ICE_TC_FLWR_FIELD_DEST_L4_PORT, flags);
 
 	hdrs->l4_key.src_port = mask->src_port & tcf->src_port;
 	hdrs->l4_mask.src_port = mask->src_port;
 	if (hdrs->l4_key.src_port)
-		fltr->flags |= ICE_TC_FLWR_FIELD_SRC_L4_PORT;
+		__set_bit(ICE_TC_FLWR_FIELD_SRC_L4_PORT, flags);
 
 	/* copy L3 fields, IPv4[6] */
 	if (vcf->flow_type == VIRTCHNL_TCP_V4_FLOW ||
@@ -877,12 +878,12 @@ ice_setup_fltr(struct ice_vf *vf, struct ice_tc_flower_fltr *fltr,
 		if (mask->dst_ip[0] & tcf->dst_ip[0]) {
 			key->dst_ipv4 = tcf->dst_ip[0];
 			msk->dst_ipv4 = mask->dst_ip[0];
-			fltr->flags |= ICE_TC_FLWR_FIELD_DEST_IPV4;
+			__set_bit(ICE_TC_FLWR_FIELD_DEST_IPV4, flags);
 		}
 		if (mask->src_ip[0] & tcf->src_ip[0]) {
 			key->src_ipv4 = tcf->src_ip[0];
 			msk->src_ipv4 = mask->src_ip[0];
-			fltr->flags |= ICE_TC_FLWR_FIELD_SRC_IPV4;
+			__set_bit(ICE_TC_FLWR_FIELD_SRC_IPV4, flags);
 		}
 	} else if (vcf->flow_type == VIRTCHNL_TCP_V6_FLOW ||
 		   vcf->flow_type == VIRTCHNL_UDP_V6_FLOW) {
@@ -898,14 +899,14 @@ ice_setup_fltr(struct ice_vf *vf, struct ice_tc_flower_fltr *fltr,
 			       sizeof(key->ip.v6.dst_ip6));
 			memcpy(&msk->ip.v6.dst_ip6, mask->dst_ip,
 			       sizeof(msk->ip.v6.dst_ip6));
-			fltr->flags |= ICE_TC_FLWR_FIELD_DEST_IPV6;
+			__set_bit(ICE_TC_FLWR_FIELD_DEST_IPV6, flags);
 		}
 		if (mask->src_ip[3] & tcf->src_ip[3]) {
 			memcpy(&key->ip.v6.src_ip6, tcf->src_ip,
 			       sizeof(key->ip.v6.src_ip6));
 			memcpy(&msk->ip.v6.src_ip6, mask->src_ip,
 			       sizeof(msk->ip.v6.src_ip6));
-			fltr->flags |= ICE_TC_FLWR_FIELD_SRC_IPV6;
+			__set_bit(ICE_TC_FLWR_FIELD_SRC_IPV6, flags);
 		}
 	}
 
@@ -917,9 +918,9 @@ ice_setup_fltr(struct ice_vf *vf, struct ice_tc_flower_fltr *fltr,
 		fltr->action.fltr_act = ICE_DROP_PACKET;
 
 	/* make sure to include VF's MAC address when adding ADQ filter */
-	if ((!(fltr->flags & ICE_TC_FLWR_FIELD_DST_MAC)) &&
+	if (!test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) &&
 	    fltr->action.fltr_act == ICE_FWD_TO_VSI) {
-		fltr->flags |= ICE_TC_FLWR_FIELD_DST_MAC;
+		__set_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags);
 		ether_addr_copy(hdrs->l2_key.dst_mac, vf->dev_lan_addr.addr);
 		eth_broadcast_addr(hdrs->l2_mask.dst_mac);
 	}
@@ -1005,7 +1006,7 @@ int ice_vc_del_switch_filter(struct ice_vf *vf, u8 *msg)
 
 	hlist_del(&f->tc_flower_node);
 	devm_kfree(dev, f);
-	if (f->flags & ICE_TC_FLWR_FIELD_DST_MAC)
+	if (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, f->flags))
 		vf->num_dmac_chnl_fltrs--;
 	v_ret = VIRTCHNL_STATUS_SUCCESS;
 err:
@@ -1092,7 +1093,7 @@ int ice_vc_add_switch_filter(struct ice_vf *vf, u8 *msg)
 
 	INIT_HLIST_NODE(&fltr->tc_flower_node);
 	hlist_add_head(&fltr->tc_flower_node, &vf->tc_flower_fltr_list);
-	if (fltr->flags & ICE_TC_FLWR_FIELD_DST_MAC)
+	if (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, fltr->flags))
 		vf->num_dmac_chnl_fltrs++;
 
 	v_ret = VIRTCHNL_STATUS_SUCCESS;
@@ -1178,7 +1179,7 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 	/* check if VF has negotiated this capability before anything else */
-	if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ)) {
+	if (!test_bit(VIRTCHNL_VF_OFFLOAD_ADQ, vf->driver_caps)) {
 		dev_dbg(dev, "VF %d attempting to enable ADQ, but hasn't properly negotiated that capability\n",
 			vf->vf_id);
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -1259,7 +1260,7 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 	}
 
 	/* Speed in Mbps */
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_ADV_LINK_SPEED)
+	if (test_bit(VIRTCHNL_VF_CAP_ADV_LINK_SPEED, vf->driver_caps))
 		link_speed = ice_conv_link_speed_to_virtchnl(true,
 							     ls->link_speed);
 	else
@@ -1331,12 +1332,12 @@ int ice_vc_add_qch_msg(struct ice_vf *vf, u8 *msg)
 	 * capability is negotiated, since in that case AVF driver will request
 	 * for a reset.
 	 */
-	if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2))
+	if (!test_bit(VIRTCHNL_VF_OFFLOAD_ADQ_V2, vf->driver_caps))
 		ice_reset_vf(vf, ICE_VF_RESET_NOTIFY);
 
 	/* send the response to the VF */
 err:
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2)
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ADQ_V2, vf->driver_caps))
 		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_CHANNELS,
 					     v_ret, (u8 *)tci, sizeof(*tci));
 	else
@@ -1378,7 +1379,7 @@ int ice_vc_del_qch_msg(struct ice_vf *vf, u8 *msg)
 		 * return success and eventually VF driver will initiate reset
 		 * as per design
 		 */
-		if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2) {
+		if (test_bit(VIRTCHNL_VF_OFFLOAD_ADQ_V2, vf->driver_caps)) {
 			dev_info(ice_pf_to_dev(pf),
 				 "Deleting Queue Channels for ADQ on VF %d and ADQ_V2 is set\n",
 				 vf->vf_id);
@@ -1453,7 +1454,7 @@ int ice_vc_del_qch_msg(struct ice_vf *vf, u8 *msg)
 
 	/* send the response to the VF */
 err:
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2)
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ADQ_V2, vf->driver_caps))
 		return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_CHANNELS,
 					     v_ret, msg,
 					     sizeof(struct virtchnl_tc_info));

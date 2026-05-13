@@ -300,7 +300,6 @@ enum ice_vsi_type {
 	ICE_VSI_CHNL = 4,
 	ICE_VSI_OFFLOAD_MACVLAN = 5,
 	ICE_VSI_LB = 6,
-	ICE_VSI_ADI = 8,
 };
 
 struct ice_link_status {
@@ -1522,7 +1521,7 @@ struct ice_hw {
 	u8 max_cgds;
 	u8 sw_entry_point_layer;
 	u16 max_children[ICE_AQC_TOPO_MAX_LEVEL_NUM];
-	struct list_head agg_list;	/* lists all aggregator */
+	struct xarray agg_list; /* array of aggregator nodes */
 	/* List contain profile ID(s) and other params per layer */
 	struct list_head rl_prof_list[ICE_AQC_TOPO_MAX_LEVEL_NUM];
 	struct ice_vsi_ctx *vsi_ctx[ICE_MAX_VSI];
@@ -1936,5 +1935,10 @@ struct ice_aq_get_set_rss_lut_params {
 /* AQ API version for FW auto drop reports */
 #define ICE_FW_API_AUTO_DROP_MAJ		1
 #define ICE_FW_API_AUTO_DROP_MIN		4
+
+/* API version for VF Tx Time */
+#define ICE_FW_API_VF_TXTIME_MAJ_E83X		2
+#define ICE_FW_API_VF_TXTIME_MIN_E83X		0
+#define ICE_FW_API_VF_TXTIME_PATCH_E83X		0
 
 #endif /* _ICE_TYPE_H_ */

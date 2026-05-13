@@ -5,9 +5,6 @@
 #define _ICE_OSDEP_H_
 
 #include "kcompat.h"
-#ifdef NEED_CLEANUP_API
-#include "kcompat_cleanup.h"
-#endif
 #include <linux/types.h>
 #ifdef HAVE_INCLUDE_BITFIELD
 #include <linux/bitfield.h>

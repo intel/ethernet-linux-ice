@@ -50,7 +50,8 @@ ice_vsig_find_vsi(struct ice_hw *hw, enum ice_block blk, u16 vsi, u16 *vsig);
 int
 ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id,
 	     unsigned long *ptypes, const struct ice_ptype_attributes *attr,
-	     u16 attr_cnt, struct ice_fv_word *es, u16 *masks, bool fd_swap);
+	     u16 attr_cnt, struct ice_fv_word *es, u16 *masks, bool fd_swap,
+	     bool shared);
 void ice_init_all_prof_masks(struct ice_hw *hw);
 void ice_shutdown_all_prof_masks(struct ice_hw *hw);
 struct ice_prof_map *

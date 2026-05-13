@@ -95,8 +95,6 @@
 #include "ice_ptp.h"
 #include "ice_tspll.h"
 #include "ice_fdir.h"
-#include "ice_vdcm.h"
-#include "ice_siov.h"
 #ifdef HAVE_AF_XDP_ZC_SUPPORT
 #include "ice_xsk.h"
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
@@ -160,6 +158,12 @@ extern const char ice_drv_ver[];
 #define ICE_MAX_NUM_DESC_BY_MAC(hw) ((hw)->mac_type == ICE_MAC_E830 ? \
 				     ICE_MAX_NUM_DESC_E830 : \
 				     ICE_MAX_NUM_DESC_E810)
+/* 'num_desc' is evaluated twice in this macro. Avoid passing expressions
+ * with side effects.
+ */
+#define ICE_VALID_NUM_DESC(hw, num_desc) \
+	(((num_desc) >= ICE_MIN_NUM_DESC) && \
+	 ((num_desc) <= ICE_MAX_NUM_DESC_BY_MAC(hw)))
 #define ICE_DFLT_MIN_RX_DESC	512
 #define ICE_DFLT_NUM_TX_DESC	256
 #ifdef CONFIG_ICE_USE_SKB
@@ -177,7 +181,6 @@ extern const char ice_drv_ver[];
 #ifdef HAVE_NDO_DFWD_OPS
 #define ICE_MAX_MACVLANS	64
 #endif
-#define ICE_MAX_SCALABLE	100
 #define ICE_DFLT_TRAFFIC_CLASS	BIT(0)
 #define ICE_INT_NAME_STR_LEN	(IFNAMSIZ + 16)
 #define ICE_AQ_LEN		192
@@ -516,7 +519,6 @@ struct ice_vsi {
 	struct ice_pf *back;		 /* back pointer to PF */
 	struct ice_rx_ring **rx_rings;	 /* Rx ring array */
 	struct ice_tx_ring **tx_rings;	 /* Tx ring array */
-	struct ice_tx_ring **tstamp_rings;	 /* Time stamp ring array */
 #ifdef HAVE_NDO_DFWD_OPS
 	/* Initial VSI tx_rings array when L2 offload is off */
 	struct ice_tx_ring **base_tx_rings;
@@ -599,6 +601,7 @@ struct ice_vsi {
 	u16 req_rxq;			 /* User requested Rx queues */
 	u16 num_rx_desc;
 	u16 num_tx_desc;
+	unsigned long *txtime_txqs;	/* bitmap to track PF Tx Time queue */
 	struct ice_tc_cfg tc_cfg;
 #ifdef HAVE_XDP_SUPPORT
 	struct bpf_prog *xdp_prog;
@@ -666,7 +669,7 @@ struct ice_vsi {
 	/* setup back reference, to which aggregator node this VSI
 	 * corresponds to
 	 */
-	struct ice_agg_node *agg_node;
+	struct ice_sched_agg_info *agg_node;
 
 	struct_group_tagged(ice_vsi_cfg_params, params,
 			    struct ice_port_info *port_info;
@@ -842,8 +845,6 @@ enum ice_pf_flags {
 	ICE_FLAG_RSS_ENA,
 	ICE_FLAG_SRIOV_ENA,
 	ICE_FLAG_SRIOV_CAPABLE,
-	ICE_FLAG_SIOV_ENA,
-	ICE_FLAG_SIOV_CAPABLE,
 	ICE_FLAG_DCB_CAPABLE,
 	ICE_FLAG_DCB_ENA,
 	ICE_FLAG_FD_ENA,
@@ -888,7 +889,6 @@ enum ice_pf_flags {
 #if IS_ENABLED(CONFIG_DPLL)
 	ICE_FLAG_DPLL,			/* SyncE/PTP dplls initialized */
 #endif
-	ICE_FLAG_TXTIME,
 	ICE_FLAG_ALLOW_FEC_DIS_AUTO,
 	ICE_PF_FLAGS_NBITS		/* must be last */
 };
@@ -936,12 +936,12 @@ struct ice_tnl_entry {
 	struct list_head node;
 };
 
-struct ice_agg_node {
-	u32 agg_id;
-#define ICE_MAX_VSIS_IN_AGG_NODE	64
-	u32 num_vsis;
-	u8 valid;
-};
+#define ICE_PF_AGG_NODE_ID_START	1
+#define ICE_PF_AGG_NODE_ID_END		32
+#define ICE_MACVLAN_AGG_NODE_ID_START	33
+#define ICE_MACVLAN_AGG_NODE_ID_END	64
+#define ICE_VF_AGG_NODE_ID_START	65
+#define ICE_VF_AGG_NODE_ID_END		96
 
 struct ice_msix {
 	/* All on host, so sum without VF, it is because we need to store
@@ -952,7 +952,6 @@ struct ice_msix {
 	u16 eth;			/* MSI-X reserved for eth */
 	u16 rdma;			/* MSI-X reserved for RDMA */
 	u16 vf;				/* MSI-X reserved for VFs */
-	u16 siov;			/* MSI-X reserved for SIOV */
 };
 
 struct ice_pf {
@@ -1138,19 +1137,6 @@ struct ice_pf {
 #endif /* HAVE_UDP_TUNNEL_NIC_INFO */
 	struct ice_eswitch eswitch;
 
-#define ICE_INVALID_AGG_NODE_ID		0
-#define ICE_PF_AGG_NODE_ID_START	1
-#define ICE_MAX_PF_AGG_NODES		32
-	struct ice_agg_node pf_agg_node[ICE_MAX_PF_AGG_NODES];
-#ifdef HAVE_NDO_DFWD_OPS
-#define ICE_MACVLAN_AGG_NODE_ID_START	(ICE_PF_AGG_NODE_ID_START + \
-					 ICE_MAX_PF_AGG_NODES)
-#define ICE_MAX_MACVLAN_AGG_NODES	32
-	struct ice_agg_node macvlan_agg_node[ICE_MAX_MACVLAN_AGG_NODES];
-#endif
-#define ICE_VF_AGG_NODE_ID_START	65
-#define ICE_MAX_VF_AGG_NODES		32
-	struct ice_agg_node vf_agg_node[ICE_MAX_VF_AGG_NODES];
 #if IS_ENABLED(CONFIG_DPLL)
 	struct ice_dplls dplls;
 #endif /* IS_ENABLED(CONFIG_DPLL) */
@@ -1443,6 +1429,33 @@ static inline struct xdp_umem *ice_tx_xsk_pool(struct ice_tx_ring *ring)
 	return ice_get_xp_from_qid(vsi, qid);
 }
 #endif /* HAVE_AF_XDP_ZC_SUPPORT */
+
+/**
+ * ice_is_txtime_ena - check if Tx Time is enabled on the Tx ring
+ * @ring: pointer to Tx ring
+ *
+ * Return: true if the Tx ring has Tx Time enabled, false otherwise.
+ */
+static inline bool ice_is_txtime_ena(const struct ice_tx_ring *ring)
+{
+	struct ice_vsi *vsi = ring->vsi;
+
+	if (!vsi->txtime_txqs)
+		return false;
+
+	return test_bit(ring->q_index, vsi->txtime_txqs);
+}
+
+/**
+ * ice_is_txtime_cfg - check if Tx Time is configured on the Tx ring
+ * @ring: pointer to Tx ring
+ *
+ * Return: true if the Tx ring is configured for Tx ring, false otherwise.
+ */
+static inline bool ice_is_txtime_cfg(const struct ice_tx_ring *ring)
+{
+	return !!(ring->flags & ICE_TX_FLAGS_TXTIME);
+}
 
 /**
  * ice_get_main_vsi - Get the PF VSI
@@ -1776,13 +1789,15 @@ ice_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 int ice_xdp_xmit(struct net_device *dev, struct xdp_buff *xdp);
 #endif /* HAVE_XDP_FRAME_STRUCT */
 #endif /* HAVE_XDP_SUPPORT */
+int ice_get_rss(struct ice_vsi *vsi, u8 *seed, u8 *lut,
+		enum ice_lut_size lut_size);
 int ice_set_rss_lut(struct ice_vsi *vsi, u8 *lut, enum ice_lut_size lut_size);
 int ice_get_rss_lut(struct ice_vsi *vsi, u8 *lut, enum ice_lut_size lut_size);
 int ice_set_rss_key(struct ice_vsi *vsi, u8 *seed);
 int ice_get_rss_key(struct ice_vsi *vsi, u8 *seed);
 void ice_fill_rss_lut(u8 *lut, enum ice_lut_size rss_table_size, u16 rss_size);
 int ice_schedule_reset(struct ice_pf *pf, enum ice_reset_req reset);
-void ice_print_link_msg(struct ice_vsi *vsi, bool isup);
+void ice_print_link_msg(struct ice_vsi *vsi, bool isup, u16 link_speed);
 int ice_plug_aux_dev(struct iidc_core_dev_info *cdev_info, const char *name);
 void ice_unplug_aux_dev(struct iidc_core_dev_info *cdev_info);
 int ice_plug_aux_devs(struct ice_pf *pf);
@@ -1790,7 +1805,7 @@ void ice_unplug_aux_devs(struct ice_pf *pf);
 int ice_init_aux_devices(struct ice_pf *pf);
 int
 ice_for_each_aux(struct ice_pf *pf, void *data,
-		 int (*fn)(struct iidc_core_dev_info *, void *));
+		 int (*fn)(struct iidc_core_dev_info *, void *, bool));
 #ifdef CONFIG_PM
 void ice_cdev_info_refresh_msix(struct ice_pf *pf);
 #endif /* CONFIG_PM */

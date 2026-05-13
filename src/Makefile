@@ -107,8 +107,6 @@ ice-$(CONFIG_PCI_IOV) +=		\
 	ice_virtchnl_fsub.o		\
 	ice_vf_lib.o
 
-ice-$(CONFIG_VFIO_MDEV:m=y) += ice_vdcm.o ice_siov.o
-
 ifneq (${CONFIG_DPLL},)
 ice-$(CONFIG_PTP_1588_CLOCK:m=y) += ice_ptp.o ice_ptp_hw.o ice_dpll.o
 else

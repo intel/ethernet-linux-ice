@@ -157,6 +157,23 @@ static inline void ice_vlock(struct ice_var_lock *vlock)
 }
 
 /**
+ * ice_vlock_alloc_type - Determine how memory shall be allocked
+ * for given lock type.
+ * @vlock: pointer to the ice_var_lock structure
+ */
+static inline gfp_t ice_vlock_alloc_type(struct ice_var_lock *vlock)
+{
+	gfp_t alloc_type = 0;
+
+	if (vlock->sleepable)
+		alloc_type = GFP_KERNEL;
+	else
+		alloc_type = GFP_ATOMIC;
+
+	return alloc_type;
+}
+
+/**
  * ice_vunlock - Release ice_var_lock
  * @vlock: pointer to the ice_var_lock structure
  */
