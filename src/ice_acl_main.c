@@ -254,7 +254,7 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 	 * actions (NULL) and zero actions 0.
 	 */
 	err = ice_flow_add_prof(hw, ICE_BLK_ACL, ICE_FLOW_RX, seg, 1,
-				NULL, 0, &prof);
+				NULL, 0, &prof, false);
 	if (err)
 		goto err_exit;
 

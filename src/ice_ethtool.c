@@ -3579,6 +3579,19 @@ ice_ksettings_find_adv_link_speed(const struct ethtool_link_ksettings *ks)
 }
 
 /**
+ * ice_autoneg_disable_allowed - check if autoneg can be disabled
+ * @p: port info
+ *
+ * Check if autonegotiation can be disabled based on link state.
+ * Return: true if autoneg is completed or if link partner doesn't support it.
+ */
+static bool ice_autoneg_disable_allowed(struct ice_port_info *p)
+{
+	return (p->phy.link_info.an_info & ICE_AQ_AN_COMPLETED) ||
+	       !(p->phy.link_info.an_info & ICE_AQ_LP_AN_ABILITY);
+}
+
+/**
  * ice_setup_autoneg
  * @p: port info
  * @ks: ethtool_link_ksettings
@@ -3610,22 +3623,22 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 			if (!ethtool_link_ksettings_test_link_mode(ks,
 								   supported,
 								   Autoneg) &&
-			    p->hw->mac_type != ICE_MAC_GENERIC) {
+			    !ice_is_generic_mac(p->hw)) {
 				netdev_info(netdev, "Autoneg not supported on this phy.\n");
 				err = -EINVAL;
 			} else {
 				/* Autoneg is allowed to change */
 
-				/* Set AN_EN_CLAUSE37 to 1 to enable AN on E822 devices.*/
-				if (p->hw->mac_type == ICE_MAC_GENERIC)
+				/* Set AN_EN_CLAUSE37 to 1 to enable AN on E82X devices.*/
+				if (ice_is_generic_mac(p->hw))
 					config->low_power_ctrl_an |= ICE_AQC_PHY_AN_EN_CLAUSE37;
 				config->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 				*autoneg_changed = 1;
 			}
 		}
 	} else {
-		/* If autoneg is currently enabled */
-		if (p->phy.link_info.an_info & ICE_AQ_AN_COMPLETED) {
+		/* If autoneg is currently enabled or LP doesn't support AN */
+		if (ice_autoneg_disable_allowed(p)) {
 			/* If autoneg is supported 10GBASE_T is the only PHY
 			 * that can disable it, so otherwise return error.
 			 * On E822 devices, this condition is not valid
@@ -3634,19 +3647,19 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 			if (ethtool_link_ksettings_test_link_mode(ks,
 								  supported,
 								  Autoneg) &&
-			    p->hw->mac_type != ICE_MAC_GENERIC) {
+			    !ice_is_generic_mac(p->hw)) {
 				netdev_info(netdev, "Autoneg cannot be disabled on this phy\n");
 				err = -EINVAL;
 			} else {
 				/* Autoneg is allowed to change */
 
 				/**
-				 * Set AN_EN_CLAUSE37 to 0 to disable AN for E822 devices.
+				 * Set AN_EN_CLAUSE37 to 0 to disable AN for E82X devices.
 				 * When disabling we also need to set ICE_AQ_PHY_ENA_AUTO_LINK_UPDT
 				 * high to propagate the changes, otherwise manual link down/up
 				 * would be required to have the change reflected in HW.
 				 */
-				if (p->hw->mac_type == ICE_MAC_GENERIC) {
+				if (ice_is_generic_mac(p->hw)) {
 					config->low_power_ctrl_an &= ~ICE_AQC_PHY_AN_EN_CLAUSE37;
 					config->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 				}
@@ -3897,7 +3910,7 @@ ice_set_link_ksettings(struct net_device *netdev,
 		/* Tell the OS link is going down, the link will go
 		 * back up when fw says it is ready asynchronously
 		 */
-		ice_print_link_msg(np->vsi, false);
+		ice_print_link_msg(np->vsi, false, 0);
 		netif_carrier_off(netdev);
 		netif_tx_stop_all_queues(netdev);
 	}
@@ -4441,7 +4454,7 @@ static int ice_set_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 		/* Tell the OS link is going down, the link will go
 		 * back up when FW says it is ready asynchronously
 		 */
-		ice_print_link_msg(np->vsi, false);
+		ice_print_link_msg(np->vsi, false, 0);
 		netif_carrier_off(netdev);
 		netif_tx_stop_all_queues(netdev);
 	}
@@ -4619,6 +4632,7 @@ ice_set_rss_hash_opt(struct ice_vsi *vsi, struct ethtool_rxnfc *nfc)
 	cfg.addl_hdrs = hdrs;
 	cfg.hdr_type = ICE_RSS_ANY_HEADERS;
 	cfg.symm = false;
+	cfg.shared = false;
 	status = ice_add_rss_cfg(&pf->hw, vsi->idx, &cfg);
 	if (status) {
 		dev_dbg(dev, "ice_add_rss_cfg failed, vsi num = %d, error = %d\n",
@@ -4801,8 +4815,6 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 #endif /* HAVE_ETHTOOL_EXTENDED_RINGPARAMS */
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
-	u16 new_rx_cnt, new_tx_cnt, new_tstamp_cnt;
-	struct ice_tx_ring *tstamp_rings = NULL;
 #ifdef HAVE_XDP_SUPPORT
 	struct ice_tx_ring *xdp_rings = NULL;
 #endif /* HAVE_XDP_SUPPORT */
@@ -4812,7 +4824,7 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 	struct ice_pf *pf = vsi->back;
 	int i, timeout = 50, err = 0;
 	struct ice_hw *hw = &pf->hw;
-	bool txtime_ena;
+	u16 new_rx_cnt, new_tx_cnt;
 
 	if (ring->tx_pending > ICE_MAX_NUM_DESC_BY_MAC(hw) ||
 	    ring->tx_pending < ICE_MIN_NUM_DESC ||
@@ -4860,18 +4872,11 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 			return -EBUSY;
 		usleep_range(1000, 2000);
 	}
-	txtime_ena = test_bit(ICE_FLAG_TXTIME, pf->flags);
-	if (txtime_ena)
-		new_tstamp_cnt = ice_calc_ts_ring_count(hw, new_tx_cnt);
 
 	/* set for the next time the netdev is started */
 	if (!netif_running(vsi->netdev)) {
 		ice_for_each_txq(vsi, i)
 			vsi->tx_rings[i]->count = new_tx_cnt;
-		/* Change all tstamp_rings to match Tx rings */
-		if (txtime_ena)
-			ice_for_each_txq(vsi, i)
-				vsi->tstamp_rings[i]->count = new_tstamp_cnt;
 		ice_for_each_rxq(vsi, i)
 			vsi->rx_rings[i]->count = new_rx_cnt;
 #ifdef HAVE_XDP_SUPPORT
@@ -4898,41 +4903,20 @@ ice_set_ringparam(struct net_device *netdev, struct ethtool_ringparam *ring)
 		goto done;
 	}
 
-	if (txtime_ena) {
-		tstamp_rings = kcalloc(vsi->num_txq, sizeof(*tstamp_rings),
-				       GFP_KERNEL);
-		if (!tstamp_rings) {
-			err = -ENOMEM;
-			goto free_tx;
-		}
-	}
-
 	ice_for_each_txq(vsi, i) {
 		/* clone ring and setup updated count */
 		tx_rings[i] = *vsi->tx_rings[i];
 		tx_rings[i].count = new_tx_cnt;
 		tx_rings[i].desc = NULL;
 		tx_rings[i].tx_buf = NULL;
+		tx_rings[i].tstamp_ring = NULL;
 		tx_rings[i].tx_tstamps = &pf->ptp.port.tx;
 		err = ice_setup_tx_ring(&tx_rings[i]);
-
-		if (txtime_ena) {
-			tstamp_rings[i] = *vsi->tstamp_rings[i];
-			tstamp_rings[i].count = new_tstamp_cnt;
-			tstamp_rings[i].desc = NULL;
-			tstamp_rings[i].tx_buf = NULL;
-			err |= ice_setup_tstamp_ring(&tstamp_rings[i]);
-		}
 		if (err) {
-			while (i--) {
-				if (txtime_ena)
-					ice_clean_tstamp_ring(&tstamp_rings[i]);
+			while (i--)
 				ice_clean_tx_ring(&tx_rings[i]);
-			}
 			kfree(tx_rings);
 			tx_rings = NULL;
-			kfree(tstamp_rings);
-			tstamp_rings = NULL;
 			goto done;
 		}
 	}
@@ -5032,15 +5016,6 @@ process_link:
 			tx_rings = NULL;
 		}
 
-		if (tstamp_rings) {
-			ice_for_each_txq(vsi, i) {
-				ice_free_tstamp_ring(vsi->tstamp_rings[i]);
-				*vsi->tstamp_rings[i] = tstamp_rings[i];
-			}
-			kfree(tstamp_rings);
-			tstamp_rings = NULL;
-		}
-
 		if (rx_rings) {
 			ice_for_each_rxq(vsi, i) {
 				ice_free_rx_ring(vsi->rx_rings[i]);
@@ -5084,17 +5059,11 @@ free_tx:
 			ice_free_tx_ring(&tx_rings[i]);
 	}
 
-	if (tstamp_rings) {
-		ice_for_each_txq(vsi, i)
-			ice_free_tstamp_ring(&tstamp_rings[i]);
-	}
-
 done:
 	kfree(rx_rings);
 #ifdef HAVE_XDP_SUPPORT
 	kfree(xdp_rings);
 #endif /* HAVE_XDP_SUPPORT */
-	kfree(tstamp_rings);
 	kfree(tx_rings);
 	clear_bit(ICE_CFG_BUSY, pf->state);
 	return err;
@@ -5397,14 +5366,10 @@ static int ice_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 		return -ENOMEM;
 
 #if defined(HAVE_ETHTOOL_RXFH_PARAM)
-	err = ice_get_rss_key(vsi, rxfh->key);
+	err = ice_get_rss(vsi, rxfh->key, lut, vsi->rss_table_size);
 #else
-	err = ice_get_rss_key(vsi, key);
+	err = ice_get_rss(vsi, key, lut, vsi->rss_table_size);
 #endif /* HAVE_ETHTOOL_RXFH_PARAM */
-	if (err)
-		goto out;
-
-	err = ice_get_rss_lut(vsi, lut, vsi->rss_table_size);
 	if (err)
 		goto out;
 
@@ -6493,7 +6458,7 @@ ice_get_module_eeprom(struct net_device *netdev,
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
 	bool is_sfp = false;
-	unsigned int i, j;
+	unsigned int i;
 	u16 offset = 0;
 	u8 page = 0;
 	int status;
@@ -6535,26 +6500,19 @@ ice_get_module_eeprom(struct net_device *netdev,
 		if (page == 0 || !(data[0x2] & 0x4)) {
 			u32 copy_len;
 
-			/* If i2c bus is busy due to slow page change or
-			 * link management access, call can fail. This is normal.
-			 * So we retry this a few times.
-			 */
-			for (j = 0; j < 4; j++) {
-				status = ice_aq_sff_eeprom(hw, 0, addr, offset, page,
-							   !is_sfp, value,
-							   SFF_READ_BLOCK_SIZE,
-							   0, NULL);
-				netdev_dbg(netdev, "SFF %02X %02X %02X %X = %02X%02X%02X%02X.%02X%02X%02X%02X (%X)\n",
-					   addr, offset, page, is_sfp,
-					   value[0], value[1], value[2], value[3],
-					   value[4], value[5], value[6], value[7],
-					   status);
-				if (status) {
-					usleep_range(1500, 2500);
-					memset(value, 0, SFF_READ_BLOCK_SIZE);
-					continue;
-				}
-				break;
+			status = ice_aq_sff_eeprom(hw, 0, addr, offset, page,
+						   !is_sfp, value,
+						   SFF_READ_BLOCK_SIZE,
+						   0, NULL);
+			netdev_dbg(netdev, "SFF %02X %02X %02X %X = %02X%02X%02X%02X.%02X%02X%02X%02X (%pe)\n",
+				   addr, offset, page, is_sfp,
+				   value[0], value[1], value[2], value[3],
+				   value[4], value[5], value[6], value[7],
+				   ERR_PTR(status));
+			if (status) {
+				netdev_err(netdev, "%s: error reading module EEPROM: status %pe\n",
+					   __func__, ERR_PTR(status));
+				return status;
 			}
 
 			/* Make sure we have enough room for the new block */

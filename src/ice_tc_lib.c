@@ -42,7 +42,7 @@ static bool ice_is_tunnel_fltr(struct ice_tc_flower_fltr *f)
  * Determine lookup count based on TC flower input for switch filter.
  */
 static int
-ice_tc_count_lkups(u32 flags, struct ice_tc_flower_fltr const *fltr)
+ice_tc_count_lkups(unsigned long *flags, struct ice_tc_flower_fltr const *fltr)
 {
 #ifdef HAVE_FLOW_DISSECTOR_KEY_IP
 	struct ice_tc_flower_lyr_2_4_hdrs const *headers = &fltr->outer_headers;
@@ -57,31 +57,31 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_fltr const *fltr)
 	if (fltr->direction == ICE_ESWITCH_FLTR_EGRESS)
 		lkups_cnt++;
 
-	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID)
+	if (test_bit(ICE_TC_FLWR_FIELD_TENANT_ID, flags))
 		lkups_cnt++;
 
 	/* For ADQ filter, outer DMAC gets added implicitly */
-	if (flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC)
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_DST_MAC, flags))
 		lkups_cnt++;
 
 #ifdef HAVE_GTP_SUPPORT
-	if (flags & ICE_TC_FLWR_FIELD_ENC_OPTS)
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_OPTS, flags))
 		lkups_cnt++;
 
 #endif /* HAVE_GTP_SUPPORT */
-	if (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
-		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV4 |
-		     ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
-		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV6))
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV6, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV6, flags))
 		lkups_cnt++;
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_IP
-	if (flags & (ICE_TC_FLWR_FIELD_ENC_IP_TOS |
-		     ICE_TC_FLWR_FIELD_ENC_IP_TTL))
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TOS, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TTL, flags))
 		lkups_cnt++;
 
 #endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
-	if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT)
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT, flags))
 		lkups_cnt++;
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_IP
@@ -90,54 +90,60 @@ ice_tc_count_lkups(u32 flags, struct ice_tc_flower_fltr const *fltr)
 		headers = &fltr->inner_headers;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
-	if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID)
+	if (test_bit(ICE_TC_FLWR_FIELD_ETH_TYPE_ID, flags))
 		lkups_cnt++;
 
 	/* is MAC fields specified? */
-	if (flags & (ICE_TC_FLWR_FIELD_DST_MAC | ICE_TC_FLWR_FIELD_SRC_MAC))
+	if (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_MAC, flags))
 		lkups_cnt++;
 
 	/* is VLAN specified? */
-	if (flags & (ICE_TC_FLWR_FIELD_VLAN | ICE_TC_FLWR_FIELD_VLAN_PRIO))
+	if (test_bit(ICE_TC_FLWR_FIELD_VLAN, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_VLAN_PRIO, flags))
 		lkups_cnt++;
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
 	/* is CVLAN specified? */
-	if (flags & (ICE_TC_FLWR_FIELD_CVLAN | ICE_TC_FLWR_FIELD_CVLAN_PRIO))
+	if (test_bit(ICE_TC_FLWR_FIELD_CVLAN, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_CVLAN_PRIO, flags))
 		lkups_cnt++;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
 
 	/* are PPPoE options specified? */
-	if (flags & (ICE_TC_FLWR_FIELD_PPPOE_SESSID |
-		     ICE_TC_FLWR_FIELD_PPP_PROTO))
+	if (test_bit(ICE_TC_FLWR_FIELD_PPPOE_SESSID, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_PPP_PROTO, flags))
 		lkups_cnt++;
 
 	/* are IPv[4|6] fields specified? */
-	if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV4 | ICE_TC_FLWR_FIELD_SRC_IPV4 |
-		     ICE_TC_FLWR_FIELD_DEST_IPV6 | ICE_TC_FLWR_FIELD_SRC_IPV6))
+	if (test_bit(ICE_TC_FLWR_FIELD_DEST_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_DEST_IPV6, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_IPV6, flags))
 		lkups_cnt++;
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_IP
-	if (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL) ||
+	if (test_bit(ICE_TC_FLWR_FIELD_IP_TOS, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_IP_TTL, flags) ||
 	    (headers->l2_key.n_proto == htons(ETH_P_IP) &&
-	     flags & ICE_TC_FLWR_FIELD_IP_PROTO))
+	     test_bit(ICE_TC_FLWR_FIELD_IP_PROTO, flags)))
 		lkups_cnt++;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
 #ifdef HAVE_FLOW_MATCH_ICMP
-	if (flags & ICE_TC_FLWR_FIELD_ICMP)
+	if (test_bit(ICE_TC_FLWR_FIELD_ICMP, flags))
 		lkups_cnt++;
 #endif /* HAVE_FLOW_MATCH_ICMP */
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
 	/* are L2TPv3 options specified? */
-	if (flags & ICE_TC_FLWR_FIELD_L2TPV3_SESSID)
+	if (test_bit(ICE_TC_FLWR_FIELD_L2TPV3_SESSID, flags))
 		lkups_cnt++;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
 
 	/* is L4 (TCP/UDP/any other L4 protocol fields) specified? */
-	if (flags & (ICE_TC_FLWR_FIELD_DEST_L4_PORT |
-		     ICE_TC_FLWR_FIELD_SRC_L4_PORT))
+	if (test_bit(ICE_TC_FLWR_FIELD_DEST_L4_PORT, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_L4_PORT, flags))
 		lkups_cnt++;
 
 	return lkups_cnt;
@@ -221,6 +227,7 @@ static u16 ice_check_supported_vlan_tpid(u16 vlan_tpid)
 	case ETH_P_8021Q:
 	case ETH_P_8021AD:
 	case ETH_P_QINQ1:
+	case ETH_P_8021AH:
 		return vlan_tpid;
 	default:
 		return 0;
@@ -229,13 +236,13 @@ static u16 ice_check_supported_vlan_tpid(u16 vlan_tpid)
 #endif /* HAVE_TCF_VLAN_TPID */
 
 static int
-ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
+ice_tc_fill_tunnel_outer(unsigned long *flags, struct ice_tc_flower_fltr *fltr,
 			 struct ice_adv_lkup_elem *list,
 			 struct ice_adv_rule_info *rule_info, int i)
 {
 	struct ice_tc_flower_lyr_2_4_hdrs *hdr = &fltr->outer_headers;
 
-	if (flags & ICE_TC_FLWR_FIELD_TENANT_ID) {
+	if (test_bit(ICE_TC_FLWR_FIELD_TENANT_ID, flags)) {
 		u32 tenant_id;
 
 		list[i].type = ice_proto_type_from_tunnel(fltr->tunnel_type);
@@ -265,7 +272,7 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 		}
 	}
 
-	if (flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_DST_MAC, flags)) {
 		list[i].type = ice_proto_type_from_mac(false);
 		ether_addr_copy(list[i].h_u.eth_hdr.dst_addr,
 				hdr->l2_key.dst_mac);
@@ -275,7 +282,7 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 	}
 
 #ifdef HAVE_GTP_SUPPORT
-	if (flags & ICE_TC_FLWR_FIELD_ENC_OPTS &&
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_OPTS, flags) &&
 	    (fltr->tunnel_type == TNL_GTPU || fltr->tunnel_type == TNL_GTPC)) {
 		list[i].type = ice_proto_type_from_tunnel(fltr->tunnel_type);
 
@@ -294,26 +301,26 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 	}
 #endif /* HAVE_GTP_SUPPORT */
 
-	if (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
-		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV4)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV4, flags)) {
 		list[i].type = ice_proto_type_from_ipv4(false);
 
-		if (flags & ICE_TC_FLWR_FIELD_ENC_SRC_IPV4) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV4, flags)) {
 			list[i].h_u.ipv4_hdr.src_addr = hdr->l3_key.src_ipv4;
 			list[i].m_u.ipv4_hdr.src_addr = hdr->l3_mask.src_ipv4;
 		}
-		if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_IPV4) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV4, flags)) {
 			list[i].h_u.ipv4_hdr.dst_addr = hdr->l3_key.dst_ipv4;
 			list[i].m_u.ipv4_hdr.dst_addr = hdr->l3_mask.dst_ipv4;
 		}
 		i++;
 	}
 
-	if (flags & (ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
-		     ICE_TC_FLWR_FIELD_ENC_DEST_IPV6)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV6, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV6, flags)) {
 		list[i].type = ice_proto_type_from_ipv6(false);
 
-		if (flags & ICE_TC_FLWR_FIELD_ENC_SRC_IPV6) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV6, flags)) {
 			memcpy(&list[i].h_u.ipv6_hdr.src_addr,
 			       &hdr->l3_key.src_ipv6_addr,
 			       sizeof(hdr->l3_key.src_ipv6_addr));
@@ -321,7 +328,7 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 			       &hdr->l3_mask.src_ipv6_addr,
 			       sizeof(hdr->l3_mask.src_ipv6_addr));
 		}
-		if (flags & ICE_TC_FLWR_FIELD_ENC_DEST_IPV6) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV6, flags)) {
 			memcpy(&list[i].h_u.ipv6_hdr.dst_addr,
 			       &hdr->l3_key.dst_ipv6_addr,
 			       sizeof(hdr->l3_key.dst_ipv6_addr));
@@ -334,16 +341,16 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_IP
 	if (fltr->inner_headers.l2_key.n_proto == htons(ETH_P_IP) &&
-	    (flags & (ICE_TC_FLWR_FIELD_ENC_IP_TOS |
-		      ICE_TC_FLWR_FIELD_ENC_IP_TTL))) {
+	    (test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TOS, flags) ||
+	     test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TTL, flags))) {
 		list[i].type = ice_proto_type_from_ipv4(false);
 
-		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TOS) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TOS, flags)) {
 			list[i].h_u.ipv4_hdr.tos = hdr->l3_key.tos;
 			list[i].m_u.ipv4_hdr.tos = hdr->l3_mask.tos;
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TTL) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TTL, flags)) {
 			list[i].h_u.ipv4_hdr.time_to_live = hdr->l3_key.ttl;
 			list[i].m_u.ipv4_hdr.time_to_live = hdr->l3_mask.ttl;
 		}
@@ -352,22 +359,22 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 	}
 
 	if (fltr->inner_headers.l2_key.n_proto == htons(ETH_P_IPV6) &&
-	    (flags & (ICE_TC_FLWR_FIELD_ENC_IP_TOS |
-		      ICE_TC_FLWR_FIELD_ENC_IP_TTL))) {
+	    (test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TOS, flags) ||
+	     test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TTL, flags))) {
 		struct ice_ipv6_hdr *hdr_h, *hdr_m;
 
 		hdr_h = &list[i].h_u.ipv6_hdr;
 		hdr_m = &list[i].m_u.ipv6_hdr;
 		list[i].type = ice_proto_type_from_ipv6(false);
 
-		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TOS) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TOS, flags)) {
 			hdr_h->be_ver_tc_flow =
 				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, hdr->l3_key.tos));
 			hdr_m->be_ver_tc_flow =
 				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, hdr->l3_mask.tos));
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_ENC_IP_TTL) {
+		if (test_bit(ICE_TC_FLWR_FIELD_ENC_IP_TTL, flags)) {
 			hdr_h->hop_limit = hdr->l3_key.ttl;
 			hdr_m->hop_limit = hdr->l3_mask.ttl;
 		}
@@ -376,7 +383,7 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
 	}
 
 #endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_IP */
-	if ((flags & ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT) &&
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT, flags) &&
 	    hdr->l3_key.ip_proto == IPPROTO_UDP) {
 		list[i].type = ICE_UDP_OF;
 		list[i].h_u.l4_hdr.dst_port = hdr->l4_key.dst_port;
@@ -405,7 +412,7 @@ ice_tc_fill_tunnel_outer(u32 flags, struct ice_tc_flower_fltr *fltr,
  * advance filter in hardware.
  */
 static int
-ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
+ice_tc_fill_rules(struct ice_hw *hw, unsigned long *flags,
 		  struct ice_tc_flower_fltr *tc_fltr,
 		  struct ice_adv_lkup_elem *list,
 		  struct ice_adv_rule_info *rule_info,
@@ -439,28 +446,28 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		inner = true;
 	}
 
-	if (flags & ICE_TC_FLWR_FIELD_ETH_TYPE_ID) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ETH_TYPE_ID, flags)) {
 		list[i].type = ice_proto_type_from_etype(inner);
 		list[i].h_u.ethertype.ethtype_id = headers->l2_key.n_proto;
 		list[i].m_u.ethertype.ethtype_id = headers->l2_mask.n_proto;
 		i++;
 	}
 
-	if (flags & (ICE_TC_FLWR_FIELD_DST_MAC |
-		     ICE_TC_FLWR_FIELD_SRC_MAC)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_MAC, flags)) {
 		struct ice_tc_l2_hdr *l2_key, *l2_mask;
 
 		l2_key = &headers->l2_key;
 		l2_mask = &headers->l2_mask;
 
 		list[i].type = ice_proto_type_from_mac(inner);
-		if (flags & ICE_TC_FLWR_FIELD_DST_MAC) {
+		if (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags)) {
 			ether_addr_copy(list[i].h_u.eth_hdr.dst_addr,
 					l2_key->dst_mac);
 			ether_addr_copy(list[i].m_u.eth_hdr.dst_addr,
 					l2_mask->dst_mac);
 		}
-		if (flags & ICE_TC_FLWR_FIELD_SRC_MAC) {
+		if (test_bit(ICE_TC_FLWR_FIELD_SRC_MAC, flags)) {
 			ether_addr_copy(list[i].h_u.eth_hdr.src_addr,
 					l2_key->src_mac);
 			ether_addr_copy(list[i].m_u.eth_hdr.src_addr,
@@ -470,19 +477,20 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	}
 
 	/* copy VLAN info */
-	if (flags & (ICE_TC_FLWR_FIELD_VLAN | ICE_TC_FLWR_FIELD_VLAN_PRIO)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_VLAN, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_VLAN_PRIO, flags)) {
 		list[i].type = ICE_VLAN_OFOS;
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
-		if (flags & ICE_TC_FLWR_FIELD_CVLAN)
+		if (test_bit(ICE_TC_FLWR_FIELD_CVLAN, flags))
 			list[i].type = ICE_VLAN_EX;
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
 
-		if (flags & ICE_TC_FLWR_FIELD_VLAN) {
+		if (test_bit(ICE_TC_FLWR_FIELD_VLAN, flags)) {
 			list[i].h_u.vlan_hdr.vlan = headers->vlan_hdr.vlan_id;
 			list[i].m_u.vlan_hdr.vlan = cpu_to_be16(VLAN_VID_MASK);
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_VLAN_PRIO) {
+		if (test_bit(ICE_TC_FLWR_FIELD_VLAN_PRIO, flags)) {
 			list[i].m_u.vlan_hdr.vlan |=
 				cpu_to_be16(VLAN_PRIO_MASK);
 			list[i].h_u.vlan_hdr.vlan |=
@@ -493,7 +501,7 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	}
 
 #ifdef HAVE_TCF_VLAN_TPID
-	if (flags & ICE_TC_FLWR_FIELD_VLAN_TPID) {
+	if (test_bit(ICE_TC_FLWR_FIELD_VLAN_TPID, flags)) {
 		vlan_tpid = be16_to_cpu(headers->vlan_hdr.vlan_tpid);
 		rule_info->vlan_type = ice_check_supported_vlan_tpid(vlan_tpid);
 
@@ -502,15 +510,16 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 #endif /* HAVE_TCF_VLAN_TPID */
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_CVLAN
-	if (flags & (ICE_TC_FLWR_FIELD_CVLAN | ICE_TC_FLWR_FIELD_CVLAN_PRIO)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_CVLAN, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_CVLAN_PRIO, flags)) {
 		list[i].type = ICE_VLAN_IN;
 
-		if (flags & ICE_TC_FLWR_FIELD_CVLAN) {
+		if (test_bit(ICE_TC_FLWR_FIELD_CVLAN, flags)) {
 			list[i].h_u.vlan_hdr.vlan = headers->cvlan_hdr.vlan_id;
 			list[i].m_u.vlan_hdr.vlan = cpu_to_be16(VLAN_VID_MASK);
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_CVLAN_PRIO) {
+		if (test_bit(ICE_TC_FLWR_FIELD_CVLAN_PRIO, flags)) {
 			list[i].m_u.vlan_hdr.vlan |=
 				cpu_to_be16(VLAN_PRIO_MASK);
 			list[i].h_u.vlan_hdr.vlan |=
@@ -521,8 +530,8 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_CVLAN */
 
-	if (flags & (ICE_TC_FLWR_FIELD_PPPOE_SESSID |
-		     ICE_TC_FLWR_FIELD_PPP_PROTO)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_PPPOE_SESSID, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_PPP_PROTO, flags)) {
 		struct ice_pppoe_hdr *vals, *masks;
 
 		vals = &list[i].h_u.pppoe_hdr;
@@ -530,12 +539,12 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 		list[i].type = ICE_PPPOE;
 
-		if (flags & ICE_TC_FLWR_FIELD_PPPOE_SESSID) {
+		if (test_bit(ICE_TC_FLWR_FIELD_PPPOE_SESSID, flags)) {
 			vals->session_id = headers->pppoe_hdr.session_id;
 			masks->session_id = cpu_to_be16(0xFFFF);
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_PPP_PROTO) {
+		if (test_bit(ICE_TC_FLWR_FIELD_PPP_PROTO, flags)) {
 			vals->ppp_prot_id = headers->pppoe_hdr.ppp_proto;
 			masks->ppp_prot_id = cpu_to_be16(0xFFFF);
 		}
@@ -544,24 +553,24 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	}
 
 	/* copy L3 (IPv[4|6]: src, dest) address */
-	if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV4 |
-		     ICE_TC_FLWR_FIELD_SRC_IPV4)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_DEST_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_IPV4, flags)) {
 		struct ice_tc_l3_hdr *l3_key, *l3_mask;
 
 		list[i].type = ice_proto_type_from_ipv4(inner);
 		l3_key = &headers->l3_key;
 		l3_mask = &headers->l3_mask;
-		if (flags & ICE_TC_FLWR_FIELD_DEST_IPV4) {
+		if (test_bit(ICE_TC_FLWR_FIELD_DEST_IPV4, flags)) {
 			list[i].h_u.ipv4_hdr.dst_addr = l3_key->dst_ipv4;
 			list[i].m_u.ipv4_hdr.dst_addr = l3_mask->dst_ipv4;
 		}
-		if (flags & ICE_TC_FLWR_FIELD_SRC_IPV4) {
+		if (test_bit(ICE_TC_FLWR_FIELD_SRC_IPV4, flags)) {
 			list[i].h_u.ipv4_hdr.src_addr = l3_key->src_ipv4;
 			list[i].m_u.ipv4_hdr.src_addr = l3_mask->src_ipv4;
 		}
 		i++;
-	} else if (flags & (ICE_TC_FLWR_FIELD_DEST_IPV6 |
-			    ICE_TC_FLWR_FIELD_SRC_IPV6)) {
+	} else if (test_bit(ICE_TC_FLWR_FIELD_DEST_IPV6, flags) ||
+		   test_bit(ICE_TC_FLWR_FIELD_SRC_IPV6, flags)) {
 		struct ice_ipv6_hdr *ipv6_hdr, *ipv6_mask;
 		struct ice_tc_l3_hdr *l3_key, *l3_mask;
 
@@ -571,13 +580,13 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		l3_key = &headers->l3_key;
 		l3_mask = &headers->l3_mask;
 
-		if (flags & ICE_TC_FLWR_FIELD_DEST_IPV6) {
+		if (test_bit(ICE_TC_FLWR_FIELD_DEST_IPV6, flags)) {
 			memcpy(&ipv6_hdr->dst_addr, &l3_key->dst_ipv6_addr,
 			       sizeof(l3_key->dst_ipv6_addr));
 			memcpy(&ipv6_mask->dst_addr, &l3_mask->dst_ipv6_addr,
 			       sizeof(l3_mask->dst_ipv6_addr));
 		}
-		if (flags & ICE_TC_FLWR_FIELD_SRC_IPV6) {
+		if (test_bit(ICE_TC_FLWR_FIELD_SRC_IPV6, flags)) {
 			memcpy(&ipv6_hdr->src_addr, &l3_key->src_ipv6_addr,
 			       sizeof(l3_key->src_ipv6_addr));
 			memcpy(&ipv6_mask->src_addr, &l3_mask->src_ipv6_addr,
@@ -588,23 +597,24 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_IP
 	if (headers->l2_key.n_proto == htons(ETH_P_IP) &&
-	    (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL |
-		      ICE_TC_FLWR_FIELD_IP_PROTO))) {
+	    (test_bit(ICE_TC_FLWR_FIELD_IP_TOS, flags) ||
+	     test_bit(ICE_TC_FLWR_FIELD_IP_TTL, flags) ||
+	     test_bit(ICE_TC_FLWR_FIELD_IP_PROTO, flags))) {
 		list[i].type = ice_proto_type_from_ipv4(inner);
 
-		if (flags & ICE_TC_FLWR_FIELD_IP_TOS) {
+		if (test_bit(ICE_TC_FLWR_FIELD_IP_TOS, flags)) {
 			list[i].h_u.ipv4_hdr.tos = headers->l3_key.tos;
 			list[i].m_u.ipv4_hdr.tos = headers->l3_mask.tos;
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_IP_TTL) {
+		if (test_bit(ICE_TC_FLWR_FIELD_IP_TTL, flags)) {
 			list[i].h_u.ipv4_hdr.time_to_live =
 				headers->l3_key.ttl;
 			list[i].m_u.ipv4_hdr.time_to_live =
 				headers->l3_mask.ttl;
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_IP_PROTO) {
+		if (test_bit(ICE_TC_FLWR_FIELD_IP_PROTO, flags)) {
 			list[i].h_u.ipv4_hdr.protocol =
 				headers->l3_key.ip_proto;
 			list[i].m_u.ipv4_hdr.protocol =
@@ -615,21 +625,22 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 	}
 
 	if (headers->l2_key.n_proto == htons(ETH_P_IPV6) &&
-	    (flags & (ICE_TC_FLWR_FIELD_IP_TOS | ICE_TC_FLWR_FIELD_IP_TTL))) {
+	    (test_bit(ICE_TC_FLWR_FIELD_IP_TOS, flags) ||
+	     test_bit(ICE_TC_FLWR_FIELD_IP_TTL, flags))) {
 		struct ice_ipv6_hdr *hdr_h, *hdr_m;
 
 		hdr_h = &list[i].h_u.ipv6_hdr;
 		hdr_m = &list[i].m_u.ipv6_hdr;
 		list[i].type = ice_proto_type_from_ipv6(inner);
 
-		if (flags & ICE_TC_FLWR_FIELD_IP_TOS) {
+		if (test_bit(ICE_TC_FLWR_FIELD_IP_TOS, flags)) {
 			hdr_h->be_ver_tc_flow =
 				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, headers->l3_key.tos));
 			hdr_m->be_ver_tc_flow =
 				htonl(FIELD_PREP(ICE_IPV6_HDR_TC_MASK, headers->l3_mask.tos));
 		}
 
-		if (flags & ICE_TC_FLWR_FIELD_IP_TTL) {
+		if (test_bit(ICE_TC_FLWR_FIELD_IP_TTL, flags)) {
 			hdr_h->hop_limit = headers->l3_key.ttl;
 			hdr_m->hop_limit = headers->l3_mask.ttl;
 		}
@@ -639,7 +650,7 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 #endif /* HAVE_FLOW_DISSECTOR_KEY_IP */
 
 #ifdef HAVE_FLOW_MATCH_ICMP
-	if (flags & ICE_TC_FLWR_FIELD_ICMP) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ICMP, flags)) {
 		if (headers->l2_key.n_proto == htons(ETH_P_IPV6))
 			list[i].type = ICE_ICMP6;
 		else
@@ -660,7 +671,7 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 #endif /* HAVE_FLOW_MATCH_ICMP */
 
 #ifdef HAVE_FLOW_DISSECTOR_KEY_L2TPV3
-	if (flags & ICE_TC_FLWR_FIELD_L2TPV3_SESSID) {
+	if (test_bit(ICE_TC_FLWR_FIELD_L2TPV3_SESSID, flags)) {
 		list[i].type = ICE_L2TPV3;
 
 		list[i].h_u.l2tpv3_sess_hdr.session_id =
@@ -673,8 +684,8 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 #endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
 
 	/* copy L4 (src, dest) port */
-	if (flags & (ICE_TC_FLWR_FIELD_DEST_L4_PORT |
-		     ICE_TC_FLWR_FIELD_SRC_L4_PORT)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_DEST_L4_PORT, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_L4_PORT, flags)) {
 		struct ice_tc_l4_hdr *l4_key, *l4_mask;
 
 		list[i].type =
@@ -682,11 +693,11 @@ ice_tc_fill_rules(struct ice_hw *hw, u32 flags,
 		l4_key = &headers->l4_key;
 		l4_mask = &headers->l4_mask;
 
-		if (flags & ICE_TC_FLWR_FIELD_DEST_L4_PORT) {
+		if (test_bit(ICE_TC_FLWR_FIELD_DEST_L4_PORT, flags)) {
 			list[i].h_u.l4_hdr.dst_port = l4_key->dst_port;
 			list[i].m_u.l4_hdr.dst_port = l4_mask->dst_port;
 		}
-		if (flags & ICE_TC_FLWR_FIELD_SRC_L4_PORT) {
+		if (test_bit(ICE_TC_FLWR_FIELD_SRC_L4_PORT, flags)) {
 			list[i].h_u.l4_hdr.src_port = l4_key->src_port;
 			list[i].m_u.l4_hdr.src_port = l4_mask->src_port;
 		}
@@ -747,12 +758,12 @@ ice_tc_set_pppoe(struct flow_match_pppoe *match,
 		 struct ice_tc_flower_lyr_2_4_hdrs *headers)
 {
 	if (match->mask->session_id) {
-		fltr->flags |= ICE_TC_FLWR_FIELD_PPPOE_SESSID;
+		__set_bit(ICE_TC_FLWR_FIELD_PPPOE_SESSID, fltr->flags);
 		headers->pppoe_hdr.session_id = match->key->session_id;
 	}
 
 	if (match->mask->ppp_proto) {
-		fltr->flags |= ICE_TC_FLWR_FIELD_PPP_PROTO;
+		__set_bit(ICE_TC_FLWR_FIELD_PPP_PROTO, fltr->flags);
 		headers->pppoe_hdr.ppp_proto = match->key->ppp_proto;
 	}
 
@@ -951,12 +962,12 @@ ice_eswitch_add_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	struct ice_adv_rule_info rule_info = { 0 };
 	struct ice_rule_query_data rule_added;
 	struct ice_hw *hw = &vsi->back->hw;
+	unsigned long *flags = fltr->flags;
 	struct ice_adv_lkup_elem *list;
-	u32 flags = fltr->flags;
 	int lkups_cnt;
 	int i, ret;
 
-	if (flags & ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT, flags)) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unsupported encap field(s)");
 		return -EOPNOTSUPP;
 	}
@@ -1258,12 +1269,12 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 {
 	struct ice_adv_rule_info rule_info = {0};
 	struct ice_rule_query_data rule_added;
+	unsigned long *flags = tc_fltr->flags;
 	struct ice_rx_ring *rx_ring = NULL;
 	struct ice_adv_lkup_elem *list;
 	struct ice_vsi *ch_vsi = NULL;
 	struct ice_pf *pf = vsi->back;
 	struct ice_hw *hw = &pf->hw;
-	u32 flags = tc_fltr->flags;
 	struct device *dev;
 	u16 lkups_cnt = 0;
 	u16 l4_proto = 0;
@@ -1276,11 +1287,12 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 		return -EOPNOTSUPP;
 	}
 
-	if (!flags || (flags & (ICE_TC_FLWR_FIELD_ENC_DEST_IPV4 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_IPV4 |
-				ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
-				ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT))) {
+	if (bitmap_empty(flags, ICE_TC_FLWR_FIELD_MAX) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV4, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV6, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV6, flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT, flags)) {
 		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Unsupported encap field(s)");
 		return -EOPNOTSUPP;
 	}
@@ -1368,23 +1380,23 @@ ice_add_tc_flower_adv_fltr(struct ice_vsi *vsi,
 
 		/* keeps track of channel filters for PF VSI */
 		if (vsi->type == ICE_VSI_PF &&
-		    (flags & (ICE_TC_FLWR_FIELD_DST_MAC |
-			      ICE_TC_FLWR_FIELD_ENC_DST_MAC)))
+		    (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) ||
+		     test_bit(ICE_TC_FLWR_FIELD_ENC_DST_MAC, flags)))
 			pf->num_dmac_chnl_fltrs++;
 	}
 	if (tc_fltr->action.fltr_act == ICE_FWD_TO_VSI) {
-		dev_dbg(dev, "added switch rule (lkups_cnt %u, flags 0x%x) for TC %u, rid %u, rule_id %u, vsi_idx %u\n",
-			lkups_cnt, flags,
+		dev_dbg(dev, "added switch rule (lkups_cnt %u) for TC %u, rid %u, rule_id %u, vsi_idx %u\n",
+			lkups_cnt,
 			tc_fltr->action.fwd.tc.tc_class, rule_added.rid,
 			rule_added.rule_id, rule_added.vsi_handle);
 	} else if (tc_fltr->action.fltr_act == ICE_FWD_TO_Q) {
-		dev_dbg(dev, "added switch rule (lkups_cnt %u, flags 0x%x), action is forward to queue: %u (HW queue %u)     , rid %u, rule_id %u\n",
-			lkups_cnt, flags, tc_fltr->action.fwd.q.queue,
+		dev_dbg(dev, "added switch rule (lkups_cnt %u), action is forward to queue: %u (HW queue %u)     , rid %u, rule_id %u\n",
+			lkups_cnt, tc_fltr->action.fwd.q.queue,
 			tc_fltr->action.fwd.q.hw_queue, rule_added.rid,
 			rule_added.rule_id);
 	} else if (tc_fltr->action.fltr_act == ICE_DROP_PACKET) {
-		dev_dbg(dev, "added switch rule (lkups_cnt %u, flags 0x%x), action is drop, rid %u, rule_id %u\n",
-			lkups_cnt, flags, rule_added.rid, rule_added.rule_id);
+		dev_dbg(dev, "added switch rule (lkups_cnt %u), action is drop, rid %u, rule_id %u\n",
+			lkups_cnt, rule_added.rid, rule_added.rule_id);
 	}
 exit:
 	kfree(list);
@@ -1405,17 +1417,17 @@ ice_tc_set_ipv4(struct flow_match_ipv4_addrs *match,
 {
 	if (match->key->dst) {
 		if (is_encap)
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_DEST_IPV4;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV4, fltr->flags);
 		else
-			fltr->flags |= ICE_TC_FLWR_FIELD_DEST_IPV4;
+			__set_bit(ICE_TC_FLWR_FIELD_DEST_IPV4, fltr->flags);
 		headers->l3_key.dst_ipv4 = match->key->dst;
 		headers->l3_mask.dst_ipv4 = match->mask->dst;
 	}
 	if (match->key->src) {
 		if (is_encap)
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_SRC_IPV4;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV4, fltr->flags);
 		else
-			fltr->flags |= ICE_TC_FLWR_FIELD_SRC_IPV4;
+			__set_bit(ICE_TC_FLWR_FIELD_SRC_IPV4, fltr->flags);
 		headers->l3_key.src_ipv4 = match->key->src;
 		headers->l3_mask.src_ipv4 = match->mask->src;
 	}
@@ -1452,29 +1464,29 @@ ice_tc_set_ipv6(struct flow_match_ipv6_addrs *match,
 	}
 	if (!ipv6_addr_any(&match->mask->dst)) {
 		if (is_encap)
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_DEST_IPV6;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV6, fltr->flags);
 		else
-			fltr->flags |= ICE_TC_FLWR_FIELD_DEST_IPV6;
+			__set_bit(ICE_TC_FLWR_FIELD_DEST_IPV6, fltr->flags);
 	}
 	if (!ipv6_addr_any(&match->mask->src)) {
 		if (is_encap)
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_SRC_IPV6;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV6, fltr->flags);
 		else
-			fltr->flags |= ICE_TC_FLWR_FIELD_SRC_IPV6;
+			__set_bit(ICE_TC_FLWR_FIELD_SRC_IPV6, fltr->flags);
 	}
 
 	l3_key = &headers->l3_key;
 	l3_mask = &headers->l3_mask;
 
-	if (fltr->flags & (ICE_TC_FLWR_FIELD_ENC_SRC_IPV6 |
-			   ICE_TC_FLWR_FIELD_SRC_IPV6)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_SRC_IPV6, fltr->flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_SRC_IPV6, fltr->flags)) {
 		memcpy(&l3_key->src_ipv6_addr, &match->key->src.s6_addr,
 		       sizeof(match->key->src.s6_addr));
 		memcpy(&l3_mask->src_ipv6_addr, &match->mask->src.s6_addr,
 		       sizeof(match->mask->src.s6_addr));
 	}
-	if (fltr->flags & (ICE_TC_FLWR_FIELD_ENC_DEST_IPV6 |
-			   ICE_TC_FLWR_FIELD_DEST_IPV6)) {
+	if (test_bit(ICE_TC_FLWR_FIELD_ENC_DEST_IPV6, fltr->flags) ||
+	    test_bit(ICE_TC_FLWR_FIELD_DEST_IPV6, fltr->flags)) {
 		memcpy(&l3_key->dst_ipv6_addr, &match->key->dst.s6_addr,
 		       sizeof(match->key->dst.s6_addr));
 		memcpy(&l3_mask->dst_ipv6_addr, &match->mask->dst.s6_addr,
@@ -1496,19 +1508,21 @@ ice_tc_set_port(struct flow_match_ports match,
 		struct ice_tc_flower_fltr *fltr,
 		struct ice_tc_flower_lyr_2_4_hdrs *headers, bool is_encap)
 {
+	unsigned long *flags = fltr->flags;
+
 	if (match.key->dst) {
 		if (is_encap)
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_DEST_L4_PORT, flags);
 		else
-			fltr->flags |= ICE_TC_FLWR_FIELD_DEST_L4_PORT;
+			__set_bit(ICE_TC_FLWR_FIELD_DEST_L4_PORT, flags);
 		headers->l4_key.dst_port = match.key->dst;
 		headers->l4_mask.dst_port = match.mask->dst;
 	}
 	if (match.key->src) {
 		if (is_encap)
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_SRC_L4_PORT, flags);
 		else
-			fltr->flags |= ICE_TC_FLWR_FIELD_SRC_L4_PORT;
+			__set_bit(ICE_TC_FLWR_FIELD_SRC_L4_PORT, flags);
 		headers->l4_key.src_port = match.key->src;
 		headers->l4_mask.src_port = match.mask->src;
 	}
@@ -1592,7 +1606,7 @@ ice_tc_tun_info(struct ice_pf *pf, struct flow_cls_offload *f,
 				return -EINVAL;
 			}
 		}
-		fltr->flags |= ICE_TC_FLWR_FIELD_TENANT_ID;
+		__set_bit(ICE_TC_FLWR_FIELD_TENANT_ID, fltr->flags);
 		fltr->tenant_id = enc_keyid.key->keyid;
 	}
 
@@ -1723,13 +1737,13 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
 		flow_rule_match_enc_ip(rule, &match);
 
 		if (match.mask->tos) {
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_IP_TOS;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_IP_TOS, fltr->flags);
 			headers->l3_key.tos = match.key->tos;
 			headers->l3_mask.tos = match.mask->tos;
 		}
 
 		if (match.mask->ttl) {
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_IP_TTL;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_IP_TTL, fltr->flags);
 			headers->l3_key.ttl = match.key->ttl;
 			headers->l3_mask.ttl = match.mask->ttl;
 		}
@@ -1758,7 +1772,7 @@ ice_parse_tunnel_attr(struct net_device *filter_dev, struct ice_vsi *vsi,
 		memcpy(&fltr->gtp_pdu_info_masks, &match.mask->data[0],
 		       sizeof(struct gtp_pdu_session_info));
 
-		fltr->flags |= ICE_TC_FLWR_FIELD_ENC_OPTS;
+		__set_bit(ICE_TC_FLWR_FIELD_ENC_OPTS, fltr->flags);
 	}
 #endif /* HAVE_GTP_SUPPORT */
 
@@ -1781,6 +1795,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 	struct ice_tc_flower_lyr_2_4_hdrs *headers = &fltr->outer_headers;
 	struct flow_rule *rule = flow_cls_offload_flow_rule(f);
 	u16 n_proto_mask = 0, n_proto_key = 0, addr_type = 0;
+	unsigned long *flags = fltr->flags;
 	struct flow_dissector *dissector;
 #if defined(HAVE_TC_FLOWER_ENC) && defined(HAVE_TC_INDIR_BLOCK)
 	struct net_device *tunnel_dev;
@@ -1882,14 +1897,14 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 			n_proto_key = 0;
 			n_proto_mask = 0;
 		} else {
-			fltr->flags |= ICE_TC_FLWR_FIELD_ETH_TYPE_ID;
+			__set_bit(ICE_TC_FLWR_FIELD_ETH_TYPE_ID, flags);
 		}
 
 		headers->l2_key.n_proto = cpu_to_be16(n_proto_key);
 		headers->l2_mask.n_proto = cpu_to_be16(n_proto_mask);
 
 		if (match.key->ip_proto)
-			fltr->flags |= ICE_TC_FLWR_FIELD_IP_PROTO;
+			__set_bit(ICE_TC_FLWR_FIELD_IP_PROTO, flags);
 
 		headers->l3_key.ip_proto = match.key->ip_proto;
 		headers->l3_mask.ip_proto = match.mask->ip_proto;
@@ -1905,7 +1920,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 					match.key->dst);
 			ether_addr_copy(headers->l2_mask.dst_mac,
 					match.mask->dst);
-			fltr->flags |= ICE_TC_FLWR_FIELD_DST_MAC;
+			__set_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags);
 		}
 
 		if (!is_zero_ether_addr(match.key->src)) {
@@ -1913,7 +1928,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 					match.key->src);
 			ether_addr_copy(headers->l2_mask.src_mac,
 					match.mask->src);
-			fltr->flags |= ICE_TC_FLWR_FIELD_SRC_MAC;
+			__set_bit(ICE_TC_FLWR_FIELD_SRC_MAC, flags);
 		}
 	}
 
@@ -1932,7 +1947,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 
 		if (mask->vlan_id) {
 			if (mask->vlan_id == VLAN_VID_MASK) {
-				fltr->flags |= ICE_TC_FLWR_FIELD_VLAN;
+				__set_bit(ICE_TC_FLWR_FIELD_VLAN, flags);
 				headers->vlan_hdr.vlan_id =
 					cpu_to_be16(key->vlan_id &
 						    VLAN_VID_MASK);
@@ -1943,7 +1958,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		}
 
 		if (match.mask->vlan_priority) {
-			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_PRIO;
+			__set_bit(ICE_TC_FLWR_FIELD_VLAN_PRIO, flags);
 			headers->vlan_hdr.vlan_prio =
 				be16_encode_bits(match.key->vlan_priority,
 						 VLAN_PRIO_MASK);
@@ -1951,7 +1966,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 #ifdef HAVE_TCF_VLAN_TPID
 		if (mask->vlan_tpid) {
 			headers->vlan_hdr.vlan_tpid = key->vlan_tpid;
-			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_TPID;
+			__set_bit(ICE_TC_FLWR_FIELD_VLAN_TPID, flags);
 		}
 #endif /* HAVE_TCF_VLAN_TPID */
 	}
@@ -1978,7 +1993,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 
 		if (match.mask->vlan_id) {
 			if (match.mask->vlan_id == VLAN_VID_MASK) {
-				fltr->flags |= ICE_TC_FLWR_FIELD_VLAN;
+				__set_bit(ICE_TC_FLWR_FIELD_VLAN, flags);
 				headers->vlan_hdr.vlan_id =
 					cpu_to_be16(match.key->vlan_id &
 						    VLAN_VID_MASK);
@@ -1989,7 +2004,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		}
 
 		if (match.mask->vlan_priority) {
-			fltr->flags |= ICE_TC_FLWR_FIELD_VLAN_PRIO;
+			__set_bit(ICE_TC_FLWR_FIELD_VLAN_PRIO, flags);
 			headers->vlan_hdr.vlan_prio =
 				be16_encode_bits(match.key->vlan_priority,
 						 VLAN_PRIO_MASK);
@@ -2015,7 +2030,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 
 		if (match.mask->vlan_id) {
 			if (match.mask->vlan_id == VLAN_VID_MASK) {
-				fltr->flags |= ICE_TC_FLWR_FIELD_CVLAN;
+				__set_bit(ICE_TC_FLWR_FIELD_CVLAN, flags);
 				headers->cvlan_hdr.vlan_id =
 					cpu_to_be16(match.key->vlan_id &
 						    VLAN_VID_MASK);
@@ -2027,7 +2042,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		}
 
 		if (match.mask->vlan_priority) {
-			fltr->flags |= ICE_TC_FLWR_FIELD_CVLAN_PRIO;
+			__set_bit(ICE_TC_FLWR_FIELD_CVLAN_PRIO, flags);
 			headers->cvlan_hdr.vlan_prio =
 				be16_encode_bits(match.key->vlan_priority,
 						 VLAN_PRIO_MASK);
@@ -2049,7 +2064,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		 */
 		headers->l2_key.n_proto = cpu_to_be16(n_proto_key);
 		headers->l2_mask.n_proto = cpu_to_be16(0xFFFF);
-		fltr->flags |= ICE_TC_FLWR_FIELD_ETH_TYPE_ID;
+		__set_bit(ICE_TC_FLWR_FIELD_ETH_TYPE_ID, flags);
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_PPPOE */
 
@@ -2084,13 +2099,13 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		flow_rule_match_ip(rule, &match);
 
 		if (match.mask->tos) {
-			fltr->flags |= ICE_TC_FLWR_FIELD_IP_TOS;
+			__set_bit(ICE_TC_FLWR_FIELD_IP_TOS, flags);
 			headers->l3_key.tos = match.key->tos;
 			headers->l3_mask.tos = match.mask->tos;
 		}
 
 		if (match.mask->ttl) {
-			fltr->flags |= ICE_TC_FLWR_FIELD_IP_TTL;
+			__set_bit(ICE_TC_FLWR_FIELD_IP_TTL, flags);
 			headers->l3_key.ttl = match.key->ttl;
 			headers->l3_mask.ttl = match.mask->ttl;
 		}
@@ -2111,7 +2126,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 		if (!match.mask->type && !match.mask->code)
 			return -EINVAL;
 
-		fltr->flags |= ICE_TC_FLWR_FIELD_ICMP;
+		__set_bit(ICE_TC_FLWR_FIELD_ICMP, flags);
 
 		headers->icmp_key.type = match.key->type;
 		headers->icmp_mask.type = match.mask->type;
@@ -2127,7 +2142,7 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 
 		flow_rule_match_l2tpv3(rule, &match);
 
-		fltr->flags |= ICE_TC_FLWR_FIELD_L2TPV3_SESSID;
+		__set_bit(ICE_TC_FLWR_FIELD_L2TPV3_SESSID, flags);
 		headers->l2tpv3_hdr.session_id = match.key->session_id;
 	}
 #endif /* HAVE_FLOW_DISSECTOR_KEY_L2TPV3 */
@@ -2151,6 +2166,48 @@ ice_parse_cls_flower(struct net_device *filter_dev, struct ice_vsi *vsi,
 }
 
 /**
+ * ice_fltr_is_dflt_dst_mac - checks if filter is a basic DST MAC filter
+ * @flags: TC flower flags
+ */
+static inline bool ice_fltr_is_dflt_dst_mac(unsigned long *flags)
+{
+	return test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) &&
+	       bitmap_weight(flags, ICE_TC_FLWR_FIELD_MAX) == 1;
+}
+
+/**
+ * ice_fltr_is_dflt_vlan - checks if filter is a basic VLAN filter
+ * @flags: TC flower flags
+ */
+static inline bool ice_fltr_is_dflt_vlan(unsigned long *flags)
+{
+	return test_bit(ICE_TC_FLWR_FIELD_VLAN, flags) &&
+	       bitmap_weight(flags, ICE_TC_FLWR_FIELD_MAX) == 1;
+}
+
+/**
+ * ice_fltr_is_dflt_dst_mac_vlan - checks if filter is a basic MAC + VLAN filter
+ * @flags: TC flower flags
+ */
+static inline bool ice_fltr_is_dflt_dst_mac_vlan(unsigned long *flags)
+{
+	return test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) &&
+	       test_bit(ICE_TC_FLWR_FIELD_VLAN, flags) &&
+	       bitmap_weight(flags, ICE_TC_FLWR_FIELD_MAX) == 2;
+}
+
+/**
+ * ice_fltr_is_dflt - checks if filter is a default filter
+ * @flags: TC flower flags
+ */
+static inline bool ice_fltr_is_dflt(unsigned long *flags)
+{
+	return ice_fltr_is_dflt_dst_mac(flags) ||
+	       ice_fltr_is_dflt_vlan(flags) ||
+	       ice_fltr_is_dflt_dst_mac_vlan(flags);
+}
+
+/**
  * ice_add_remove_tc_flower_dflt_fltr - add or remove default filter
  * @vsi: Pointer to VSI
  * @tc_fltr: Pointer to TC flower filter structure
@@ -2170,8 +2227,7 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 	const u8 *dst_mac = headers->l2_key.dst_mac;
 	int err;
 
-	switch (tc_fltr->flags) {
-	case ICE_TC_FLWR_FLTR_FLAGS_DST_MAC:
+	if (ice_fltr_is_dflt_dst_mac(tc_fltr->flags)) {
 		if (add) {
 			err = ice_fltr_add_mac(vsi, dst_mac, act);
 			if (err)
@@ -2181,8 +2237,7 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 			if (err)
 				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not remove MAC filters");
 		}
-		break;
-	case ICE_TC_FLWR_FLTR_FLAGS_VLAN:
+	} else if (ice_fltr_is_dflt_vlan(tc_fltr->flags)) {
 		if (add) {
 			struct ice_vlan vlan =
 				ICE_VLAN(ETH_P_8021Q, vlan_id, 0, act);
@@ -2196,8 +2251,7 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 			if (err)
 				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not delete VLAN filters");
 		}
-		break;
-	case ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN:
+	} else if (ice_fltr_is_dflt_dst_mac_vlan(tc_fltr->flags)) {
 		if (add) {
 			err = ice_fltr_add_mac_vlan(vsi, dst_mac, vlan_id, act);
 			if (err)
@@ -2208,12 +2262,11 @@ ice_add_remove_tc_flower_dflt_fltr(struct ice_vsi *vsi,
 			if (err)
 				NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Could not remove MAC VLAN filters");
 		}
-		break;
-	default:
+	} else {
 		NL_SET_ERR_MSG_MOD(tc_fltr->extack, "Not a default filter type");
 		err = -EOPNOTSUPP;
-		break;
 	}
+
 	return err;
 }
 
@@ -2234,9 +2287,7 @@ ice_add_switch_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 	if (fltr->action.fltr_act == ICE_FWD_TO_QGRP)
 		return -EOPNOTSUPP;
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
-	if ((fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC ||
-	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_VLAN ||
-	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN) &&
+	if (ice_fltr_is_dflt(fltr->flags) &&
 	    fltr->action.fltr_act != ICE_DROP_PACKET)
 		return ice_add_remove_tc_flower_dflt_fltr(vsi, fltr, true);
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -2261,6 +2312,7 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 			 struct ice_tc_flower_fltr *fltr)
 {
 	unsigned int nrx = TC_H_MIN(cls_flower->classid);
+	unsigned long *flags = fltr->flags;
 	u32 num_tc;
 	int tc;
 
@@ -2317,9 +2369,9 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 		return -EINVAL;
 	}
 
-	if ((fltr->flags & ICE_TC_FLWR_FIELD_TENANT_ID) &&
-	    (fltr->flags & (ICE_TC_FLWR_FIELD_DST_MAC |
-			   ICE_TC_FLWR_FIELD_SRC_MAC))) {
+	if (test_bit(ICE_TC_FLWR_FIELD_TENANT_ID, flags) &&
+	    (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) ||
+	     test_bit(ICE_TC_FLWR_FIELD_SRC_MAC, flags))) {
 		NL_SET_ERR_MSG_MOD(fltr->extack, "Unable to add filter because filter using tunnel key and inner MAC is unsupported combination");
 		return -EOPNOTSUPP;
 	}
@@ -2338,23 +2390,23 @@ ice_handle_tclass_action(struct ice_vsi *vsi,
 	 * MAC address.
 	 */
 	if (ice_is_tunnel_fltr(fltr)) {
-		if (!(fltr->flags & ICE_TC_FLWR_FIELD_ENC_DST_MAC)) {
+		if (!test_bit(ICE_TC_FLWR_FIELD_ENC_DST_MAC, flags)) {
 			ether_addr_copy(fltr->outer_headers.l2_key.dst_mac,
 					vsi->netdev->dev_addr);
 			eth_broadcast_addr(fltr->outer_headers.l2_mask.dst_mac);
-			fltr->flags |= ICE_TC_FLWR_FIELD_ENC_DST_MAC;
+			__set_bit(ICE_TC_FLWR_FIELD_ENC_DST_MAC, flags);
 		}
-	} else if (!(fltr->flags & ICE_TC_FLWR_FIELD_DST_MAC)) {
+	} else if (!test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags)) {
 		ether_addr_copy(fltr->outer_headers.l2_key.dst_mac,
 				vsi->netdev->dev_addr);
 		eth_broadcast_addr(fltr->outer_headers.l2_mask.dst_mac);
-		fltr->flags |= ICE_TC_FLWR_FIELD_DST_MAC;
+		__set_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags);
 	}
 
 	/* Make sure VLAN is already added to main VSI, before allowing ADQ to
 	 * add a VLAN based filter such as MAC + VLAN + L4 port.
 	 */
-	if (fltr->flags & ICE_TC_FLWR_FIELD_VLAN) {
+	if (test_bit(ICE_TC_FLWR_FIELD_VLAN, flags)) {
 		u16 vlan_id = be16_to_cpu(fltr->outer_headers.vlan_hdr.vlan_id);
 
 		if (!ice_vlan_fltr_exist(&vsi->back->hw, vlan_id, vsi->idx)) {
@@ -2492,12 +2544,11 @@ ice_parse_tc_flower_actions(struct net_device *filter_dev,
  */
 static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 {
+	unsigned long *flags = fltr->flags;
 	struct ice_pf *pf = vsi->back;
 	int err;
 
-	if ((fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC ||
-	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_VLAN ||
-	     fltr->flags == ICE_TC_FLWR_FLTR_FLAGS_DST_MAC_VLAN) &&
+	if (ice_fltr_is_dflt(flags) &&
 	    !ice_is_eswitch_mode_switchdev(vsi->back) &&
 	    fltr->action.fltr_act != ICE_DROP_PACKET) {
 		err = ice_add_remove_tc_flower_dflt_fltr(vsi, fltr, false);
@@ -2523,8 +2574,8 @@ static int ice_del_tc_fltr(struct ice_vsi *vsi, struct ice_tc_flower_fltr *fltr)
 
 			/* keeps track of channel filters for PF VSI */
 			if (vsi->type == ICE_VSI_PF &&
-			    (fltr->flags & (ICE_TC_FLWR_FIELD_DST_MAC |
-					    ICE_TC_FLWR_FIELD_ENC_DST_MAC)))
+			    (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, flags) ||
+			     test_bit(ICE_TC_FLWR_FIELD_ENC_DST_MAC, flags)))
 				pf->num_dmac_chnl_fltrs--;
 		}
 	}

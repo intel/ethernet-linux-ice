@@ -54,7 +54,7 @@ struct iidc_auxiliary_drv
  */
 int
 ice_for_each_aux(struct ice_pf *pf, void *data,
-		 int (*fn)(struct iidc_core_dev_info *, void *))
+		 int (*fn)(struct iidc_core_dev_info *, void *, bool))
 {
 	unsigned int i;
 
@@ -66,7 +66,7 @@ ice_for_each_aux(struct ice_pf *pf, void *data,
 
 		cdev_info = pf->cdev_infos[i];
 		if (cdev_info) {
-			int ret = fn(cdev_info, data);
+			int ret = fn(cdev_info, data, false);
 			if (ret)
 				return ret;
 		}
@@ -79,9 +79,11 @@ ice_for_each_aux(struct ice_pf *pf, void *data,
  * ice_send_event_to_aux - send event to a specific aux driver
  * @cdev_info: pointer to iidc_core_dev_info struct for this aux
  * @data: opaque pointer used to pass event struct
+ * @locked: is the aux dev lock held in this call chain
  */
-static int
-ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
+int
+ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data,
+		      bool locked)
 {
 	struct iidc_event *event = data;
 	struct iidc_auxiliary_drv *iadrv;
@@ -100,9 +102,18 @@ ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
 	if (test_bit(ICE_SET_CHANNELS, pf->state))
 		return 0;
 
+	/* In some paths, aux dev lock is already taken, however we can't take
+	 * adev_mutex while holding it since it can lead to a deadlock. Unlock
+	 * it, take both locks in correct order, then re-lock at the end, so
+	 * that the caller can unlock as expected.
+	 */
+	if (locked)
+		device_unlock(&cdev_info->adev->dev);
+
 	mutex_lock(&pf->adev_mutex);
 
 	if (!cdev_info->adev || !event) {
+		/* aux dev got destroyed - no need to re-lock it */
 		mutex_unlock(&pf->adev_mutex);
 		return 0;
 	}
@@ -114,27 +125,11 @@ ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data)
 	device_unlock(&cdev_info->adev->dev);
 	mutex_unlock(&pf->adev_mutex);
 
+	/* Re-lock if needed to retain lock state */
+	if (locked)
+		device_lock(&cdev_info->adev->dev);
+
 	return 0;
-}
-
-/**
- * ice_send_event_to_aux_no_lock - send event to aux dev without taking dev_lock
- * @cdev: pointer to iidc_core_dev_info struct
- * @data: opaque poiner used to pass event struct
- */
-void ice_send_event_to_aux_no_lock(struct iidc_core_dev_info *cdev, void *data)
-{
-	struct iidc_event *event = data;
-	struct iidc_auxiliary_drv *iadrv;
-	struct ice_pf *pf;
-
-	pf = pci_get_drvdata(cdev->pdev);
-	mutex_lock(&pf->adev_mutex);
-
-	iadrv = ice_get_auxiliary_drv(cdev);
-	if (iadrv && iadrv->event_handler)
-		iadrv->event_handler(cdev, event);
-	mutex_unlock(&pf->adev_mutex);
 }
 
 /**
@@ -168,7 +163,8 @@ void ice_send_event_to_auxs(struct ice_pf *pf, struct iidc_event *event)
  * functions.
  */
 int ice_unroll_cdev_info(struct iidc_core_dev_info *cdev_info,
-			 void __always_unused *data)
+			 void __always_unused *data,
+			 bool __always_unused locked)
 {
 	kfree(cdev_info);
 	return 0;
@@ -771,7 +767,7 @@ void ice_send_vf_reset_to_aux(struct iidc_core_dev_info *cdev_info, u16 vf_id)
 		return;
 	set_bit(IIDC_EVENT_VF_RESET, event->type);
 	event->info.vf_id = (u32)vf_id;
-	ice_send_event_to_aux(cdev_info, event);
+	ice_send_event_to_aux(cdev_info, event, false);
 	kfree(event);
 }
 

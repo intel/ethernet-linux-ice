@@ -6,24 +6,13 @@
 
 #include <linux/types.h>
 #include <linux/spinlock_types.h>
+#ifdef HAVE_XARRAY_API
+#include <linux/xarray.h>
+#endif /* HAVE_XARRAY_API */
 #include "kcompat.h"
 
 struct pci_dev;
 struct ice_pf;
-
-/**
- * struct ice_port_list - data used to store the list of adapter ports
- *
- * This structure contains data used to maintain a list of adapter ports
- *
- * @ports: list of ports
- * @lock: protect access to the ports list
- */
-struct ice_port_list {
-	struct list_head ports;
-	/* To synchronize the ports list operations */
-	struct mutex lock;
-};
 
 /**
  * struct ice_adapter - PCI adapter resources shared across PFs
@@ -31,7 +20,7 @@ struct ice_port_list {
  *                        register of the PTP clock.
  * @refcount: Reference count. struct ice_pf objects hold the references.
  * @ctrl_pf: Control PF of the adapter
- * @ports: Ports list
+ * @ptp_ports: PTP ports array
  * @whole_dev_lock: the lock that should be used to serialize FW/HW
  *                  re/configuration, or any other operation that requires
  *                  to be serialized over whole device (all PFs on given card)
@@ -42,7 +31,7 @@ struct ice_adapter {
 	spinlock_t ptp_gltsyn_time_lock;
 
 	struct ice_pf *ctrl_pf;
-	struct ice_port_list ports;
+	struct xarray ptp_ports;
 
 	struct mutex whole_dev_lock;
 };

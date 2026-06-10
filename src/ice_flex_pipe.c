@@ -1514,6 +1514,49 @@ ice_prof_has_mask(struct ice_hw *hw, enum ice_block blk, u8 prof, u16 *masks)
 }
 
 /**
+ * ice_adapter_find_prof_id_with_mask - find profile ID for a given
+ *					field vector in adapter's control PF
+ * @hw: pointer to the hardware structure
+ * @blk: HW block
+ * @fv: field vector to search for
+ * @masks: masks for fv
+ * @prof_id: receives the profile ID
+ *
+ * Return: zero if profile ID found, or a negative error code if not found.
+ */
+static int
+ice_adapter_find_prof_id_with_mask(struct ice_hw *hw, enum ice_block blk,
+				   struct ice_fv_word *fv, u16 *masks,
+				   u8 *prof_id)
+{
+	struct ice_hw *adapter_hw = ice_get_primary_hw(
+hw->back);
+	struct ice_es *es = &adapter_hw->blk[blk].es;
+
+	/* For FD, we don't want to reuse an existing profile with the same
+	 * field vector and mask. This will cause rule interference.
+	 */
+	if (blk == ICE_BLK_FD)
+		return -ENOENT;
+
+	for (u8 i = 0; i < es->count; i++) {
+		u16 off = i * es->fvw;
+
+		if (memcmp(&es->t[off], fv, es->fvw * sizeof(*fv)))
+			continue;
+
+		/* check if masks settings are the same for this profile */
+		if (masks && !ice_prof_has_mask(adapter_hw, blk, i, masks))
+			continue;
+
+		*prof_id = i;
+		return 0;
+	}
+
+	return -ENOENT;
+}
+
+/**
  * ice_find_prof_id_with_mask - find profile ID for a given field vector
  * @hw: pointer to the hardware structure
  * @blk: HW block
@@ -1648,6 +1691,28 @@ ice_free_tcam_ent(struct ice_hw *hw, enum ice_block blk, u16 tcam_idx)
 		return -EINVAL;
 
 	return ice_free_hw_res(hw, res_type, 1, &tcam_idx);
+}
+
+/**
+ * ice_subscribe_prof_id - subscribe to an existing profile ID
+ * @hw: pointer to the HW struct
+ * @blk: the block in which to subscribe to the resource
+ * @prof_id: variable that holds profile ID to subscribe to
+ *
+ * Subscribe to an existing profile ID, which also corresponds to a Field
+ * Vector (Extraction Sequence) entry.
+ *
+ * Return: zero on success, or a negative error code on failure.
+ */
+static int
+ice_subscribe_prof_id(struct ice_hw *hw, enum ice_block blk, u16 prof_id)
+{
+	u16 res_type;
+
+	if (!ice_prof_id_rsrc_type(blk, &res_type))
+		return -EINVAL;
+
+	return ice_subscribe_hw_res(hw, res_type, prof_id);
 }
 
 /**
@@ -3366,6 +3431,7 @@ static void ice_disable_fd_swap(struct ice_hw *hw, u16 prof_id)
  * @es: extraction sequence (length of array is determined by the block)
  * @masks: mask for extraction sequence
  * @fd_swap: enable/disable FDIR paired src/dst fields swap option
+ * @shared: should resource be shareable
  *
  * This function registers a profile, which matches a set of PTYPES with a
  * particular extraction sequence. While the hardware profile is allocated
@@ -3375,7 +3441,8 @@ static void ice_disable_fd_swap(struct ice_hw *hw, u16 prof_id)
 int
 ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id,
 	     unsigned long *ptypes, const struct ice_ptype_attributes *attr,
-	     u16 attr_cnt, struct ice_fv_word *es, u16 *masks, bool fd_swap)
+	     u16 attr_cnt, struct ice_fv_word *es, u16 *masks, bool fd_swap,
+	     bool shared)
 {
 	DECLARE_BITMAP(ptgs_used, ICE_XLT1_CNT);
 	struct ice_prof_map *prof;
@@ -3390,8 +3457,24 @@ ice_add_prof(struct ice_hw *hw, enum ice_block blk, u64 id,
 	/* search for existing profile */
 	status = ice_find_prof_id_with_mask(hw, blk, es, masks, &prof_id);
 	if (status) {
-		/* allocate profile ID */
-		status = ice_alloc_prof_id(hw, blk, &prof_id);
+		/* Shared RSS resource path */
+		if (shared) {
+			struct ice_hw *primary = ice_get_primary_hw
+			(
+hw->back);
+			status = ice_adapter_find_prof_id_with_mask(hw, blk,
+								    es, masks,
+								    &prof_id);
+			if (status)
+				status = ice_alloc_prof_id(primary, blk,
+							   &prof_id);
+			else
+				status = ice_subscribe_prof_id(hw, blk,
+							       prof_id);
+		} else {
+			/* allocate profile ID */
+			status = ice_alloc_prof_id(hw, blk, &prof_id);
+		}
 		if (status)
 			goto err_ice_add_prof;
 		if (blk == ICE_BLK_FD && fd_swap) {

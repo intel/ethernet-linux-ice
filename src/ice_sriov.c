@@ -1728,7 +1728,7 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted)
 		pf->hw.dcf_caps &= ~(DCF_ACL_CAP | DCF_UDP_TUNNEL_CAP);
 		ice_dcf_set_state(pf, ICE_DCF_STATE_OFF);
 		pf->dcf.vf = NULL;
-		vf->driver_caps &= ~VIRTCHNL_VF_CAP_DCF;
+		__clear_bit(VIRTCHNL_VF_CAP_DCF, vf->driver_caps);
 	}
 
 	vf->trusted = trusted;
@@ -2309,7 +2309,11 @@ static void ice_dump_vf(struct ice_vf *vf)
 	dev_info(dev, "VF[%d]:\n", vf->vf_id);
 	dev_info(dev, "\tvf_ver.major = %d vf_ver.minor = %d\n",
 		 vf->vf_ver.major, vf->vf_ver.minor);
-	dev_info(dev, "\tdriver_caps = 0x%08x\n", vf->driver_caps);
+
+	dev_info(dev, "\tdriver_caps:\n");
+	for (int i = 0; i < BITS_TO_LONGS(VIRTCHNL_VF_CAPS_MAX); i++)
+		dev_info(dev, "\t\t0x%lx\n", vf->driver_caps[i]);
+
 	dev_info(dev, "\tvf_caps:\n");
 	if (test_bit(ICE_VF_CAP_TRUSTED, vf->vf_caps))
 		dev_info(dev, "\t\tICE_VF_CAP_TRUSTED\n");

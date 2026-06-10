@@ -868,7 +868,7 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 		mutex_lock(&vf->cfg_lock);
 
 		ice_eswitch_detach(pf, vf);
-		vf->driver_caps = 0;
+		bitmap_zero(vf->driver_caps, VIRTCHNL_VF_CAPS_MAX);
 		ice_vc_set_default_allowlist(vf);
 
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -1036,7 +1036,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 		}
 	}
 
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_RDMA)
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_RDMA, vf->driver_caps))
 		vf->vf_ops->clear_rdma_irq_map(vf);
 
 	/* poll VPGEN_VFRSTAT reg to make sure
@@ -1050,7 +1050,7 @@ int ice_reset_vf(struct ice_vf *vf, u32 flags)
 	if (!rsd)
 		dev_warn(dev, "VF reset check timeout on VF %d\n", vf->vf_id);
 
-	vf->driver_caps = 0;
+	bitmap_zero(vf->driver_caps, VIRTCHNL_VF_CAPS_MAX);
 	ice_vc_set_default_allowlist(vf);
 
 	/* disable promiscuous modes in case they were enabled
@@ -1815,20 +1815,11 @@ void ice_vf_rebuild_aggregator_node_cfg(struct ice_vsi *vsi)
 		return;
 
 	dev = ice_pf_to_dev(pf);
-	if (vsi->agg_node->num_vsis == ICE_MAX_VSIS_IN_AGG_NODE) {
-		dev_dbg(dev,
-			"agg_id %u already has reached max_num_vsis %u\n",
-			vsi->agg_node->agg_id, vsi->agg_node->num_vsis);
-		return;
-	}
-
 	status = ice_move_vsi_to_agg(pf->hw.port_info, vsi->agg_node->agg_id,
 				     vsi->idx, (u8)vsi->tc_cfg.ena_tc);
 	if (status)
 		dev_dbg(dev, "unable to move VSI idx %u into aggregator %u node",
 			vsi->idx, vsi->agg_node->agg_id);
-	else
-		vsi->agg_node->num_vsis++;
 }
 
 /**

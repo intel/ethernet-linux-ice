@@ -669,33 +669,29 @@ err:
 }
 EXPORT_SYMBOL(ice_migration_restore_devstate);
 
-#define VIRTCHNL_VF_MIGRATION_SUPPORT_FEATURE \
-				(VIRTCHNL_VF_OFFLOAD_L2 | \
-				 VIRTCHNL_VF_OFFLOAD_RSS_PF | \
-				 VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2 | \
-				 VIRTCHNL_VF_OFFLOAD_ENCAP | \
-				 VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM | \
-				 VIRTCHNL_VF_OFFLOAD_RX_POLLING | \
-				 VIRTCHNL_VF_OFFLOAD_WB_ON_ITR | \
-				 VIRTCHNL_VF_CAP_ADV_LINK_SPEED | \
-				 VIRTCHNL_VF_OFFLOAD_VLAN | \
-				 VIRTCHNL_VF_OFFLOAD_USO)
-
 /**
- * ice_migration_supported_caps - get migration supported VF capablities
+ * ice_migration_set_supported_caps - set migration supported VF capabilities
+ * @driver_caps: current driver capabilities
  *
  * When migration is activated, some VF capabilities are not supported.
  * So unmask those capability flags for VF resources.
  */
-u32 ice_migration_supported_caps(void)
+void ice_migration_set_supported_caps(unsigned long *driver_caps)
 {
-	u32 mig_support_cap = VIRTCHNL_VF_MIGRATION_SUPPORT_FEATURE;
+	__set_bit(VIRTCHNL_VF_OFFLOAD_L2, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_RSS_PF, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_ENCAP, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_RX_POLLING, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_WB_ON_ITR, driver_caps);
+	__set_bit(VIRTCHNL_VF_CAP_ADV_LINK_SPEED, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_VLAN, driver_caps);
+	__set_bit(VIRTCHNL_VF_OFFLOAD_USO, driver_caps);
 
-	mig_support_cap |= VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC;
+	__set_bit(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC, driver_caps);
 
-	mig_support_cap |= VIRTCHNL_VF_OFFLOAD_CRC;
-
-	return mig_support_cap;
+	__set_bit(VIRTCHNL_VF_OFFLOAD_CRC, driver_caps);
 }
 
 #endif /* CONFIG_VFIO_PCI_CORE && HAVE_LMV1_SUPPORT */

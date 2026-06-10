@@ -30,10 +30,10 @@
 #include "ice_ieps.h"
 
 #define DRV_VERSION_MAJOR 2
-#define DRV_VERSION_MINOR 5
+#define DRV_VERSION_MINOR 6
 #define DRV_VERSION_BUILD 4
 
-#define DRV_VERSION	"2.5.4"
+#define DRV_VERSION	"2.6.4"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -66,6 +66,35 @@ MODULE_PARM_DESC(debug, "netif level (0=none,...,16=all), hw debug_mask (0x8XXXX
 #else
 MODULE_PARM_DESC(debug, "netif level (0=none,...,16=all)");
 #endif /* !CONFIG_DYNAMIC_DEBUG */
+
+static uint watchdog_timeo = 5;
+static int ice_watchdog_timeo_set(const char *val,
+				  const struct kernel_param *kp)
+{
+	uint temp;
+	int ret;
+
+	ret = kstrtouint(val, 10, &temp);
+	if (ret)
+		return ret;
+
+	if (temp < 5 || temp > 60) {
+		pr_warn("Invalid value %u for parameter, must be between 5-60. Setting to 5.\n",
+			temp);
+		temp = 5;
+	}
+
+	watchdog_timeo = temp;
+	return 0;
+}
+
+static const struct kernel_param_ops ice_watchdog_timeo_ops = {
+	.set = ice_watchdog_timeo_set,
+	.get = param_get_uint,
+};
+
+module_param_cb(watchdog_timeo, &ice_watchdog_timeo_ops, &watchdog_timeo, 0644);
+MODULE_PARM_DESC(watchdog_timeo, "watchdog tx timeout range 5-60 (5 sec default)");
 
 /**
  * ice_hw_to_dev - Get device pointer from the hardware structure
@@ -797,23 +826,11 @@ static void ice_sync_fltr_subtask(struct ice_pf *pf)
  */
 static void ice_pf_dis_all_vsi(struct ice_pf *pf, bool locked)
 {
-	int node;
 	int v;
 
 	ice_for_each_vsi(pf, v)
 		if (pf->vsi[v])
 			ice_dis_vsi(pf->vsi[v], locked);
-
-	for (node = 0; node < ICE_MAX_PF_AGG_NODES; node++)
-		pf->pf_agg_node[node].num_vsis = 0;
-
-	for (node = 0; node < ICE_MAX_VF_AGG_NODES; node++)
-		pf->vf_agg_node[node].num_vsis = 0;
-
-#ifdef HAVE_NDO_DFWD_OPS
-	for (node = 0; node < ICE_MAX_MACVLAN_AGG_NODES; node++)
-		pf->macvlan_agg_node[node].num_vsis = 0;
-#endif
 }
 
 #ifdef HAVE_UDP_TUNNEL_NIC_INFO
@@ -1465,8 +1482,7 @@ static int ice_cfg_netdev(struct ice_vsi *vsi)
 	/* Setup netdev TC information */
 	ice_vsi_cfg_netdev_tc(vsi, vsi->tc_cfg.ena_tc);
 
-	/* setup watchdog timeout value to be 5 second */
-	netdev->watchdog_timeo = 5 * HZ;
+	netdev->watchdog_timeo = watchdog_timeo * HZ;
 
 #ifdef HAVE_NETDEV_MIN_MAX_MTU
 	netdev->min_mtu = ETH_MIN_MTU;
@@ -1797,8 +1813,9 @@ static void ice_print_topo_conflict(struct ice_vsi *vsi)
  * ice_print_link_msg - print link up or down message
  * @vsi: the VSI whose link status is being queried
  * @isup: boolean for if the link is now up or down
+ * @link_speed: current link speed value to display
  */
-void ice_print_link_msg(struct ice_vsi *vsi, bool isup)
+void ice_print_link_msg(struct ice_vsi *vsi, bool isup, u16 link_speed)
 {
 	struct ice_aqc_get_phy_caps_data *caps;
 	const char *an_advertised;
@@ -1822,7 +1839,7 @@ void ice_print_link_msg(struct ice_vsi *vsi, bool isup)
 		return;
 	}
 
-	switch (vsi->port_info->phy.link_info.link_speed) {
+	switch (link_speed) {
 	case ICE_AQ_LINK_SPEED_200GB:
 		speed = "200 G";
 		break;
@@ -2003,8 +2020,7 @@ static void ice_set_dflt_mib(struct ice_pf *pf)
 	 * PFs are enabled, then only 4 TCs are allowed to be
 	 * programmed for LFC.
 	 */
-#define MAX_PFS_PER_DEVICE_FOR_MIB 8
-	if (hw->dev_caps.num_funcs == MAX_PFS_PER_DEVICE_FOR_MIB)
+	if (pf->hw.func_caps.common_cap.maxtc < IEEE_8021QAZ_MAX_TCS)
 		buf[0] |= ICE_IEEE_ETS_PRIO_1_S;
 
 	/* ETS CFG all UPs map to TC 0. Next 4 (1 - 4) Octets = 0.
@@ -2155,7 +2171,7 @@ static void ice_handle_link_change(struct ice_vsi *vsi, bool link_up,
 	else if (link_up)
 		ice_set_dflt_mib(pf);
 	ice_vsi_link_event(vsi, link_up);
-	ice_print_link_msg(vsi, link_up);
+	ice_print_link_msg(vsi, link_up, link_speed);
 
 	ice_vc_notify_link_state(pf);
 }
@@ -3064,7 +3080,8 @@ static void ice_service_timer(struct timer_list *t)
 {
 	struct ice_pf *pf = timer_container_of(pf, t, serv_tmr);
 
-	mod_timer(&pf->serv_tmr, round_jiffies(pf->serv_tmr_period + jiffies));
+	mod_timer(&pf->serv_tmr,
+		  round_jiffies(pf->serv_tmr_period + pf->serv_tmr_prev));
 	ice_service_task_schedule(pf);
 }
 
@@ -4716,9 +4733,6 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 {
 	struct ice_pf *pf = data;
 	struct ice_hw *hw = &pf->hw;
-#if !IS_ENABLED(CONFIG_PREEMPT_RT) || defined(HAVE_RT_IRQ_SCHED_FIX)
-	irqreturn_t ret = IRQ_HANDLED;
-#endif /* !CONFIG_PREEMPT_RT || HAVE_RT_IRQ_SCHED_FIX */
 	struct device *dev;
 	u32 oicr, ena_mask;
 
@@ -4729,6 +4743,8 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 
 	oicr = rd32(hw, PFINT_OICR);
 	ena_mask = rd32(hw, PFINT_OICR_ENA);
+
+	ice_trace(misc_intr_begin, pf, oicr, ena_mask);
 
 	if (oicr & PFINT_OICR_SWINT_M) {
 		ena_mask &= ~PFINT_OICR_SWINT_M;
@@ -4802,11 +4818,7 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 	if (oicr & PFINT_OICR_TSYN_TX_M) {
 		ena_mask &= ~PFINT_OICR_TSYN_TX_M;
 
-#if !IS_ENABLED(CONFIG_PREEMPT_RT) || defined(HAVE_RT_IRQ_SCHED_FIX)
-		ret = ice_ptp_ts_irq(pf);
-#else
 		ice_ptp_ts_irq(pf);
-#endif /* !CONFIG_PREEMPT_RT || HAVE_RT_IRQ_SCHED_FIX */
 	}
 
 	if (oicr & PFINT_OICR_TSYN_EVNT_M) {
@@ -4861,13 +4873,11 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 
 #if !IS_ENABLED(CONFIG_PREEMPT_RT) || defined(HAVE_RT_IRQ_SCHED_FIX)
 	ice_service_task_schedule(pf);
-	if (ret == IRQ_HANDLED)
-		ice_irq_dynamic_ena(hw, NULL, NULL);
-
-	return ret;
-#else /* CONFIG_PREEMPT_RT && !HAVE_RT_IRQ_SCHED_FIX */
-	return IRQ_WAKE_THREAD;
 #endif /* !CONFIG_PREEMPT_RT || HAVE_RT_IRQ_SCHED_FIX */
+
+	ice_trace(misc_intr_end, pf);
+
+	return IRQ_WAKE_THREAD;
 }
 
 /**
@@ -4882,6 +4892,8 @@ static irqreturn_t ice_misc_intr_thread_fn(int __always_unused irq, void *data)
 
 	hw = &pf->hw;
 
+	ice_trace(misc_intr_thread_fn_begin, pf);
+
 	if (ice_is_reset_in_progress(pf->state))
 		goto skip_irq;
 
@@ -4894,18 +4906,22 @@ static irqreturn_t ice_misc_intr_thread_fn(int __always_unused irq, void *data)
 		ice_ptp_extts_event(pf);
 #endif /* CONFIG_PREEMPT_RT && !HAVE_RT_IRQ_SCHED_FIX */
 
-	if (test_and_clear_bit(ICE_MISC_THREAD_TX_TSTAMP, pf->misc_thread)) {
-		/* Process outstanding Tx timestamps. If there is more work,
-		 * re-arm the interrupt to trigger again.
-		 */
-		if (ice_ptp_process_ts(pf) == ICE_TX_TSTAMP_WORK_PENDING) {
-			wr32(hw, PFINT_OICR, PFINT_OICR_TSYN_TX_M);
-			ice_flush(hw);
-		}
-	}
+	if (test_and_clear_bit(ICE_MISC_THREAD_TX_TSTAMP, pf->misc_thread))
+		ice_ptp_process_ts(pf);
 
 skip_irq:
 	ice_irq_dynamic_ena(hw, NULL, NULL);
+	ice_flush(hw);
+
+	if (ice_ptp_tx_tstamps_pending(pf)) {
+		/* If any new Tx timestamps happened while in interrupt,
+		 * re-arm the interrupt to trigger it again.
+		 */
+		wr32(hw, PFINT_OICR, PFINT_OICR_TSYN_TX_M);
+		ice_flush(hw);
+	}
+
+	ice_trace(misc_intr_thread_fn_end, pf);
 
 	return IRQ_HANDLED;
 }
@@ -5520,8 +5536,6 @@ static void ice_set_pf_caps(struct ice_pf *pf)
 		pf->vfs.num_supported = min_t(int, func_caps->num_allocd_vfs,
 					      ICE_MAX_SRIOV_VFS);
 	}
-	if (ice_is_siov_capable(pf))
-		set_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags);
 	clear_bit(ICE_FLAG_RSS_ENA, pf->flags);
 	if (func_caps->common_cap.rss_table_size)
 		set_bit(ICE_FLAG_RSS_ENA, pf->flags);
@@ -5575,6 +5589,7 @@ static int ice_init_pf(struct ice_pf *pf)
 	/* setup service timer and periodic service task */
 	timer_setup(&pf->serv_tmr, ice_service_timer, 0);
 	pf->serv_tmr_period = HZ;
+	pf->serv_tmr_prev = 0;
 	INIT_WORK(&pf->serv_task, ice_service_task);
 	clear_bit(ICE_SERVICE_SCHED, pf->state);
 
@@ -5903,9 +5918,6 @@ static int ice_prepare_for_safe_mode(struct ice_pf *pf)
 	pf_vsi->info.fd_options = cpu_to_le16(val);
 	if (test_bit(ICE_FLAG_SRIOV_ENA, pf->flags))
 		ice_free_vfs(pf);
-
-	if (test_bit(ICE_FLAG_SIOV_ENA, pf->flags))
-		ice_deinit_siov_res(pf);
 
 #ifdef HAVE_NDO_DFWD_OPS
 	if (test_bit(ICE_FLAG_MACVLAN_ENA, pf->flags)) {
@@ -6802,8 +6814,6 @@ static int ice_init_features(struct ice_pf *pf)
 #endif /* HAVE_NETDEV_UPPER_INFO */
 	ice_config_health_events(pf, true);
 
-	if (test_bit(ICE_FLAG_SIOV_CAPABLE, pf->flags))
-		ice_initialize_siov_res(pf);
 	/* Clear the CHECKSUM_COMPLETE_INV bit */
 	if (ice_is_feature_supported(pf, ICE_F_GCS)) {
 		reg = rd32(&pf->hw, GL_RDPU_CNTRL);
@@ -6823,8 +6833,6 @@ static void ice_deinit_features(struct ice_pf *pf)
 {
 	if (ice_is_safe_mode(pf))
 		return;
-	if (test_bit(ICE_FLAG_SIOV_ENA, pf->flags))
-		ice_deinit_siov_res(pf);
 #ifdef HAVE_NETDEV_UPPER_INFO
 
 	ice_deinit_lag(pf);
@@ -7781,32 +7789,55 @@ static int __maybe_unused ice_resume(struct device *dev)
 /**
  * ice_pci_err_detected - warning that PCI error has been detected
  * @pdev: PCI device information struct
- * @err: the type of PCI error
+ * @pci_state: state of the PCIe channel (determines the type of error)
  *
  * Called to warn that something happened on the PCI bus and the error handling
- * is in progress.  Allows the driver to gracefully prepare/handle PCI errors.
+ * is in progress. Allows the driver to decide if the device is recoverable
+ * and prepare for the recovery (if any).
  */
 static pci_ers_result_t
-ice_pci_err_detected(struct pci_dev *pdev, pci_channel_state_t err)
+ice_pci_err_detected(struct pci_dev *pdev, pci_channel_state_t pci_state)
 {
 	struct ice_pf *pf = pci_get_drvdata(pdev);
 
-	if (!pf) {
-		dev_err(&pdev->dev, "%s: unrecoverable device error %d\n",
-			__func__, err);
+	if (!pf)
 		return PCI_ERS_RESULT_DISCONNECT;
-	}
 
-	if (!test_bit(ICE_SUSPENDED, pf->state)) {
-		ice_service_task_stop(pf);
+	switch (pci_state) {
+	case pci_channel_io_perm_failure:
+		/* PCIe link is dead, disconnect the device */
+		dev_err(&pdev->dev, "%s: unrecoverable PCI or device error %d\n",
+			__func__, pci_state);
 
-		if (!test_bit(ICE_PREPARED_FOR_RESET, pf->state)) {
-			set_bit(ICE_PFR_REQ, pf->state);
-			ice_prepare_for_reset(pf, ICE_RESET_PFR);
+		return PCI_ERS_RESULT_DISCONNECT;
+	case pci_channel_io_frozen:
+		/* uncorrectable fatal error, PCIe needs a reset,
+		 * which will result in PCIR and GLOBR triggered in the HW,
+		 * cleanup resources and prepare to bring the HW up after resets
+		 */
+		pf->hw.reset_ongoing = true;
+		ice_prepare_for_reset(pf, ICE_RESET_CORER);
+		ice_free_irq_msix_misc(pf);
+		ice_free_irq_msix_ll_ts(pf);
+
+		return PCI_ERS_RESULT_NEED_RESET;
+	case pci_channel_io_normal:
+		/* uncorrectable non-fatal error, no PCIe reset needed,
+		 * but there might be a data loss, so prepare for a PF reset
+		 */
+		if (!test_bit(ICE_SUSPENDED, pf->state)) {
+			ice_service_task_stop(pf);
+
+			if (!test_bit(ICE_PREPARED_FOR_RESET, pf->state)) {
+				set_bit(ICE_PFR_REQ, pf->state);
+				ice_prepare_for_reset(pf, ICE_RESET_PFR);
+			}
 		}
+		return PCI_ERS_RESULT_CAN_RECOVER;
+	default:
+		/* Very unlikely case of unknown/unsupported PCIe state */
+		return PCI_ERS_RESULT_NONE;
 	}
-
-	return PCI_ERS_RESULT_NEED_RESET;
 }
 
 /**
@@ -7876,8 +7907,23 @@ static void ice_pci_err_resume(struct pci_dev *pdev)
 
 	ice_restore_all_vfs_msi_state(pdev);
 
-	ice_do_reset(pf, ICE_RESET_PFR);
-	ice_service_task_restart(pf);
+	if (pf->hw.reset_ongoing) {
+		/* recovering from an uncorrectable fatal error,
+		 * there was a PCIe reset followed by a CORER
+		 */
+		pf->hw.reset_ongoing = false;
+		ice_rebuild(pf, ICE_RESET_CORER);
+		clear_bit(ICE_PREPARED_FOR_RESET, pf->state);
+		ice_reset_all_vfs(pf);
+	} else {
+		/* recovering from an uncorrectable non-fatal error,
+		 * there was no reset, so trigger one to cleanup the device
+		 * and recover from a potential data loss on the PCIe channel
+		 */
+		ice_do_reset(pf, ICE_RESET_PFR);
+		ice_service_task_restart(pf);
+	}
+
 	mod_timer(&pf->serv_tmr, round_jiffies(jiffies + pf->serv_tmr_period));
 }
 
@@ -8049,7 +8095,7 @@ static int __init ice_module_init(void)
 	pr_info("%s - version %s\n", ice_driver_string, ice_drv_ver);
 	pr_info("%s\n", ice_copyright);
 
-	ice_wq = alloc_workqueue("%s", 0, 0, KBUILD_MODNAME);
+	ice_wq = alloc_workqueue("%s", WQ_UNBOUND, 0, KBUILD_MODNAME);
 	if (!ice_wq) {
 		pr_err("Failed to create workqueue\n");
 		return -ENOMEM;
@@ -9350,7 +9396,8 @@ static int ice_up_complete(struct ice_vsi *vsi)
 	    (vsi->port_info->phy.link_info.link_info & ICE_AQ_LINK_UP) &&
 	    vsi->netdev && vsi->type == ICE_VSI_PF) {
 		ice_ptp_link_change(pf, true);
-		ice_print_link_msg(vsi, true);
+		ice_print_link_msg(vsi, true,
+				   vsi->port_info->phy.link_info.link_speed);
 		netif_tx_start_all_queues(vsi->netdev);
 		netif_carrier_on(vsi->netdev);
 	}
@@ -9888,12 +9935,8 @@ int ice_down(struct ice_vsi *vsi)
 
 	ice_napi_disable_all(vsi);
 
-	ice_for_each_txq(vsi, i) {
-		if (vsi->tstamp_rings &&
-		    (vsi->tx_rings[i]->flags & ICE_TX_FLAGS_TXTIME))
-			ice_clean_tstamp_ring(vsi->tstamp_rings[i]);
+	ice_for_each_txq(vsi, i)
 		ice_clean_tx_ring(vsi->tx_rings[i]);
-	}
 
 	ice_for_each_rxq(vsi, i)
 		ice_clean_rx_ring(vsi->rx_rings[i]);
@@ -9960,16 +10003,6 @@ int ice_vsi_setup_tx_rings(struct ice_vsi *vsi)
 		err = ice_setup_tx_ring(tx_ring);
 		if (err)
 			break;
-		if (vsi->tstamp_rings) {
-			struct ice_tx_ring *tstamp_ring = vsi->tstamp_rings[i];
-
-			if (vsi->netdev)
-				tstamp_ring->netdev = vsi->netdev;
-
-			err = ice_setup_tstamp_ring(tstamp_ring);
-			if (err)
-				break;
-		}
 	}
 
 	return err;
@@ -10335,10 +10368,6 @@ static void ice_rebuild(struct ice_pf *pf, enum ice_reset_req reset_type)
 		if (err)
 			goto err_init_ctrlq;
 	}
-
-	/* Restore necessary config for Scalable IOV */
-	if (test_bit(ICE_FLAG_SIOV_ENA, pf->flags))
-		ice_restore_pasid_config(pf, reset_type);
 
 	err = ice_clear_pf_cfg(hw);
 	if (err) {
@@ -10821,6 +10850,35 @@ int ice_get_rss_key(struct ice_vsi *vsi, u8 *seed)
 			status, ice_aq_str(hw->adminq.sq_last_status));
 
 	return status;
+}
+
+/**
+ * ice_get_rss - Get RSS LUT and/or key
+ * @vsi: Pointer to VSI structure
+ * @seed: Buffer to store the key in
+ * @lut: Buffer to store the lookup table entries
+ * @lut_size: Size of buffer to store the lookup table entries
+ *
+ * Returns 0 on success, negative on failure
+ */
+int ice_get_rss(struct ice_vsi *vsi, u8 *seed, u8 *lut,
+		enum ice_lut_size lut_size)
+{
+	int err;
+
+	if (seed) {
+		err = ice_get_rss_key(vsi, seed);
+		if (err)
+			return err;
+	}
+
+	if (lut) {
+		err = ice_get_rss_lut(vsi, lut, lut_size);
+		if (err)
+			return err;
+	}
+
+	return 0;
 }
 
 /**
@@ -11964,11 +12022,11 @@ static void ice_rem_all_chnl_fltrs(struct ice_pf *pf)
 		} else if (fltr->dest_vsi) {
 			/* update advanced switch filter count */
 			if (fltr->dest_vsi->type == ICE_VSI_CHNL) {
-				u32 flags = fltr->flags;
-
 				fltr->dest_vsi->num_chnl_fltr--;
-				if (flags & (ICE_TC_FLWR_FIELD_DST_MAC |
-					     ICE_TC_FLWR_FIELD_ENC_DST_MAC))
+				if (test_bit(ICE_TC_FLWR_FIELD_DST_MAC,
+					     fltr->flags) ||
+				    test_bit(ICE_TC_FLWR_FIELD_ENC_DST_MAC,
+					     fltr->flags))
 					pf->num_dmac_chnl_fltrs--;
 			}
 		}
@@ -12442,74 +12500,36 @@ exit:
 
 #ifdef HAVE_TC_ETF_QOPT_OFFLOAD
 /**
- * ice_is_txtime_ena - check if TxTime is enabled
- * @vsi: VSI to check
+ * ice_cfg_txtime - configure Tx Time for the Tx ring
+ * @tx_ring: pointer to the Tx ring structure
  *
- * Returns true if TxTime is enabled on any Tx queue, else false.
+ * Return: 0 on success, negative value on failure.
  */
-static bool ice_is_txtime_ena(struct ice_vsi *vsi)
+static int ice_cfg_txtime(struct ice_tx_ring *tx_ring)
 {
-	int i;
+	struct ice_vsi *vsi;
+	struct device *dev;
+	struct ice_pf *pf;
+	u32 queue;
+	int err;
 
-	ice_for_each_txq(vsi, i)
-		if (vsi->tx_rings[i]->flags & ICE_TX_FLAGS_TXTIME)
-			return true;
+	if (!tx_ring)
+		return -EINVAL;
 
-	return false;
-}
+	vsi = tx_ring->vsi;
+	pf = vsi->back;
+	queue = tx_ring->q_index;
+	dev = ice_pf_to_dev(pf);
 
-/**
- * ice_vsi_cfg_txtime - configure TxTime for the VSI
- * @vsi: VSI to reconfigure
- * @enable: enable or disable TxTime
- * @queue: Tx queue to configure TxTime on
- *
- * Returns 0 on success, negative value on failure.
- */
-static int ice_vsi_cfg_txtime(struct ice_vsi *vsi, bool enable,
-			      int queue)
-{
-	bool if_running = netif_running(vsi->netdev);
-	struct ice_pf *pf = vsi->back;
-	int ret, timeout = 50;
+	/* Ignore return value, and always attempt to enable queue. */
+	ice_qp_dis(vsi, queue);
 
-	while (test_and_set_bit(ICE_CFG_BUSY, vsi->back->state)) {
-		timeout--;
-		if (!timeout)
-			return -EBUSY;
-		usleep_range(1000, 2000);
-	}
+	err = ice_qp_ena(vsi, queue);
+	if (err)
+		dev_err(dev, "Failed to enable Tx queue %d for TxTime configuration\n",
+			queue);
 
-	/* If rnnning, close and open VSI to clear and reconfigure all rings. */
-	if (if_running)
-		ice_vsi_close(vsi);
-
-	/* Enable or disable PF TxTime flag which is checked during VSI rebuild
-	 * for allocating the timestamp rings.
-	 */
-	if (enable)
-		set_bit(ICE_FLAG_TXTIME, pf->flags);
-	else
-		clear_bit(ICE_FLAG_TXTIME, pf->flags);
-
-	/* Rebuild VSI to allocate or free timestamp rings */
-	ret = ice_vsi_rebuild(vsi, ICE_VSI_FLAG_NO_INIT);
-	if (ret) {
-		dev_err(ice_pf_to_dev(pf), "Unhandled error during VSI rebuild. Unload and reload the driver.\n");
-		goto done;
-	}
-
-	if (enable)
-		vsi->tx_rings[queue]->flags |= ICE_TX_FLAGS_TXTIME;
-
-	if (!if_running)
-		goto done;
-
-	ice_vsi_open(vsi);
-
-done:
-	clear_bit(ICE_CFG_BUSY, vsi->back->state);
-	return ret;
+	return err;
 }
 
 /**
@@ -12517,7 +12537,7 @@ done:
  * @netdev: network interface device structure
  * @qopt_off: etf queue option offload from the skb to set
  *
- * Returns 0 on success, negative value on failure.
+ * Return: 0 on success, negative value on failure.
  */
 static int ice_offload_txtime(struct net_device *netdev,
 			      void *qopt_off)
@@ -12536,44 +12556,28 @@ static int ice_offload_txtime(struct net_device *netdev,
 	if (!qopt_off || qopt->queue < 0 || qopt->queue >= vsi->num_txq)
 		return -EINVAL;
 
-	tx_ring = vsi->tx_rings[qopt->queue];
-
-	/* Enable or disable TxTime on the specified Tx queue. */
 	if (qopt->enable)
-		tx_ring->flags |= ICE_TX_FLAGS_TXTIME;
+		set_bit(qopt->queue,  vsi->txtime_txqs);
 	else
-		tx_ring->flags &= ~ICE_TX_FLAGS_TXTIME;
+		clear_bit(qopt->queue, vsi->txtime_txqs);
 
-	/* When TxTime is first enabled on any Tx queue or is disabled on all
-	 * Tx queues, then configure TxTime to allocate or free resources.
-	 */
-	if (!test_bit(ICE_FLAG_TXTIME, pf->flags) || !ice_is_txtime_ena(vsi)) {
-		ret = ice_vsi_cfg_txtime(vsi, qopt->enable, qopt->queue);
-		if (ret)
-			goto err;
-	} else if (netif_running(netdev)) {
-		struct ice_aqc_ena_dis_txtime_qgrp txtime_pg;
-		struct ice_hw *hw = &pf->hw;
-
-		/* If queues are allocated and configured (running), then enable
-		 * or disable TxTime on the specified queue.
-		 */
-		ret = ice_aq_ena_dis_txtimeq(hw, qopt->queue, 1, qopt->enable,
-					     &txtime_pg, NULL);
+	if (netif_running(vsi->netdev)) {
+		tx_ring = vsi->tx_rings[qopt->queue];
+		ret = ice_cfg_txtime(tx_ring);
 		if (ret)
 			goto err;
 	}
+
 	netdev_info(netdev, "%s TxTime on queue: %i\n",
 		    str_enable_disable(qopt->enable), qopt->queue);
 	return 0;
+
 err:
 	netdev_err(netdev, "Failed to %s TxTime on queue: %i\n",
 		   str_enable_disable(qopt->enable), qopt->queue);
 
 	if (qopt->enable)
-		tx_ring->flags &= ~ICE_TX_FLAGS_TXTIME;
-	else
-		tx_ring->flags |= ICE_TX_FLAGS_TXTIME;
+		clear_bit(qopt->queue,  vsi->txtime_txqs);
 	return ret;
 }
 #endif /* HAVE_TC_ETF_QOPT_OFFLOAD */
@@ -12663,8 +12667,6 @@ ice_setup_tc(struct net_device *netdev, u32 __always_unused handle,
 	case TC_SETUP_QDISC_ETF:
 #ifdef HAVE_TC_ETF_QOPT_OFFLOAD
 		return ice_offload_txtime(netdev, type_data);
-#else
-		return -EOPNOTSUPP;
 #endif /* HAVE_TC_ETF_QOPT_OFFLOAD */
 	default:
 		return -EOPNOTSUPP;
@@ -13201,6 +13203,10 @@ static const struct net_device_ops ice_netdev_ops = {
 	.ndo_set_tx_maxrate = ice_set_tx_maxrate,
 #endif /* HAVE_NDO_EXTENDED_SET_TX_MAXRATE */
 #endif /* HAVE_NDO_SET_TX_MAXRATE */
+#ifdef HAVE_NDO_HWTSTAMP
+	.ndo_hwtstamp_get = ice_ptp_hwtstamp_get,
+	.ndo_hwtstamp_set = ice_ptp_hwtstamp_set,
+#endif /* HAVE_NDO_HWTSTAMP */
 #ifdef HAVE_NDO_ETH_IOCTL
 	.ndo_eth_ioctl = ice_eth_ioctl,
 #else

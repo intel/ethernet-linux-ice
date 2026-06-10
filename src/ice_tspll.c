@@ -143,16 +143,17 @@ static void ice_tspll_set_params_e82x(struct ice_pf *pf,
 				      enum ice_src_tmr_mode src_tmr_mode)
 {
 	struct ice_ptp_port *port;
+	unsigned long port_num;
 
-	mutex_lock(&pf->adapter->ports.lock);
-	list_for_each_entry(port, &pf->adapter->ports.ports, list_node) {
+	rcu_read_lock();
+	xa_for_each(&pf->adapter->ptp_ports, port_num, port) {
 		struct ice_pf *target_pf = ptp_port_to_pf(port);
 
 		target_pf->hw.ptp.tspll_freq = tspll_freq;
 		target_pf->hw.ptp.src_tmr_mode = src_tmr_mode;
 		target_pf->hw.ptp.clk_src = clk_src;
 	}
-	mutex_unlock(&pf->adapter->ports.lock);
+	rcu_read_unlock();
 }
 
 /**
@@ -1173,6 +1174,24 @@ int ice_tspll_cfg_cgu_err_reporting(struct ice_hw *hw, bool enable)
 
 	return 0;
 }
+
+#ifdef ICE_TSPLL_FALLBACK_ON_UNLOAD
+/**
+ * ice_tspll_set_txco - Release CGU by locking to TCXO
+ * @hw: pointer to the HW structure
+ */
+void ice_tspll_set_txco(struct ice_hw *hw)
+{
+	enum ice_tspll_freq tspll_freq;
+	enum ice_clk_src clk_src;
+
+	/* Lock to internal 25 MHz TCXO */
+	tspll_freq = ICE_TSPLL_FREQ_25_000;
+	clk_src = ICE_CLK_SRC_TCXO;
+
+	ice_tspll_cfg(hw, tspll_freq, clk_src);
+}
+#endif /* ICE_TSPLL_FALLBACK_ON_UNLOAD */
 
 /**
  * ice_tspll_init - Initialize TSPLL with settings from firmware

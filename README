@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-March 02, 2026
+May 13, 2026
 
 
 Contents
@@ -517,7 +517,7 @@ Note:
 Note:
 
   When using Link Aggregation, RDMA in VF is not available - the
-  VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+  VIRTCHNL capability VIRTCHNL_VF_OFFLOAD_RDMA is disabled.
 
 
 Auxiliary Bus
@@ -616,6 +616,11 @@ Link Aggregation (LAG)/bonding allows combining multiple physical
 interfaces to provide redundancy and in some configurations increase
 total throughput.
 
+LAG DDP package is required for LAG functionality. The default DDP
+package installed by the driver does not support LAG. If you are using
+a custom DDP package, make sure it supports LAG if you want to use
+this feature.
+
 
 Link Aggregation and RDMA
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -675,7 +680,7 @@ If the ice driver is configured for active-active LAG:
 Note:
 
   When using Link Aggregation, RDMA in VF is not available - the
-  VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+  VIRTCHNL capability VIRTCHNL_VF_OFFLOAD_RDMA is disabled.
 
 
 Link Aggregation and SR-IOV VFs
@@ -704,11 +709,6 @@ with bridges:
 
 * The FW LLDP Agent is disabled on both bond ports (see FW-LLDP
   (Firmware Link Layer Discovery Protocol))
-
-* Firmware supports LAN VF LAG capability:
-     * For active-backup mode: version 4.30 or newer
-
-     * For other modes: version 4.80 or newer
 
 * The ice_lag DDP package is loaded
 
@@ -2372,6 +2372,12 @@ For example, to have your device advertise 10000baseSR Full, use:
    ethtool -s <ethX> advertise 0x80000000000
 
 For more details, please refer to the ethtool man page.
+
+Note:
+
+  Toggling autonegotiation is supported on selected E82x devices when
+  used with supported 1G modules; refer to the device User Guide to
+  confirm availability for your adapter and module combination.
 
 
 Data Center Bridging (DCB)

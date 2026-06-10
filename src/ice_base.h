@@ -16,10 +16,7 @@ void ice_vsi_map_rings_to_vectors(struct ice_vsi *vsi);
 void ice_vsi_free_q_vectors(struct ice_vsi *vsi);
 int
 ice_vsi_cfg_txq(struct ice_vsi *vsi, struct ice_tx_ring *ring,
-		struct ice_tx_ring *tstamp_ring,
-		struct ice_aqc_add_tx_qgrp *qg_buf,
-		struct ice_aqc_set_txtime_qgrp *txtime_qg_buf);
-u16 ice_calc_ts_ring_count(struct ice_hw *hw, u16 tx_desc_count);
+		struct ice_aqc_add_tx_qgrp *qg_buf);
 void ice_cfg_itr(struct ice_hw *hw, struct ice_q_vector *q_vector);
 void
 ice_cfg_txq_interrupt(struct ice_vsi *vsi, u16 txq, u16 msix_idx, u16 itr_idx);
@@ -33,4 +30,7 @@ ice_vsi_stop_tx_ring(struct ice_vsi *vsi, enum ice_disq_rst_src rst_src,
 void
 ice_fill_txq_meta(struct ice_vsi *vsi, struct ice_tx_ring *ring,
 		  struct ice_txq_meta *txq_meta);
+int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx);
+int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx);
+u16 ice_calc_ts_ring_count(struct ice_tx_ring *ring);
 #endif /* _ICE_BASE_H_ */

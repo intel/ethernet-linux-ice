@@ -12,11 +12,15 @@ struct ice_pf;
 void ice_send_event_to_auxs(struct ice_pf *pf, struct iidc_event *event);
 struct iidc_auxiliary_drv
 *ice_get_auxiliary_drv(struct iidc_core_dev_info *cdev_info);
-void ice_send_event_to_aux_no_lock(struct iidc_core_dev_info *cdev, void *data);
+int
+ice_send_event_to_aux(struct iidc_core_dev_info *cdev_info, void *data,
+		      bool locked);
 
 void ice_cdev_info_update_vsi(struct iidc_core_dev_info *cdev_info,
 			      struct ice_vsi *vsi);
-int ice_unroll_cdev_info(struct iidc_core_dev_info *cdev_info, void *data);
+int ice_unroll_cdev_info(struct iidc_core_dev_info *cdev_info,
+			 void __always_unused *data,
+			 bool __always_unused locked);
 struct iidc_core_dev_info
 *ice_find_cdev_info_by_id(struct ice_pf *pf, int cdev_info_id);
 

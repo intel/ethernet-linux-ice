@@ -2560,7 +2560,7 @@ static void ice_lag_rdma_changeupper_event(struct ice_lag *lag,
  *
  * Change a flag in the primary's lag struct and issue all VF reset. As part of
  * VF reset, ice_vc_get_vf_res_msg() will check the flag in lag struct and
- * decide whether to set the VIRTCHNL_VF_CAP_RDMA capability, enabling or
+ * decide whether to set the VIRTCHNL_VF_OFFLOAD_RDMA capability, enabling or
  * disabling VF RDMA.
  *
  * Note: ice_reset_all_vfs() is not used, as it is designed for different use
@@ -2721,14 +2721,11 @@ void ice_lag_rdma_aa_failover(struct ice_lag *lag,
 	if (!(cdev->rdma_port_bitmap & dest))
 		return;
 
-	if (cdev->adev && !locked)
-		device_lock(&cdev->adev->dev);
-
 	if (cdev->adev) {
 		event = kzalloc(sizeof(*event), GFP_ATOMIC);
 		if (event) {
 			set_bit(IIDC_EVENT_FAILOVER_START, event->type);
-			ice_send_event_to_aux_no_lock(cdev, event);
+			ice_send_event_to_aux(cdev, event, locked);
 		}
 	}
 
@@ -2787,11 +2784,9 @@ void ice_lag_rdma_aa_failover(struct ice_lag *lag,
 	if (event) {
 		clear_bit(IIDC_EVENT_FAILOVER_START, event->type);
 		set_bit(IIDC_EVENT_FAILOVER_FINISH, event->type);
-		ice_send_event_to_aux_no_lock(cdev, event);
+		ice_send_event_to_aux(cdev, event, locked);
 		kfree(event);
 	}
-	if (cdev->adev && !locked)
-		device_unlock(&cdev->adev->dev);
 }
 
 static void
@@ -2866,11 +2861,10 @@ ice_lag_rdma_monitor_link(struct ice_lag *lag, struct ice_hw *event_hw,
 	if (!cdev->adev)
 		return;
 
-	device_lock(&cdev->adev->dev);
 	event = kzalloc(sizeof(*event), GFP_ATOMIC);
 	if (event) {
 		set_bit(IIDC_EVENT_FAILOVER_START, event->type);
-		ice_send_event_to_aux_no_lock(cdev, event);
+		ice_send_event_to_aux(cdev, event, false);
 	}
 
 	dev_warn(ice_pf_to_dev(lag->pf), "Moving nodes from %d to %d\n",
@@ -2882,10 +2876,9 @@ ice_lag_rdma_monitor_link(struct ice_lag *lag, struct ice_hw *event_hw,
 	if (event) {
 		clear_bit(IIDC_EVENT_FAILOVER_START, event->type);
 		set_bit(IIDC_EVENT_FAILOVER_FINISH, event->type);
-		ice_send_event_to_aux_no_lock(cdev, event);
+		ice_send_event_to_aux(cdev, event, false);
 		kfree(event);
 	}
-	device_unlock(&cdev->adev->dev);
 }
 
 /**
@@ -3093,13 +3086,12 @@ static void ice_lag_rdma_monitor_act_back(struct ice_lag *lag,
 			if (!cdev->adev)
 				return;
 
-			device_lock(&cdev->adev->dev);
 			/* start failover process for RDMA */
 			event = kzalloc(sizeof(*event), GFP_ATOMIC);
 			if (event) {
 				set_bit(IIDC_EVENT_FAILOVER_START,
 					event->type);
-				ice_send_event_to_aux_no_lock(cdev, event);
+				ice_send_event_to_aux(cdev, event, false);
 			}
 
 			dev_dbg(ice_pf_to_dev(lag->pf), "Moving nodes from %d to %d\n",
@@ -3111,10 +3103,9 @@ static void ice_lag_rdma_monitor_act_back(struct ice_lag *lag,
 					  event->type);
 				set_bit(IIDC_EVENT_FAILOVER_FINISH,
 					event->type);
-				ice_send_event_to_aux_no_lock(cdev, event);
+				ice_send_event_to_aux(cdev, event, false);
 				kfree(event);
 			}
-			device_unlock(&cdev->adev->dev);
 		}
 		return;
 	}
@@ -3125,12 +3116,11 @@ static void ice_lag_rdma_monitor_act_back(struct ice_lag *lag,
 
 		if (!cdev->adev)
 			return;
-		device_lock(&cdev->adev->dev);
 		/* start failover process for RDMA */
 		event = kzalloc(sizeof(*event), GFP_ATOMIC);
 		if (event) {
 			set_bit(IIDC_EVENT_FAILOVER_START, event->type);
-			ice_send_event_to_aux_no_lock(cdev, event);
+			ice_send_event_to_aux(cdev, event, false);
 		}
 
 		dev_dbg(ice_pf_to_dev(lag->pf), "Moving nodes from %d to %d\n",
@@ -3141,10 +3131,9 @@ static void ice_lag_rdma_monitor_act_back(struct ice_lag *lag,
 		if (event) {
 			clear_bit(IIDC_EVENT_FAILOVER_START, event->type);
 			set_bit(IIDC_EVENT_FAILOVER_FINISH, event->type);
-			ice_send_event_to_aux_no_lock(cdev, event);
+			ice_send_event_to_aux(cdev, event, false);
 			kfree(event);
 		}
-		device_unlock(&cdev->adev->dev);
 	}
 }
 

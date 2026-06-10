@@ -433,7 +433,7 @@ static void
 ice_set_pfe_link(struct ice_vf *vf, struct virtchnl_pf_event *pfe,
 		 int ice_link_speed, bool link_up)
 {
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_ADV_LINK_SPEED) {
+	if (test_bit(VIRTCHNL_VF_CAP_ADV_LINK_SPEED, vf->driver_caps)) {
 		pfe->event_data.link_event_adv.link_status = link_up;
 		/* Speed in Mbps */
 		pfe->event_data.link_event_adv.link_speed =
@@ -609,26 +609,26 @@ static u16 ice_vc_get_max_frame_size(struct ice_vf *vf)
 }
 
 /**
- * ice_vc_get_vlan_caps
+ * ice_vc_get_vlan_caps - get VF capability flags based on driver caps
  * @hw: pointer to the hw
  * @vf: pointer to the VF info
  * @vsi: pointer to the VSI
  * @driver_caps: current driver caps
  *
- * Return 0 if there is no VLAN caps supported, or VLAN caps value
+ * Return: 0 if there is no VLAN caps supported, or VLAN caps value
  */
 static u32
 ice_vc_get_vlan_caps(struct ice_hw *hw, struct ice_vf *vf, struct ice_vsi *vsi,
-		     u32 driver_caps)
+		     const unsigned long *driver_caps)
 {
 	if (ice_is_eswitch_mode_switchdev(vf->pf))
 		/* In switchdev setting VLAN from VF isn't supported */
 		return 0;
 
-	if (driver_caps & VIRTCHNL_VF_OFFLOAD_VLAN_V2) {
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_VLAN_V2, driver_caps)) {
 		/* VLAN offloads based on current device configuration */
-		return VIRTCHNL_VF_OFFLOAD_VLAN_V2;
-	} else if (driver_caps & VIRTCHNL_VF_OFFLOAD_VLAN) {
+		return BIT(VIRTCHNL_VF_OFFLOAD_VLAN_V2);
+	} else if (test_bit(VIRTCHNL_VF_OFFLOAD_VLAN, driver_caps)) {
 		/* allow VF to negotiate VIRTCHNL_VF_OFFLOAD explicitly for
 		 * these two conditions, which amounts to guest VLAN filtering
 		 * and offloads being based on the inner VLAN or the
@@ -636,7 +636,7 @@ ice_vc_get_vlan_caps(struct ice_hw *hw, struct ice_vf *vf, struct ice_vsi *vsi,
 		 * negotiate VIRTCHNL_VF_OFFLOAD in any other cases
 		 */
 		if (ice_is_dvm_ena(hw) && ice_vf_is_port_vlan_ena(vf)) {
-			return VIRTCHNL_VF_OFFLOAD_VLAN;
+			return BIT(VIRTCHNL_VF_OFFLOAD_VLAN);
 		} else if (!ice_is_dvm_ena(hw) &&
 			   !ice_vf_is_port_vlan_ena(vf)) {
 			/* configure backward compatible support for VFs that
@@ -644,7 +644,7 @@ ice_vc_get_vlan_caps(struct ice_hw *hw, struct ice_vf *vf, struct ice_vsi *vsi,
 			 * configured in SVM, and no port VLAN is configured
 			 */
 			ice_vf_vsi_cfg_svm_legacy_vlan_mode(vsi);
-			return VIRTCHNL_VF_OFFLOAD_VLAN;
+			return BIT(VIRTCHNL_VF_OFFLOAD_VLAN);
 		} else if (ice_is_dvm_ena(hw)) {
 			/* configure software offloaded VLAN support when DVM
 			 * is enabled, but no port VLAN is enabled
@@ -692,15 +692,24 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 		len = 0;
 		goto err;
 	}
-	if (VF_IS_V11(&vf->vf_ver))
-		vf->driver_caps = *(u32 *)msg;
-	else
-		vf->driver_caps = VIRTCHNL_VF_OFFLOAD_L2 |
-				  VIRTCHNL_VF_OFFLOAD_VLAN;
+
+	bitmap_zero(vf->driver_caps, VIRTCHNL_VF_CAPS_MAX);
+	if (VF_IS_V11(&vf->vf_ver)) {
+		/* VIRTCHNL_OP_GET_VF_RESOURCES only sends the first 32 flags.
+		 * If VIRTCHNL_VF_CAPS2 (bit 2) is set, then there are more
+		 * flags. A complete set (including the first 32) is then sent
+		 * via VIRTCHNL_OP_GET_VF_CAPS2.
+		 */
+		bitmap_from_arr32(vf->driver_caps, (u32 *)msg,
+				  BITS_PER_TYPE(u32));
+	} else {
+		__set_bit(VIRTCHNL_VF_OFFLOAD_L2, vf->driver_caps);
+		__set_bit(VIRTCHNL_VF_OFFLOAD_VLAN, vf->driver_caps);
+	}
 
 	if (vf->migration_active)
-		vf->driver_caps &= ice_migration_supported_caps();
-	vfres->vf_cap_flags = VIRTCHNL_VF_OFFLOAD_L2;
+		ice_migration_set_supported_caps(vf->driver_caps);
+	vfres->vf_cap_flags = BIT(VIRTCHNL_VF_OFFLOAD_L2);
 	vsi = ice_get_vf_vsi(vf);
 	if (!vsi) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -710,62 +719,66 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 	vfres->vf_cap_flags |= ice_vc_get_vlan_caps(hw, vf, vsi,
 						    vf->driver_caps);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RSS_PF)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RSS_PF;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_RSS_PF, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_RSS_PF);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_FDIR_PF)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_FDIR_PF;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_FDIR_PF, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_FDIR_PF);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_FSUB_PF)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_FSUB_PF;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_FSUB_PF, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_FSUB_PF);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ENCAP)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_ENCAP;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ENCAP, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_ENCAP);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RX_POLLING)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RX_POLLING;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_RX_POLLING, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_RX_POLLING);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_WB_ON_ITR)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_WB_ON_ITR;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_WB_ON_ITR, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_WB_ON_ITR);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_REQ_QUEUES)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_REQ_QUEUES;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_REQ_QUEUES, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_REQ_QUEUES);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_CRC)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_CRC;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_CRC, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_CRC);
 
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_ADV_LINK_SPEED)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_ADV_LINK_SPEED;
+	if (test_bit(VIRTCHNL_VF_CAP_ADV_LINK_SPEED, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_CAP_ADV_LINK_SPEED);
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF);
 #ifdef __TC_MQPRIO_MODE_MAX
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ &&
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ADQ, vf->driver_caps) &&
 	    !ice_is_eswitch_mode_switchdev(pf))
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_ADQ;
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2 &&
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_ADQ);
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ADQ_V2, vf->driver_caps) &&
 	    !ice_is_eswitch_mode_switchdev(pf))
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_ADQ_V2;
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_ADQ_V2);
 #endif /* __TC_MQPRIO_MODE_MAX */
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_USO)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_USO;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_USO, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_USO);
 
-	if (vf->driver_caps & VIRTCHNL_VF_LARGE_NUM_QPAIRS &&
+	if (test_bit(VIRTCHNL_VF_LARGE_NUM_QPAIRS, vf->driver_caps) &&
 	    vsi->rss_lut_type != ICE_LUT_VSI)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_LARGE_NUM_QPAIRS;
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_LARGE_NUM_QPAIRS);
+
+	/* Indicate that VF can send more flags in VIRTCHNL_OP_GET_VF_CAPS2 */
+	if (test_bit(VIRTCHNL_VF_CAPS2, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_CAPS2);
 
 	/* Negotiate DCF capability. */
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_DCF) {
+	if (test_bit(VIRTCHNL_VF_CAP_DCF, vf->driver_caps)) {
 		if (!ice_is_dcf_enabled(pf)) {
 			if (!ice_check_dcf_allowed(vf)) {
 				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -789,7 +802,7 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 			}
 		}
 
-		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_DCF;
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_CAP_DCF);
 		ice_dcf_set_state(pf, ICE_DCF_STATE_ON);
 	} else if (ice_is_vf_dcf(vf) &&
 		   ice_dcf_get_state(pf) != ICE_DCF_STATE_OFF) {
@@ -808,10 +821,10 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 		ice_reset_vf(vf, 0);
 	}
 
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_QOS)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_QOS;
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_QOS, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_QOS);
 
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_RDMA &&
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_RDMA, vf->driver_caps) &&
 	    vf->vf_ops->cfg_rdma_irq_map && vf->vf_ops->clear_rdma_irq_map &&
 	    ice_is_aux_ena(pf) && ice_is_rdma_ena(pf) &&
 #if defined(HAVE_NETDEV_UPPER_INFO)
@@ -819,11 +832,11 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 #else
 	    ice_is_rdma_aux_loaded(pf))
 #endif /* LAG_SUPPORT && HAVE_NETDEV_UPPER_INFO */
-		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_RDMA;
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_OFFLOAD_RDMA);
 
 	if (ice_is_ptp_supported(pf) &&
-	    vf->driver_caps & VIRTCHNL_VF_CAP_PTP)
-		vfres->vf_cap_flags |= VIRTCHNL_VF_CAP_PTP;
+	    test_bit(VIRTCHNL_VF_CAP_PTP, vf->driver_caps))
+		vfres->vf_cap_flags |= BIT(VIRTCHNL_VF_CAP_PTP);
 
 	vfres->num_vsis = 1;
 	/* Tx and Rx queue are equal for VF */
@@ -840,7 +853,8 @@ static int ice_vc_get_vf_res_msg(struct ice_vf *vf, u8 *msg)
 			vf->hw_lan_addr.addr);
 
 	/* match guest capabilities */
-	vf->driver_caps = vfres->vf_cap_flags;
+	bitmap_from_arr32(vf->driver_caps, &vfres->vf_cap_flags,
+			  BITS_PER_TYPE(u32));
 
 	ice_vc_set_caps_allowlist(vf);
 	ice_vc_set_working_allowlist(vf);
@@ -897,16 +911,16 @@ static bool ice_vc_isvalid_q_id(struct ice_vsi *vsi, u16 qid)
 
 /**
  * ice_vc_isvalid_ring_len
+ * @hw: pointer to the hw struct
  * @ring_len: length of ring
  *
  * check for the valid ring count, should be multiple of ICE_REQ_DESC_MULTIPLE
  * or zero
  */
-static bool ice_vc_isvalid_ring_len(u16 ring_len)
+static bool ice_vc_isvalid_ring_len(struct ice_hw *hw, u16 ring_len)
 {
 	return ring_len == 0 ||
-	       (ring_len >= ICE_MIN_NUM_DESC &&
-		ring_len <= ICE_MAX_NUM_DESC_E810 &&
+		(ICE_VALID_NUM_DESC(hw, ring_len) &&
 		!(ring_len % ICE_REQ_DESC_MULTIPLE));
 }
 
@@ -1281,9 +1295,9 @@ static bool ice_vc_parse_rss_cfg(struct ice_hw *hw,
  * Return true if VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF capability is set,
  * else return false
  */
-static bool ice_vf_adv_rss_offload_ena(u32 caps)
+static bool ice_vf_adv_rss_offload_ena(const unsigned long *caps)
 {
-	return !!(caps & VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF);
+	return test_bit(VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF, caps);
 }
 
 /**
@@ -1311,6 +1325,7 @@ static void hash_cfg_reset(struct ice_rss_hash_cfg *cfg)
 	cfg->addl_hdrs = 0;
 	cfg->hdr_type = ICE_RSS_OUTER_HEADERS;
 	cfg->symm = 0;
+	cfg->shared = false;
 }
 
 /**
@@ -1327,6 +1342,7 @@ static void hash_cfg_record(struct ice_rss_hash_cfg *ctx,
 	ctx->addl_hdrs = cfg->addl_hdrs;
 	ctx->hdr_type = cfg->hdr_type;
 	ctx->symm = cfg->symm;
+	ctx->shared = cfg->shared;
 }
 
 /**
@@ -1837,6 +1853,7 @@ ice_add_rss_cfg_post_gtpu(struct ice_vf *vf, struct ice_vf_hash_gtpu_ctx *ctx,
 		ctx->ctx[ctx_idx].hash_flds = cfg->hash_flds;
 		ctx->ctx[ctx_idx].hdr_type = cfg->hdr_type;
 		ctx->ctx[ctx_idx].symm = cfg->symm;
+		ctx->ctx[ctx_idx].shared = cfg->shared;
 	}
 
 	switch (ctx_idx) {
@@ -2327,6 +2344,7 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 		cfg.addl_hdrs = ICE_FLOW_SEG_HDR_NONE;
 		cfg.hash_flds = ICE_HASH_INVALID;
 		cfg.hdr_type = ICE_RSS_ANY_HEADERS;
+		cfg.shared = false;
 
 		if (!ice_vc_parse_rss_cfg(hw, rss_cfg, &cfg)) {
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -3572,7 +3590,7 @@ error_param:
  */
 static int ice_vc_get_max_allowed_qpairs(struct ice_vf *vf)
 {
-	if (vf->driver_caps & VIRTCHNL_VF_LARGE_NUM_QPAIRS)
+	if (test_bit(VIRTCHNL_VF_LARGE_NUM_QPAIRS, vf->driver_caps))
 		return ICE_MAX_QS_PER_VF;
 
 	return ICE_MAX_DFLT_QS_PER_VF;
@@ -3744,6 +3762,80 @@ err:
 }
 
 /**
+ * ice_vc_cfg_txq - Configure a TX queue with optional txtime support
+ * @vf: pointer to the VF info
+ * @vsi: pointer to the VSI
+ * @txqi: pointer to virtchnl_txq_info structure
+ *
+ * Return: VIRTCHNL_STATUS_SUCCESS on success, error code on failure.
+ */
+static enum virtchnl_status_code
+ice_vc_cfg_txq(struct ice_vf *vf, struct ice_vsi *vsi,
+	       struct virtchnl_txq_info *txqi)
+{
+	struct ice_pf *pf = vf->pf;
+	u16 q_idx = txqi->queue_id;
+
+	if (txqi->ring_len == 0)
+		return VIRTCHNL_STATUS_SUCCESS;
+
+	/* Configure DMA ring */
+	vsi->tx_rings[q_idx]->dma = txqi->dma_ring_addr;
+	vsi->tx_rings[q_idx]->count = txqi->ring_len;
+
+	/* Disable queue before reconfiguration */
+	if (ice_vf_vsi_dis_single_txq(vf, vsi, q_idx, txqi->queue_id))
+		return VIRTCHNL_STATUS_ERR_PARAM;
+
+	/* Configure txtime/timestamp support if enabled */
+	if (txqi->flags & VIRTCHNL_TXQ_FLAG_TXTIME_ENABLED) {
+		struct ice_tx_ring *tx_ring = vsi->tx_rings[q_idx];
+		struct ice_tstamp_ring *tstamp_ring;
+
+		if (!ice_is_feature_supported(pf, ICE_F_TXTIME))
+			return VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+
+		tstamp_ring = kzalloc(sizeof(*tstamp_ring), GFP_KERNEL);
+		if (!tstamp_ring)
+			return VIRTCHNL_STATUS_ERR_NO_MEMORY;
+
+		tx_ring->tstamp_ring = tstamp_ring;
+		tstamp_ring->tx_ring = tx_ring;
+		tstamp_ring->dma = txqi->dma_txtime_addr;
+		tstamp_ring->count = txqi->ring_len +
+					      VIRTCHNL_MAX_TXTIME_FETCH_TX_DESC;
+		set_bit(q_idx, vsi->txtime_txqs);
+		dev_dbg(ice_pf_to_dev(pf),
+			"VF-%d configured TX queue %d with txtime, tstamp_dma=0x%llx\n",
+			vf->vf_id, q_idx, txqi->dma_txtime_addr);
+	} else if (vsi->txtime_txqs) {
+		clear_bit(q_idx, vsi->txtime_txqs);
+	}
+
+	/* Configure the queue with the requested settings */
+	if (ice_vsi_cfg_single_txq(vsi, vsi->tx_rings, q_idx)) {
+		if (txqi->flags & VIRTCHNL_TXQ_FLAG_TXTIME_ENABLED) {
+			kfree(vsi->tx_rings[q_idx]->tstamp_ring);
+			clear_bit(q_idx, vsi->txtime_txqs);
+		} else if (vsi->txtime_txqs) {
+			set_bit(q_idx, vsi->txtime_txqs);
+		}
+
+		dev_warn(ice_pf_to_dev(pf),
+			 "VF-%d failed to configure TX queue %d\n",
+			 vf->vf_id, q_idx);
+		return VIRTCHNL_STATUS_ERR_PARAM;
+	}
+
+	dev_dbg(ice_pf_to_dev(pf),
+		"VF-%d successfully configured TX queue %d (ring_len=%d, dma=0x%llx, flags=0x%x)\n",
+		vf->vf_id, q_idx, txqi->ring_len, txqi->dma_ring_addr,
+		txqi->flags);
+
+	return VIRTCHNL_STATUS_SUCCESS;
+}
+
+/**
  * ice_vc_cfg_qs_msg
  * @vf: pointer to the VF info
  * @msg: pointer to the msg buffer
@@ -3789,7 +3881,7 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 		if (!qci->qpair[i].rxq.crc_disable)
 			continue;
 
-		if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_CRC) ||
+		if (!test_bit(VIRTCHNL_VF_OFFLOAD_CRC, vf->driver_caps) ||
 		    vf->dcf_vlan_info.outer_stripping_ena ||
 		    vf->vlan_strip_ena)
 			goto error_param;
@@ -3797,12 +3889,15 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 	for (i = 0; i < qci->num_queue_pairs; i++) {
 		qpi = &qci->qpair[i];
 
+		if (!(qpi->txq.flags & VIRTCHNL_TXQ_FLAG_TXTIME_ENABLED) &&
+		    qpi->txq.headwb_enabled)
+			goto error_param;
+
 		if (qpi->txq.vsi_id != qci->vsi_id ||
 		    qpi->rxq.vsi_id != qci->vsi_id ||
 		    qpi->rxq.queue_id != qpi->txq.queue_id ||
-		    qpi->txq.headwb_enabled ||
-		    !ice_vc_isvalid_ring_len(qpi->txq.ring_len) ||
-		    !ice_vc_isvalid_ring_len(qpi->rxq.ring_len) ||
+		    !ice_vc_isvalid_ring_len(&pf->hw, qpi->txq.ring_len) ||
+		    !ice_vc_isvalid_ring_len(&pf->hw, qpi->rxq.ring_len) ||
 		    !ice_vc_isvalid_q_id(vsi, qpi->txq.queue_id))
 			goto error_param;
 
@@ -3824,16 +3919,7 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 
 		/* copy Tx queue info from VF into VSI */
 		if (qpi->txq.ring_len > 0) {
-			vsi->tx_rings[q_idx]->dma = qpi->txq.dma_ring_addr;
-			vsi->tx_rings[q_idx]->count = qpi->txq.ring_len;
-
-			/* Disable any existing queue first */
-			if (ice_vf_vsi_dis_single_txq(vf, vsi, q_idx,
-						      qpi->txq.queue_id))
-				goto error_param;
-
-			/* Configure a queue with the requested settings */
-			if (ice_vsi_cfg_single_txq(vsi, vsi->tx_rings, q_idx)) {
+			if (ice_vc_cfg_txq(vf, vsi, &qpi->txq)) {
 				dev_warn(ice_pf_to_dev(pf), "VF-%d failed to configure TX queue %d\n",
 					 vf->vf_id, i);
 				goto error_param;
@@ -3885,16 +3971,17 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 			 * format. Legacy 16byte descriptor is not supported.
 			 * If this RXDID is selected, return error.
 			 */
-			if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC) {
+			if (test_bit(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC,
+				     vf->driver_caps)) {
 				rxdid = qpi->rxq.rxdid;
 				if (!(BIT(rxdid) & pf->supported_rxdids))
 					goto error_param;
 			} else {
 				rxdid = ICE_RXDID_LEGACY_1;
 			}
-			if (vf->driver_caps &
-			    VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC &&
-			    vf->driver_caps & VIRTCHNL_VF_CAP_PTP &&
+			if (test_bit(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC,
+				     vf->driver_caps) &&
+			    test_bit(VIRTCHNL_VF_CAP_PTP, vf->driver_caps) &&
 			    qpi->rxq.flags & VIRTCHNL_PTP_RX_TSTAMP)
 				ice_write_qrxflxp_cntxt(&vsi->back->hw,
 							vsi->rxq_map[q_idx],
@@ -4407,9 +4494,9 @@ error_param:
  *
  * Return true if VIRTCHNL_VF_OFFLOAD_VLAN capability is set, else return false
  */
-static bool ice_vf_vlan_offload_ena(u32 caps)
+static bool ice_vf_vlan_offload_ena(const unsigned long *caps)
 {
-	return !!(caps & VIRTCHNL_VF_OFFLOAD_VLAN);
+	return test_bit(VIRTCHNL_VF_OFFLOAD_VLAN, caps);
 }
 
 /**
@@ -4796,13 +4883,13 @@ error_param:
 }
 
 /**
- * ice_vc_get_rss_hena - return the RSS HENA bits allowed by the hardware
+ * ice_vc_get_rss_hashcfg - return the RSS Hash configuration bits allowed by the hardware
  * @vf: pointer to the VF info
  */
-static int ice_vc_get_rss_hena(struct ice_vf *vf)
+static int ice_vc_get_rss_hashcfg(struct ice_vf *vf)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
-	struct virtchnl_rss_hena *vrh = NULL;
+	struct virtchnl_rss_hashcfg *vrh = NULL;
 	int len = 0, ret;
 
 	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
@@ -4816,7 +4903,7 @@ static int ice_vc_get_rss_hena(struct ice_vf *vf)
 		goto err;
 	}
 
-	len = sizeof(struct virtchnl_rss_hena);
+	len = sizeof(struct virtchnl_rss_hashcfg);
 	vrh = kzalloc(len, GFP_KERNEL);
 	if (!vrh) {
 		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
@@ -4824,23 +4911,23 @@ static int ice_vc_get_rss_hena(struct ice_vf *vf)
 		goto err;
 	}
 
-	vrh->hena = ICE_DEFAULT_RSS_HENA;
+	vrh->hashcfg = ICE_DEFAULT_RSS_HASHCFG;
 err:
 	/* send the response back to the VF */
-	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_RSS_HENA_CAPS, v_ret,
+	ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS, v_ret,
 				    (u8 *)vrh, len);
 	kfree(vrh);
 	return ret;
 }
 
 /**
- * ice_vc_set_rss_hena - set RSS HENA bits for the VF
+ * ice_vc_set_rss_hashcfg - set RSS Hash configuration bits for the VF
  * @vf: pointer to the VF info
  * @msg: pointer to the msg buffer
  */
-static int ice_vc_set_rss_hena(struct ice_vf *vf, u8 *msg)
+static int ice_vc_set_rss_hashcfg(struct ice_vf *vf, u8 *msg)
 {
-	struct virtchnl_rss_hena *vrh = (struct virtchnl_rss_hena *)msg;
+	struct virtchnl_rss_hashcfg *vrh = (struct virtchnl_rss_hashcfg *)msg;
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
@@ -4871,9 +4958,9 @@ static int ice_vc_set_rss_hena(struct ice_vf *vf, u8 *msg)
 	 * disable RSS
 	 */
 	status = ice_rem_vsi_rss_cfg(&pf->hw, vsi->idx);
-	if (status && !vrh->hena) {
+	if (status && !vrh->hashcfg) {
 		/* only report failure to clear the current RSS configuration if
-		 * that was clearly the VF's intention (i.e. vrh->hena = 0)
+		 * that was clearly the VF's intention (i.e. vrh->hashcfg = 0)
 		 */
 		v_ret = ice_err_to_virt_err(status);
 		goto err;
@@ -4886,14 +4973,14 @@ static int ice_vc_set_rss_hena(struct ice_vf *vf, u8 *msg)
 			 vf->vf_id);
 	}
 
-	if (vrh->hena) {
-		status = ice_add_avf_rss_cfg(&pf->hw, vsi->idx, vrh->hena);
+	if (vrh->hashcfg) {
+		status = ice_add_avf_rss_cfg(&pf->hw, vsi->idx, vrh->hashcfg);
 		v_ret = ice_err_to_virt_err(status);
 	}
 
 	/* send the response to the VF */
 err:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_SET_RSS_HENA, v_ret,
+	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_SET_RSS_HASHCFG, v_ret,
 				     NULL, 0);
 }
 
@@ -5045,7 +5132,7 @@ static int ice_vc_query_rxdid(struct ice_vf *vf)
 		goto err;
 	}
 
-	if (!(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC)) {
+	if (!test_bit(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC, vf->driver_caps)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto err;
 	}
@@ -5126,7 +5213,7 @@ static int ice_vc_dcf_vlan_offload_msg(struct ice_vf *vf, u8 *msg)
 	offload = (struct virtchnl_dcf_vlan_offload *)msg;
 
 	if (!ice_is_dvm_ena(&pf->hw) ||
-	    !(vf->driver_caps & VIRTCHNL_VF_OFFLOAD_VLAN_V2) ||
+	    !test_bit(VIRTCHNL_VF_OFFLOAD_VLAN_V2, vf->driver_caps) ||
 	    !ice_is_vf_dcf(vf) || ice_dcf_get_state(pf) != ICE_DCF_STATE_ON) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto err;
@@ -5433,8 +5520,8 @@ static int ice_vc_dis_dcf_cap(struct ice_vf *vf)
 		goto err;
 	}
 
-	if (vf->driver_caps & VIRTCHNL_VF_CAP_DCF) {
-		vf->driver_caps &= ~VIRTCHNL_VF_CAP_DCF;
+	if (test_bit(VIRTCHNL_VF_CAP_DCF, vf->driver_caps)) {
+		__clear_bit(VIRTCHNL_VF_CAP_DCF, vf->driver_caps);
 		ice_rm_all_dcf_sw_rules(vf->pf);
 		ice_clear_dcf_acl_cfg(vf->pf);
 		ice_clear_dcf_udp_tunnel_cfg(vf->pf);
@@ -5996,22 +6083,31 @@ static int ice_vf_get_vsi_qid(struct ice_vf *vf, u32 vf_qid)
  * ice_vc_validate_qs_v2_msg - validate all qs_msg parameters
  * @vf: VF the message was received from
  * @qs_msg: contents of the message from the VF
+ * @msglen: actual byte length of the received message buffer
  *
  * Used to validate both the VIRTCHNL_OP_ENABLE_QUEUES_V2 and
  * VIRTCHNL_OP_DISABLE_QUEUES_V2 messages. This should always be called before
  * attempting to enable and/or disable queues on behalf of a VF in response to
- * the preivously mentioned opcodes. If all checks succeed, then return
+ * the previously mentioned opcodes. If all checks succeed, then return
  * success indicating to the caller that the qs_msg is valid. Otherwise return
  * false, indicating to the caller that the qs_msg is invalid.
  */
 static bool
 ice_vc_validate_qs_v2_msg(struct ice_vf *vf,
-			  struct virtchnl_del_ena_dis_queues *qs_msg)
+			  struct virtchnl_del_ena_dis_queues *qs_msg,
+			  u16 msglen)
 {
 	struct virtchnl_queue_chunks *chunks = &qs_msg->chunks;
+	size_t expected_len;
 	int i;
 
-	if (!chunks->num_chunks)
+	if (!chunks->num_chunks ||
+	    chunks->num_chunks > VIRTCHNL_OP_ENABLE_DISABLE_DEL_QUEUES_V2_MAX)
+		return false;
+
+	expected_len = struct_size(qs_msg, chunks.chunks,
+				   chunks->num_chunks - 1);
+	if (msglen < expected_len)
 		return false;
 
 	for (i = 0; i < chunks->num_chunks; i++) {
@@ -6084,7 +6180,7 @@ ice_vc_ena_txq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
  * @vf: source of the request
  * @msg: message to handle
  */
-static int ice_vc_ena_qs_v2_msg(struct ice_vf *vf, u8 *msg)
+static int ice_vc_ena_qs_v2_msg(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_del_ena_dis_queues *ena_qs_msg;
@@ -6104,7 +6200,7 @@ static int ice_vc_ena_qs_v2_msg(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	if (!ice_vc_validate_qs_v2_msg(vf, ena_qs_msg)) {
+	if (!ice_vc_validate_qs_v2_msg(vf, ena_qs_msg, msglen)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto error_param;
 	}
@@ -6181,7 +6277,7 @@ ice_vc_dis_txq_chunk(struct ice_vf *vf, struct virtchnl_queue_chunk *chunk)
  * @vf: source of the request
  * @msg: message to handle
  */
-static int ice_vc_dis_qs_v2_msg(struct ice_vf *vf, u8 *msg)
+static int ice_vc_dis_qs_v2_msg(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_del_ena_dis_queues *dis_qs_msg;
@@ -6201,7 +6297,7 @@ static int ice_vc_dis_qs_v2_msg(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	if (!ice_vc_validate_qs_v2_msg(vf, dis_qs_msg)) {
+	if (!ice_vc_validate_qs_v2_msg(vf, dis_qs_msg, msglen)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto error_param;
 	}
@@ -6232,16 +6328,18 @@ error_param:
  * ice_vc_validate_qv_maps - validate parameters sent in the qs_msg structure
  * @vf: VF the message was received from
  * @qv_maps: contents of the message from the VF
+ * @msglen: actual byte length of the received message buffer
  *
- * Used to validate VIRTCHNL_OP_MAP_VECTOR  messages. This should always be
- * called before attempting map interrupts to queues. If all checks succeed,
- * then return success indicating to the caller that the qv_maps are valid.
- * Otherwise return false, indicating to the caller that the qv_maps are
- * invalid.
+ * Used to validate VIRTCHNL_OP_MAP_QUEUE_VECTOR messages. This should always
+ * be called before attempting map interrupts to queues. If all checks
+ * succeed, then return success indicating to the caller that the qv_maps are
+ * valid. Otherwise return false, indicating to the caller that the qv_maps
+ * are invalid.
  */
 static bool
 ice_vc_validate_qv_maps(struct ice_vf *vf,
-			struct virtchnl_queue_vector_maps *qv_maps)
+			struct virtchnl_queue_vector_maps *qv_maps,
+			u16 msglen)
 {
 	struct ice_vsi *vsi;
 	int i, total_vectors;
@@ -6264,7 +6362,11 @@ ice_vc_validate_qv_maps(struct ice_vf *vf,
 		total_vectors = vsi->num_q_vectors + ICE_NONQ_VECS_VF;
 	}
 
-	if (!qv_maps->num_qv_maps)
+	if (!qv_maps->num_qv_maps ||
+	    qv_maps->num_qv_maps > VIRTCHNL_OP_MAP_UNMAP_QUEUE_VECTOR_MAX)
+		return false;
+
+	if (msglen < struct_size(qv_maps, qv_maps, qv_maps->num_qv_maps))
 		return false;
 
 	for (i = 0; i < qv_maps->num_qv_maps; i++) {
@@ -6287,7 +6389,7 @@ ice_vc_validate_qv_maps(struct ice_vf *vf,
  * @vf: source of the request
  * @msg: message to handle
  */
-static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
+static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_queue_vector_maps *qv_maps;
@@ -6307,7 +6409,7 @@ static int ice_vc_map_q_vector_msg(struct ice_vf *vf, u8 *msg)
 		goto error_param;
 	}
 
-	if (!ice_vc_validate_qv_maps(vf, qv_maps)) {
+	if (!ice_vc_validate_qv_maps(vf, qv_maps, msglen)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto error_param;
 	}
@@ -6595,6 +6697,9 @@ static bool ice_vc_validate_vlan_tpid(u16 filtering_caps, u16 tpid)
 		break;
 	case ETH_P_QINQ1:
 		vlan_ethertype = VIRTCHNL_VLAN_ETHERTYPE_9100;
+		break;
+	case ETH_P_8021AH:
+		vlan_ethertype = VIRTCHNL_VLAN_ETHERTYPE_88E7;
 		break;
 	}
 
@@ -7019,6 +7124,9 @@ static int ice_vc_get_tpid(u32 ethertype_setting, u16 *tpid)
 	case VIRTCHNL_VLAN_ETHERTYPE_9100:
 		*tpid = ETH_P_QINQ1;
 		break;
+	case VIRTCHNL_VLAN_ETHERTYPE_88E7:
+		*tpid = ETH_P_8021AH;
+		break;
 	default:
 		*tpid = 0;
 		return -EINVAL;
@@ -7365,6 +7473,87 @@ static int ice_vc_dis_vlan_insertion_v2_msg(struct ice_vf *vf, u8 *msg)
 out:
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_INSERTION_V2,
 				     v_ret, NULL, 0);
+}
+
+/**
+ * ice_vc_get_vf_caps2 - handle VIRTCHNL_OP_GET_VF_CAPS2
+ * @vf: pointer to VF
+ * @msg: pointer to the message buffer
+ *
+ * Called from the VF to negotiate extended capability flag set if
+ * VIRTCHNL_VF_CAPS2 was set in vf_cap_flags. The PF responds with the
+ * intersection of its supported flags and the VF's requested flags.
+ *
+ * Return: 0 on success, negative on failure
+ */
+static int ice_vc_get_vf_caps2(struct ice_vf *vf,
+			       const struct virtchnl_vf_caps2 *msg)
+{
+	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	DECLARE_BITMAP(msg_caps, VIRTCHNL_VF_CAPS_MAX);
+	struct virtchnl_vf_caps2 *caps2;
+	struct ice_pf *pf = vf->pf;
+	unsigned int nbits;
+	int err;
+
+	caps2 = kzalloc(struct_size(caps2, vf_cap_flags,
+				    BITS_TO_U32(VIRTCHNL_VF_CAPS_MAX)),
+			GFP_KERNEL);
+	if (!caps2)
+		return -ENOMEM;
+
+	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto send_msg;
+	}
+
+	if (!test_bit(VIRTCHNL_VF_CAPS2, vf->driver_caps)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto send_msg;
+	}
+
+	caps2->flags_len = BITS_TO_U32(VIRTCHNL_VF_CAPS_MAX);
+
+	/* Set extended feature flags. The first 32 bits should be already set
+	 * in VIRTCHNL_OP_GET_VF_RESOURCES
+	 */
+	if (ice_is_feature_supported(pf, ICE_F_TXTIME) &&
+	    ice_is_fw_vf_txtime_supported_e83x(&pf->hw)) {
+		dev_dbg(ice_pf_to_dev(pf),
+			"VF %u: advertising TXTIME offload capability\n",
+			vf->vf_id);
+		__set_bit(VIRTCHNL_VF_OFFLOAD_TXTIME, vf->driver_caps);
+	}
+
+	/* Make sure to not read after msg bitmap or local bitmap. The remaining
+	 * bits (if any) should be unset, since one side doesn't know about
+	 * them, therefore cannot support these capabilities.
+	 */
+	nbits = min_t(unsigned int, VIRTCHNL_VF_CAPS_MAX,
+		      BITS_PER_TYPE(u32) * msg->flags_len);
+	bitmap_zero(msg_caps, VIRTCHNL_VF_CAPS_MAX);
+	bitmap_from_arr32(msg_caps, msg->vf_cap_flags, nbits);
+
+	/* Note that msg->vf_cap_flags cannot be directly used, because then
+	 * we'd need to limit the operation range to nbits. If the local caps
+	 * is larger and has some flags set after nbits, then they would be
+	 * incorrectly left set.
+	 */
+	bitmap_and(vf->driver_caps, vf->driver_caps, msg_caps,
+		   VIRTCHNL_VF_CAPS_MAX);
+
+	bitmap_to_arr32(caps2->vf_cap_flags, vf->driver_caps,
+			VIRTCHNL_VF_CAPS_MAX);
+
+send_msg:
+	err = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_VF_CAPS2, v_ret,
+				    (u8 *)caps2,
+				    struct_size(caps2, vf_cap_flags,
+						caps2->flags_len));
+
+	kfree(caps2);
+
+	return err;
 }
 
 static int ice_vc_get_ptp_cap(struct ice_vf *vf, u8 *msg)
@@ -8171,8 +8360,8 @@ static const struct ice_virtchnl_ops ice_virtchnl_dflt_ops = {
 	.add_vlan_msg = ice_vc_add_vlan_msg,
 	.remove_vlan_msg = ice_vc_remove_vlan_msg,
 	.query_rxdid = ice_vc_query_rxdid,
-	.get_rss_hena = ice_vc_get_rss_hena,
-	.set_rss_hena_msg = ice_vc_set_rss_hena,
+	.get_rss_hashcfg = ice_vc_get_rss_hashcfg,
+	.set_rss_hashcfg_msg = ice_vc_set_rss_hashcfg,
 	.ena_vlan_stripping = ice_vc_ena_vlan_stripping,
 	.dis_vlan_stripping = ice_vc_dis_vlan_stripping,
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -8217,6 +8406,7 @@ static const struct ice_virtchnl_ops ice_virtchnl_dflt_ops = {
 	.get_sw_cross_tstamp = ice_vc_get_sw_cross_tstamp,
 	.get_phc_freq_ratio = ice_vc_get_phc_freq_ratio,
 #endif /* CONFIG_X86 */
+	.get_vf_caps2 = ice_vc_get_vf_caps2,
 };
 
 /**
@@ -8337,8 +8527,8 @@ static const struct ice_virtchnl_ops ice_virtchnl_repr_ops = {
 	.hqos_elems_move = ice_vc_hqos_elems_move,
 	.hqos_elems_conf = ice_vc_hqos_elems_conf,
 	.query_rxdid = ice_vc_query_rxdid,
-	.get_rss_hena = ice_vc_get_rss_hena,
-	.set_rss_hena_msg = ice_vc_set_rss_hena,
+	.get_rss_hashcfg = ice_vc_get_rss_hashcfg,
+	.set_rss_hashcfg_msg = ice_vc_set_rss_hashcfg,
 	.ena_vlan_stripping = ice_vc_ena_vlan_stripping,
 	.dis_vlan_stripping = ice_vc_dis_vlan_stripping,
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -8383,6 +8573,7 @@ static const struct ice_virtchnl_ops ice_virtchnl_repr_ops = {
 	.get_sw_cross_tstamp = ice_vc_get_sw_cross_tstamp,
 	.get_phc_freq_ratio = ice_vc_get_phc_freq_ratio,
 #endif /* CONFIG_X86 */
+	.get_vf_caps2 = ice_vc_get_vf_caps2,
 };
 
 /**
@@ -8592,11 +8783,11 @@ error_handler:
 	case VIRTCHNL_OP_GET_SUPPORTED_RXDIDS:
 		err = ops->query_rxdid(vf);
 		break;
-	case VIRTCHNL_OP_GET_RSS_HENA_CAPS:
-		err = ops->get_rss_hena(vf);
+	case VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS:
+		err = ops->get_rss_hashcfg(vf);
 		break;
-	case VIRTCHNL_OP_SET_RSS_HENA:
-		err = ops->set_rss_hena_msg(vf, msg);
+	case VIRTCHNL_OP_SET_RSS_HASHCFG:
+		err = ops->set_rss_hashcfg_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING:
 		err = ops->ena_vlan_stripping(vf);
@@ -8682,14 +8873,14 @@ error_handler:
 		err = ops->get_max_rss_qregion(vf);
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES_V2:
-		err = ops->ena_qs_v2_msg(vf, msg);
+		err = ops->ena_qs_v2_msg(vf, msg, msglen);
 		ice_vc_notify_vf_link_state(vf);
 		break;
 	case VIRTCHNL_OP_DISABLE_QUEUES_V2:
-		err = ops->dis_qs_v2_msg(vf, msg);
+		err = ops->dis_qs_v2_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_MAP_QUEUE_VECTOR:
-		err = ops->map_q_vector_msg(vf, msg);
+		err = ops->map_q_vector_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS:
 		err = ops->get_offload_vlan_v2_caps(vf);
@@ -8727,6 +8918,10 @@ error_handler:
 		err = ops->get_phc_freq_ratio(vf);
 		break;
 #endif /* CONFIG_X86 */
+	case VIRTCHNL_OP_GET_VF_CAPS2:
+		err = ops->get_vf_caps2(vf,
+					(const struct virtchnl_vf_caps2 *)msg);
+		break;
 	case VIRTCHNL_OP_UNKNOWN:
 	default:
 		dev_err(dev, "Unsupported opcode %d from VF %d\n", v_opcode,

@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "March 02, 2026" "" "Linux ice readme"
+.TH "ICE" "7" "May 13, 2026" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -700,7 +700,7 @@ driver.
 .INDENT 0.0
 .INDENT 3.5
 When using Link Aggregation, RDMA in VF is not available \- the
-VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+VIRTCHNL capability VIRTCHNL_VF_OFFLOAD_RDMA is disabled.
 .UNINDENT
 .UNINDENT
 .SS Auxiliary Bus
@@ -796,6 +796,10 @@ Both guides are available on the Intel Technical Library at:
 .sp
 Link Aggregation (LAG)/bonding allows combining multiple physical interfaces to
 provide redundancy and in some configurations increase total throughput.
+.sp
+LAG DDP package is required for LAG functionality. The default DDP package
+installed by the driver does not support LAG. If you are using a custom DDP
+package, make sure it supports LAG if you want to use this feature.
 .SS Link Aggregation and RDMA
 .sp
 Link aggregation (LAG) and RDMA are compatible only if all the following are
@@ -862,7 +866,7 @@ the RDMA driver will move RDMA QSets back to the originally allocated port.
 .INDENT 0.0
 .INDENT 3.5
 When using Link Aggregation, RDMA in VF is not available \- the
-VIRTCHNL capability VIRTCHNL_VF_CAP_RDMA is disabled.
+VIRTCHNL capability VIRTCHNL_VF_OFFLOAD_RDMA is disabled.
 .UNINDENT
 .UNINDENT
 .SS Link Aggregation and SR\-IOV VFs
@@ -896,17 +900,6 @@ The primary port (first one added to the bond) is in switchdev mode (see
 Both bond ports have identical DCB configurations
 .IP \(bu 2
 The FW LLDP Agent is disabled on both bond ports (see \fI\%FW\-LLDP (Firmware Link Layer Discovery Protocol)\fP)
-.IP \(bu 2
-.INDENT 2.0
-.TP
-.B Firmware supports LAN VF LAG capability:
-.INDENT 7.0
-.IP \(bu 2
-For active\-backup mode: version 4.30 or newer
-.IP \(bu 2
-For other modes: version 4.80 or newer
-.UNINDENT
-.UNINDENT
 .IP \(bu 2
 The ice_lag DDP package is loaded
 .IP \(bu 2
@@ -3476,6 +3469,15 @@ ethtool \-s <ethX> advertise 0x80000000000
 .UNINDENT
 .sp
 For more details, please refer to the ethtool man page.
+.sp
+\fBNOTE:\fP
+.INDENT 0.0
+.INDENT 3.5
+Toggling autonegotiation is supported on selected E82x devices when
+used with supported 1G modules; refer to the device User Guide to confirm
+availability for your adapter and module combination.
+.UNINDENT
+.UNINDENT
 .SS Data Center Bridging (DCB)
 .sp
 \fBNOTE:\fP

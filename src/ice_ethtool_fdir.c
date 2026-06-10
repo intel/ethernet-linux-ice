@@ -467,7 +467,7 @@ void ice_fdir_replay_flows(struct ice_hw *hw)
 			prof = hw->fdir_prof[flow];
 			ice_flow_add_prof(hw, ICE_BLK_FD, ICE_FLOW_RX,
 					  prof->fdir_seg[tun], TNL_SEG_CNT(tun),
-					  NULL, 0, &hw_prof);
+					  NULL, 0, &hw_prof, false);
 			for (j = 0; j < prof->cnt; j++) {
 				enum ice_flow_priority prio;
 				u64 entry_h = 0;
@@ -705,7 +705,7 @@ ice_fdir_set_hw_fltr_rule(struct ice_pf *pf, struct ice_flow_seg_info *seg,
 	 * actions (NULL) and zero actions 0.
 	 */
 	err = ice_flow_add_prof(hw, ICE_BLK_FD, ICE_FLOW_RX, seg,
-				TNL_SEG_CNT(tun), NULL, 0, &prof);
+				TNL_SEG_CNT(tun), NULL, 0, &prof, false);
 	if (err)
 		return err;
 

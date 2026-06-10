@@ -71,6 +71,8 @@ ice_acquire_res(struct ice_hw *hw, enum ice_aq_res_ids res,
 		enum ice_aq_res_access_type access, u32 timeout);
 void ice_release_res(struct ice_hw *hw, enum ice_aq_res_ids res);
 int
+ice_subscribe_hw_res(struct ice_hw *hw, u16 type, u16 res);
+int
 ice_alloc_hw_res(struct ice_hw *hw, u16 type, u16 num, bool btm, u16 *res);
 int
 ice_free_hw_res(struct ice_hw *hw, u16 type, u16 num, u16 *res);
@@ -136,10 +138,6 @@ int
 ice_aq_set_txtimeq(struct ice_hw *hw, u16 txtimeq, u8 q_count,
 		   struct ice_aqc_set_txtime_qgrp *txtime_qg,
 		   u16 buf_size, struct ice_sq_cd *cd);
-int
-ice_aq_ena_dis_txtimeq(struct ice_hw *hw, u16 txtimeq, u16 q_count, bool q_ena,
-		       struct ice_aqc_ena_dis_txtime_qgrp *txtime_qg,
-		       struct ice_sq_cd *cd);
 extern const struct ice_ctx_ele ice_txtime_ctx_info[];
 bool ice_check_sq_alive(struct ice_hw *hw, struct ice_ctl_q_info *cq);
 int ice_aq_q_shutdown(struct ice_hw *hw, bool unloading);
@@ -405,6 +403,7 @@ int ice_get_last_health_status_code(struct ice_hw *hw,
 				    struct ice_aqc_health_status_elem *out,
 				    u16 code);
 bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
+bool ice_is_fw_vf_txtime_supported_e83x(struct ice_hw *hw);
 /* AQ API version for FW auto drop reports */
 bool ice_is_fw_auto_drop_supported(struct ice_hw *hw);
 void ice_init_lm_ops(struct ice_hw *hw);

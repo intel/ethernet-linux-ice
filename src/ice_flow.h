@@ -346,10 +346,10 @@ enum ice_flow_avf_hdr_field {
 };
 
 /* Supported RSS offloads  This macro is defined to support
- * VIRTCHNL_OP_GET_RSS_HENA_CAPS ops. PF driver sends the RSS hardware
+ * VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS ops. PF driver sends the RSS hardware
  * capabilities to the caller of this ops.
  */
-#define ICE_DEFAULT_RSS_HENA ( \
+#define ICE_DEFAULT_RSS_HASHCFG ( \
 	BIT_ULL(ICE_AVF_FLOW_FIELD_IPV4_UDP) | \
 	BIT_ULL(ICE_AVF_FLOW_FIELD_IPV4_SCTP) | \
 	BIT_ULL(ICE_AVF_FLOW_FIELD_IPV4_TCP) | \
@@ -387,6 +387,7 @@ struct ice_rss_hash_cfg {
 	u64 hash_flds; /* hash bit field (ICE_FLOW_HASH_*) to configure */
 	enum ice_rss_cfg_hdr_type hdr_type; /* to specify inner or outer */
 	bool symm; /* symmetric or asymmetric hash */
+	bool shared; /* resource can be shared between PFs */
 };
 
 enum ice_flow_dir {
@@ -512,6 +513,8 @@ struct ice_flow_prof {
 		bool symm; /* Symmetric Hash for RSS */
 	} cfg;
 
+	bool shared_rss; /* Share RSS between PFs */
+
 	/* Default actions */
 	struct ice_flow_action *acts;
 };
@@ -568,7 +571,7 @@ int
 ice_flow_add_prof(struct ice_hw *hw, enum ice_block blk, enum ice_flow_dir dir,
 		  struct ice_flow_seg_info *segs, u8 segs_cnt,
 		  struct ice_flow_action *acts, u8 acts_cnt,
-		  struct ice_flow_prof **prof);
+		  struct ice_flow_prof **prof, bool shared);
 int
 ice_flow_rem_prof(struct ice_hw *hw, enum ice_block blk, u64 prof_id);
 int

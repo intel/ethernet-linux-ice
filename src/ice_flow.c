@@ -1152,7 +1152,8 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 				   ICE_FLOW_PTYPE_MAX);
 		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV4) &&
 			   !(hdrs & ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER)) {
-			src = !i ? (const unsigned long *)ice_ptypes_ipv4_ofos_no_l4 :
+			src = !i ? (const unsigned long *)
+					ice_ptypes_ipv4_ofos_no_l4 :
 				(const unsigned long *)ice_ptypes_ipv4_il_no_l4;
 			bitmap_and(params->ptypes, params->ptypes, src,
 				   ICE_FLOW_PTYPE_MAX);
@@ -1163,7 +1164,8 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 				   ICE_FLOW_PTYPE_MAX);
 		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV6) &&
 			   !(hdrs & ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER)) {
-			src = !i ? (const unsigned long *)ice_ptypes_ipv6_ofos_no_l4 :
+			src = !i ? (const unsigned long *)
+					ice_ptypes_ipv6_ofos_no_l4 :
 				(const unsigned long *)ice_ptypes_ipv6_il_no_l4;
 			bitmap_and(params->ptypes, params->ptypes, src,
 				   ICE_FLOW_PTYPE_MAX);
@@ -1293,9 +1295,11 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 
 		if (hdrs & ICE_FLOW_SEG_HDR_PFCP) {
 			if (hdrs & ICE_FLOW_SEG_HDR_PFCP_NODE)
-				src = (const unsigned long *)ice_ptypes_pfcp_node;
+				src = (const unsigned long *)
+					ice_ptypes_pfcp_node;
 			else
-				src = (const unsigned long *)ice_ptypes_pfcp_session;
+				src = (const unsigned long *)
+					ice_ptypes_pfcp_session;
 
 			bitmap_and(params->ptypes, params->ptypes,
 				   src, ICE_FLOW_PTYPE_MAX);
@@ -2183,6 +2187,7 @@ ice_flow_rem_entry_sync(struct ice_hw *hw, enum ice_block blk,
  * @acts: array of default actions
  * @acts_cnt: number of default actions
  * @prof: stores the returned flow profile added
+ * @shared: should resource be shareable
  *
  * Assumption: the caller has acquired the lock to the profile list
  */
@@ -2191,7 +2196,7 @@ ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
 		       enum ice_flow_dir dir,
 		       struct ice_flow_seg_info *segs, u8 segs_cnt,
 		       struct ice_flow_action *acts, u8 acts_cnt,
-		       struct ice_flow_prof **prof)
+		       struct ice_flow_prof **prof, bool shared)
 {
 	struct ice_flow_prof_params *params;
 	struct ice_prof_id *ids;
@@ -2227,6 +2232,7 @@ ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
 	params->prof->id = prof_id;
 	params->prof->dir = dir;
 	params->prof->segs_cnt = segs_cnt;
+	params->prof->shared_rss = shared;
 
 	/* Make a copy of the segments that need to be persistent in the flow
 	 * profile instance
@@ -2256,7 +2262,7 @@ ice_flow_add_prof_sync(struct ice_hw *hw, enum ice_block blk,
 	/* Add a HW profile for this flow profile */
 	status = ice_add_prof(hw, blk, prof_id, params->ptypes,
 			      params->attr, params->attr_cnt, params->es,
-			      params->mask, true);
+			      params->mask, true, shared);
 	if (status) {
 		ice_debug(hw, ICE_DBG_FLOW, "Error adding a HW flow profile\n");
 		goto out;
@@ -2602,7 +2608,7 @@ ice_flow_set_hw_prof(struct ice_hw *hw, u16 dest_vsi_handle,
 
 	status = ice_add_prof(hw, blk, id, prof->ptypes,
 			      params->attr, params->attr_cnt,
-			      params->es, params->mask, false);
+			      params->es, params->mask, false, false);
 	if (status)
 		goto free_params;
 
@@ -2625,12 +2631,13 @@ free_params:
  * @acts: array of default actions
  * @acts_cnt: number of default actions
  * @prof: stores the returned flow profile added
+ * @shared: should resource be shareable
  */
 int
 ice_flow_add_prof(struct ice_hw *hw, enum ice_block blk, enum ice_flow_dir dir,
 		  struct ice_flow_seg_info *segs, u8 segs_cnt,
 		  struct ice_flow_action *acts, u8 acts_cnt,
-		  struct ice_flow_prof **prof)
+		  struct ice_flow_prof **prof, bool shared)
 {
 	int status;
 
@@ -2650,7 +2657,7 @@ ice_flow_add_prof(struct ice_hw *hw, enum ice_block blk, enum ice_flow_dir dir,
 	mutex_lock(&hw->fl_profs_locks[blk]);
 
 	status = ice_flow_add_prof_sync(hw, blk, dir, segs, segs_cnt,
-					acts, acts_cnt, prof);
+					acts, acts_cnt, prof, shared);
 	if (!status)
 		list_add(&(*prof)->l_entry, &hw->fl_profs[blk]);
 
@@ -3912,7 +3919,7 @@ ice_rem_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 
 	/* convert match bitmap to u64 for hash field comparison */
 	for_each_set_bit(i, prof->segs[prof->segs_cnt - 1].match,
-		         ICE_FLOW_FIELD_IDX_MAX) {
+			 ICE_FLOW_FIELD_IDX_MAX) {
 		seg_match |= 1ULL << i;
 	}
 
@@ -3973,6 +3980,7 @@ ice_add_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 	rss_cfg->hash.addl_hdrs = prof->segs[prof->segs_cnt - 1].hdrs;
 	rss_cfg->hash.hdr_type = hdr_type;
 	rss_cfg->hash.symm = prof->cfg.symm;
+	rss_cfg->hash.shared = prof->shared_rss;
 	set_bit(vsi_handle, rss_cfg->vsis);
 
 	list_add_tail(&rss_cfg->l_entry, &hw->rss_list_head);
@@ -4290,7 +4298,7 @@ ice_add_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle,
 
 	/* Create a new flow profile with packet segment information. */
 	status = ice_flow_add_prof(hw, blk, ICE_FLOW_RX,
-				   segs, segs_cnt, NULL, 0, &prof);
+				   segs, segs_cnt, NULL, 0, &prof, cfg->shared);
 	if (status)
 		goto exit;
 
@@ -4571,6 +4579,7 @@ int ice_add_avf_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 avf_hash)
 		hcfg.addl_hdrs = ICE_FLOW_SEG_HDR_NONE;
 		hcfg.hash_flds = rss_hash;
 		hcfg.symm = false;
+		hcfg.shared = false;
 		hcfg.hdr_type = ICE_RSS_ANY_HEADERS;
 		status = ice_add_rss_cfg(hw, vsi_handle, &hcfg);
 		if (status)

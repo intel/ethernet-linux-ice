@@ -58,7 +58,7 @@
 /* any of the features that need to alter module_init */
 #if !defined(HAVE_XARRAY_API)
 
-static int __init kc_module_init_impl(void)
+static inline int __init kc_module_init_impl(void)
 {
 #ifdef HAVE_XARRAY_API
 #else
@@ -67,6 +67,17 @@ static int __init kc_module_init_impl(void)
 ;
 	return 0;
 }
+
+/*
+ * ___ADDRESSABLE was introduced in kernel 5.0 with a 2-arg signature.
+ * For older kernels, we provide a compatible implementation that forces
+ * the compiler to emit the symbol and prevent it from being optimized away.
+ */
+#ifdef NEED____ADDRESSABLE
+#define ___ADDRESSABLE(sym, __attrs)					\
+	static void * __used __attrs					\
+	__PASTE(__addressable_, sym) = (void *)(uintptr_t)&sym;
+#endif
 
 #undef module_init
 #define orig_module_init(initfn)	\

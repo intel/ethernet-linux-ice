@@ -65,8 +65,8 @@ struct ice_virtchnl_ops {
 	int (*hqos_elems_move)(struct ice_vf *vf, u8 *msg);
 	int (*hqos_elems_conf)(struct ice_vf *vf, u8 *msg);
 	int (*query_rxdid)(struct ice_vf *vf);
-	int (*get_rss_hena)(struct ice_vf *vf);
-	int (*set_rss_hena_msg)(struct ice_vf *vf, u8 *msg);
+	int (*get_rss_hashcfg)(struct ice_vf *vf);
+	int (*set_rss_hashcfg_msg)(struct ice_vf *vf, u8 *msg);
 	int (*ena_vlan_stripping)(struct ice_vf *vf);
 	int (*dis_vlan_stripping)(struct ice_vf *vf);
 #ifdef HAVE_TC_SETUP_CLSFLOWER
@@ -95,9 +95,9 @@ struct ice_virtchnl_ops {
 	int (*flow_sub_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*flow_unsub_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*get_max_rss_qregion)(struct ice_vf *vf);
-	int (*ena_qs_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*dis_qs_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*map_q_vector_msg)(struct ice_vf *vf, u8 *msg);
+	int (*ena_qs_v2_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
+	int (*dis_qs_v2_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
+	int (*map_q_vector_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
 	int (*get_offload_vlan_v2_caps)(struct ice_vf *vf);
 	int (*add_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
 	int (*remove_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
@@ -111,6 +111,8 @@ struct ice_virtchnl_ops {
 	int (*get_sw_cross_tstamp)(struct ice_vf *vf);
 	int (*get_phc_freq_ratio)(struct ice_vf *vf);
 #endif /* CONFIG_X86 */
+	int (*get_vf_caps2)(struct ice_vf *vf,
+			    const struct virtchnl_vf_caps2 *msg);
 };
 
 /**
@@ -121,7 +123,7 @@ struct ice_virtchnl_ops {
  */
 static inline u32 ice_vc_get_max_chnl_tc_allowed(struct ice_vf *vf)
 {
-	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ADQ_V2)
+	if (test_bit(VIRTCHNL_VF_OFFLOAD_ADQ_V2, vf->driver_caps))
 		return VIRTCHNL_MAX_ADQ_V2_CHANNELS;
 	else
 		return VIRTCHNL_MAX_ADQ_CHANNELS;

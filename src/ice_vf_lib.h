@@ -133,6 +133,7 @@ struct ice_fdir_prof_info {
 struct ice_rss_prof_info {
 	struct ice_parser_profile prof;
 	bool symm;
+	bool shared;
 };
 
 /* VF operations */
@@ -199,7 +200,10 @@ struct ice_vf {
 	int first_vector_idx;
 	struct ice_sw *vf_sw_id;	/* switch ID the VF VSIs connect to */
 	struct virtchnl_version_info vf_ver;
-	u32 driver_caps;		/* reported by VF driver */
+
+	/* reported by VF driver */
+	DECLARE_BITMAP(driver_caps, VIRTCHNL_VF_CAPS_MAX);
+
 	u16 stag;			/* VF Port Extender (PE) stag if used */
 	struct virtchnl_ether_addr dev_lan_addr;
 	struct virtchnl_ether_addr hw_lan_addr;

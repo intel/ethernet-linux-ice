@@ -1619,6 +1619,98 @@ static const struct file_operations ice_debugfs_command_fops = {
 	.write = ice_debugfs_command_write,
 };
 
+#define ICE_WATCHDOG_TIMEO_INPUT_MAX_LEN 4
+
+/**
+ * ice_debugfs_watchdog_timeo_read - read from 'data' file
+ * @file: the opened file
+ * @buffer: where to write the data for the user to read
+ * @count: the size of the user's buffer
+ * @ppos: file position offset
+ *
+ * Return: number of bytes read on success, negative error code on failure
+ */
+static ssize_t ice_debugfs_watchdog_timeo_read(struct file *file,
+					       char __user *buffer,
+					       size_t count, loff_t *ppos)
+{
+	char buf[ICE_WATCHDOG_TIMEO_INPUT_MAX_LEN + 1];
+	struct ice_pf *pf = file->private_data;
+	struct net_device *ndev;
+	struct ice_vsi *vsi;
+	int len;
+
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi || !vsi->netdev)
+		return -ENODEV;
+
+	ndev = vsi->netdev;
+
+	/* only allow reading from start once */
+	if (*ppos)
+		return 0;
+
+	len = snprintf(buf, sizeof(buf), "%u\n", ndev->watchdog_timeo / HZ);
+
+	return simple_read_from_buffer(buffer, count, ppos, buf, len);
+}
+
+#define ICE_WATCHDOG_TIMEO_MIN 5
+#define ICE_WATCHDOG_TIMEO_MAX 60
+
+/**
+ * ice_debugfs_watchdog_timeo_write - write into 'data' file
+ * @file: the opened file
+ * @buf: where to find the user's data
+ * @count: the length of the user's data
+ * @ppos: file position offset
+ *
+ * Return: number of bytes written on success, negative error code on failure
+ */
+static ssize_t
+ice_debugfs_watchdog_timeo_write(struct file *file, const char __user *buf,
+				 size_t count, loff_t *ppos)
+{
+	struct ice_pf *pf = file->private_data;
+	struct device *dev = ice_pf_to_dev(pf);
+	struct net_device *ndev;
+	struct ice_vsi *vsi;
+	uint watchdog_timeo;
+	int ret;
+
+	vsi = ice_get_main_vsi(pf);
+	if (!vsi || !vsi->netdev)
+		return -ENODEV;
+
+	ndev = vsi->netdev;
+
+	/* don't allow partial writes or overly long input */
+	if (*ppos || count > ICE_WATCHDOG_TIMEO_INPUT_MAX_LEN)
+		return -EINVAL;
+
+	ret = kstrtouint_from_user(buf, count, 0, &watchdog_timeo);
+	if (ret)
+		return ret;
+
+	if (watchdog_timeo < ICE_WATCHDOG_TIMEO_MIN ||
+	    watchdog_timeo > ICE_WATCHDOG_TIMEO_MAX) {
+		dev_err(dev, "Invalid watchdog timer value %u, value must be between %d - %d\n",
+			watchdog_timeo, ICE_WATCHDOG_TIMEO_MIN,
+			ICE_WATCHDOG_TIMEO_MAX);
+		return -EINVAL;
+	}
+
+	ndev->watchdog_timeo = watchdog_timeo * HZ;
+	return count;
+}
+
+static const struct file_operations ice_debugfs_watchdog_timeo_fops = {
+	.owner = THIS_MODULE,
+	.open  = simple_open,
+	.read = ice_debugfs_watchdog_timeo_read,
+	.write = ice_debugfs_watchdog_timeo_write,
+};
+
 /**
  * ice_debugfs_pf_init - setup the debugfs directory
  * @pf: the ice that is starting up
@@ -1628,12 +1720,19 @@ void ice_debugfs_pf_init(struct ice_pf *pf)
 	const char *name = pci_name(pf->pdev);
 
 	pf->ice_debugfs_pf = debugfs_create_dir(name, ice_debugfs_root);
-	if (IS_ERR(pf->ice_debugfs_pf))
+	if (IS_ERR(pf->ice_debugfs_pf)) {
+		pf->ice_debugfs_pf = NULL;
 		return;
+	}
 
 	pf->ice_debugfs_fw = debugfs_create_dir("fw", pf->ice_debugfs_pf);
-	if (IS_ERR(pf->ice_debugfs_fw))
+	if (IS_ERR(pf->ice_debugfs_fw)) {
+		pf->ice_debugfs_fw = NULL;
 		return;
+	}
+
+	debugfs_create_file("watchdog_timeo", 0600, pf->ice_debugfs_pf,
+			    pf, &ice_debugfs_watchdog_timeo_fops);
 
 	if (!debugfs_create_file("command", 0600, pf->ice_debugfs_pf,
 				 pf, &ice_debugfs_command_fops))

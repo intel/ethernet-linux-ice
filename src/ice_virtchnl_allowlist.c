@@ -42,7 +42,7 @@ static const u32 l2_allowlist_opcodes[] = {
 	VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE,
 };
 
-/* VIRTCHNL_VF_CAP_RDMA */
+/* VIRTCHNL_VF_OFFLOAD_RDMA */
 static const u32 rdma_allowlist_opcodes[] = {
 	VIRTCHNL_OP_RDMA, VIRTCHNL_OP_CONFIG_RDMA_IRQ_MAP,
 	VIRTCHNL_OP_RELEASE_RDMA_IRQ_MAP,
@@ -71,7 +71,7 @@ static const u32 vlan_v2_allowlist_opcodes[] = {
 /* VIRTCHNL_VF_OFFLOAD_RSS_PF */
 static const u32 rss_pf_allowlist_opcodes[] = {
 	VIRTCHNL_OP_CONFIG_RSS_KEY, VIRTCHNL_OP_CONFIG_RSS_LUT,
-	VIRTCHNL_OP_GET_RSS_HENA_CAPS, VIRTCHNL_OP_SET_RSS_HENA,
+	VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS, VIRTCHNL_OP_SET_RSS_HASHCFG,
 };
 
 /* VIRTCHNL_VF_OFFLOAD_ADQ */
@@ -132,6 +132,11 @@ static const u32 ptp_allowlist_opcodes[] = {
 	VIRTCHNL_OP_1588_PTP_GET_CAPS, VIRTCHNL_OP_1588_PTP_GET_TIME,
 };
 
+/* VIRTCHNL_VF_CAPS2 */
+static const u32 caps2_allowlist_opcodes[] = {
+	VIRTCHNL_OP_GET_VF_CAPS2,
+};
+
 static const u32 hqos_allowlist_opcodes[] = {
 	VIRTCHNL_OP_HQOS_TREE_READ, VIRTCHNL_OP_HQOS_ELEMS_ADD,
 	VIRTCHNL_OP_HQOS_ELEMS_DEL, VIRTCHNL_OP_HQOS_ELEMS_MOVE,
@@ -145,13 +150,13 @@ struct allowlist_opcode_info {
 
 #define BIT_INDEX(caps) (HWEIGHT((caps) - 1))
 #define ALLOW_ITEM(caps, list) \
-	[BIT_INDEX(caps)] = { \
+	[caps] = { \
 		.opcodes = list, \
 		.size = ARRAY_SIZE(list) \
 	}
 static const struct allowlist_opcode_info allowlist_opcodes[] = {
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_L2, l2_allowlist_opcodes),
-	ALLOW_ITEM(VIRTCHNL_VF_CAP_RDMA, rdma_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_RDMA, rdma_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_REQ_QUEUES, req_queues_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_VLAN, vlan_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_RSS_PF, rss_pf_allowlist_opcodes),
@@ -166,6 +171,7 @@ static const struct allowlist_opcode_info allowlist_opcodes[] = {
 	ALLOW_ITEM(VIRTCHNL_VF_LARGE_NUM_QPAIRS, large_num_qpairs_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_OFFLOAD_VLAN_V2, vlan_v2_allowlist_opcodes),
 	ALLOW_ITEM(VIRTCHNL_VF_CAP_PTP, ptp_allowlist_opcodes),
+	ALLOW_ITEM(VIRTCHNL_VF_CAPS2, caps2_allowlist_opcodes),
 };
 
 /**
@@ -253,10 +259,9 @@ void ice_vc_set_hqos_allowlist(struct ice_vf *vf)
 void ice_vc_set_caps_allowlist(struct ice_vf *vf)
 {
 	struct ice_port_info *pi = ice_get_main_vsi(vf->pf)->port_info;
-	unsigned long caps = vf->driver_caps;
 	unsigned int i;
 
-	for_each_set_bit(i, &caps, ARRAY_SIZE(allowlist_opcodes))
+	for_each_set_bit(i, vf->driver_caps, ARRAY_SIZE(allowlist_opcodes))
 		ice_vc_allowlist_opcodes(vf, allowlist_opcodes[i].opcodes,
 					 allowlist_opcodes[i].size);
 
