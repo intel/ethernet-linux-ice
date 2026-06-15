@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 2.6.4
+Version: 2.6.6
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
