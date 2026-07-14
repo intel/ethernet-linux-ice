@@ -1461,7 +1461,9 @@ int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 		if (err)
 			goto free_buf;
 		ice_set_ring_xdp(xdp_ring);
+#ifdef HAVE_AF_XDP_ZC_SUPPORT
 		xdp_ring->xsk_pool = ice_tx_xsk_pool(xdp_ring);
+#endif /* HAVE_AF_XDP_ZC_SUPPORT */
 	}
 #endif /* HAVE_XDP_SUPPORT */
 

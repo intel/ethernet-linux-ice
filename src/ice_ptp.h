@@ -127,8 +127,9 @@ enum ice_tx_tstamp_work {
  * @offset: offset into timestamp block to get the real index
  * @len: length of the tstamps and in_use fields.
  * @init: if true, the tracker is initialized;
- * @calibrating: if true, the PHY is calibrating the Tx offset. During this
- *               window, timestamps are temporarily disabled.
+ * @disabled: if true, new timestamp requests are disabled. This is set during
+ *            operations which might impact validity of Tx timestamps such as
+ *            during initial calibration of PHY timestamps on E82x.
  * @has_ready_bitmap: if true, the hardware has a valid Tx timestamp ready
  *                    bitmap register. If false, fall back to verifying new
  *                    timestamp values against previously cached copy.
@@ -142,7 +143,7 @@ struct ice_ptp_tx {
 	u8 offset;
 	u8 len;
 	u8 init : 1;
-	u8 calibrating : 1;
+	u8 disabled : 1;
 	u8 has_ready_bitmap : 1;
 	s8 last_ll_ts_idx_read;
 };
@@ -169,6 +170,7 @@ struct ice_ptp_tx {
  * @port_num: the port number this structure represents
  * @tx_clk: currently active Tx reference clock source
  * @tx_clk_req: requested Tx reference clock source (new target)
+ * @phy_soft_resets: number of times port has been PHY soft reset
  */
 struct ice_ptp_port {
 	struct kref ref;
@@ -181,6 +183,7 @@ struct ice_ptp_port {
 	u8 rx_calibrating : 1;
 	enum ice_e825c_ref_clk tx_clk;
 	enum ice_e825c_ref_clk tx_clk_req;
+	u32 phy_soft_resets;
 };
 
 enum ice_ptp_state {
@@ -285,6 +288,7 @@ struct ice_ptp_pin_desc {
  * @tx_hwtstamp_discarded: number of Tx skbs discarded due to cached PHC time
  *                         being too old to correctly extend timestamp
  * @late_cached_phc_updates: number of times cached PHC update is late
+ * @phy_ports_maybe_stuck: bitmap of PHY ports that might be stuck
  */
 struct ice_ptp {
 	enum ice_ptp_state state;
@@ -313,6 +317,7 @@ struct ice_ptp {
 	u32 tx_hwtstamp_flushed;
 	u32 tx_hwtstamp_discarded;
 	u32 late_cached_phc_updates;
+	DECLARE_BITMAP(phy_ports_maybe_stuck, ICE_MAX_PORT_PER_PCI_DEV);
 };
 
 static inline struct ice_ptp *__ptp_port_to_ptp(struct ice_ptp_port *p)

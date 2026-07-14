@@ -1531,13 +1531,19 @@ ice_adapter_find_prof_id_with_mask(struct ice_hw *hw, enum ice_block blk,
 {
 	struct ice_hw *adapter_hw = ice_get_primary_hw(
 hw->back);
-	struct ice_es *es = &adapter_hw->blk[blk].es;
+	struct ice_es *es;
 
 	/* For FD, we don't want to reuse an existing profile with the same
 	 * field vector and mask. This will cause rule interference.
 	 */
 	if (blk == ICE_BLK_FD)
 		return -ENOENT;
+
+	/* Guard against the primary port being mid-removal */
+	if (!adapter_hw || !adapter_hw->blk[blk].es.t)
+		return -ENOENT;
+
+	es = &adapter_hw->blk[blk].es;
 
 	for (u8 i = 0; i < es->count; i++) {
 		u16 off = i * es->fvw;
@@ -2645,6 +2651,7 @@ void ice_free_hw_tbls(struct ice_hw *hw)
 		kfree(hw->blk[i].prof.t);
 		kfree(hw->blk[i].prof_redir.t);
 		kfree(hw->blk[i].es.t);
+		hw->blk[i].es.t = NULL; /* prevent dangling pointer use after free */
 		kfree(hw->blk[i].es.ref_count);
 		kfree(hw->blk[i].es.written);
 		kfree(hw->blk[i].es.mask_ena);

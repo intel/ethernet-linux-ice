@@ -283,7 +283,7 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_template,
 				     __field(int, len)
 				     __field(int, in_use)
 				     __field(u8, init)
-				     __field(u8, calibrating)),
+				     __field(u8, disabled)),
 
 		    TP_fast_assign(lockdep_assert_held(&tx->lock);
 #ifdef HAVE_ASSIGN_STR_2_PARAMS
@@ -303,14 +303,14 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_template,
 				   __entry->in_use = bitmap_weight(tx->in_use,
 								   tx->len);
 				   __entry->init = tx->init;
-				   __entry->calibrating = tx->calibrating;),
+				   __entry->disabled = tx->disabled;),
 
-		    TP_printk("dev=%s netdev=%s skb=%p sequence_id=%d block=%d offset=%d len=%d in_use=%d init=%d calibrating=%d idx=%d",
+		    TP_printk("dev=%s netdev=%s skb=%p sequence_id=%d block=%d offset=%d len=%d in_use=%d init=%d disabled=%d idx=%d",
 			      __get_str(dev_name), __get_str(netdev_name),
 			      __entry->skb, __entry->seq,
 			      __entry->block, __entry->offset, __entry->len,
 			      __entry->in_use, __entry->init,
-			      __entry->calibrating, __entry->idx));
+			      __entry->disabled, __entry->idx));
 #define DEFINE_TX_TSTAMP_OP_EVENT(name) \
 DEFINE_EVENT(ice_tx_tstamp_template, name, \
 	     TP_PROTO(struct device *dev, struct ice_ptp_tx *tx, \
@@ -346,7 +346,7 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_with_value_template,
 				     __field(int, len)
 				     __field(int, in_use)
 				     __field(u8, init)
-				     __field(u8, calibrating)),
+				     __field(u8, disabled)),
 
 		    TP_fast_assign(lockdep_assert_held(&tx->lock);
 #ifdef HAVE_ASSIGN_STR_2_PARAMS
@@ -368,15 +368,15 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_with_value_template,
 				   __entry->in_use = bitmap_weight(tx->in_use,
 								   tx->len);
 				   __entry->init = tx->init;
-				   __entry->calibrating = tx->calibrating;),
+				   __entry->disabled = tx->disabled;),
 
-		    TP_printk("dev=%s netdev=%s skb=%p sequence_id=%d raw_tstamp=%llu tstamp=%llu block=%d offset=%d len=%d in_use=%d init=%d calibrating=%d idx=%d",
+		    TP_printk("dev=%s netdev=%s skb=%p sequence_id=%d raw_tstamp=%llu tstamp=%llu block=%d offset=%d len=%d in_use=%d init=%d disabled=%d idx=%d",
 			      __get_str(dev_name), __get_str(netdev_name),
 			      __entry->skb, __entry->seq,
 			      __entry->raw_tstamp, __entry->tstamp,
 			      __entry->block, __entry->offset, __entry->len,
 			      __entry->in_use, __entry->init,
-			      __entry->calibrating, __entry->idx));
+			      __entry->disabled, __entry->idx));
 
 #define DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(name) \
 DEFINE_EVENT(ice_tx_tstamp_with_value_template, name, \

@@ -788,8 +788,7 @@ static int ice_init_fltr_mgmt_struct(struct ice_hw *hw)
 	struct ice_switch_info *sw;
 	int status;
 
-	hw->switch_info = (struct ice_switch_info *)
-			  kzalloc(sizeof(*hw->switch_info), GFP_KERNEL);
+	hw->switch_info = kzalloc(sizeof(*hw->switch_info), GFP_KERNEL);
 	sw = hw->switch_info;
 
 	if (!sw)
@@ -1038,8 +1037,7 @@ int ice_init_hw(struct ice_hw *hw)
 		goto err_unroll_cqinit;
 
 	if (!hw->port_info)
-		hw->port_info = (struct ice_port_info *)
-			kzalloc(sizeof(*hw->port_info), GFP_KERNEL);
+		hw->port_info = kzalloc(sizeof(*hw->port_info), GFP_KERNEL);
 	if (!hw->port_info) {
 		status = -ENOMEM;
 		goto err_unroll_cqinit;
@@ -1077,8 +1075,7 @@ int ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_sched;
 
-	pcaps = (struct ice_aqc_get_phy_caps_data *)
-		kzalloc(sizeof(*pcaps), GFP_KERNEL);
+	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps) {
 		status = -ENOMEM;
 		goto err_unroll_sched;

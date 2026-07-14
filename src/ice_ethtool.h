@@ -210,6 +210,7 @@ struct ice_stats {
 #define ICE_TX_HWTSTAMP_FLUSHED		"tx_hwtstamp_flushed"
 #define ICE_TX_HWTSTAMP_DISCARDED	"tx_hwtstamp_discarded"
 #define ICE_LATE_CACHED_PHC_UPDATES	"late_cached_phc_updates"
+#define ICE_PTP_PHY_SOFT_RESETS		"ptp_phy_soft_resets"
 
 struct ice_phy_type_to_ethtool {
 	u64 aq_link_speed;

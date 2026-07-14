@@ -1215,20 +1215,6 @@ static int ice_init_vf_rss_lut_sysfs(struct ice_vf *vf)
 	return device_create_file(&vf->vfdev->dev, &vf->rss_lut_attr);
 }
 
-static bool
-ice_is_transmit_lldp_enabled(struct ice_pf *pf)
-{
-	struct ice_vf *vf;
-	unsigned int bkt;
-
-	ice_for_each_vf(pf, bkt, vf) {
-		if (vf->transmit_lldp)
-			return true;
-	}
-
-	return false;
-}
-
 /**
  * ice_ena_vf_rx_lldp
  * @vf: VF to configure Rx LLDP for
@@ -1314,11 +1300,6 @@ int ice_handle_vf_tx_lldp(struct ice_vf *vf, bool ena)
 		return -EPERM;
 	}
 
-	if (ena && ice_is_transmit_lldp_enabled(pf)) {
-		dev_err(dev, "Only a single VF per port is allowed to transmit LLDP packets, ignoring the settings");
-		return -EPERM;
-	}
-
 	allow_override = ena ? ice_vsi_ctx_set_allow_override
 			     : ice_vsi_ctx_clear_allow_override;
 
@@ -1326,16 +1307,6 @@ int ice_handle_vf_tx_lldp(struct ice_vf *vf, bool ena)
 		return -ENOENT;
 
 	vf->transmit_lldp = ena;
-
-	vsi = ice_get_main_vsi(pf);
-	if (!vsi)
-		return -ENOENT;
-	/* If VF can transmit LLDP, then PF cannot and vice versa */
-	allow_override = ena ? ice_vsi_ctx_clear_allow_override
-			     : ice_vsi_ctx_set_allow_override;
-
-	if (ice_vsi_update_security(vsi, allow_override))
-		return -ENOENT;
 
 	return 0;
 }

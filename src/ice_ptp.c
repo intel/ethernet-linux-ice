@@ -2305,7 +2305,7 @@ ice_ptp_is_tx_tracker_up(struct ice_ptp_tx *tx)
 {
 	lockdep_assert_held(&tx->lock);
 
-	return tx->init && !tx->calibrating;
+	return tx->init && !tx->disabled;
 }
 
 /**
@@ -2319,6 +2319,7 @@ void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 	struct ice_ptp_port *ptp_port;
 	unsigned long flags;
 	struct sk_buff *skb;
+	struct device *dev;
 	struct ice_pf *pf;
 
 	if (!tx->init)
@@ -2326,6 +2327,7 @@ void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 
 	ptp_port = container_of(tx, struct ice_ptp_port, tx);
 	pf = ptp_port_to_pf(ptp_port);
+	dev = ice_pf_to_dev(pf);
 	params = &pf->hw.ptp.phy.e810;
 
 	/* Drop packets which have waited for more than 2 seconds */
@@ -2348,7 +2350,13 @@ void ice_ptp_req_tx_single_tstamp(struct ice_ptp_tx *tx, u8 idx)
 
 	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
 
-	params->atqbal_flags |= ATQBAL_FLAGS_INTR_IN_PROGRESS;
+	if (test_and_set_bit(ATQBAL_FLAGS_INTR_IN_PROGRESS,
+			     params->atqbal_flags)) {
+		dev_dbg(dev, "%s: low latency interrupt request already in progress?\n",
+			__func__);
+		spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
+		return;
+	}
 
 	/* Write TS index to read to the PF register so the FW can read it */
 	wr32(&pf->hw, PF_SB_ATQBAL,
@@ -2391,7 +2399,8 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 
 	spin_lock_irqsave(&params->atqbal_wq.lock, flags);
 
-	if (!(params->atqbal_flags & ATQBAL_FLAGS_INTR_IN_PROGRESS))
+	if (!test_and_clear_bit(ATQBAL_FLAGS_INTR_IN_PROGRESS,
+				params->atqbal_flags))
 		dev_dbg(dev, "%s: low latency interrupt request not in progress?\n",
 			__func__);
 
@@ -2399,8 +2408,6 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 	hi = rd32(&pf->hw, PF_SB_ATQBAH);
 
 	/* Wake up threads waiting on low latency interface */
-	params->atqbal_flags &= ~ATQBAL_FLAGS_INTR_IN_PROGRESS;
-
 	wake_up_locked(&params->atqbal_wq);
 
 	spin_unlock_irqrestore(&params->atqbal_wq.lock, flags);
@@ -2570,6 +2577,16 @@ static void ice_ptp_process_tx_tstamp(struct ice_ptp_tx *tx)
 		err = ice_get_phy_tx_tstamp_ready(hw, tx->block, &tstamp_ready);
 		if (err)
 			return;
+
+		/* Only E825-C tracks per-port PHY interrupt stalls. Real
+		 * evidence that the PHY interrupt/ready logic is alive for
+		 * this port: clear any pending "maybe stuck" suspicion
+		 * recorded by the aux worker so we don't trigger a spurious
+		 * soft reset on a race between IRQ drain and the aux check.
+		 */
+		if (tstamp_ready &&
+		    hw->mac_type == ICE_MAC_GENERIC_3K_E825)
+			clear_bit(tx->block, pf->ptp.phy_ports_maybe_stuck);
 
 		/* Check and clear any Tx timestamp ready indication for
 		 * a slot that is not currently in use.
@@ -2755,7 +2772,7 @@ ice_ptp_alloc_tx_tracker(struct ice_ptp_tx *tx)
 	tx->tstamps = tstamps;
 	tx->in_use = in_use;
 	tx->init = 1;
-	tx->calibrating = 0;
+	tx->disabled = 0;
 	tx->last_ll_ts_idx_read = -1;
 
 	spin_lock_init(&tx->lock);
@@ -3195,13 +3212,13 @@ static void ice_ptp_wait_for_offsets(struct work_struct *work)
 	if (ice_is_reset_in_progress(pf->state))
 		goto err;
 
-	if (port->tx.calibrating) {
+	if (port->tx.disabled) {
 		tx_err = ice_ptp_check_tx_fifo(port);
 		if (!tx_err)
 			tx_err = ice_phy_cfg_tx_offset_e82x(&pf->hw,
 							    port->port_num);
 		if (!tx_err)
-			port->tx.calibrating = false;
+			port->tx.disabled = false;
 	}
 
 	if (port->rx_calibrating) {
@@ -3287,7 +3304,7 @@ static int ice_ptp_port_phy_restart(struct ice_ptp_port *ptp_port)
 		 * PHY offset
 		 */
 		spin_lock(&ptp_port->tx.lock);
-		ptp_port->tx.calibrating = true;
+		ptp_port->tx.disabled = true;
 		spin_unlock(&ptp_port->tx.lock);
 		ptp_port->tx_fifo_busy_cnt = 0;
 		ptp_port->rx_calibrating = true;
@@ -3427,8 +3444,10 @@ skip_unused_txclk_disable:
 		ice_ptp_port_phy_restart(ptp_port);
 		return;
 	case ICE_MAC_GENERIC_3K_E825:
-		if (linkup)
+		if (linkup) {
+			ice_ptp_phy_soft_reset_eth56g(hw, ptp_port->port_num);
 			ice_ptp_port_phy_restart(ptp_port);
+		}
 		return;
 	default:
 		dev_warn(ice_pf_to_dev(pf), "%s: Unknown PHY type\n", __func__);
@@ -5087,6 +5106,217 @@ static void ice_ptp_maybe_trigger_tx_interrupt(struct ice_pf *pf)
 }
 
 /**
+ * ice_port_perform_phy_soft_reset - Perform a PHY soft reset for E825C port
+ * @pf: Board private structure
+ * @port_num: The port number to reset
+ * @ptp_port: PTP port software structure if the port driver is loaded.
+ *
+ * Perform a PHY soft reset for the given port of the device. Note that we
+ * must still reset the PHY even if the PF driver for the port number is
+ * unloaded. In that case, the port structure won't exist and will be NULL.
+ *
+ * Context: if ptp_port is non-NULL, caller must have a valid reference to it.
+ */
+static void ice_port_perform_phy_soft_reset(struct ice_pf *pf, u8 port_num,
+					    struct ice_ptp_port *ptp_port)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_hw *hw = &pf->hw;
+	int err, err_count = 0;
+	unsigned long flags;
+
+	/* 1. If the port is active, disable new Tx timestamps */
+	if (ptp_port) {
+		spin_lock_irqsave(&ptp_port->tx.lock, flags);
+		ptp_port->tx.disabled = true;
+		spin_unlock_irqrestore(&ptp_port->tx.lock, flags);
+
+		/* Track how many times the PHY soft reset has occurred for
+		 * active ports.
+		 */
+		ptp_port->phy_soft_resets++;
+	}
+
+	/* 2. Disable PHY interrupts for the port */
+	err = ice_phy_cfg_intr_eth56g(hw, port_num, false, 1);
+	if (err) {
+		dev_warn(dev, "Failed to disable PHY interrupt for port %d, err %d. Continuing anyway\n",
+			 port_num, err);
+		err_count++;
+	}
+
+	/* 3. Trigger a PHY soft reset for the port. */
+	err = ice_ptp_phy_soft_reset_eth56g(hw, port_num);
+	if (err) {
+		dev_warn(dev, "Soft reset of PHY port %d failed, err %d. Continuing anyway\n",
+			 port_num, err);
+		err_count++;
+	}
+
+	/* 4. If the port is active, perform PHY reconfiguration */
+	if (ptp_port && ptp_port->link_up) {
+		mutex_lock(&ptp_port->ps_lock);
+		err = ice_start_phy_timer_eth56g(hw, port_num);
+		mutex_unlock(&ptp_port->ps_lock);
+
+		if (err) {
+			dev_warn(dev, "Failed to restart PHY port %d, err %d. Continuing anyway\n",
+				 port_num, err);
+			err_count++;
+		}
+	}
+
+	/* 5. Re-enable PHY interrupts */
+	err = ice_phy_cfg_intr_eth56g(hw, port_num, true, 1);
+	if (err) {
+		dev_warn(dev, "Failed to re-enable PHY interrupt for port %d, err %d\n",
+			 port_num, err);
+		err_count++;
+	}
+
+	/* 6. Re-enable Tx timestamps */
+	if (ptp_port) {
+		spin_lock_irqsave(&ptp_port->tx.lock, flags);
+		ptp_port->tx.disabled = false;
+		spin_unlock_irqrestore(&ptp_port->tx.lock, flags);
+	}
+
+	if (err_count)
+		dev_warn_ratelimited(dev, "PHY soft reset for port %d attempted, but process encountered %d errors\n",
+				     port_num, err_count);
+	else
+		dev_warn_ratelimited(dev, "PHY soft reset for port %d complete\n",
+				     port_num);
+}
+
+static bool ice_ptp_has_tstamp_timeout(struct ice_ptp_tx *tx)
+{
+	unsigned long flags, idx;
+	bool timeouts = false;
+
+	spin_lock_irqsave(&tx->lock, flags);
+	for_each_set_bit(idx, tx->in_use, tx->len)
+		if (time_is_before_jiffies(tx->tstamps[idx].start + 2 * HZ)) {
+			timeouts = true;
+			break;
+		}
+	spin_unlock_irqrestore(&tx->lock, flags);
+
+	return timeouts;
+}
+
+/**
+ * ice_ptp_check_phy_interrupt_status - Check if E825C PHY interrupt is blocked
+ * @pf: Board private structure
+ *
+ * The E825C PHY timestamping block can become stuck such that no interrupts
+ * will be generated. This is known to occur due to software misconfiguration,
+ * but is suspected to possibly occur rarely during normal operation. If the
+ * PHY_PTP_INT_STATUS indicator for the port is stuck high, but the port PHY
+ * timestamp memory block is cleared, then port timestamp interrupt might be
+ * stuck.
+ *
+ * If a port appears stuck for two checks in a row, attempt to recover the
+ * timestamp block by performing a PHY soft reset for the associated port.
+ */
+static void ice_ptp_check_phy_interrupt_status(struct ice_pf *pf)
+{
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_ptp_port *ptp_port;
+	struct ice_hw *hw = &pf->hw;
+	u64 tstamp_ready;
+	bool was_stuck;
+	u32 ts_status;
+	int err;
+
+	/* Only need to check for PHY lockup on E825-C devices */
+	if (hw->mac_type != ICE_MAC_GENERIC_3K_E825)
+		return;
+
+	err = ice_ptp_read_tx_hwtstamp_status_eth56g(hw, &ts_status);
+	if (err) {
+		dev_dbg(dev, "Failed to read PHY_PTP_INT_STATUS, err %d\n",
+			err);
+		return;
+	}
+
+	if (!ts_status) {
+		/* No PHY is reporting a pending Tx timestamp interrupt;
+		 * any previously recorded suspicion is stale.
+		 */
+		bitmap_zero(pf->ptp.phy_ports_maybe_stuck,
+			    ICE_MAX_PORT_PER_PCI_DEV);
+		return;
+	}
+
+	for (int port_num = 0; port_num < hw->ptp.num_lports; port_num++) {
+		unsigned long *maybe_stuck = pf->ptp.phy_ports_maybe_stuck;
+
+		if (!(ts_status & BIT(port_num))) {
+			if (test_bit(port_num, maybe_stuck)) {
+				/* no longer suspicious, drop flag */
+				dev_dbg(dev, "Port %d no longer suspicious. Clearing 'stuck mask' for that port\n",
+					port_num);
+				clear_bit(port_num, maybe_stuck);
+			}
+			continue;
+		}
+
+		err = ice_get_phy_tx_tstamp_ready(hw, port_num, &tstamp_ready);
+		if (err)
+			continue;
+
+		/* If the port has an active driver, it will have a PTP port
+		 * structure associated with this adapter. The hardware block
+		 * must be reset regardless, but additional steps are taken
+		 * for active ports.
+		 */
+		rcu_read_lock();
+		ptp_port = xa_load(&pf->adapter->ptp_ports, port_num);
+		if (!ptp_port || !kref_get_unless_zero(&ptp_port->ref))
+			ptp_port = NULL;
+		rcu_read_unlock();
+
+		/* If the timestamp status bit for the PHY interrupt is read
+		 * high, and the timestamp ready bitmap is clear, the
+		 * timestamp interrupt might be stuck. If this situation is
+		 * detected twice in a row then assume the PHY interrupt is
+		 * stuck. In certain cases, high Tx timestamp rates may not
+		 * get caught with such a check since new timestamps will
+		 * cause the ready bitmap to not be empty, however interrupts
+		 * may still be stuck. Also assume the timestamp interrupt is
+		 * stuck if we detect timestamps waiting for too long.
+		 */
+		if (ptp_port && ice_ptp_has_tstamp_timeout(&ptp_port->tx)) {
+			dev_warn_ratelimited(dev, "Detected Tx timestamp timeouts on port %d. Attempting automatic recovery via PHY soft reset\n",
+					     port_num);
+			ice_port_perform_phy_soft_reset(pf, port_num, ptp_port);
+			clear_bit(port_num, maybe_stuck);
+		} else if (!tstamp_ready) {
+			was_stuck = test_and_clear_bit(port_num, maybe_stuck);
+
+			if (was_stuck) {
+				dev_warn_ratelimited(dev, "Detected PHY interrupt stall on port %d. Attempting automatic recovery via PHY soft reset\n",
+						     port_num);
+				ice_port_perform_phy_soft_reset(pf, port_num,
+								ptp_port);
+			} else {
+				set_bit(port_num, maybe_stuck);
+				dev_dbg(dev, "Suspicious interrupt stall detected on port %d. Setting 'stuck mask' for that port\n",
+					port_num);
+			}
+		} else if (test_and_clear_bit(port_num, maybe_stuck)) {
+			/* Ready bitmap is non-empty: interrupts are flowing. */
+			dev_dbg(dev, "Ready bitmap is non-empty: interrupts are flowing on port %d. Clearing 'stuck mask' for that port\n",
+				port_num);
+		}
+
+		if (ptp_port)
+			kref_put(&ptp_port->ref, ice_ptp_release_port_rcu);
+	}
+}
+
+/**
  * ice_ptp_periodic_work - Do PTP periodic work
  * @info: Driver's PTP info structure
  *
@@ -5106,6 +5336,8 @@ static long ice_ptp_periodic_work(struct ptp_clock_info *info)
 	err = ice_ptp_update_cached_phctime_all(pf);
 	if (err)
 		retry = true;
+
+	ice_ptp_check_phy_interrupt_status(pf);
 
 	ice_ptp_maybe_trigger_tx_interrupt(pf);
 
@@ -5411,6 +5643,14 @@ bool ice_ptp_tx_tstamps_pending(struct ice_pf *pf)
 	if (pf->ptp.state != ICE_PTP_READY)
 		return false;
 
+	/* E810 devices with support for the low latency timestamp interrupt
+	 * have specialized handling for timestamps. They should not
+	 * re-schedule the miscellaneous interrupt.
+	 */
+	if (hw->mac_type == ICE_MAC_E810 &&
+	    hw->dev_caps.ts_dev_info.ts_ll_int_read)
+		return false;
+
 	switch (pf->ptp.tx_interrupt_mode) {
 	case ICE_PTP_TX_INTERRUPT_NONE:
 		return false;
@@ -5683,7 +5923,13 @@ static int ice_ptp_setup_pf(struct ice_pf *pf)
 	u8 port_num, phy;
 	int err;
 
-	if (WARN_ON(!ctrl_pf) || pf->hw.mac_type == ICE_MAC_UNKNOWN)
+	if (!ctrl_ptp) {
+		dev_info(ice_pf_to_dev(pf),
+			 "PTP unavailable: no controlling PF\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (pf->hw.mac_type == ICE_MAC_UNKNOWN)
 		return -ENODEV;
 
 	kref_init(&ptp->port.ref);
@@ -5731,7 +5977,9 @@ static void ice_ptp_cleanup_pf(struct ice_pf *pf)
 	ref = &ptp->port.ref;
 	kref_put(ref, ice_ptp_release_port_rcu);
 
-	wait_var_event(ref, !kref_read(ref));
+	dev_WARN_ONCE(ice_pf_to_dev(pf),
+		      !wait_var_event_timeout(ref, !kref_read(ref), 15 * HZ),
+		      "Timed out waiting for port references to release. Continuing to unload anyways.");
 
 	synchronize_rcu();
 }
@@ -6073,6 +6321,9 @@ err_exit:
 void ice_ptp_release(struct ice_pf *pf)
 {
 	struct ice_ptp *ptp = &pf->ptp;
+	if (pf->adapter && pf->adapter->ctrl_pf == pf)
+		pf->adapter->ctrl_pf = NULL;
+
 	if (ptp->state == ICE_PTP_UNINIT)
 		return;
 

@@ -232,6 +232,7 @@ static const struct ice_stats ice_gstrings_pf_stats[] = {
 	ICE_PF_STAT(ICE_TX_HWTSTAMP_FLUSHED, ptp.tx_hwtstamp_flushed),
 	ICE_PF_STAT(ICE_TX_HWTSTAMP_DISCARDED, ptp.tx_hwtstamp_discarded),
 	ICE_PF_STAT(ICE_LATE_CACHED_PHC_UPDATES, ptp.late_cached_phc_updates),
+	ICE_PF_STAT(ICE_PTP_PHY_SOFT_RESETS, ptp.port.phy_soft_resets),
 };
 
 static const u32 ice_regs_dump_list[] = {

@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 2.6.6
+Version: 2.6.7
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
@@ -110,9 +110,6 @@ done
 rm -rf %{buildroot}
 
 %files -f file.list
-/lib/firmware/updates/intel/ice/ddp/ice-1.3.59.0.pkg
-/lib/firmware/updates/intel/ice/ddp/ice.pkg
-/lib/firmware/updates/intel/ice/ddp/LICENSE
 
 %defattr(-,root,root)
 %{_mandir}/man7/ice.7.gz
