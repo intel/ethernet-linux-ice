@@ -2979,12 +2979,14 @@ _kc_dev_change_flags(struct net_device *netdev, unsigned int flags,
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0))
+#ifdef NEED_NETDEV_XMIT_MORE
 #if (defined HAVE_SKB_XMIT_MORE) && \
 (!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,2))))
 #define netdev_xmit_more()	(skb->xmit_more)
 #else
 #define netdev_xmit_more()	(0)
 #endif
+#endif /* NEED_NETDEV_XMIT_MORE */
 
 #ifndef mmiowb
 #ifdef CONFIG_IA64
