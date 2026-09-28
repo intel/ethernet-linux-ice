@@ -2069,8 +2069,8 @@ ice_parse_raw_rss_pattern(struct ice_vf *vf, struct virtchnl_proto_hdrs *proto,
 	struct ice_parser_result pkt_parsed;
 	struct ice_hw *hw = &vf->pf->hw;
 	struct ice_parser_profile prof;
+	struct ice_parser *psr = NULL;
 	u16 pkt_len, udp_port = 0;
-	struct ice_parser *psr;
 	u8 *pkt_buf, *msk_buf;
 	int status = 0;
 
@@ -3603,12 +3603,12 @@ static int ice_vc_get_max_allowed_qpairs(struct ice_vf *vf)
  *
  * Configure VF queues bandwidth.
  */
-static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
+static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_queues_bw_cfg *qbw =
 		(struct virtchnl_queues_bw_cfg *)msg;
-	struct ice_vf_qs_bw *qs_bw;
+	struct ice_vf_qs_bw *qs_bw, *qs_bw_tmp;
 	struct ice_vsi *vsi;
 	size_t len;
 	u16 i;
@@ -3628,6 +3628,11 @@ static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
 	if (qbw->num_queues > min_t(u16, vsi->alloc_txq, vsi->alloc_rxq)) {
 		dev_err(ice_pf_to_dev(vf->pf), "VF-%d trying to configure more than allocated number of queues: %d\n",
 			vf->vf_id, min_t(u16, vsi->alloc_txq, vsi->alloc_rxq));
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto err;
+	}
+
+	if (msglen < struct_size(qbw, cfg, qbw->num_queues - 1)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto err;
 	}
@@ -3655,7 +3660,7 @@ static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 			goto err;
 		}
-		if (qbw->cfg[i].tc >= VIRTCHNL_MAX_ADQ_V2_CHANNELS) {
+		if (qbw->cfg[i].tc >= ICE_MAX_TRAFFIC_CLASS) {
 			dev_warn(ice_pf_to_dev(vf->pf), "VF-%d trying to configure invalid TC\n",
 				 vf->vf_id);
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -3677,7 +3682,27 @@ static int ice_vc_cfg_q_bw(struct ice_vf *vf, u8 *msg)
 		qs_bw[i].tc = qbw->cfg[i].tc;
 	}
 
+	qs_bw_tmp = kmemdup(vf->qs_bw, len, GFP_KERNEL);
+	if (!qs_bw_tmp) {
+		v_ret = VIRTCHNL_STATUS_ERR_NO_MEMORY;
+		goto err_bw;
+	}
+
 	memcpy(vf->qs_bw, qs_bw, len);
+
+	if (ice_vf_cfg_qs_bw(vf, qbw->num_queues)) {
+		dev_warn(ice_pf_to_dev(vf->pf), "Unable to configure queue bandwidth for VF-%d\n",
+			 vf->vf_id);
+		memcpy(vf->qs_bw, qs_bw_tmp, len);
+
+		if (ice_vf_cfg_qs_bw(vf, qbw->num_queues))
+			dev_warn(ice_pf_to_dev(vf->pf),
+				 "VF-%d BW rollback failed; HW inconsistent until VF reset\n",
+				 vf->vf_id);
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+	}
+
+	kfree(qs_bw_tmp);
 
 err_bw:
 	kfree(qs_bw);
@@ -3765,16 +3790,16 @@ err:
  * ice_vc_cfg_txq - Configure a TX queue with optional txtime support
  * @vf: pointer to the VF info
  * @vsi: pointer to the VSI
+ * @q_idx: index of the queue within @vsi (already validated by caller)
  * @txqi: pointer to virtchnl_txq_info structure
  *
  * Return: VIRTCHNL_STATUS_SUCCESS on success, error code on failure.
  */
 static enum virtchnl_status_code
-ice_vc_cfg_txq(struct ice_vf *vf, struct ice_vsi *vsi,
+ice_vc_cfg_txq(struct ice_vf *vf, struct ice_vsi *vsi, u16 q_idx,
 	       struct virtchnl_txq_info *txqi)
 {
 	struct ice_pf *pf = vf->pf;
-	u16 q_idx = txqi->queue_id;
 
 	if (txqi->ring_len == 0)
 		return VIRTCHNL_STATUS_SUCCESS;
@@ -3792,7 +3817,7 @@ ice_vc_cfg_txq(struct ice_vf *vf, struct ice_vsi *vsi,
 		struct ice_tx_ring *tx_ring = vsi->tx_rings[q_idx];
 		struct ice_tstamp_ring *tstamp_ring;
 
-		if (!ice_is_feature_supported(pf, ICE_F_TXTIME))
+		if (!ice_is_feature_supported(pf, ICE_F_SRIOV_TXTIME))
 			return VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
 
 		tstamp_ring = kzalloc(sizeof(*tstamp_ring), GFP_KERNEL);
@@ -3919,7 +3944,7 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 
 		/* copy Tx queue info from VF into VSI */
 		if (qpi->txq.ring_len > 0) {
-			if (ice_vc_cfg_txq(vf, vsi, &qpi->txq)) {
+			if (ice_vc_cfg_txq(vf, vsi, q_idx, &qpi->txq)) {
 				dev_warn(ice_pf_to_dev(pf), "VF-%d failed to configure TX queue %d\n",
 					 vf->vf_id, i);
 				goto error_param;
@@ -3974,7 +3999,8 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 			if (test_bit(VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC,
 				     vf->driver_caps)) {
 				rxdid = qpi->rxq.rxdid;
-				if (!(BIT(rxdid) & pf->supported_rxdids))
+				if (rxdid >= BITS_PER_LONG ||
+				    !(BIT(rxdid) & pf->supported_rxdids))
 					goto error_param;
 			} else {
 				rxdid = ICE_RXDID_LEGACY_1;
@@ -4008,8 +4034,6 @@ static int ice_vc_cfg_qs_msg(struct ice_vf *vf, u8 *msg)
 		}
 	}
 
-	if (ice_vf_cfg_qs_bw(vf, qci->num_queue_pairs))
-		goto error_param;
 #ifdef HAVE_NETDEV_UPPER_INFO
 
 	ice_lag_complete_vf_reset(pf->lag, act_prt);
@@ -4292,7 +4316,7 @@ ice_vc_del_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
  * add guest MAC address filter
  */
 static int
-ice_vc_handle_mac_addr_msg(struct ice_vf *vf, u8 *msg, bool set)
+ice_vc_handle_mac_addr_msg(struct ice_vf *vf, u8 *msg, bool set, u16 msglen)
 {
 	int (*ice_vc_cfg_mac)
 		(struct ice_vf *vf, struct ice_vsi *vsi,
@@ -4319,13 +4343,20 @@ ice_vc_handle_mac_addr_msg(struct ice_vf *vf, u8 *msg, bool set)
 		goto handle_mac_exit;
 	}
 
-	/* If this VF is not privileged, then we can't modify  more than a
+	if (msglen < struct_size(al, list, al->num_elements)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto handle_mac_exit;
+	}
+
+	/* If this VF is not privileged, then we can't add more than a
 	 * limited number of addresses. Check to make sure that the
 	 * additions do not push us over the limit.
+	 * We allow deletion, otherwise there will be no option to delete MAC
+	 * when there is a maximum number of them.
 	 */
-	if (!ice_is_vf_trusted(vf) &&
+	if (set && !ice_is_vf_trusted(vf) &&
 	    (vf->num_mac + al->num_elements) > ICE_MAX_MACADDR_PER_VF) {
-		dev_err(ice_pf_to_dev(pf), "Can't modify more MAC addresses, because VF-%d is not trusted, switch the VF to trusted mode in order to add more functionalities\n",
+		dev_err(ice_pf_to_dev(pf), "Can't add more MAC addresses, because VF-%d is not trusted, switch the VF to trusted mode in order to add more functionalities\n",
 			vf->vf_id);
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto handle_mac_exit;
@@ -4365,9 +4396,9 @@ handle_mac_exit:
  *
  * add guest MAC address filter
  */
-static int ice_vc_add_mac_addr_msg(struct ice_vf *vf, u8 *msg)
+static int ice_vc_add_mac_addr_msg(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
-	return ice_vc_handle_mac_addr_msg(vf, msg, true);
+	return ice_vc_handle_mac_addr_msg(vf, msg, true, msglen);
 }
 
 /**
@@ -4377,9 +4408,9 @@ static int ice_vc_add_mac_addr_msg(struct ice_vf *vf, u8 *msg)
  *
  * remove guest MAC address filter
  */
-static int ice_vc_del_mac_addr_msg(struct ice_vf *vf, u8 *msg)
+static int ice_vc_del_mac_addr_msg(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
-	return ice_vc_handle_mac_addr_msg(vf, msg, false);
+	return ice_vc_handle_mac_addr_msg(vf, msg, false, msglen);
 }
 
 /**
@@ -5376,7 +5407,8 @@ ice_dcf_handle_aq_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 	}
 
 	if (aq_ret != -EIO) {
-		v_ret = ice_dcf_post_aq_send_cmd(pf, aq_desc, aq_buf);
+		v_ret = ice_dcf_post_aq_send_cmd(pf, aq_desc, aq_buf,
+						 aq_buf_size);
 		if (v_ret != VIRTCHNL_STATUS_SUCCESS) {
 			v_op = VIRTCHNL_OP_DCF_CMD_DESC;
 			goto err;
@@ -6101,8 +6133,7 @@ ice_vc_validate_qs_v2_msg(struct ice_vf *vf,
 	size_t expected_len;
 	int i;
 
-	if (!chunks->num_chunks ||
-	    chunks->num_chunks > VIRTCHNL_OP_ENABLE_DISABLE_DEL_QUEUES_V2_MAX)
+	if (!chunks->num_chunks)
 		return false;
 
 	expected_len = struct_size(qs_msg, chunks.chunks,
@@ -6362,8 +6393,7 @@ ice_vc_validate_qv_maps(struct ice_vf *vf,
 		total_vectors = vsi->num_q_vectors + ICE_NONQ_VECS_VF;
 	}
 
-	if (!qv_maps->num_qv_maps ||
-	    qv_maps->num_qv_maps > VIRTCHNL_OP_MAP_UNMAP_QUEUE_VECTOR_MAX)
+	if (!qv_maps->num_qv_maps)
 		return false;
 
 	if (msglen < struct_size(qv_maps, qv_maps, qv_maps->num_qv_maps))
@@ -6734,9 +6764,13 @@ static bool ice_vc_is_valid_vlan(struct virtchnl_vlan *vc_vlan)
  */
 static bool
 ice_vc_validate_vlan_filter_list(struct virtchnl_vlan_filtering_caps *vfc,
-				 struct virtchnl_vlan_filter_list_v2 *vfl)
+				 struct virtchnl_vlan_filter_list_v2 *vfl,
+				 u16 msglen)
 {
 	u16 i;
+
+	if (msglen < struct_size(vfl, filters, vfl->num_elements))
+		return false;
 
 	for (i = 0; i < vfl->num_elements; i++) {
 		struct virtchnl_vlan_supported_caps *filtering_support =
@@ -6875,13 +6909,14 @@ ice_vc_del_vlans(struct ice_vf *vf, struct ice_vsi *vsi,
 static bool
 ice_vc_validate_del_vlan_filter_list(struct ice_vsi *vsi,
 				     struct virtchnl_vlan_filtering_caps *vfc,
-				     struct virtchnl_vlan_filter_list_v2 *vfl)
+				     struct virtchnl_vlan_filter_list_v2 *vfl,
+				     u16 msglen)
 {
 	if (!vfl->num_elements ||
 	    vfl->num_elements > ice_vsi_num_non_zero_vlans(vsi))
 		return false;
 
-	return ice_vc_validate_vlan_filter_list(vfc, vfl);
+	return ice_vc_validate_vlan_filter_list(vfc, vfl, msglen);
 }
 
 /**
@@ -6889,7 +6924,7 @@ ice_vc_validate_del_vlan_filter_list(struct ice_vsi *vsi,
  * @vf: VF the message was received from
  * @msg: message received from the VF
  */
-static int ice_vc_remove_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
+static int ice_vc_remove_vlan_v2_msg(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	struct virtchnl_vlan_filter_list_v2 *vfl =
 		(struct virtchnl_vlan_filter_list_v2 *)msg;
@@ -6897,6 +6932,11 @@ static int ice_vc_remove_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 	struct ice_vsi *vsi;
 
 	if (!ice_vc_isvalid_vsi_id(vf, vfl->vport_id)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto out;
+	}
+
+	if (msglen < struct_size(vfl, filters, vfl->num_elements)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto out;
 	}
@@ -6909,7 +6949,7 @@ static int ice_vc_remove_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 
 	if (!ice_vc_validate_del_vlan_filter_list(vsi,
 						  &vf->vlan_v2_caps.filtering,
-						  vfl)) {
+						  vfl, msglen)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto out;
 	}
@@ -6994,7 +7034,8 @@ ice_vc_add_vlans(struct ice_vf *vf, struct ice_vsi *vsi,
 static bool
 ice_vc_validate_add_vlan_filter_list(struct ice_vsi *vsi,
 				     struct virtchnl_vlan_filtering_caps *vfc,
-				     struct virtchnl_vlan_filter_list_v2 *vfl)
+				     struct virtchnl_vlan_filter_list_v2 *vfl,
+				     u16 msglen)
 {
 	u16 num_req_fltr;
 
@@ -7005,7 +7046,7 @@ ice_vc_validate_add_vlan_filter_list(struct ice_vsi *vsi,
 	if (num_req_fltr > vfc->max_filters)
 		return false;
 
-	return ice_vc_validate_vlan_filter_list(vfc, vfl);
+	return ice_vc_validate_vlan_filter_list(vfc, vfl, msglen);
 }
 
 /**
@@ -7013,7 +7054,7 @@ ice_vc_validate_add_vlan_filter_list(struct ice_vsi *vsi,
  * @vf: VF the message was received from
  * @msg: message received from the VF
  */
-static int ice_vc_add_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
+static int ice_vc_add_vlan_v2_msg(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_vlan_filter_list_v2 *vfl =
@@ -7030,6 +7071,11 @@ static int ice_vc_add_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 		goto out;
 	}
 
+	if (msglen < struct_size(vfl, filters, vfl->num_elements)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto out;
+	}
+
 	vsi = ice_get_vf_vsi(vf);
 	if (!vsi) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -7038,7 +7084,7 @@ static int ice_vc_add_vlan_v2_msg(struct ice_vf *vf, u8 *msg)
 
 	if (!ice_vc_validate_add_vlan_filter_list(vsi,
 						  &vf->vlan_v2_caps.filtering,
-						  vfl)) {
+						  vfl, msglen)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto out;
 	}
@@ -7517,8 +7563,7 @@ static int ice_vc_get_vf_caps2(struct ice_vf *vf,
 	/* Set extended feature flags. The first 32 bits should be already set
 	 * in VIRTCHNL_OP_GET_VF_RESOURCES
 	 */
-	if (ice_is_feature_supported(pf, ICE_F_TXTIME) &&
-	    ice_is_fw_vf_txtime_supported_e83x(&pf->hw)) {
+	if (ice_is_feature_supported(pf, ICE_F_SRIOV_TXTIME)) {
 		dev_dbg(ice_pf_to_dev(pf),
 			"VF %u: advertising TXTIME offload capability\n",
 			vf->vf_id);
@@ -8427,7 +8472,7 @@ void ice_virtchnl_set_dflt_ops(struct ice_vf *vf)
  * to firmware, we store it so that PF could report same
  * MAC as VF.
  */
-static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg)
+static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
 	struct virtchnl_ether_addr_list *al =
@@ -8438,6 +8483,11 @@ static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg)
 
 	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states) ||
 	    !ice_vc_isvalid_vsi_id(vf, al->vsi_id)) {
+		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		goto handle_mac_exit;
+	}
+
+	if (msglen < struct_size(al, list, al->num_elements)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		goto handle_mac_exit;
 	}
@@ -8482,7 +8532,7 @@ handle_mac_exit:
  * For legacy VF driver try to update cached MAC address.
  */
 static int
-ice_vc_repr_del_mac(struct ice_vf *vf, u8 *msg)
+ice_vc_repr_del_mac(struct ice_vf *vf, u8 *msg, u16 msglen)
 {
 	struct virtchnl_ether_addr_list *al =
 		(struct virtchnl_ether_addr_list *)msg;
@@ -8726,10 +8776,10 @@ error_handler:
 		ops->reset_vf(vf);
 		break;
 	case VIRTCHNL_OP_ADD_ETH_ADDR:
-		err = ops->add_mac_addr_msg(vf, msg);
+		err = ops->add_mac_addr_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_DEL_ETH_ADDR:
-		err = ops->del_mac_addr_msg(vf, msg);
+		err = ops->del_mac_addr_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_CONFIG_VSI_QUEUES:
 		err = ops->cfg_qs_msg(vf, msg);
@@ -8852,7 +8902,7 @@ error_handler:
 		err = ops->cfg_q_tc_map(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_QUEUE_BW:
-		err = ops->cfg_q_bw(vf, msg);
+		err = ops->cfg_q_bw(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_CONFIG_QUANTA:
 		err = ops->cfg_q_quanta(vf, msg);
@@ -8886,10 +8936,10 @@ error_handler:
 		err = ops->get_offload_vlan_v2_caps(vf);
 		break;
 	case VIRTCHNL_OP_ADD_VLAN_V2:
-		err = ops->add_vlan_v2_msg(vf, msg);
+		err = ops->add_vlan_v2_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_DEL_VLAN_V2:
-		err = ops->remove_vlan_v2_msg(vf, msg);
+		err = ops->remove_vlan_v2_msg(vf, msg, msglen);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING_V2:
 		err = ops->ena_vlan_stripping_v2_msg(vf, msg);

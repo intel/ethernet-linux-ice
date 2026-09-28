@@ -937,6 +937,14 @@ static int ice_dcbnl_setapp(struct net_device *netdev, struct dcb_app *app)
 
 	/* apply new mapping for this DSCP value */
 	new_cfg->dscp_map[app->protocol] = app->priority;
+	if (new_cfg->numapps >= ICE_DCBX_MAX_APPS) {
+		netdev_err(netdev, "DSCP APP table full (%u entries)\n",
+			   new_cfg->numapps);
+		clear_bit(app->protocol, new_cfg->dscp_mapped);
+		dcb_ieee_delapp(netdev, app);
+		ret = -ENOSPC;
+		goto setapp_out;
+	}
 	new_cfg->app[new_cfg->numapps++] = new_app;
 
 	if (!ice_dcb_need_recfg(pf, &pf->hw.port_info->qos_cfg.local_dcbx_cfg,

@@ -392,9 +392,16 @@ err_cp_free:
  * ice_lag_cfg_pf_fltrs - set filters up for PF traffic
  * @lag: local interfaces lag struct
  * @ptr: opaque data containing notifier event
+ * @sriov_compliant: whether the aggregate is currently SR-IOV LAG compliant
+ *
+ * The active-active aggregate filter is required for LACP negotiation to
+ * work even on a non-compliant aggregate, so it is installed unconditionally.
+ * The active-backup per-port filter exists solely to steer VF traffic to the
+ * currently active port, so only run it once the aggregate is confirmed SR-IOV
+ * compliant.
  */
 static void
-ice_lag_cfg_pf_fltrs(struct ice_lag *lag, void *ptr)
+ice_lag_cfg_pf_fltrs(struct ice_lag *lag, void *ptr, bool sriov_compliant)
 {
 	struct netdev_notifier_bonding_info *info =
 ptr;
@@ -412,7 +419,8 @@ ptr;
 			ice_lag_cfg_lp_fltr(lag, true, false);
 			lag->need_fltr_cfg = false;
 		}
-	} else {
+	} else if (ice_is_feature_supported(lag->pf, ICE_F_SRIOV_LAG) &&
+		   sriov_compliant) {
 		ice_lag_cfg_pf_fltrs_act_bkup(lag, bonding_info);
 	}
 }
@@ -2329,7 +2337,7 @@ static void ice_lag_set_swid(u16 primary_swid, struct ice_lag *local_lag,
 	buf->num_elems = cpu_to_le16(1);
 	buf->res_type = cpu_to_le16(ICE_AQC_RES_TYPE_SWID);
 	/* if unlinking, need to free the shared resource */
-	if (!link && local_lag->bond_swid) {
+	if (!link) {
 		buf->elem[0].e.sw_resp = cpu_to_le16(local_lag->bond_swid);
 		status = ice_aq_alloc_free_res(&local_lag->pf->hw,
 					       ICE_LAG_NUM_RULES, buf, buf_len,
@@ -2539,12 +2547,19 @@ static void ice_lag_rdma_changeupper_event(struct ice_lag *lag,
 					netdev_warn(lag->netdev, "Error creating RoCEv2 filter\n");
 		} else {
 			lag->bond_id = ida_alloc(&ice_lag_ida, GFP_KERNEL);
+			if (lag->bond_id < 0) {
+				netdev_warn(lag->netdev, "Failed to allocate bond ID for RoCEv2 LAG\n");
+				lag->bond_id = -1;
+				return;
+			}
 			if (ice_lag_rdma_create_fltr(lag))
 				netdev_warn(lag->netdev, "Error creating RoCEv2 filter\n");
 		}
 	} else {
 		if (!lag->primary)
 			ice_lag_rdma_del_fltr(lag);
+		else if (lag->bond_id < 0)
+			netdev_warn(lag->netdev, "RoCEv2 LAG bond ID not allocated on unlink\n");
 		else
 			ida_free(&ice_lag_ida, lag->bond_id);
 
@@ -3586,15 +3601,23 @@ static void ice_lag_disable_sriov_bond(struct ice_lag *lag)
  * ice_lag_preset_drop_fltr - preset drop filter for A/B bonds
  * @lag: local lag struct
  * @ptr: opaque data containing event
+ * @sriov_compliant: whether the aggregate is currently SR-IOV LAG compliant
  *
  * Sets the initial drop filter for secondary interface in an
- * active-backup bond
+ * active-backup bond. This is part of the SR-IOV VF-forwarding
+ * active-port tracking, so it is only relevant once the aggregate is
+ * SR-IOV compliant.
  */
-static void ice_lag_preset_drop_fltr(struct ice_lag *lag, void *ptr)
+static void ice_lag_preset_drop_fltr(struct ice_lag *lag, void *ptr,
+				     bool sriov_compliant)
 {
 	struct net_device *netdev = netdev_notifier_info_to_dev(ptr);
 
 	if (netdev != lag->netdev || lag->primary || !lag->need_fltr_cfg)
+		return;
+
+	if (!ice_is_feature_supported(lag->pf, ICE_F_SRIOV_LAG) ||
+	    !sriov_compliant)
 		return;
 
 	ice_lag_cfg_drop_fltr(lag, true);
@@ -3612,6 +3635,7 @@ static void ice_lag_process_event(struct work_struct *work)
 	struct ice_lag_work *lag_work;
 	struct net_device *netdev;
 	struct list_head *tmp, *n;
+	bool is_sriov_compliant;
 	bool unregister_sriov;
 	bool unregister_roce;
 	struct ice_pf *pf;
@@ -3644,10 +3668,25 @@ static void ice_lag_process_event(struct work_struct *work)
 		unregister_sriov = false;
 		unregister_roce = false;
 
+		/* ice_lag_chk_sriov_comp() needs to run before
+		 * ice_lag_cfg_pf_fltrs()/ice_lag_preset_drop_fltr(), as it
+		 * updates lag->bond_mode and lag->bond_aa which the functions
+		 * use.
+		 */
+		is_sriov_compliant = ice_lag_chk_sriov_comp(lag_work->lag, bi);
+
+		/* ice_lag_cfg_pf_fltrs() always installs the active-active
+		 * aggregate lport filter, needed for LACP negotiation
+		 * regardless of SR-IOV compliance. Its active-backup path,
+		 * along with ice_lag_preset_drop_fltr(), only manages
+		 * per-port VF-forwarding filters, so those only run once the
+		 * aggregate is confirmed SR-IOV compliant.
+		 */
+		ice_lag_cfg_pf_fltrs(lag_work->lag, bi, is_sriov_compliant);
+		ice_lag_preset_drop_fltr(lag_work->lag, bi, is_sriov_compliant);
+
 		if (ice_is_feature_supported(pf, ICE_F_SRIOV_LAG)) {
-			if (ice_lag_chk_sriov_comp(lag_work->lag, bi)) {
-				ice_lag_cfg_pf_fltrs(lag_work->lag, bi);
-				ice_lag_preset_drop_fltr(lag_work->lag, bi);
+			if (is_sriov_compliant) {
 				ice_lag_sriov_monitor_info(lag_work->lag, bi);
 			} else {
 				ice_lag_disable_sriov_bond(lag_work->lag);

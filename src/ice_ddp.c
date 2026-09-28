@@ -2351,7 +2351,7 @@ ice_acquire_global_cfg_lock(struct ice_hw *hw,
 				 ICE_GLOBAL_CFG_LOCK_TIMEOUT);
 
 	if (!status)
-		mutex_lock(&ice_global_cfg_lock_sw);
+		mutex_lock(hw->global_cfg_lock_sw);
 	else if (status == -EALREADY)
 		ice_debug(hw, ICE_DBG_PKG, "Global config lock: No work to do\n");
 
@@ -2366,7 +2366,7 @@ ice_acquire_global_cfg_lock(struct ice_hw *hw,
  */
 void ice_release_global_cfg_lock(struct ice_hw *hw)
 {
-	mutex_unlock(&ice_global_cfg_lock_sw);
+	mutex_unlock(hw->global_cfg_lock_sw);
 	ice_release_res(hw, ICE_GLOBAL_CFG_LOCK_RES_ID);
 }
 

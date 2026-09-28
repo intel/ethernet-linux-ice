@@ -970,6 +970,18 @@ static bool ice_sq_done(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 	 */
 	udelay(5);
 
+	/* If a reset is in progress (driver-flagged or indicated by the device
+	 * state register) or a critical AQ error has been flagged, the firmware
+	 * will not complete pending admin queue commands.  Return false
+	 * immediately rather than spinning for the full timeout — each wasted
+	 * second here multiplies into N×1s system hangs when an EPR or global
+	 * reset resets the AQ ring head mid-probe (CELER scenario).
+	 */
+	if (hw->reset_ongoing ||
+	    (rd32(hw, GLGEN_RSTAT) & GLGEN_RSTAT_DEVSTATE_M) ||
+	    (rd32(hw, cq->sq.len) & cq->sq.len_crit_mask))
+		return false;
+
 	return !vlock_rd32_poll_timeout(hw, cq->sq.head, head,
 					head == cq->sq.next_to_use, 20, 5,
 					ICE_CTL_Q_SQ_CMD_TIMEOUT,

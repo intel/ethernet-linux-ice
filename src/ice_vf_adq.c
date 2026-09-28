@@ -775,10 +775,11 @@ ice_vc_chnl_fltr_state_verify(struct ice_vf *vf, struct virtchnl_filter *vcf)
 	}
 
 	max_tc_allowed = ice_vc_get_max_chnl_tc_allowed(vf);
-	if (vcf->action_meta >= max_tc_allowed) {
-		dev_err(dev, "VF %d: Err: action(%u)_meta(TC): %u >= max_tc_allowed (%u)\n",
-			vf->vf_id, vcf->action, vcf->action_meta,
-			max_tc_allowed);
+	if (vcf->action_meta >= max_tc_allowed ||
+	    vcf->action_meta >= vf->num_tc ||
+	    !ice_vf_adq_vsi_valid(vf, vcf->action_meta)) {
+		dev_err(dev, "VF %d: Err: action(%u)_meta(TC): %u invalid\n",
+			vf->vf_id, vcf->action, vcf->action_meta);
 		return VIRTCHNL_STATUS_ERR_PARAM;
 	}
 
@@ -1005,9 +1006,9 @@ int ice_vc_del_switch_filter(struct ice_vf *vf, u8 *msg)
 	dest_vsi->num_chnl_fltr--;
 
 	hlist_del(&f->tc_flower_node);
-	devm_kfree(dev, f);
 	if (test_bit(ICE_TC_FLWR_FIELD_DST_MAC, f->flags))
 		vf->num_dmac_chnl_fltrs--;
+	devm_kfree(dev, f);
 	v_ret = VIRTCHNL_STATUS_SUCCESS;
 err:
 	/* send the response back to the VF */

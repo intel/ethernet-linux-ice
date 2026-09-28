@@ -860,8 +860,10 @@ void ice_sched_clear_agg(struct ice_hw *hw)
 					 list_entry) {
 			list_del(&agg_vsi_info->list_entry);
 			kfree(agg_vsi_info);
+			agg_info->num_vsis--;
 		}
 		xa_erase(&hw->agg_list, index);
+		WARN_ON(agg_info->num_vsis > 0);
 		kfree(agg_info);
 	}
 }
@@ -2160,6 +2162,7 @@ static void ice_sched_rm_agg_vsi_info(struct ice_port_info *pi, u16 vsi_handle)
 			if (agg_vsi_info->vsi_handle == vsi_handle) {
 				list_del(&agg_vsi_info->list_entry);
 				kfree(agg_vsi_info);
+				agg_info->num_vsis--;
 				return;
 			}
 	}
@@ -2663,6 +2666,7 @@ ice_move_all_vsi_to_dflt_agg(struct ice_port_info *pi,
 		if (rm_vsi_info && !agg_vsi_info->tc_bitmap[0]) {
 			list_del(&agg_vsi_info->list_entry);
 			kfree(agg_vsi_info);
+			agg_info->num_vsis--;
 		}
 	}
 
@@ -2913,6 +2917,7 @@ ice_alloc_agg_info(struct ice_hw *hw, u32 min_id, u32 max_id,
 
 	/* Initialize the aggregator VSI list head */
 	INIT_LIST_HEAD(&agg_info->agg_vsi_list);
+	agg_info->num_vsis = 0;
 
 	status = xa_alloc(&hw->agg_list, &agg_id, agg_info,
 			  XA_LIMIT(min_id, max_id), GFP_KERNEL);
@@ -3098,6 +3103,7 @@ ice_sched_assoc_vsi_to_agg(struct ice_port_info *pi, u32 agg_id,
 		/* add VSI ID into the aggregator list */
 		agg_vsi_info->vsi_handle = vsi_handle;
 		list_add(&agg_vsi_info->list_entry, &agg_info->agg_vsi_list);
+		agg_info->num_vsis++;
 	}
 	/* Move VSI node to new aggregator node for requested TC(s) */
 	ice_for_each_traffic_class(tc) {
@@ -3116,6 +3122,7 @@ ice_sched_assoc_vsi_to_agg(struct ice_port_info *pi, u32 agg_id,
 	if (old_agg_vsi_info && !old_agg_vsi_info->tc_bitmap[0]) {
 		list_del(&old_agg_vsi_info->list_entry);
 		kfree(old_agg_vsi_info);
+		old_agg_info->num_vsis--;
 	}
 	return status;
 }
@@ -3226,32 +3233,6 @@ ice_sched_cfg_node_bw_alloc(struct ice_hw *hw, struct ice_sched_node *node,
 }
 
 /**
- * ice_move_vsi_to_agg - moves VSI to new or default aggregator
- * @pi: port information structure
- * @agg_id: aggregator ID
- * @vsi_handle: software VSI handle
- * @tc_bitmap: TC bitmap of enabled TC(s)
- *
- * Move or associate VSI to a new or default aggregator node.
- */
-int
-ice_move_vsi_to_agg(struct ice_port_info *pi, u32 agg_id, u16 vsi_handle,
-		    u8 tc_bitmap)
-{
-	unsigned long bitmap = tc_bitmap;
-	int status;
-
-	mutex_lock(&pi->sched_lock);
-	status = ice_sched_assoc_vsi_to_agg(pi, agg_id, vsi_handle,
-					    (unsigned long *)&bitmap);
-	if (!status)
-		status = ice_save_agg_vsi_tc_bitmap(pi, agg_id, vsi_handle,
-						    (unsigned long *)&bitmap);
-	mutex_unlock(&pi->sched_lock);
-	return status;
-}
-
-/**
  * ice_find_available_agg - Find or create aggregator node
  * @hw: pointer to the HW structure
  * @min_id: minimum aggregator node ID to use
@@ -3276,13 +3257,10 @@ ice_find_available_agg(struct ice_hw *hw, u32 min_id, u32 max_id,
 	unsigned long agg_id;
 
 	xa_for_each_range(&hw->agg_list, agg_id, agg_info, min_id, max_id) {
-		unsigned int num_vsis;
-
 		if (agg_info->agg_type != agg_type)
 			continue;
 
-		num_vsis = list_count_nodes(&agg_info->agg_vsi_list);
-		if (num_vsis < ICE_MAX_VSIS_IN_AGG_NODE)
+		if (agg_info->num_vsis < ICE_MAX_VSIS_IN_AGG_NODE)
 			return agg_info;
 	}
 
@@ -3297,6 +3275,7 @@ ice_find_available_agg(struct ice_hw *hw, u32 min_id, u32 max_id,
  * @min_id: the minimum aggregator node ID to associate with
  * @max_id: the maximum aggregator node ID to associate with
  * @tc_bitmap: TC bitmap of enabled TC(s)
+ * @configured_id: If non-NULL, contains the configured ID on return
  *
  * Locate a suitable aggregator node for this VSI, creating a new one if
  * necessary. Configure the aggregator node if necessary, and move the VSI
@@ -3304,12 +3283,11 @@ ice_find_available_agg(struct ice_hw *hw, u32 min_id, u32 max_id,
  *
  * Context: Acquires the scheduler lock.
  *
- * Return: A pointer to the aggregator node info structure, or an ERR_PTR on
- * failure.
+ * Return: zero on success or a negative errno on failure.
  */
-struct ice_sched_agg_info *
-ice_cfg_vsi_agg(struct ice_port_info *pi, u16 vsi_handle,
-		u32 min_id, u32 max_id, u8 tc_bitmap)
+int ice_cfg_vsi_agg(struct ice_port_info *pi, u16 vsi_handle,
+		    u32 min_id, u32 max_id, u8 tc_bitmap,
+		    u32 *configured_id)
 {
 	struct ice_sched_agg_info *agg_info;
 	unsigned long bitmap = tc_bitmap;
@@ -3320,42 +3298,39 @@ ice_cfg_vsi_agg(struct ice_port_info *pi, u16 vsi_handle,
 
 	/* Locate an aggregator node to use */
 	agg_info = ice_find_available_agg(hw, min_id, max_id, ICE_AGG_TYPE_AGG);
-	if (IS_ERR(agg_info))
+	if (IS_ERR(agg_info)) {
+		status = PTR_ERR(agg_info);
 		goto out_unlock;
+	}
 
 	/* Configure the aggregator node */
 	status = ice_sched_cfg_agg(pi, agg_info, &bitmap);
-	if (status) {
-		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+	if (status)
 		goto out_unlock;
-	}
 
 	/* Save the TC bitmap for this aggregator node */
 	status = ice_save_agg_tc_bitmap(pi, agg_info->agg_id, &bitmap);
-	if (status) {
-		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+	if (status)
 		goto out_unlock;
-	}
 
 	/* Associate the VSI with this aggregator node */
 	status = ice_sched_assoc_vsi_to_agg(pi, agg_info->agg_id, vsi_handle,
 					    &bitmap);
-	if (status) {
-		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+	if (status)
 		goto out_unlock;
-	}
 
 	/* Save the VSI handle to the aggregator TC bitmap */
 	status = ice_save_agg_vsi_tc_bitmap(pi, agg_info->agg_id, vsi_handle,
 					    &bitmap);
-	if (status) {
-		agg_info = (struct ice_sched_agg_info *)ERR_PTR(status);
+	if (status)
 		goto out_unlock;
-	}
+
+	if (configured_id)
+		*configured_id = agg_info->agg_id;
 
 out_unlock:
 	mutex_unlock(&pi->sched_lock);
-	return agg_info;
+	return status;
 }
 
 /**

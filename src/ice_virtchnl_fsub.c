@@ -669,10 +669,12 @@ int ice_vc_flow_sub_fltr(struct ice_vf *vf, u8 *msg)
 	}
 
 	/**
-	 * reserve one more memory slot for ETH
-	 * which may consume 2 lookup items
+	 * Each masked protocol header may expand into up to two lookup
+	 * elements (an ETH header is split into a MAC and an ETYPE entry),
+	 * so reserve two slots per header to match the worst case produced
+	 * by ice_vc_parse_fsub_pattern() and avoid an out-of-bounds write.
 	 */
-	lkups_num = fltr->proto_hdrs.count - VIRTCHNL_MAX_NUM_PROTO_HDRS + 1;
+	lkups_num = 2 * (fltr->proto_hdrs.count - VIRTCHNL_MAX_NUM_PROTO_HDRS);
 	if (lkups_num < 1) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		dev_dbg(dev, "Invalid fsub filter for VF %d\n", vf->vf_id);

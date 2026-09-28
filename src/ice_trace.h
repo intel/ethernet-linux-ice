@@ -295,7 +295,7 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_template,
 				   __assign_str(netdev_name);
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 				   __entry->skb = skb;
-				   __entry->seq = ice_ptp_get_seq_id(skb);
+				   __entry->seq = ice_ptp_get_tx_seq_id(skb);
 				   __entry->idx = idx;
 				   __entry->block = tx->block;
 				   __entry->offset = tx->offset;
@@ -320,6 +320,8 @@ DEFINE_EVENT(ice_tx_tstamp_template, name, \
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_request);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_tracker_down);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_idx_full);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_pkt_mapped);
+DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_pkt_cleaned);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_req);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_fw_done);
 DEFINE_TX_TSTAMP_OP_EVENT(ice_tx_tstamp_timeout);
@@ -358,7 +360,7 @@ DECLARE_EVENT_CLASS(ice_tx_tstamp_with_value_template,
 				   __assign_str(netdev_name);
 #endif /* HAVE_ASSIGN_STR_2_PARAMS */
 				   __entry->skb = skb;
-				   __entry->seq = ice_ptp_get_seq_id(skb);
+				   __entry->seq = ice_ptp_get_tx_seq_id(skb);
 				   __entry->raw_tstamp = raw_tstamp;
 				   __entry->tstamp = tstamp;
 				   __entry->idx = idx;
@@ -388,6 +390,58 @@ DEFINE_EVENT(ice_tx_tstamp_with_value_template, name, \
 DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(ice_tx_tstamp_complete);
 DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(ice_tx_tstamp_invalid);
 DEFINE_TX_TSTAMP_OP_EVENT_WITH_VALUE(ice_tx_tstamp_dropped);
+
+/* Trace event for Rx timestamp */
+TRACE_EVENT(ice_rx_hwtstamp,
+	    TP_PROTO(struct device *dev, struct sk_buff *skb,
+		     u64 cached_time, u32 ts_high, u64 ts_ns),
+
+	    TP_ARGS(dev, skb, cached_time, ts_high, ts_ns),
+
+	    TP_STRUCT__entry(__string(dev_name, dev_name(dev))
+			     __string(netdev_name, netdev_name(skb->dev))
+			     __field(void *, skb)
+			     __field(int, seq)
+			     __field(u64, cached_time)
+			     __field(u32, ts_high)
+			     __field(u64, ts_ns)),
+
+	    TP_fast_assign(__entry->skb = skb;
+			   __entry->seq = ice_ptp_get_rx_seq_id(skb);
+			   __entry->cached_time = cached_time;
+			   __entry->ts_high = ts_high;
+			   __entry->ts_ns = ts_ns;
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
+			   __assign_str(dev_name, dev_name(dev));
+			   __assign_str(netdev_name, netdev_name(skb->dev));
+#else
+			   __assign_str(dev_name);
+			   __assign_str(netdev_name);
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
+			   ),
+
+	    TP_printk("dev=%s netdev=%s skb=%pK sequence_id=%d cached_time=%llu ts_high=%u ts_ns=%llu",
+		      __get_str(dev_name), __get_str(netdev_name),
+		      __entry->skb, __entry->seq,
+		      __entry->cached_time, __entry->ts_high, __entry->ts_ns));
+
+/* Trace when PTP auxiliary work triggers a software IRQ */
+TRACE_EVENT(ice_ptp_aux_work_trigger_sw_irq,
+	    TP_PROTO(struct ice_pf *pf),
+
+	    TP_ARGS(pf),
+
+	    TP_STRUCT__entry(__string(dev_name, dev_name(ice_pf_to_dev(pf)))),
+
+	    TP_fast_assign(
+#ifdef HAVE_ASSIGN_STR_2_PARAMS
+			   __assign_str(dev_name, dev_name(ice_pf_to_dev(pf)));
+#else
+			   __assign_str(dev_name);
+#endif /* HAVE_ASSIGN_STR_2_PARAMS */
+			  ),
+
+	    TP_printk("dev=%s\n", __get_str(dev_name)));
 
 /* Trace events for the miscellaneous (OICR) interrupt handler */
 TRACE_EVENT(ice_misc_intr_begin,
@@ -446,6 +500,7 @@ DEFINE_EVENT(ice_misc_intr_template, name, \
 DEFINE_MISC_INTR_EVENT(ice_misc_intr_end);
 DEFINE_MISC_INTR_EVENT(ice_misc_intr_thread_fn_begin);
 DEFINE_MISC_INTR_EVENT(ice_misc_intr_thread_fn_end);
+DEFINE_MISC_INTR_EVENT(ice_misc_intr_tstamps_pending);
 
 DECLARE_EVENT_CLASS(ice_switch_stats_template,
 		    TP_PROTO(struct ice_switch_info *sw_info,

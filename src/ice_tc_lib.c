@@ -1132,7 +1132,7 @@ ice_locate_rx_ring_using_queue(struct ice_vsi *vsi,
 					vf->vf_id);
 				return NULL;
 			}
-			if ((queue - offset) >= vsi->num_rxq) {
+			if ((queue - offset) >= tc_vsi->num_rxq) {
 				dev_err(dev, "VF %d: forward to queue (%u) not in range, offset:%u, num_qps %u, num_rxq      %u\n",
 					vf->vf_id, queue, offset,
 					num_qps, tc_vsi->num_rxq);

@@ -162,6 +162,7 @@ bool ice_is_feature_supported(struct ice_pf *pf, enum ice_feature f);
 void ice_set_feature_support(struct ice_pf *pf, enum ice_feature f);
 void ice_clear_feature_support(struct ice_pf *pf, enum ice_feature f);
 void ice_init_feature_support(struct ice_pf *pf);
+bool ice_is_erot_adapter(struct ice_pf *pf);
 int ice_normalize_cpu_count(int num_cpus);
 bool ice_vsi_is_rx_queue_active(struct ice_vsi *vsi);
 void ice_vsi_free_rss_global_lut(struct ice_vsi *vsi);

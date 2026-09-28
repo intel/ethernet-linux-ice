@@ -702,6 +702,7 @@ struct ice_hw_common_caps {
 #define ICE_NVM_PENDING_NVM_IMAGE		BIT(0)
 #define ICE_NVM_PENDING_OROM			BIT(1)
 #define ICE_NVM_PENDING_NETLIST			BIT(2)
+	bool external_pqc_rot_present;
 	bool sec_rev_disabled;
 	bool update_disabled;
 	bool nvm_unified_update;
@@ -733,6 +734,7 @@ struct ice_hw_common_caps {
 	bool dyn_flattening_en;
 	/* Support for OROM update in Recovery Mode */
 	bool orom_recovery_update;
+	bool pqc_cert_provisioning;
 	bool next_cluster_id_support;
 };
 
@@ -1122,7 +1124,7 @@ enum ice_rl_type {
 #define ICE_SCHED_DFLT_RL_PROF_ID	0
 #define ICE_SCHED_NO_SHARED_RL_PROF_ID	0xFFFF
 #define ICE_SCHED_INVAL_PROF_ID		0xFFFF
-#define ICE_SCHED_DFLT_BURST_SIZE	(15 * 1024)	/* in bytes (15k) */
+#define ICE_SCHED_DFLT_BURST_SIZE	(2 * 1024)	/* in bytes (2k) */
 
 /* Access Macros for Tx Sched RL Profile data */
 #define ICE_TXSCHED_GET_RL_PROF_ID(p) le16_to_cpu((p)->info.profile_id)
@@ -1464,6 +1466,13 @@ enum ice_global_link_topo {
 
 struct ice_ptp_hw {
 	union ice_phy_params phy;
+	/* Serializes eth56g Tx timestamp-memory reads (the per-index
+	 * timestamp entries, not the TX_MEMORY_STATUS registers). Reading an
+	 * entry auto-clears its ts_memory_status bit as a side effect, so the
+	 * per-index and full-port clear paths must not interleave on the same
+	 * port or a bit could re-latch the interrupt.
+	 */
+	struct mutex tx_tstamp_lock;
 	u8 num_lports;
 	u8 ports_per_phy;
 	enum ice_src_tmr_mode src_tmr_mode;
@@ -1531,6 +1540,13 @@ struct ice_hw {
 	struct ice_vsi_ctx *vsi_ctx[ICE_MAX_VSI];
 	u8 evb_veb;		/* true for VEB, false for VEPA */
 	u8 reset_ongoing;	/* true if HW is in reset, false otherwise */
+	/* Per-physical-device software mutex mirroring the firmware Global
+	 * Config Lock. All PFs on the same device point at one mutex; PFs on
+	 * different devices point at different mutexes, so a busy FW on one
+	 * device does not stall AQ traffic on unrelated devices. Wired up in
+	 * ice_probe() before the first AQ command is issued.
+	 */
+	struct mutex *global_cfg_lock_sw;
 	struct ice_bus_info bus;
 	struct ice_flash_info flash;
 	struct ice_hw_dev_caps dev_caps;	/* device capabilities */
@@ -1650,6 +1666,11 @@ struct ice_hw {
 	u8 ieps_cpi_lm : 1;
 	/* Used for Get phy caps when CPK FW based LM is disabled */
 	struct ice_aqc_get_phy_caps_data ieps_pcaps;
+	/*
+	 * true if device capability indicates
+	 * eRoT (external Root of Trust) present
+	 */
+	bool erot_present;
 };
 
 /* Statistics collected by each port, VSI, VEB, and S-channel */
@@ -1772,6 +1793,14 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_SR_PBA_BLOCK_PTR			0x16
 #define ICE_SR_BOOT_CFG_PTR			0x132
 #define ICE_SR_NVM_WOL_CFG			0x19
+/* WoL Feature Config - ANVM field IDs, one per PF, read via the NVM
+ * Config Read admin queue command (ice_aq_read_nvm_cfg()). Not a Shadow
+ * RAM TLV; firmware resolves the field ID to its storage location.
+ * Field IDs: 0x000E for PF0, 0x010E for PF1, ..., 0x070E for PF7.
+ */
+#define ICE_WOL_FEATURE_DISABLE			0x01
+#define ICE_WOL_FEATURE_ENABLE			0x02
+#define ICE_WOL_FEATURE(pf_id)			(0x0E + (pf_id) * 0x100)
 #define ICE_NVM_OROM_VER_OFF			0x02
 #define ICE_SR_NVM_DEV_STARTER_VER		0x18
 #define ICE_SR_ALTERNATE_SAN_MAC_ADDR_PTR	0x27
@@ -1816,8 +1845,14 @@ struct ice_aq_get_set_rss_lut_params {
 #define ICE_SR_EMP_SR_SETTINGS_PTR		0x48
 #define ICE_SR_CONFIGURATION_METADATA_PTR	0x4D
 #define ICE_SR_IMMEDIATE_VALUES_PTR		0x4E
+#define ICE_SR_PQC_MANIFEST_BANK_PTR		0x4E
+#define ICE_SR_PQC_MANIFEST_BANK_SIZE		0x4F
 #define ICE_SR_LINK_DEFAULT_OVERRIDE_PTR	0x134
+#define ICE_SR_HII_PORT_DISABLE_BY_FUNC_PTR	0x139
+#define ICE_SR_HII_PORT_DISABLE_RDE_WOL_OVRD	BIT(8)
 #define ICE_SR_POR_REGISTERS_AUTOLOAD_PTR	0x118
+/* Word offset from TLV start to first data word (past type + length words) */
+#define ICE_SR_TLV_DATA_OFFSET			2
 
 /* CSS Header words */
 #define ICE_NVM_CSS_HDR_LEN_L			0x02

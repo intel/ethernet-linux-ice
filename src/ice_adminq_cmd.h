@@ -143,6 +143,7 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_PENDING_OROM_VER			0x004B
 #define ICE_AQC_CAPS_NET_VER				0x004C
 #define ICE_AQC_CAPS_PENDING_NET_VER			0x004D
+#define ICE_AQC_CAPS_EXTERNAL_PQC_ROT_PRESENT		0x004E
 #define ICE_AQC_CAPS_CEM				0x00F2
 #define ICE_AQC_CAPS_IWARP				0x0051
 #define ICE_AQC_CAPS_LED				0x0061
@@ -163,6 +164,7 @@ struct ice_aqc_list_caps_elem {
 #define ICE_AQC_CAPS_NAC_TOPOLOGY			0x0087
 #define ICE_AQC_CAPS_DYN_FLATTENING			0x008A
 #define ICE_AQC_CAPS_OROM_RECOVERY_UPDATE		0x0090
+#define ICE_AQC_CAPS_PQC_CERT_PROVISIONING		0x0091
 #define ICE_AQC_CAPS_FW_LAG_SUPPORT			0x0092
 #define ICE_AQC_BIT_ROCEV2_LAG				BIT(0)
 #define ICE_AQC_BIT_SRIOV_LAG				BIT(1)
@@ -2464,6 +2466,14 @@ struct ice_aqc_nvm {
 #define ICE_AQC_NVM_SDP_AC_MAX_SIZE		7
 
 #define ICE_AQC_NVM_MINSREV_MOD_ID		0x130
+#define ICE_AQC_NVM_LINK_DFLT_OVERRIDE_MOD_ID	0x134
+/* AQ module reads exclude the TLV type word, so the per-port Port Options 1
+ * word sits at module word offset 1 + lport * ICE_SR_PFA_LINK_OVERRIDE_WORDS.
+ */
+#define ICE_AQC_NVM_LDO_PORT_OPT1_OFFSET(n)	(0x0001 + 10 * (n))
+#define ICE_AQC_NVM_LDO_TX_CLK_SRC_M		GENMASK(15, 14)
+#define ICE_AQC_NVM_LDO_TX_CLK_SRC_S		14
+#define ICE_AQC_NVM_LDO_TX_CLK_SRC_DONT_CHANGE	0x3
 #define ICE_AQC_NVM_TX_TOPO_MOD_ID		0x14B
 
 /* Used for reading and writing MinSRev using 0x0701 and 0x0703. Note that the
@@ -2569,6 +2579,7 @@ struct ice_aqc_nvm_comp_tbl {
 #define NVM_COMP_ID_OROM	0x5
 #define NVM_COMP_ID_NVM		0x6
 #define NVM_COMP_ID_NETLIST	0x8
+#define NVM_COMP_ID_MANIFEST	0x12
 
 	u8 comp_class_idx;
 #define FWU_COMP_CLASS_IDX_NOT_USE 0x0

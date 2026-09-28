@@ -436,6 +436,7 @@ enum ice_devlink_param_id {
 	ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV,
 	ICE_DEVLINK_PARAM_ID_TX_LOOPBACK,
 	ICE_DEVLINK_PARAM_ID_TX_SCHED_LAYERS,
+	ICE_DEVLINK_PARAM_ID_TX_CLK_SOURCE,
 };
 
 /**
@@ -577,10 +578,20 @@ ice_devlink_minsrev_set(struct devlink *devlink, u32 id, struct devlink_param_gs
  * -EINVAL if this function is called with the wrong ID.
  */
 static int
-ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_param_value val,
+ice_devlink_minsrev_validate(struct devlink *devlink, u32 id,
+			     union devlink_param_value
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+			     val_
+#else
+			     *val
+#endif
+,
 			     struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+	union devlink_param_value *val = &val_;
+#endif
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_minsrev_info minsrevs = {};
 	int status;
@@ -597,32 +608,32 @@ ice_devlink_minsrev_validate(struct devlink *devlink, u32 id, union devlink_para
 
 	switch (id) {
 	case ICE_DEVLINK_PARAM_ID_FW_MGMT_MINSREV:
-		if (val.vu32 > pf->hw.flash.nvm.srev) {
+		if (val->vu32 > pf->hw.flash.nvm.srev) {
 			NL_SET_ERR_MSG_MOD(extack, "Cannot update fw.mgmt minimum security revision higher than the currently running firmware");
 			dev_dbg(dev, "Attempted to set fw.mgmt.minsrev to %u, but running firmware has srev %u\n",
-				val.vu32, pf->hw.flash.nvm.srev);
+				val->vu32, pf->hw.flash.nvm.srev);
 			return -EPERM;
 		}
 
-		if (minsrevs.nvm_valid && val.vu32 < minsrevs.nvm) {
+		if (minsrevs.nvm_valid && val->vu32 < minsrevs.nvm) {
 			NL_SET_ERR_MSG_MOD(extack, "Cannot lower the minimum security revision for fw.mgmt flash section");
 			dev_dbg(dev, "Attempted  to set fw.mgmt.minsrev to %u, but current minsrev is %u\n",
-				val.vu32, minsrevs.nvm);
+				val->vu32, minsrevs.nvm);
 			return -EPERM;
 		}
 		break;
 	case ICE_DEVLINK_PARAM_ID_FW_UNDI_MINSREV:
-		if (val.vu32 > pf->hw.flash.orom.srev) {
+		if (val->vu32 > pf->hw.flash.orom.srev) {
 			NL_SET_ERR_MSG_MOD(extack, "Cannot update fw.undi minimum security revision higher than the currently running firmware");
 			dev_dbg(dev, "Attempted to set fw.undi.minsrev to %u, but running firmware has srev %u\n",
-				val.vu32, pf->hw.flash.orom.srev);
+				val->vu32, pf->hw.flash.orom.srev);
 			return -EPERM;
 		}
 
-		if (minsrevs.orom_valid && val.vu32 < minsrevs.orom) {
+		if (minsrevs.orom_valid && val->vu32 < minsrevs.orom) {
 			NL_SET_ERR_MSG_MOD(extack, "Cannot lower the minimum security revision for fw.undi flash section");
 			dev_dbg(dev, "Attempted  to set fw.undi.minsrev to %u, but current minsrev is %u\n",
-				val.vu32, minsrevs.orom);
+				val->vu32, minsrevs.orom);
 			return -EPERM;
 		}
 		break;
@@ -772,7 +783,13 @@ static int ice_devlink_tx_sched_layers_set(struct devlink *devlink,
  */
 static int ice_devlink_tx_sched_layers_validate(struct devlink *devlink,
 						u32 __always_unused id,
-						union devlink_param_value val,
+						union devlink_param_value
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+						val_
+#else
+						*val
+#endif
+ __always_unused,
 						struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
@@ -901,10 +918,20 @@ static int ice_devlink_loopback_set(struct devlink *devlink, u32 id,
  * error.
  */
 static int ice_devlink_loopback_validate(struct devlink *devlink, u32 id,
-					 union devlink_param_value val,
+					 union devlink_param_value
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+					 val_
+#else
+					 *val
+#endif
+,
 					 struct netlink_ext_ack *extack)
 {
-	if (ice_devlink_loopback_str_to_mode(val.vstr) < 0) {
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+	union devlink_param_value *val = &val_;
+#endif
+
+	if (ice_devlink_loopback_str_to_mode(val->vstr) < 0) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Error: Requested value is not supported.");
 		return -EINVAL;
@@ -946,6 +973,168 @@ static const struct devlink_param ice_dvl_sched_params[] = {
 			     ice_devlink_tx_sched_layers_get,
 			     ice_devlink_tx_sched_layers_set,
 			     ice_devlink_tx_sched_layers_validate),
+};
+
+/**
+ * ice_update_tx_clk_src_nvm - Save user's Tx clock source preference in NVM
+ * @pf: pointer to pf structure
+ * @clk_src: reference clock source to be saved
+ *
+ * Return: zero when save was successful, negative values otherwise.
+ */
+static int ice_update_tx_clk_src_nvm(struct ice_pf *pf, u8 clk_src)
+{
+	struct ice_hw *hw = &pf->hw;
+	u32 data_offset;
+	__le16 data;
+	u16 opt1;
+	u8 port;
+	int err;
+
+	err = ice_acquire_nvm(hw, ICE_RES_WRITE);
+	if (err)
+		return err;
+
+	port = hw->port_info->lport;
+	data_offset = ICE_AQC_NVM_LDO_PORT_OPT1_OFFSET(port) * sizeof(u16);
+	/* Read the existing Port Options 1 word for this port */
+	err = ice_aq_read_nvm(hw, ICE_AQC_NVM_LINK_DFLT_OVERRIDE_MOD_ID,
+			      data_offset, sizeof(data), &data, true, true,
+			      NULL);
+	if (err)
+		goto exit_release;
+
+	opt1 = le16_to_cpu(data);
+	opt1 &= ~ICE_AQC_NVM_LDO_TX_CLK_SRC_M;
+	opt1 |= FIELD_PREP(ICE_AQC_NVM_LDO_TX_CLK_SRC_M, clk_src);
+	data = cpu_to_le16(opt1);
+	/* Write the modified word back, preserving the rest of Port Options */
+	err = ice_write_one_nvm_block(pf, ICE_AQC_NVM_LINK_DFLT_OVERRIDE_MOD_ID,
+				      data_offset, sizeof(data), (u8 *)&data,
+				      true, NULL, NULL);
+
+exit_release:
+	ice_release_nvm(hw);
+	return err;
+}
+
+/**
+ * ice_devlink_tx_clk_source_get - Get the default Tx reference clock source
+ * @devlink: pointer to the devlink instance
+ * @id: the parameter ID to get
+ * @ctx: context to store the parameter value
+ * @extack: netlink extended ACK structure
+ *
+ * Return: zero on success and negative value on failure.
+ */
+static int ice_devlink_tx_clk_source_get(struct devlink *devlink,
+					 u32 __always_unused id,
+					 struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_GET_EXTACK
+					 , struct netlink_ext_ack __always_unused *extack
+#endif
+)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	struct ice_hw *hw = &pf->hw;
+	u32 data_offset;
+	__le16 data;
+	u8 port;
+	int err;
+
+	err = ice_acquire_nvm(hw, ICE_RES_READ);
+	if (err)
+		return err;
+
+	port = hw->port_info->lport;
+	data_offset = ICE_AQC_NVM_LDO_PORT_OPT1_OFFSET(port) * sizeof(u16);
+	err = ice_aq_read_nvm(hw, ICE_AQC_NVM_LINK_DFLT_OVERRIDE_MOD_ID,
+			      data_offset, sizeof(data), &data, true, true,
+			      NULL);
+	if (err) {
+		/* If read fails, fallback to 'Don't Change' HW default */
+		ctx->val.vu8 = ICE_AQC_NVM_LDO_TX_CLK_SRC_DONT_CHANGE;
+		err = 0;
+	} else {
+		ctx->val.vu8 = FIELD_GET(ICE_AQC_NVM_LDO_TX_CLK_SRC_M,
+					 le16_to_cpu(data));
+	}
+
+	ice_release_nvm(hw);
+	return err;
+}
+
+static int ice_devlink_tx_clk_source_set(struct devlink *devlink,
+					 u32 __always_unused id,
+					 struct devlink_param_gset_ctx *ctx
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
+					 , struct netlink_ext_ack *extack
+#endif
+)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+	int err;
+
+	err = ice_update_tx_clk_src_nvm(pf, ctx->val.vu8);
+	if (err) {
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
+		NL_SET_ERR_MSG_MOD(extack, "Error: Failed to store Tx reference clock configuration in NVM.");
+#else
+		ice_dev_err_errno(ice_pf_to_dev(pf), err,
+				  "Failed to store Tx reference clock configuration in NVM");
+#endif
+		return err;
+	}
+
+#ifdef HAVE_DEVLINK_PARAMS_SET_EXTACK
+	NL_SET_ERR_MSG_MOD(extack,
+			   "TX reference clock configuration has been stored in NVM. Firmware will use the updated setting on the next device initialization (for example, after a PCI power cycle).");
+#else
+	dev_info(ice_pf_to_dev(pf),
+		 "TX reference clock configuration has been stored in NVM. Firmware will use the updated setting on the next device initialization (for example, after a PCI power cycle).\n");
+#endif
+
+	return 0;
+}
+
+static int ice_devlink_tx_clk_source_validate(struct devlink *devlink,
+					      u32 __always_unused id,
+					      union devlink_param_value
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+					      val_
+#else
+					      *val
+#endif
+ __always_unused,
+					      struct netlink_ext_ack *extack)
+{
+	struct ice_pf *pf = devlink_priv(devlink);
+
+	if (pf->hw.mac_type != ICE_MAC_GENERIC_3K_E825) {
+		NL_SET_ERR_MSG_MOD(extack, "Error: Tx reference clock selection is not supported on this device.");
+		return -EOPNOTSUPP;
+	}
+
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+	if (val_.vu8 > ICE_AQC_NVM_LDO_TX_CLK_SRC_DONT_CHANGE) {
+#else
+	if (val->vu8 > ICE_AQC_NVM_LDO_TX_CLK_SRC_DONT_CHANGE) {
+#endif
+		NL_SET_ERR_MSG_MOD(extack, "Error: Requested Tx reference clock source is not supported.");
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static const struct devlink_param ice_tx_clk_source_params[] = {
+	DEVLINK_PARAM_DRIVER(ICE_DEVLINK_PARAM_ID_TX_CLK_SOURCE,
+			     "tx_clk_source",
+			     DEVLINK_PARAM_TYPE_U8,
+			     BIT(DEVLINK_PARAM_CMODE_PERMANENT),
+			     ice_devlink_tx_clk_source_get,
+			     ice_devlink_tx_clk_source_set,
+			     ice_devlink_tx_clk_source_validate),
 };
 #endif /* HAVE_DEVLINK_PARAMS */
 
@@ -2366,7 +2555,16 @@ int ice_devlink_register_params(struct ice_pf *pf)
 		err = devl_params_register(devlink, ice_dvl_sched_params,
 					   ARRAY_SIZE(ice_dvl_sched_params));
 	if (err)
-		return err;
+		goto err_unreg_base;
+
+	if (pf->hw.mac_type == ICE_MAC_GENERIC_3K_E825) {
+		u16 cnt = ARRAY_SIZE(ice_tx_clk_source_params);
+
+		err = devl_params_register(devlink,
+					   ice_tx_clk_source_params, cnt);
+		if (err)
+			goto err_unreg_sched;
+	}
 
 #ifdef HAVE_DEVLINK_PARAMS_PUBLISH
 	devlink_params_publish(priv_to_devlink(pf));
@@ -2374,6 +2572,17 @@ int ice_devlink_register_params(struct ice_pf *pf)
 
 #endif /* HAVE_DEVLINK_PARAMS */
 	return 0;
+
+#ifdef HAVE_DEVLINK_PARAMS
+err_unreg_sched:
+	if (hw->func_caps.common_cap.tx_sched_topo_comp_mode_en)
+		devl_params_unregister(devlink, ice_dvl_sched_params,
+				       ARRAY_SIZE(ice_dvl_sched_params));
+err_unreg_base:
+	devl_params_unregister(devlink, ice_devlink_params,
+			       ARRAY_SIZE(ice_devlink_params));
+	return err;
+#endif /* HAVE_DEVLINK_PARAMS */
 }
 
 /**
@@ -2398,6 +2607,10 @@ void ice_devlink_unregister_params(struct ice_pf *pf)
 	if (hw->func_caps.common_cap.tx_sched_topo_comp_mode_en)
 		devl_params_unregister(devlink, ice_dvl_sched_params,
 				       ARRAY_SIZE(ice_dvl_sched_params));
+
+	if (pf->hw.mac_type == ICE_MAC_GENERIC_3K_E825)
+		devl_params_unregister(devlink, ice_tx_clk_source_params,
+				       ARRAY_SIZE(ice_tx_clk_source_params));
 #endif /* HAVE_DEVLINK_PARAMS */
 }
 
@@ -3002,7 +3215,13 @@ ice_devlink_tc_inline_fd_get(struct devlink *devlink, u32 id,
  */
 static int
 ice_devlink_tc_inline_fd_validate(struct devlink *devlink, u32 id,
-				  union devlink_param_value val,
+				  union devlink_param_value
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+				  val_
+#else
+				  *val
+#endif
+ __always_unused,
 				  struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
@@ -3098,10 +3317,19 @@ ice_devlink_tc_qps_per_poller_get(struct devlink *devlink, u32 id,
  */
 static int
 ice_devlink_tc_qps_per_poller_validate(struct devlink *devlink, u32 id,
-				       union devlink_param_value val,
+				       union devlink_param_value
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+				       val_
+#else
+				       *val
+#endif
+,
 				       struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+	union devlink_param_value *val = &val_;
+#endif
 	struct ice_vsi *ch_vsi;
 
 	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
@@ -3109,7 +3337,7 @@ ice_devlink_tc_qps_per_poller_validate(struct devlink *devlink, u32 id,
 	if (!ch_vsi)
 		return -EINVAL;
 
-	if (val.vu8 > ch_vsi->ch->num_rxq) {
+	if (val->vu8 > ch_vsi->ch->num_rxq) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Value cannot be greater than number of queues in TC");
 		return -EINVAL;
@@ -3206,10 +3434,19 @@ ice_devlink_tc_poller_timeout_get(struct devlink *devlink, u32 id,
  */
 static int
 ice_devlink_tc_poller_timeout_validate(struct devlink *devlink, u32 id,
-				       union devlink_param_value val,
+				       union devlink_param_value
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+				       val_
+#else
+				       *val
+#endif
+,
 				       struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
+#ifdef NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR
+	union devlink_param_value *val = &val_;
+#endif
 	struct ice_vsi *ch_vsi;
 
 	ch_vsi = ice_get_tc_param_ch_vsi(pf, id,
@@ -3217,7 +3454,7 @@ ice_devlink_tc_poller_timeout_validate(struct devlink *devlink, u32 id,
 	if (!ch_vsi)
 		return -EINVAL;
 
-	if (val.vu32 > MAX_POLLER_TIMEOUT) {
+	if (val->vu32 > MAX_POLLER_TIMEOUT) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Value cannot be greater than 10000 jiffies");
 		return -EINVAL;

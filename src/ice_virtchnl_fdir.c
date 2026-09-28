@@ -61,11 +61,26 @@ enum ice_fdir_tunnel_type {
 	ICE_FDIR_TUNNEL_TYPE_L2TPV2_INNER,
 };
 
+/* Build a globally unique ACL entry ID for a VF-offloaded FDIR rule. The top
+ * bit avoids collision with PF ethtool rule IDs (fsp->location); the VF ID and
+ * flow ID keep it unique across VFs.
+ */
+#define ICE_ACL_VF_ENTRY_ID(vf_id, flow_id) \
+	(BIT_ULL(63) | ((u64)(vf_id) << 32) | (u64)(flow_id))
+
+/* ice_vc_add_fdir_acl() outcome: whether a VF ntuple rule was programmed on
+ * the ACL engine or should remain on Flow Director. Negative values are errnos.
+ */
+#define ICE_VC_FDIR_FLTR	0
+#define ICE_VC_ACL_FLTR		1
+
 struct virtchnl_fdir_fltr_conf {
 	struct ice_fdir_fltr input;
 	enum ice_fdir_tunnel_type ttype;
 	u64 inset_flag;
 	u32 flow_id;
+	/* ACL entry handle when this rule is offloaded to ACL (0 if not) */
+	u64 acl_entry_h;
 
 	struct ice_parser_profile *prof;
 	bool parser_ena;
@@ -3244,11 +3259,29 @@ ice_vc_fdir_lookup_entry(struct ice_vf *vf, u32 id)
 static void ice_vc_fdir_flush_entry(struct ice_vf *vf)
 {
 	struct ice_fdir_fltr *desc, *temp;
+	struct ice_pf *pf = vf->pf;
+	struct ice_hw *hw = &pf->hw;
 
 	list_for_each_entry_safe(desc, temp,
 				 &vf->fdir.fdir_rule_list, fltr_node) {
 		struct virtchnl_fdir_fltr_conf *conf =
 				to_fltr_conf_from_desc(desc);
+
+		/* Remove the backing ACL entry for offloaded rules. Skip HW
+		 * removal during a PF reset - the ACL block is rebuilt from
+		 * the PF filter list anyway.
+		 */
+		if (conf->input.acl_fltr && conf->acl_entry_h &&
+		    !ice_is_reset_in_progress(pf->state)) {
+			int err;
+
+			err = ice_flow_rem_entry(hw, ICE_BLK_ACL,
+						 conf->acl_entry_h);
+			if (err)
+				dev_dbg(ice_pf_to_dev(pf),
+					"VF %d: failed to remove ACL entry on flush: %d\n",
+					vf->vf_id, err);
+		}
 
 		list_del(&desc->fltr_node);
 		kfree(conf);
@@ -4026,6 +4059,282 @@ err_exit:
 }
 
 /**
+ * ice_vc_fdir_acl_can_offload - check if a VF FDIR rule may be offloaded to ACL
+ * @vf: pointer to the VF info
+ * @conf: FDIR configuration for the filter
+ *
+ * ACL can hold per-entry masks, so a rule that would otherwise conflict with an
+ * existing Flow Director input set can be programmed as an ACL rule instead.
+ * Only simple non-tunnel IPv4 TCP/UDP/SCTP/other rules with a drop or single
+ * queue action can be represented by the shared per-flow ACL profile.
+ *
+ * Return: true if the rule is a candidate for ACL offload.
+ */
+static bool
+ice_vc_fdir_acl_can_offload(struct ice_vf *vf,
+			    struct virtchnl_fdir_fltr_conf *conf)
+{
+	struct ice_fdir_fltr *input = &conf->input;
+	struct ice_pf *pf = vf->pf;
+
+	if (!pf->hw.acl_tbl)
+		return false;
+
+	if (conf->ttype != ICE_FDIR_TUNNEL_TYPE_NONE)
+		return false;
+
+	if (conf->parser_ena)
+		return false;
+
+	if (input->dest_ctl != ICE_FLTR_PRGM_DESC_DEST_DROP_PKT &&
+	    input->dest_ctl != ICE_FLTR_PRGM_DESC_DEST_DIRECT_PKT_QINDEX)
+		return false;
+
+	switch (input->flow_type) {
+	case ICE_FLTR_PTYPE_NONF_IPV4_TCP:
+	case ICE_FLTR_PTYPE_NONF_IPV4_UDP:
+	case ICE_FLTR_PTYPE_NONF_IPV4_SCTP:
+	case ICE_FLTR_PTYPE_NONF_IPV4_OTHER:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/**
+ * ice_vc_fdir_has_input_set_conflict - detect a Flow Director input set clash
+ * @vf: pointer to the VF info
+ * @fltr: virtual channel add cmd buffer
+ * @conf: FDIR configuration for the filter
+ * @tun: 0 for non-tunnel, 1 for tunnel type filter
+ *
+ * Build the candidate flow segment for this rule and compare it with the input
+ * set already programmed for the same flow type. Flow Director HW supports only
+ * one input set per flow type, so a mismatch means the rule cannot be added to
+ * Flow Director while rules of that type already exist.
+ *
+ * Return: true if the rule conflicts with the existing Flow Director input set.
+ */
+static bool
+ice_vc_fdir_has_input_set_conflict(struct ice_vf *vf,
+				   struct virtchnl_fdir_add *fltr,
+				   struct virtchnl_fdir_fltr_conf *conf,
+				   int tun)
+{
+	enum ice_fltr_ptype flow = conf->input.flow_type;
+	const struct ice_flow_seg_info *old_seg;
+	struct ice_vf_fdir *fdir = &vf->fdir;
+	struct ice_fd_hw_prof *vf_prof;
+	struct ice_flow_seg_info *seg;
+	bool conflict = false;
+
+	if (flow >= ICE_FLTR_PTYPE_MAX || !fdir->fdir_prof ||
+	    !fdir->fdir_prof[flow])
+		return false;
+
+	vf_prof = fdir->fdir_prof[flow];
+	old_seg = vf_prof->fdir_seg[tun];
+	if (!old_seg || !fdir->fdir_fltr_cnt[flow][tun])
+		return false;
+
+	/* tun is 0 for non-tunnel and 1 for tunnel filters, so reserve tun + 1
+	 * segments: one for non-tunnel, two (outer + inner) for tunnel.
+	 */
+	seg = kcalloc((tun + 1), sizeof(*seg), GFP_KERNEL);
+	if (!seg)
+		return false;
+
+	if (ice_vc_fdir_set_flow_fld(vf, fltr, conf, seg, tun) ||
+	    ice_vc_fdir_set_flow_hdr(vf, conf, seg, tun))
+		goto out;
+
+	if (memcmp(old_seg, seg, sizeof(*seg) * (tun + 1)))
+		conflict = true;
+
+out:
+	kfree(seg);
+	return conflict;
+}
+
+/**
+ * ice_vc_fdir_acl_is_allowed_match - is the input set representable by ACL
+ * @seg: candidate flow segment describing the matched fields
+ *
+ * The shared VF ACL profile extracts IPv4 addresses and L4 ports only. If the
+ * rule matches any other field it cannot be represented by ACL and must stay on
+ * Flow Director (where it will fail as a conflict rather than silently widen).
+ *
+ * Return: true if every matched field is representable by the ACL profile.
+ */
+static bool
+ice_vc_fdir_acl_is_allowed_match(struct ice_flow_seg_info *seg)
+{
+	DECLARE_BITMAP(allowed, ICE_FLOW_FIELD_IDX_MAX);
+
+	bitmap_zero(allowed, ICE_FLOW_FIELD_IDX_MAX);
+	set_bit(ICE_FLOW_FIELD_IDX_IPV4_SA, allowed);
+	set_bit(ICE_FLOW_FIELD_IDX_IPV4_DA, allowed);
+	set_bit(ICE_FLOW_FIELD_IDX_TCP_SRC_PORT, allowed);
+	set_bit(ICE_FLOW_FIELD_IDX_TCP_DST_PORT, allowed);
+	set_bit(ICE_FLOW_FIELD_IDX_UDP_SRC_PORT, allowed);
+	set_bit(ICE_FLOW_FIELD_IDX_UDP_DST_PORT, allowed);
+	set_bit(ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT, allowed);
+	set_bit(ICE_FLOW_FIELD_IDX_SCTP_DST_PORT, allowed);
+
+	return bitmap_subset(seg->match, allowed, ICE_FLOW_FIELD_IDX_MAX);
+}
+
+/**
+ * ice_vc_fdir_acl_set_masks - derive full ACL field masks from the input set
+ * @conf: FDIR configuration for the filter
+ * @seg: candidate flow segment describing the matched fields
+ *
+ * VF filters describe exact-match input sets. Populate conf->input.mask with a
+ * full mask for each matched field so the ACL entry matches exactly the same
+ * fields as the requested Flow Director rule.
+ */
+static void
+ice_vc_fdir_acl_set_masks(struct virtchnl_fdir_fltr_conf *conf,
+			  struct ice_flow_seg_info *seg)
+{
+	struct ice_fdir_fltr *input = &conf->input;
+
+	if (test_bit(ICE_FLOW_FIELD_IDX_IPV4_SA, seg->match))
+		input->mask.v4.src_ip = htonl(U32_MAX);
+	if (test_bit(ICE_FLOW_FIELD_IDX_IPV4_DA, seg->match))
+		input->mask.v4.dst_ip = htonl(U32_MAX);
+	if (test_bit(ICE_FLOW_FIELD_IDX_TCP_SRC_PORT, seg->match) ||
+	    test_bit(ICE_FLOW_FIELD_IDX_UDP_SRC_PORT, seg->match) ||
+	    test_bit(ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT, seg->match))
+		input->mask.v4.src_port = htons(U16_MAX);
+	if (test_bit(ICE_FLOW_FIELD_IDX_TCP_DST_PORT, seg->match) ||
+	    test_bit(ICE_FLOW_FIELD_IDX_UDP_DST_PORT, seg->match) ||
+	    test_bit(ICE_FLOW_FIELD_IDX_SCTP_DST_PORT, seg->match))
+		input->mask.v4.dst_port = htons(U16_MAX);
+}
+
+/**
+ * ice_vc_add_fdir_acl - offload a conflicting VF FDIR rule to ACL
+ * @vf: pointer to the VF info
+ * @fltr: virtual channel add cmd buffer
+ * @conf: FDIR configuration for the filter
+ * @tun: 0 for non-tunnel, 1 for tunnel type filter
+ *
+ * If this rule would conflict with an existing Flow Director input set for the
+ * same flow type, and it is representable by ACL, program it as an ACL rule
+ * (inserting it into the VF filter list to obtain a flow_id and storing the ACL
+ * entry handle for later removal).
+ *
+ * Return: ICE_VC_ACL_FLTR if the rule was offloaded to ACL, ICE_VC_FDIR_FLTR
+ * to keep it on Flow Director, or a negative errno if a conflict was found but
+ * the ACL offload failed.
+ */
+static int
+ice_vc_add_fdir_acl(struct ice_vf *vf, struct virtchnl_fdir_add *fltr,
+		    struct virtchnl_fdir_fltr_conf *conf, int tun)
+{
+	struct ice_fdir_fltr *input = &conf->input;
+	struct device *dev = ice_pf_to_dev(vf->pf);
+	struct ice_flow_seg_info *seg, *m;
+	struct ice_hw *hw = &vf->pf->hw;
+	u64 entry_id, entry_h = 0;
+	struct ice_vsi *vf_vsi;
+	int ret;
+
+	vf_vsi = ice_get_vf_vsi(vf);
+	if (!vf_vsi)
+		return ICE_VC_FDIR_FLTR;
+
+	if (!ice_vc_fdir_acl_can_offload(vf, conf))
+		return ICE_VC_FDIR_FLTR;
+
+	if (!ice_vc_fdir_has_input_set_conflict(vf, fltr, conf, tun))
+		return ICE_VC_FDIR_FLTR;
+
+	/* Rebuild the candidate segment to derive ACL masks and confirm the
+	 * input set is fully representable by ACL. tun is 0 for non-tunnel and
+	 * 1 for tunnel filters, so reserve tun + 1 segments: one for non-tunnel,
+	 * two (outer + inner) for tunnel.
+	 */
+	seg = kcalloc((tun + 1), sizeof(*seg), GFP_KERNEL);
+	if (!seg)
+		return -ENOMEM;
+
+	if (ice_vc_fdir_set_flow_fld(vf, fltr, conf, seg, tun) ||
+	    ice_vc_fdir_set_flow_hdr(vf, conf, seg, tun)) {
+		kfree(seg);
+		return -EINVAL;
+	}
+
+	m = tun ? &seg[tun] : seg;
+	if (!ice_vc_fdir_acl_is_allowed_match(m)) {
+		/* Not representable by ACL: keep it on Flow Director so it
+		 * fails as a conflict instead of silently widening the match.
+		 */
+		kfree(seg);
+		return ICE_VC_FDIR_FLTR;
+	}
+
+	ice_vc_fdir_acl_set_masks(conf, m);
+	kfree(seg);
+
+	mutex_lock(&hw->fdir_fltr_lock);
+
+	ret = ice_vc_fdir_insert_entry(vf, conf, &conf->flow_id);
+	if (ret) {
+		mutex_unlock(&hw->fdir_fltr_lock);
+		dev_dbg(dev, "VF %d: insert FDIR list failed\n", vf->vf_id);
+		return ret;
+	}
+
+	entry_id = ICE_ACL_VF_ENTRY_ID(vf->vf_id, conf->flow_id);
+	ret = ice_acl_add_rule_vf(vf_vsi, input, entry_id, &entry_h);
+	if (ret) {
+		ice_vc_fdir_remove_entry(vf, conf, conf->flow_id);
+		mutex_unlock(&hw->fdir_fltr_lock);
+		ice_dev_err_errno(dev, ret,
+				  "VF %d: ACL offload of FDIR rule failed",
+				  vf->vf_id);
+		return ret;
+	}
+
+	conf->acl_entry_h = entry_h;
+	input->acl_fltr = true;
+	mutex_unlock(&hw->fdir_fltr_lock);
+
+	return ICE_VC_ACL_FLTR;
+}
+
+/**
+ * ice_vc_del_fdir_acl - remove an ACL-offloaded VF FDIR rule
+ * @vf: pointer to the VF info
+ * @conf: FDIR configuration for the filter
+ *
+ * Remove the backing ACL TCAM entry and update the VF filter counter. The
+ * caller owns removing @conf from the VF list and freeing it.
+ *
+ * Return: 0 on success and negative values for failure.
+ */
+static int
+ice_vc_del_fdir_acl(struct ice_vf *vf, struct virtchnl_fdir_fltr_conf *conf)
+{
+	enum ice_fltr_ptype flow = conf->input.flow_type;
+	struct ice_hw *hw = &vf->pf->hw;
+	int ret;
+
+	mutex_lock(&hw->fdir_fltr_lock);
+	ret = ice_flow_rem_entry(hw, ICE_BLK_ACL, conf->acl_entry_h);
+	mutex_unlock(&hw->fdir_fltr_lock);
+	if (ret)
+		return ret;
+
+	if (vf->fdir.fdir_fltr_cnt[flow][0])
+		vf->fdir.fdir_fltr_cnt[flow][0]--;
+
+	return 0;
+}
+
+/**
  * ice_vc_add_fdir_fltr - add a FDIR filter for VF by the msg buffer
  * @vf: pointer to the VF info
  * @msg: pointer to the msg buffer
@@ -4100,6 +4409,43 @@ int ice_vc_add_fdir_fltr(struct ice_vf *vf, u8 *msg)
 		return ice_vc_add_fdir_raw(vf, conf, stat, len);
 
 	is_tun = ice_fdir_is_tunnel(conf->ttype);
+
+	/* If this rule needs a different input set than an existing Flow
+	 * Director rule of the same flow type, divert it to ACL (which
+	 * supports per-entry masks) so both rules can coexist.
+	 */
+	ret = ice_vc_add_fdir_acl(vf, fltr, conf, is_tun);
+	switch (ret) {
+	case ICE_VC_ACL_FLTR:
+		/* Offloaded to ACL: the rule is fully programmed here, so
+		 * reply synchronously (the control-VSI/IRQ path is not used).
+		 */
+		vf->fdir.fdir_fltr_cnt[conf->input.flow_type][is_tun]++;
+		v_ret = VIRTCHNL_STATUS_SUCCESS;
+		stat->status = VIRTCHNL_FDIR_SUCCESS;
+		stat->flow_id = conf->flow_id;
+		ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_FDIR_FILTER,
+					    v_ret, (u8 *)stat, len);
+		kfree(stat);
+		return ret;
+	case ICE_VC_FDIR_FLTR:
+		/* Not offloaded to ACL: program it on Flow Director below,
+		 * which sends the reply from its completion path.
+		 */
+		break;
+	default:
+		/* A conflict was detected but the ACL offload itself failed
+		 * (e.g. -ENOMEM or an ACL profile/entry programming error).
+		 * These are resource/hardware failures, not a rule conflict.
+		 */
+		v_ret = VIRTCHNL_STATUS_SUCCESS;
+		stat->status = VIRTCHNL_FDIR_FAILURE_RULE_NORESOURCE;
+		ice_dev_err_errno(dev, ret,
+				  "VF %d: ACL offload of conflicting FDIR rule failed",
+				  vf->vf_id);
+		goto err_free_conf;
+	}
+
 	ret = ice_vc_fdir_config_input_set(vf, fltr, conf, is_tun);
 	if (ret) {
 		v_ret = VIRTCHNL_STATUS_SUCCESS;
@@ -4299,6 +4645,30 @@ int ice_vc_del_fdir_fltr(struct ice_vf *vf, u8 *msg)
 		goto err_exit;
 	}
 
+	/* ACL-offloaded rules are removed synchronously, bypassing the Flow
+	 * Director control-VSI completion path.
+	 */
+	if (conf->input.acl_fltr) {
+		ret = ice_vc_del_fdir_acl(vf, conf);
+		if (ret) {
+			v_ret = VIRTCHNL_STATUS_SUCCESS;
+			stat->status = VIRTCHNL_FDIR_FAILURE_RULE_NORESOURCE;
+			ice_dev_err_errno(dev, ret,
+					  "VF %d: removing ACL FDIR rule failed",
+					  vf->vf_id);
+			goto err_exit;
+		}
+
+		v_ret = VIRTCHNL_STATUS_SUCCESS;
+		stat->status = VIRTCHNL_FDIR_SUCCESS;
+		ice_vc_fdir_remove_entry(vf, conf, conf->flow_id);
+		kfree(conf);
+		ret = ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_FDIR_FILTER,
+					    v_ret, (u8 *)stat, len);
+		kfree(stat);
+		return ret;
+	}
+
 	/* Just return failure when ctrl_vsi idx is invalid */
 	if (vf->ctrl_vsi_idx == ICE_NO_VSI) {
 		v_ret = VIRTCHNL_STATUS_SUCCESS;
@@ -4371,6 +4741,7 @@ void ice_vf_fdir_init(struct ice_vf *vf)
  */
 void ice_vf_fdir_exit(struct ice_vf *vf)
 {
+	timer_shutdown_sync(&vf->fdir.ctx_irq.rx_tmr);
 	ice_vc_fdir_flush_entry(vf);
 	idr_destroy(&vf->fdir.fdir_rule_idr);
 	ice_vc_fdir_rem_prof_all(vf);

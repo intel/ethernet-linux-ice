@@ -22,6 +22,8 @@
 #define ICE_DEV_ID_E823L_1GBE		0x124F
 /* Intel(R) Ethernet Connection E823-L for QSFP */
 #define ICE_DEV_ID_E823L_QSFP		0x151D
+/* Intel(R) Ethernet Controller E830(E835)-CC/X557-AT 10GBASE-T */
+#define ICE_DEV_ID_E835_10G_BASE_T	0x1256
 /* Intel(R) Ethernet Controller E835-C for backplane */
 #define ICE_DEV_ID_E835C_BACKPLANE	0x1261
 /* Intel(R) Ethernet Controller E835-C for QSFP */

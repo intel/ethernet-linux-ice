@@ -18,6 +18,7 @@ static void _rt_tsr_set(struct ice_parser_rt *rt, u16 tsr)
 
 static void _rt_ho_set(struct ice_parser_rt *rt, u16 ho)
 {
+	ho = min_t(u16, ho, ICE_PARSER_MAX_PKT_LEN);
 	rt->gpr[GPR_HO_IDX] = ho;
 	memcpy(&rt->gpr[GPR_HB_IDX], &rt->pkt_buf[ho], 32);
 }
@@ -729,6 +730,8 @@ static void _proto_off_resolve(struct ice_parser_rt *rt,
 
 	for (i = 0; i < 255; i++) {
 		if (rt->protocols[i]) {
+			if (rslt->po_num >= ARRAY_SIZE(rslt->po))
+				break;
 			rslt->po[rslt->po_num].proto_id = (u8)i;
 			rslt->po[rslt->po_num].offset = rt->offsets[i];
 			rslt->po_num++;

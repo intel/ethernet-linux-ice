@@ -9,6 +9,9 @@
 #ifndef NEED_READ_POLL_TIMEOUT
 #include <linux/iopoll.h>
 #endif
+#ifndef NEED_KTIME_GET_SNAPSHOT_ID
+#define ptp_cts_clock_id(cts) ((cts)->clock_id)
+#endif
 #include "ice_dpll.h"
 #if defined(CONFIG_X86)
 #include "asm/tsc.h"
@@ -1272,8 +1275,8 @@ ice_ptp_load_output_pin_cfg(struct ice_pf *pf, char *buf, ssize_t offset,
 	int count = offset;
 	u32 freq, src_freq;
 
-	count += scnprintf(buf + count, PAGE_SIZE, "%s\n", "out");
-	count += scnprintf(buf + count, PAGE_SIZE,
+	count += scnprintf(buf + count, PAGE_SIZE - count, "%s\n", "out");
+	count += scnprintf(buf + count, PAGE_SIZE - count,
 			   "|%4s|%8s|%5s|%11s|%6s|\n",
 			   "pin", "enabled", "dpll", "freq", "esync");
 	ice_dpll_pin_update_lock(pf);
@@ -1291,7 +1294,7 @@ ice_ptp_load_output_pin_cfg(struct ice_pf *pf, char *buf, ssize_t offset,
 		esync_en = !!(flags & ICE_AQC_GET_CGU_OUT_CFG_ESYNC_EN);
 		pin_en = !!(flags & ICE_AQC_GET_CGU_OUT_CFG_OUT_EN);
 		dpll &= ICE_AQC_GET_CGU_OUT_CFG_DPLL_SRC_SEL;
-		count += scnprintf(buf + count, PAGE_SIZE,
+		count += scnprintf(buf + count, PAGE_SIZE - count,
 				   "|%4u|%8u|%5u|%11u|%6u|\n",
 				   pin, pin_en, dpll, freq, esync_en);
 	}
@@ -1324,8 +1327,8 @@ ice_ptp_load_input_pin_cfg(struct ice_pf *pf, char *buf,
 	s32 phase_delay;
 	u32 freq;
 
-	count += scnprintf(buf + count, PAGE_SIZE, "%s\n", "in");
-	count += scnprintf(buf + count, PAGE_SIZE,
+	count += scnprintf(buf + count, PAGE_SIZE - count, "%s\n", "in");
+	count += scnprintf(buf + count, PAGE_SIZE - count,
 			  "|%4s|%8s|%8s|%11s|%12s|%15s|%11s|%11s|\n",
 			   "pin", "enabled", "state", "freq", "phase_delay",
 			   "eSync/Ref-sync", "DPLL0 prio", "DPLL1 prio");
@@ -1376,7 +1379,7 @@ ice_ptp_load_input_pin_cfg(struct ice_pf *pf, char *buf,
 		else
 			pin_state = ICE_DPLL_PIN_STATE_VALID;
 
-		count += scnprintf(buf + count, PAGE_SIZE,
+		count += scnprintf(buf + count, PAGE_SIZE - count,
 				   "|%4u|%8u|%8s|%11u|%12d|%15u|%11u|%11u|\n",
 				   pin, pin_en, pin_state, freq,
 				   phase_delay, esync_refsync_en, dpll0_prio,
@@ -2248,6 +2251,33 @@ static u64 ice_ptp_extend_32b_ts(u64 cached_phc_time, u32 in_tstamp)
 }
 
 /**
+ * ice_ptp_phy_time_offset - Read the cached PHY to PHC nanosecond distance
+ * @pf: Board private structure
+ */
+static u32 ice_ptp_phy_time_offset(struct ice_pf *pf)
+{
+	return READ_ONCE(pf->ptp.port.phy_time_offset);
+}
+
+/**
+ * ice_ptp_extend_phy_32b_ts - Extend a PHY timestamp into PHC time
+ * @cached_phc_time: recently cached copy of PHC time
+ * @in_tstamp: 32b nominal nanoseconds timestamp captured by the PHY
+ * @phy_offset: cached nanosecond distance from the PHY timer to the PHC
+ *
+ * On E825 the PHY timer is never programmed and free runs in its own time
+ * base. Shift the capture into the PHC time base first, which only needs the
+ * offset modulo 2^32, then extend it as usual. @phy_offset is zero on devices
+ * whose PHY timer tracks the PHC, making this equivalent to calling
+ * ice_ptp_extend_32b_ts() directly.
+ */
+static u64 ice_ptp_extend_phy_32b_ts(u64 cached_phc_time, u32 in_tstamp,
+				     u32 phy_offset)
+{
+	return ice_ptp_extend_32b_ts(cached_phc_time, in_tstamp + phy_offset);
+}
+
+/**
  * ice_ptp_extend_40b_ts - Convert a 40b timestamp to 64b nanoseconds
  * @pf: Board private structure
  * @in_tstamp: Ingress/egress 40b timestamp value
@@ -2286,8 +2316,9 @@ static u64 ice_ptp_extend_40b_ts(struct ice_pf *pf, u64 in_tstamp)
 		return 0;
 	}
 
-	ticks = ice_ptp_extend_32b_ts(READ_ONCE(pf->ptp.cached_phc_time),
-				      (in_tstamp >> 8) & mask);
+	ticks = ice_ptp_extend_phy_32b_ts(READ_ONCE(pf->ptp.cached_phc_time),
+					  (in_tstamp >> 8) & mask,
+					  ice_ptp_phy_time_offset(pf));
 	return ice_tspll_ticks2ns(&pf->hw, ticks);
 }
 
@@ -3227,10 +3258,22 @@ static void ice_ptp_wait_for_offsets(struct work_struct *work)
 			port->rx_calibrating = false;
 	}
 
-	if (!tx_err && !port->rx_calibrating)
+	if (!tx_err && !port->rx_calibrating) {
+		dev_dbg(ice_pf_to_dev(pf),
+			"PTP offset valid for port %u, Tx timestamps enabled\n",
+			port->port_num);
 		return;
+	}
+
+	/* Tx and/or Rx offset not yet configured, try again later.
+	 * This is expected during normal link-up: the vernier offset
+	 * calibration cannot complete until at least one packet has
+	 * been transmitted, so the first retries routinely land here.
+	 */
+	dev_dbg(ice_pf_to_dev(pf),
+		"PTP offset not yet valid for port %u (tx_err=%d rx_calibrating=%d)\n",
+		port->port_num, tx_err, port->rx_calibrating);
 err:
-	/* Tx and/or Rx offset not yet configured, try again later */
 	queue_delayed_work(system_unbound_wq, &port->ov_work,
 			   msecs_to_jiffies(100));
 }
@@ -3273,6 +3316,43 @@ static int ice_ptp_port_phy_stop(struct ice_ptp_port *ptp_port)
 }
 
 /**
+ * ice_ptp_update_phy_offset - Cache the PHC to PHY timer difference
+ * @pf: Board private structure
+ *
+ * The E825 PHY port timer is left free running, so capture how far it is from
+ * the PHC and cache the difference. Only that difference is needed to rebuild
+ * a full 64 bit timestamp from the 32 bits the PHY reports.
+ */
+static int ice_ptp_update_phy_offset(struct ice_pf *pf)
+{
+	struct ice_ptp_port *ptp_port = &pf->ptp.port;
+	struct ice_hw *hw = &pf->hw;
+	u64 phy_time, phc_time;
+	int err;
+
+	if (hw->mac_type != ICE_MAC_GENERIC_3K_E825)
+		return 0;
+
+	if (!ice_ptp_lock(hw))
+		return -EBUSY;
+
+	err = ice_read_phy_and_phc_time_eth56g(hw, ptp_port->port_num,
+					       &phy_time, &phc_time);
+	ice_ptp_unlock(hw);
+	if (err) {
+		dev_err(ice_pf_to_dev(pf), "PTP failed to read PHY time on port %u, err %d\n",
+			ptp_port->port_num, err);
+		return err;
+	}
+
+	/* Both captures carry nanoseconds in their upper 32 bits */
+	WRITE_ONCE(ptp_port->phy_time_offset,
+		   (u32)(phc_time >> 32) - (u32)(phy_time >> 32));
+
+	return 0;
+}
+
+/**
  * ice_ptp_port_phy_restart - (Re)start and calibrate PHY timestamping
  * @ptp_port: PTP port for which the PHY start is set
  *
@@ -3285,6 +3365,7 @@ static int ice_ptp_port_phy_restart(struct ice_ptp_port *ptp_port)
 	struct ice_pf *pf = ptp_port_to_pf(ptp_port);
 	u8 port = ptp_port->port_num;
 	struct ice_hw *hw = &pf->hw;
+	unsigned long flags;
 	int err;
 
 	if (!ice_ptp_is_managed_phy(hw))
@@ -3303,21 +3384,32 @@ static int ice_ptp_port_phy_restart(struct ice_ptp_port *ptp_port)
 		/* temporarily disable Tx timestamps while calibrating
 		 * PHY offset
 		 */
-		spin_lock(&ptp_port->tx.lock);
+		spin_lock_irqsave(&ptp_port->tx.lock, flags);
 		ptp_port->tx.disabled = true;
-		spin_unlock(&ptp_port->tx.lock);
+		spin_unlock_irqrestore(&ptp_port->tx.lock, flags);
 		ptp_port->tx_fifo_busy_cnt = 0;
 		ptp_port->rx_calibrating = true;
 
 		/* Start the PHY timer in Vernier mode */
 		err = ice_start_phy_timer_e82x(hw, port);
-		if (err)
+		if (err) {
+			/* If starting the PHY timer fails, ov_work is never
+			 * queued, so restore the Tx/Rx calibration state to
+			 * avoid permanently disabling Tx timestamps.
+			 */
+			spin_lock_irqsave(&ptp_port->tx.lock, flags);
+			ptp_port->tx.disabled = false;
+			spin_unlock_irqrestore(&ptp_port->tx.lock, flags);
+			ptp_port->rx_calibrating = false;
 			break;
+		}
 
 		queue_delayed_work(system_unbound_wq, &ptp_port->ov_work, 0);
 		break;
 	case ICE_MAC_GENERIC_3K_E825:
 		err = ice_start_phy_timer_eth56g(hw, port);
+		if (!err)
+			err = ice_ptp_update_phy_offset(pf);
 		break;
 	default:
 		err = -ENODEV;
@@ -3438,16 +3530,72 @@ skip_unused_txclk_disable:
 	switch (hw->mac_type) {
 	case ICE_MAC_E810:
 	case ICE_MAC_E830:
-		/* Do not reconfigure E810 or E830 PHY */
+	case ICE_MAC_GENERIC_3K_E825:
+		/* Do not reconfigure E810 or E830 PHY, but on link-up clear
+		 * any stale timestamp ready bits left over from a previous
+		 * link cycle. The PHY may have latched timestamps for packets
+		 * in flight when the link went down; these must be cleared
+		 * before new timestamp requests arrive.
+		 *
+		 * E810 does not have a real ready bitmap
+		 * (ice_get_phy_tx_tstamp_ready_e810 returns all-ones), so
+		 * skip clearing on E810 to avoid unnecessary sideband queue
+		 * operations for every not-in-use slot on each link-up.
+		 */
+		if (linkup && ptp_port->tx.has_ready_bitmap) {
+			struct ice_ptp_tx *tx = &ptp_port->tx;
+			u64 tstamp_ready;
+			int i;
+
+			if (ice_get_phy_tx_tstamp_ready(hw, tx->block,
+							&tstamp_ready)) {
+				dev_warn_ratelimited(ice_pf_to_dev(pf),
+						     "PTP failed to read Tx timestamp ready bitmap on link-up; stale PHY timestamps may remain and stall Tx timestamping\n");
+			} else {
+				/* Only clear stale ready bits for slots that
+				 * have no in-flight software request. Iterating
+				 * the not-in-use slots skips any concurrent
+				 * ice_ptp_request_ts() allocation without
+				 * holding tx->lock across the PHY access. E830
+				 * and E825 reach this clear; E810 is filtered
+				 * out above by has_ready_bitmap.
+				 */
+				for_each_clear_bit(i, tx->in_use, tx->len) {
+					u8 phy_idx = i + tx->offset;
+
+					if (tstamp_ready & BIT_ULL(phy_idx))
+						ice_clear_phy_tstamp(hw,
+								     tx->block,
+								     phy_idx);
+				}
+			}
+		}
+
+		/* E810 and E830 need no further PHY reconfiguration */
+		if (hw->mac_type != ICE_MAC_GENERIC_3K_E825)
+			return;
+
+		/* E825 recovers its Tx path by soft resetting the PHY
+		 * timestamp block and restarting the port, but only on
+		 * link-up. The reset is a three-step register toggle; if it
+		 * fails partway through, the port can be left held in reset,
+		 * and programming a PHY that is stuck in reset via
+		 * ice_ptp_port_phy_restart() would leave Tx timestamping
+		 * permanently broken. So warn and skip the restart on
+		 * failure; the sequence is retried on the next link-up event.
+		 */
+		if (!linkup)
+			return;
+
+		if (ice_ptp_phy_soft_reset_eth56g(hw, ptp_port->port_num))
+			dev_warn(ice_pf_to_dev(pf),
+				 "PTP failed to soft reset PHY port %u on link-up; skipping restart, Tx timestamping may be stuck, try toggle a link to recover\n",
+				 ptp_port->port_num);
+		else
+			ice_ptp_port_phy_restart(ptp_port);
 		return;
 	case ICE_MAC_GENERIC:
 		ice_ptp_port_phy_restart(ptp_port);
-		return;
-	case ICE_MAC_GENERIC_3K_E825:
-		if (linkup) {
-			ice_ptp_phy_soft_reset_eth56g(hw, ptp_port->port_num);
-			ice_ptp_port_phy_restart(ptp_port);
-		}
 		return;
 	default:
 		dev_warn(ice_pf_to_dev(pf), "%s: Unknown PHY type\n", __func__);
@@ -3542,6 +3690,30 @@ static void ice_ptp_restart_all_phy(struct ice_pf *pf)
 
 		if (port->link_up)
 			ice_ptp_port_phy_restart(port);
+
+		kref_put(&port->ref, ice_ptp_release_port_rcu);
+		rcu_read_lock();
+	}
+	rcu_read_unlock();
+}
+
+/**
+ * ice_ptp_update_phy_offset_all - Refresh cached PHY offset on all ports
+ * @pf: Board private structure
+ */
+static void ice_ptp_update_phy_offset_all(struct ice_pf *pf)
+{
+	struct ice_ptp_port *port;
+	unsigned long port_num;
+
+	rcu_read_lock();
+	xa_for_each(&pf->adapter->ptp_ports, port_num, port) {
+		if (!kref_get_unless_zero(&port->ref))
+			continue;
+		rcu_read_unlock();
+
+		if (port->link_up)
+			ice_ptp_update_phy_offset(ptp_port_to_pf(port));
 
 		kref_put(&port->ref, ice_ptp_release_port_rcu);
 		rcu_read_lock();
@@ -4199,6 +4371,8 @@ ice_ptp_settime64(struct ptp_clock_info *info, const struct timespec64 *ts)
 	/* Recalibrate and re-enable timestamp block */
 	if (hw->mac_type == ICE_MAC_GENERIC)
 		ice_ptp_restart_all_phy(pf);
+	else if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
+		ice_ptp_update_phy_offset_all(pf);
 exit:
 	if (err) {
 		dev_err(ice_pf_to_dev(pf), "PTP failed to set time %d\n", err);
@@ -4293,6 +4467,10 @@ static int ice_ptp_adjtime(struct ptp_clock_info *info, s64 delta)
 		ice_dev_err_errno(dev, err, "PTP failed to adjust time");
 		return err;
 	}
+
+	/* PHY timer was not adjusted, recapture its distance to the PHC */
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825)
+		ice_ptp_update_phy_offset_all(pf);
 
 	ice_ptp_reset_cached_phctime(pf);
 
@@ -4446,11 +4624,13 @@ static const struct ice_crosststamp_cfg ice_crosststamp_cfg_e830 = {
 /**
  * struct ice_crosststamp_ctx - Device cross timestamp context
  * @snapshot: snapshot of system clocks for historic interpolation
+ * @snapshot_clock_id: System clock ID for @snapshot
  * @pf: pointer to the PF private structure
  * @cfg: pointer to hardware configuration for cross timestamp
  */
 struct ice_crosststamp_ctx {
 	struct system_time_snapshot snapshot;
+	clockid_t snapshot_clock_id;
 	struct ice_pf *pf;
 	const struct ice_crosststamp_cfg *cfg;
 };
@@ -4496,10 +4676,7 @@ static int ice_capture_crosststamp(ktime_t *device,
 	}
 
 	/* Snapshot system time for historic interpolation */
-	ktime_get_snapshot(&ctx->snapshot);
-
-	/* Program cmd to master timer */
-	ice_ptp_src_cmd(hw, ICE_PTP_READ_TIME);
+	ktime_get_snapshot_id(ctx->snapshot_clock_id, &ctx->snapshot);
 
 	/* Start the ART and device clock sync sequence */
 	ctl = rd32(hw, cfg->ctl_reg);
@@ -4535,9 +4712,6 @@ static int ice_capture_crosststamp(ktime_t *device,
 	*device = ns_to_ktime(ts);
 
 err_timeout:
-	/* Clear the master timer */
-	ice_ptp_src_cmd(hw, ICE_PTP_NOP);
-
 	/* Release HW lock */
 	lock = rd32(hw, cfg->lock_reg);
 	lock &= ~cfg->lock_busy;
@@ -4565,7 +4739,8 @@ static int ice_ptp_getcrosststamp(struct ptp_clock_info *info,
 {
 	struct ice_pf *pf = ptp_info_to_pf(info);
 	struct ice_crosststamp_ctx ctx = {
-		.pf = pf
+		.pf = pf,
+		.snapshot_clock_id = ptp_cts_clock_id(cts),
 	};
 
 	switch (pf->hw.mac_type) {
@@ -4760,8 +4935,9 @@ void
 ice_ptp_rx_hwtstamp(struct ice_rx_ring *rx_ring,
 		    union ice_32b_rx_flex_desc *rx_desc, struct sk_buff *skb)
 {
-	struct ice_hw *hw = &((struct ice_pf *)rx_ring->vsi->back)->hw;
+	struct ice_pf *pf = rx_ring->vsi->back;
 	struct skb_shared_hwtstamps *hwtstamps;
+	struct ice_hw *hw = &pf->hw;
 	u64 ts_ns, cached_time;
 	u32 ts_high;
 
@@ -4781,8 +4957,13 @@ ice_ptp_rx_hwtstamp(struct ice_rx_ring *rx_ring,
 	 * bits itself.
 	 */
 	ts_high = le32_to_cpu(rx_desc->wb.flex_ts.ts_high);
-	ts_ns = ice_ptp_extend_32b_ts(cached_time, ts_high);
+	ts_ns = ice_ptp_extend_phy_32b_ts(cached_time, ts_high,
+					  ice_ptp_phy_time_offset(pf));
 	ts_ns = ice_tspll_ticks2ns(hw, ts_ns);
+
+	ice_trace(rx_hwtstamp,
+		  ice_pf_to_dev((struct ice_pf *)rx_ring->vsi->back),
+		  skb, cached_time, ts_high, ts_ns);
 
 	hwtstamps = skb_hwtstamps(skb);
 	memset(hwtstamps, 0, sizeof(*hwtstamps));
@@ -5030,8 +5211,10 @@ static void ice_handle_cgu_state(struct ice_pf *pf)
 				NULL, NULL, NULL, &state);
 
 	if (ret) {
-		dev_err(ice_pf_to_dev(pf), "Failed to get cgu state (%u:%s)",
-			ret, ice_aq_str(pf->hw.adminq.sq_last_status));
+		/* EBUSY is expected during reset recovery, don't log error */
+		if (pf->hw.adminq.sq_last_status != ICE_AQ_RC_EBUSY)
+			dev_err(ice_pf_to_dev(pf), "Failed to get cgu state (%u:%s)",
+				ret, ice_aq_str(pf->hw.adminq.sq_last_status));
 		return;
 	}
 	ice_dpll_pin_idx_to_name(pf, pf->synce_ref_pin, pin_name);
@@ -5097,6 +5280,9 @@ static void ice_ptp_maybe_trigger_tx_interrupt(struct ice_pf *pf)
 			ret);
 	} else if (ret) {
 		dev_dbg(dev, "PTP periodic task detected waiting timestamps. Triggering Tx timestamp interrupt now.\n");
+
+		ice_trace(ptp_aux_work_trigger_sw_irq, pf);
+		pf->ptp.aux_work_tsyn_tx_triggered++;
 
 		wr32(hw, PFINT_OICR, PFINT_OICR_TSYN_TX_M);
 		ice_flush(hw);
@@ -6237,6 +6423,7 @@ void ice_ptp_init(struct ice_pf *pf)
 
 	ptp->state = ICE_PTP_INITIALIZING;
 
+	mutex_init(&hw->ptp.tx_tstamp_lock);
 	if (hw->lane_num < 0) {
 		err = hw->lane_num;
 		goto err_exit;
@@ -6278,6 +6465,20 @@ void ice_ptp_init(struct ice_pf *pf)
 	if (err)
 		goto err_exit_clean_pf;
 
+	/* Seed the cached PTP link state from the current PHY link status
+	 * before starting the PHY timestamping block. On a fresh load the
+	 * port structure is zeroed (link_up == false); if the link is
+	 * already up at probe (for example after a PXE boot) no link-change
+	 * edge will follow, and ice_ptp_link_change() is edge-driven, so the
+	 * flag would stay stale. Seeding it here also lets
+	 * ice_ptp_reset_phy_timestamping() make the correct start/stop
+	 * decision instead of stopping the PHY timer on an already-up link.
+	 */
+	if (pf->hw.port_info)
+		ptp->port.link_up =
+			!!(pf->hw.port_info->phy.link_info.link_info &
+			ICE_AQ_LINK_UP);
+
 	/* Start the PHY timestamping block */
 	ice_ptp_reset_phy_timestamping(pf);
 
@@ -6302,6 +6503,7 @@ err_exit_clean_pf:
 	mutex_destroy(&ptp->port.ps_lock);
 	ice_ptp_cleanup_pf(pf);
 err_exit:
+	mutex_destroy(&hw->ptp.tx_tstamp_lock);
 	/* If we registered a PTP clock, release it */
 	if (pf->ptp.clock) {
 		ptp_clock_unregister(ptp->clock);
@@ -6331,6 +6533,7 @@ void ice_ptp_release(struct ice_pf *pf)
 		ice_ptp_cleanup_pf(pf);
 		mutex_destroy(&ptp->port.ps_lock);
 		ice_ptp_sysfs_release(pf);
+		mutex_destroy(&pf->hw.ptp.tx_tstamp_lock);
 		if (ptp->clock)
 			ptp_clock_unregister(ptp->clock);
 		return;
@@ -6361,6 +6564,8 @@ void ice_ptp_release(struct ice_pf *pf)
 	ice_ptp_port_phy_stop(&ptp->port);
 	mutex_destroy(&ptp->port.ps_lock);
 	ice_ptp_sysfs_release(pf);
+
+	mutex_destroy(&pf->hw.ptp.tx_tstamp_lock);
 
 	if (!ptp->clock)
 		return;

@@ -46,8 +46,8 @@ struct ice_virtchnl_ops {
 	int (*get_ver_msg)(struct ice_vf *vf, u8 *msg);
 	int (*get_vf_res_msg)(struct ice_vf *vf, u8 *msg);
 	void (*reset_vf)(struct ice_vf *vf);
-	int (*add_mac_addr_msg)(struct ice_vf *vf, u8 *msg);
-	int (*del_mac_addr_msg)(struct ice_vf *vf, u8 *msg);
+	int (*add_mac_addr_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
+	int (*del_mac_addr_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
 	int (*cfg_qs_msg)(struct ice_vf *vf, u8 *msg);
 	int (*ena_qs_msg)(struct ice_vf *vf, u8 *msg);
 	int (*dis_qs_msg)(struct ice_vf *vf, u8 *msg);
@@ -88,7 +88,7 @@ struct ice_virtchnl_ops {
 	int (*handle_rss_cfg_msg)(struct ice_vf *vf, u8 *msg, bool add);
 	int (*get_qos_caps)(struct ice_vf *vf);
 	int (*cfg_q_tc_map)(struct ice_vf *vf, u8 *msg);
-	int (*cfg_q_bw)(struct ice_vf *vf, u8 *msg);
+	int (*cfg_q_bw)(struct ice_vf *vf, u8 *msg, u16 msglen);
 	int (*cfg_q_quanta)(struct ice_vf *vf, u8 *msg);
 	int (*add_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
 	int (*del_fdir_fltr_msg)(struct ice_vf *vf, u8 *msg);
@@ -99,8 +99,8 @@ struct ice_virtchnl_ops {
 	int (*dis_qs_v2_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
 	int (*map_q_vector_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
 	int (*get_offload_vlan_v2_caps)(struct ice_vf *vf);
-	int (*add_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
-	int (*remove_vlan_v2_msg)(struct ice_vf *vf, u8 *msg);
+	int (*add_vlan_v2_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
+	int (*remove_vlan_v2_msg)(struct ice_vf *vf, u8 *msg, u16 msglen);
 	int (*ena_vlan_stripping_v2_msg)(struct ice_vf *vf, u8 *msg);
 	int (*dis_vlan_stripping_v2_msg)(struct ice_vf *vf, u8 *msg);
 	int (*ena_vlan_insertion_v2_msg)(struct ice_vf *vf, u8 *msg);

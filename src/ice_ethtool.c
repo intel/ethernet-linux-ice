@@ -233,6 +233,8 @@ static const struct ice_stats ice_gstrings_pf_stats[] = {
 	ICE_PF_STAT(ICE_TX_HWTSTAMP_DISCARDED, ptp.tx_hwtstamp_discarded),
 	ICE_PF_STAT(ICE_LATE_CACHED_PHC_UPDATES, ptp.late_cached_phc_updates),
 	ICE_PF_STAT(ICE_PTP_PHY_SOFT_RESETS, ptp.port.phy_soft_resets),
+	ICE_PF_STAT(ICE_AUX_WORK_TSYN_TX_TRIGGERED,
+		    ptp.aux_work_tsyn_tx_triggered),
 };
 
 static const u32 ice_regs_dump_list[] = {
@@ -3660,7 +3662,8 @@ ice_setup_autoneg(struct ice_port_info *p, struct ethtool_link_ksettings *ks,
 				 * high to propagate the changes, otherwise manual link down/up
 				 * would be required to have the change reflected in HW.
 				 */
-				if (ice_is_generic_mac(p->hw)) {
+				if (ice_is_generic_mac(p->hw) ||
+				    p->hw->mac_type == ICE_MAC_E830) {
 					config->low_power_ctrl_an &= ~ICE_AQC_PHY_AN_EN_CLAUSE37;
 					config->caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
 				}
@@ -5289,6 +5292,15 @@ ice_set_pauseparam(struct net_device *netdev, struct ethtool_pauseparam *pause)
 	return err;
 }
 
+#ifdef HAVE_ETHTOOL_GET_RX_RING_COUNT
+static u32 ice_get_rx_ring_count(struct net_device *netdev)
+{
+	struct ice_netdev_priv *np = netdev_priv(netdev);
+
+	return np->vsi->rss_size;
+}
+#endif /* HAVE_ETHTOOL_GET_RX_RING_COUNT */
+
 #if defined(ETHTOOL_GRSSH) && defined(ETHTOOL_SRSSH)
 /**
  * ice_get_rxfh_key_size - get the RSS hash key size
@@ -5701,7 +5713,7 @@ static int ice_set_channels(struct net_device *dev, struct ethtool_channels *ch)
 	}
 
 	set_bit(ICE_SET_CHANNELS, pf->state);
-	err = ice_vsi_recfg_qs(vsi, new_rx, new_tx);
+	err = ice_vsi_recfg_qs(vsi, new_rx, new_tx, true);
 	if (err)
 		goto channels_out;
 
@@ -5745,7 +5757,7 @@ static void ice_get_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	if (np->vsi->type != ICE_VSI_PF)
 		netdev_warn(netdev, "Wake on LAN is not supported on this interface!\n");
 
-	/* Get WoL settings based on the HW capability */
+	/* Get WoL settings based on HW capability and Feature Config policy */
 	if (ice_is_wol_supported(&pf->hw)) {
 		wol->supported = WAKE_MAGIC;
 		wol->wolopts = pf->wol_ena ? WAKE_MAGIC : 0;
@@ -5772,6 +5784,13 @@ static int ice_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	/* only magic packet is supported */
 	if (wol->wolopts && wol->wolopts != WAKE_MAGIC)
 		return -EOPNOTSUPP;
+
+	/* If the RDE (Redfish Device Enablement) WoL Override PF Driver flag
+	 * (bit 8 of TLV 0x139) is set, warn that firmware may override
+	 * an OS driver disable of WoL when entering S5.
+	 */
+	if (!wol->wolopts && ice_is_rde_wol_override_set(&pf->hw) > 0)
+		netdev_info(netdev, "OS Driver WOL setting may be overridden per Admin Policy\n");
 
 	/* Set WoL only if there is a new value */
 	if (pf->wol_ena != !!wol->wolopts) {
@@ -6612,6 +6631,9 @@ static const struct ethtool_ops ice_ethtool_ops = {
 	.get_rxfh_indir_size	= ice_get_rxfh_indir_size,
 	.get_rxfh		= ice_get_rxfh,
 	.set_rxfh		= ice_set_rxfh,
+#ifdef HAVE_ETHTOOL_GET_RX_RING_COUNT
+	.get_rx_ring_count	= ice_get_rx_ring_count,
+#endif /* HAVE_ETHTOOL_GET_RX_RING_COUNT */
 #endif /* ETHTOOL_GRSSH && ETHTOOL_SRSSH */
 	.get_channels		= ice_get_channels,
 	.set_channels		= ice_set_channels,

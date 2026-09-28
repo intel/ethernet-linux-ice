@@ -189,6 +189,7 @@ extern const char ice_drv_ver[];
 #define ICE_MIN_LAN_MSIX	1
 #define ICE_OICR_MSIX		1
 #define ICE_MIN_MSIX		(ICE_MIN_LAN_MSIX + ICE_OICR_MSIX)
+#define ICE_LL_TS_MSIX		1
 #define ICE_FDIR_MSIX		2
 #define ICE_RDMA_NUM_AEQ_MSIX	1
 #define ICE_MIN_RDMA_MSIX	2
@@ -326,11 +327,13 @@ enum ice_feature {
 	ICE_F_CGU,
 	ICE_F_GNSS,
 	ICE_F_TXTIME,
+	ICE_F_SRIOV_TXTIME,
 	ICE_F_GCS,
 	ICE_F_ROCE_LAG,
 	ICE_F_SRIOV_LAG,
 	ICE_F_SRIOV_AA_LAG,
 	ICE_F_MBX_LIMIT,
+	ICE_F_EROT,
 	ICE_F_MAX
 };
 
@@ -666,10 +669,10 @@ struct ice_vsi {
 
 	u8 num_tc_devlink_params;
 
-	/* setup back reference, to which aggregator node this VSI
-	 * corresponds to
+	/* ID of the aggregator node this VSI was configured with at setup, or
+	 * negative if it was not configured with an aggregator node.
 	 */
-	struct ice_sched_agg_info *agg_node;
+	s64 agg_id;
 
 	struct_group_tagged(ice_vsi_cfg_params, params,
 			    struct ice_port_info *port_info;
@@ -1754,7 +1757,7 @@ void ice_set_ethtool_recovery_ops(struct net_device *netdev);
 void ice_set_ethtool_safe_mode_ops(struct net_device *netdev);
 u16 ice_get_avail_txq_count(struct ice_pf *pf);
 u16 ice_get_avail_rxq_count(struct ice_pf *pf);
-int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx);
+int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx, bool locked);
 void ice_update_pf_stats(struct ice_pf *pf);
 void ice_update_vsi_stats(struct ice_vsi *vsi);
 int ice_up(struct ice_vsi *vsi);
@@ -1836,6 +1839,7 @@ int ice_get_num_local_cpus(struct device *dev);
 int ice_link_event(struct ice_pf *pf, struct ice_port_info *pi, bool link_up,
 		   u16 link_speed);
 const char *ice_aq_str(enum ice_aq_err aq_err);
+int ice_is_rde_wol_override_set(struct ice_hw *hw);
 bool ice_is_wol_supported(struct ice_hw *hw);
 
 enum ice_aq_task_state {
@@ -1902,6 +1906,9 @@ void ice_unload(struct ice_pf *pf);
 #endif /* HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 int
 ice_acl_add_rule_ethtool(struct ice_vsi *vsi, struct ethtool_rxnfc *cmd);
+int
+ice_acl_add_rule_vf(struct ice_vsi *vsi, struct ice_fdir_fltr *input,
+		    u64 entry_id, u64 *entry_h);
 int ice_init_acl(struct ice_pf *pf);
 
 static inline bool ice_is_dual(struct ice_hw *hw)

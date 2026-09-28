@@ -1,7 +1,7 @@
 ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 ***********************************************************
 
-June 30, 2026
+September 28, 2026
 
 
 Contents
@@ -548,15 +548,17 @@ bonding is configured with ARP monitoring.
 Use the ethtool private flag mac-source-pruning to enable or disable
 source MAC pruning on received packets:
 
-# ethtool --set-priv-flags <ethX> mac-source-pruning on|off
-   Where: on - discards packets with source MAC address matching the
-   source MAC
+   ethtool --set-priv-flags <ethX> mac-source-pruning on|off
 
-      address of the interface (default)
+Where:
 
-   off - receives packets with source MAC address matching the source
-   MAC
-      address of the interface
+on:
+   discards packets with source MAC address matching the source MAC
+   address of the interface (default)
+
+off:
+   receives packets with source MAC address matching the source MAC
+   address of the interface
 
 NOTE: When you set mac-source-pruning to on (disabled): - The driver
 will disable spoof check. - The network interface will receive all
@@ -568,15 +570,17 @@ specified VF by setting the private PF flag vf-source-pruning and
 setting correct spoofchk and trust settings on the specified VF (see
 below example).
 
-# ethtool --set-priv-flags <ethX> vf-source-pruning on|off
-   Where: on - discards packets with source MAC address matching the
-   source MAC
+   ethtool --set-priv-flags <ethX> vf-source-pruning on|off
 
-      address of the interface (default)
+Where:
 
-   off - receives packets with source MAC address matching the source
-   MAC
-      address of the interface
+on:
+   discards packets with source MAC address matching the source MAC
+   address of the interface (default)
+
+off:
+   receives packets with source MAC address matching the source MAC
+   address of the interface
 
 NOTE: Enabling vf-source-pruning will not automatically set anti-
 spoofing and trust mode automatically. You must perform these steps
@@ -584,8 +588,8 @@ yourself. They can be performed in any order. For example: # ip link
 set <ethX> vf <vf id> spoofchk off # ip link set <ethX> vf <vf id>
 trust on # ethtool --set-priv-flag <ethX> vf-source-pruning off
 
-For more information, refer to *_macvlanantispoofing* and *_trusted-
-vf* in this README.
+For more information, refer to MAC and VLAN Anti-Spoofing Feature for
+VFs and Trusted VFs and VF Promiscuous Mode in this README.
 
 
 NVM Express* (NVMe) over TCP and Fabrics
@@ -689,16 +693,15 @@ Link Aggregation and SR-IOV VFs
 LAG and SR-IOV are compatible only if all the following are true:
 
 * The bond is in one of the supported modes. Remaining modes are not
-  compatible
+  compatible with bridges:
 
-with bridges:
-   * active-backup (1)
+  * active-backup (1)
 
-   * balance-xor (2)
+  * balance-xor (2)
 
-   * broadcast (3)
+  * broadcast (3)
 
-   * 802.3ad (4)
+  * 802.3ad (4)
 
 * The bond comprises of exactly two ports from the same NIC MAC chip
 
@@ -906,6 +909,10 @@ ADQ KNOWN ISSUES:
   filters. Dmesg will report the error if TC filters fail to add
   properly.
 
+
+Setting Up ADQ
+~~~~~~~~~~~~~~
+
 To set up the adapter for ADQ, where "<ethX>" is the interface in use:
 
 1. Reload the ice driver to remove any previous TC configuration:
@@ -926,6 +933,10 @@ To set up the adapter for ADQ, where "<ethX>" is the interface in use:
       ethtool -k <ethX> | grep "hw-tc"
       ethtool --show-priv-flags <ethX>
 
+
+ADQ Configuration Script
+~~~~~~~~~~~~~~~~~~~~~~~~
+
 Intel also provides a script to configure ADQ. This script allows you
 configure ADQ-specific parameters such as traffic classes, priority,
 filters, and ethtool parameters.
@@ -935,6 +946,10 @@ tarball for more information.
 
 The script and README are also available as part of the Python Package
 Index at https://pypi.org/project/adqsetup.
+
+
+Using ADQ with Independent Pollers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice driver supports ADQ acceleration using independent pollers.
 Independent pollers are kernel threads invoked by interrupts and are
@@ -986,6 +1001,10 @@ For example:
   flowing:
 
      devlink dev param set pci/0000:3b:00.0 name tc1_poller_timeout value 1000 cmode runtime
+
+
+Configuring ADQ Flows per Traffic Class
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice out-of-tree driver allows you to configure inline Intel(R)
 Ethernet Flow Director (Intel(R) Ethernet FD) filters per traffic
@@ -3265,6 +3284,10 @@ Note:
   * You must have admin permissions and be logged in as root to change
     firmware logging settings.
 
+
+Configuring firmware log modules
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 The driver groups firmware events into categories, called "modules."
 The modules are instantiated under the "fwlog/modules" directory.
 
@@ -3386,6 +3409,10 @@ To read the "log_level" of all the modules:
 
    cat /sys/kernel/debug/ice/0000\:18\:00.0/fwlog/modules/all
 
+
+Enabling and disabling firmware logs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 You can configure modules, but firmware will **not** send firmware
 logging events to the driver until it explicitly receives the
 "fwlog\enable" setting.
@@ -3397,6 +3424,10 @@ To enable firmware logging:
 To disable firmware logging:
 
    echo 0 > /sys/kernel/debug/ice/0000\:18\:00.0/fwlog/enable
+
+
+Retrieving firmware log data
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To retrieve the firmware log data, read the data from "fwlog\data".
 You can clear the contents of the firmware log data by writing any
@@ -3418,6 +3449,10 @@ Note:
     by Customer Support. Information collected is related only to
     firmware and hardware for debug purposes.
 
+
+Changing how often the log events are sent to the driver
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 The driver receives firmware log data from the Admin Receive Queue
 (ARQ). To change the frequency that the firmware sends the ARQ events,
 write a value to "fwlog/nr_messages".
@@ -3434,6 +3469,10 @@ An example to set the value is:
 To see the currently configured value:
 
    cat /sys/kernel/debug/ice/0000\:18\:00.0/fwlog/nr_messages
+
+
+Configuring the amount of memory used to store firmware log data
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The driver stores firmware log data within the driver. The default
 size of the memory used to store the data is 1MB, but some use cases
@@ -3942,6 +3981,10 @@ for each PF. RDMA requires one more MSI-X vector than the PF
 allocation, so the driver will automatically allocate 9-65 MSI-X
 vectors for RDMA.
 
+
+Setting MSI-X Vector Allocation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 You can use sysfs to override the automatic MSI-X vector allocation
 for a particular PF or RDMA function, or for the pool of vectors used
 by the VFs bound to a PF:
@@ -3999,6 +4042,10 @@ Note:
   For some Linux distributions, the "sriov_vf_msix_count" parameter is
   not available, and it is recommended to use devlink parameter.
 
+
+Current MSI-X Allocation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
 You can check the current MSI-X vector allocation by using the
 "devlink resource show" parameter. For example:
 
@@ -4012,6 +4059,10 @@ Might return:
      name: msix_eth size 48 occ 24 unit
      name: msix_vf size 48 occ 24 unit
      name: msix_rdma size 48 occ 24 unit
+
+
+Increasing the Automatic Allocation Limit
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice driver supports changing the automatic MSI-X vector and queue
 allocation for PFs and VFs to spread the RSS load across more cores.
@@ -4066,6 +4117,10 @@ To set a PF back to using its PF LUT:
    echo 0 > /sys/bus/pci/devices/<ethx>/sriov_drivers_autoprobe
    echo 64 > /sys/bus/pci/devices/<ethx>/rss_lut_vf_attr
    echo 2048 > /sys/bus/pci/devices/<ethx>/rss_lut_pf_attr
+
+
+Internal Temperature Reporting
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ice driver support for monitoring the internal temperature of the
 chip.

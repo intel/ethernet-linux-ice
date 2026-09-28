@@ -24,6 +24,11 @@ struct ice_pf;
  * @whole_dev_lock: the lock that should be used to serialize FW/HW
  *                  re/configuration, or any other operation that requires
  *                  to be serialized over whole device (all PFs on given card)
+ * @global_cfg_lock_sw: software mutex mirroring the firmware Global Config
+ *                      Lock. Held while a DDP package download owns the
+ *                      firmware lock so unrelated AQ commands from the PFs of
+ *                      this device block. Scoped per device so AQ traffic on
+ *                      other devices is not serialized against this one.
  */
 struct ice_adapter {
 	refcount_t refcount;
@@ -34,6 +39,7 @@ struct ice_adapter {
 	struct xarray ptp_ports;
 
 	struct mutex whole_dev_lock;
+	struct mutex global_cfg_lock_sw; /* mirrors FW Global Config Lock */
 };
 
 struct ice_adapter *ice_adapter_get(const struct pci_dev *pdev);

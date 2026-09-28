@@ -1,3 +1,4 @@
+'\" t
 .\" Man page generated from reStructuredText.
 .
 .
@@ -27,7 +28,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "ICE" "7" "June 30, 2026" "" "Linux ice readme"
+.TH "ICE" "7" "September 28, 2026" "" "Linux ice readme"
 .SH NAME
 ice \- ice Linux* Base Driver for the Intel(R) Ethernet 800 Series
 .SS Contents
@@ -87,7 +88,7 @@ sizes larger than 3KB.
 .sp
 See the \(dqIntel(R) Ethernet Adapters and Devices User Guide\(dq for additional
 information on features. It is available on the Intel website at
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/705831\fP\&.
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/705831'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/705831\fP\X'tty: link'\&.
 .SH IDENTIFYING YOUR ADAPTER
 .sp
 The driver is compatible with devices based on the following:
@@ -114,7 +115,7 @@ Intel(R) Ethernet Controller E835
 .sp
 For information on how to identify your adapter, and for the latest Intel
 network drivers, refer to the Intel Support website at
-\fI\%https://www.intel.com/support\fP\&.
+\X'tty: link https://www.intel.com/support'\fI\%https://www.intel.com/support\fP\X'tty: link'\&.
 .SH IMPORTANT NOTES
 .SS Configuring SR\-IOV for improved network security
 .sp
@@ -204,11 +205,9 @@ driver tar file:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tar zxf ice\-<x.x.x>.tar.gz
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 3. 3
@@ -217,11 +216,9 @@ for the driver tar:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cd ice\-<x.x.x>/src/
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 4. 3
@@ -229,11 +226,9 @@ Compile the driver module:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 make install
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -241,11 +236,9 @@ The binary will be installed as:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 /lib/modules/<KERNEL VER>/updates/drivers/net/ethernet/intel/ice/ice.ko
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -260,11 +253,9 @@ use the following command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 make CFLAGS_EXTRA=\(aq\-DUNIFIED_STATS\(aq install
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -279,11 +270,9 @@ cores:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 make \-j<nproc> CFLAGS_EXTRA=\(aq\-DADQ_PERF_COUNTERS\(aq install
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -317,12 +306,10 @@ To check the version of the driver and then load it:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 modinfo ice
 modprobe ice
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -331,11 +318,9 @@ kernel before loading the new module:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 rmmod ice; modprobe ice
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -354,11 +339,9 @@ modprobe:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip address add <IP_address>/<netmask bits> dev <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 7. 3
@@ -368,11 +351,9 @@ that is being tested:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ping <IP_address>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -391,11 +372,9 @@ driver tar file:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 rpmbuild \-tb ice\-<x.x.x>.tar.gz
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -414,11 +393,9 @@ following commands, where \fB<RPM>\fP is the location of the RPM file:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 rpm \-Uvh <RPM>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -426,11 +403,9 @@ or:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 dnf/yum localinstall <RPM>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 3. 3
@@ -439,11 +414,9 @@ bus, you must also install the auxiliary RPM:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 rpm \-Uvh <ice RPM> <auxiliary RPM>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -451,11 +424,9 @@ or:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 dnf/yum localinstall <ice RPM> <auxiliary RPM>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -468,11 +439,9 @@ to missing kernel\-devel headers. To workaround this issue, specify
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 rpm \-Uvh auxiliary\-1.0.0\-1.x86_64.rpm \-\-excludepath=/lib/modules/3.10.0\-957.el7.x86_64/source/include/linux/auxiliary_bus.h
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -509,7 +478,7 @@ user\-changeable parameters after the driver is loaded.
 The driver utilizes the ethtool interface for driver configuration and
 diagnostics, as well as displaying statistical information. The latest ethtool
 version is required for this functionality. Download it at
-\fI\%https://kernel.org/pub/software/network/ethtool/\fP\&.
+\X'tty: link https://kernel.org/pub/software/network/ethtool/'\fI\%https://kernel.org/pub/software/network/ethtool/\fP\X'tty: link'\&.
 .SS Viewing Link Messages
 .sp
 Link messages will not be displayed to the console if the distribution is
@@ -518,11 +487,9 @@ your console, set dmesg to eight by entering the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 dmesg \-n 8
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -605,13 +572,11 @@ command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 lspci \-vv \-s af:00.0 | grep \-i Serial
 
 Capabilities: [150 v1] Device Serial Number b8\-87\-a3\-ff\-ff\-ca\-05\-68
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -620,11 +585,9 @@ dashes:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 lspci \-vv \-s af:00.0 | grep \-i Serial | awk \(aq{print $7}\(aq | sed s/\-//g b887a3ffffca0568
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -725,20 +688,24 @@ active\-backup bonding is configured with ARP monitoring.
 Use the ethtool private flag mac\-source\-pruning to enable or disable source
 MAC pruning on received packets:
 .INDENT 0.0
-.TP
-.B # ethtool \-\-set\-priv\-flags <ethX> mac\-source\-pruning on|off
-Where:
-on \- discards packets with source MAC address matching the source MAC
-.INDENT 7.0
 .INDENT 3.5
-address of the interface (default)
+.sp
+.EX
+ethtool \-\-set\-priv\-flags <ethX> mac\-source\-pruning on|off
+.EE
 .UNINDENT
 .UNINDENT
-.INDENT 7.0
+.sp
+Where:
+.INDENT 0.0
 .TP
-.B off \- receives packets with source MAC address matching the source MAC
+.B on
+discards packets with source MAC address matching the source MAC
+address of the interface (default)
+.TP
+.B off
+receives packets with source MAC address matching the source MAC
 address of the interface
-.UNINDENT
 .UNINDENT
 .sp
 NOTE: When you set mac\-source\-pruning to on (disabled):
@@ -750,20 +717,24 @@ The ice driver allows to enable or disable source pruning on a specified VF
 by setting the private PF flag vf\-source\-pruning and setting correct spoofchk
 and trust settings on the specified VF (see below example).
 .INDENT 0.0
-.TP
-.B # ethtool \-\-set\-priv\-flags <ethX> vf\-source\-pruning on|off
-Where:
-on \- discards packets with source MAC address matching the source MAC
-.INDENT 7.0
 .INDENT 3.5
-address of the interface (default)
+.sp
+.EX
+ethtool \-\-set\-priv\-flags <ethX> vf\-source\-pruning on|off
+.EE
 .UNINDENT
 .UNINDENT
-.INDENT 7.0
+.sp
+Where:
+.INDENT 0.0
 .TP
-.B off \- receives packets with source MAC address matching the source MAC
+.B on
+discards packets with source MAC address matching the source MAC
+address of the interface (default)
+.TP
+.B off
+receives packets with source MAC address matching the source MAC
 address of the interface
-.UNINDENT
 .UNINDENT
 .sp
 NOTE: Enabling vf\-source\-pruning will not automatically set anti\-spoofing and
@@ -773,8 +744,8 @@ performed in any order. For example:
 # ip link set <ethX> vf <vf id> trust on
 # ethtool \-\-set\-priv\-flag <ethX> vf\-source\-pruning off
 .sp
-For more information, refer to _macvlanantispoofing
-and _trusted\-vf in this README.
+For more information, refer to \fI\%MAC and VLAN Anti\-Spoofing Feature for VFs\fP
+and \fI\%Trusted VFs and VF Promiscuous Mode\fP in this README.
 .SS NVM Express* (NVMe) over TCP and Fabrics
 .sp
 RDMA provides a high throughput, low latency means to directly access NVM
@@ -791,7 +762,7 @@ Configuration Guide
 .UNINDENT
 .sp
 Both guides are available on the Intel Technical Library at:
-\fI\%https://www.intel.com/content/www/us/en/design/products\-and\-solutions/networking\-and\-io/ethernet\-controller\-e810/technical\-library.html\fP
+\X'tty: link https://www.intel.com/content/www/us/en/design/products-and-solutions/networking-and-io/ethernet-controller-e810/technical-library.html'\fI\%https://www.intel.com/content/www/us/en/design/products\-and\-solutions/networking\-and\-io/ethernet\-controller\-e810/technical\-library.html\fP\X'tty: link'
 .SS Link Aggregation
 .sp
 Link Aggregation (LAG)/bonding allows combining multiple physical interfaces to
@@ -874,12 +845,9 @@ VIRTCHNL capability VIRTCHNL_VF_OFFLOAD_RDMA is disabled.
 LAG and SR\-IOV are compatible only if all the following are true:
 .INDENT 0.0
 .IP \(bu 2
-The bond is in one of the supported modes. Remaining modes are not compatible
-.UNINDENT
-.INDENT 0.0
-.TP
-.B with bridges:
-.INDENT 7.0
+The bond is in one of the supported modes. Remaining modes are not
+compatible with bridges:
+.INDENT 2.0
 .IP \(bu 2
 active\-backup (1)
 .IP \(bu 2
@@ -889,8 +857,6 @@ broadcast (3)
 .IP \(bu 2
 802.3ad (4)
 .UNINDENT
-.UNINDENT
-.INDENT 0.0
 .IP \(bu 2
 The bond comprises of exactly two ports from the same NIC MAC chip
 .IP \(bu 2
@@ -906,9 +872,8 @@ The ice_lag DDP package is loaded
 Firmware supports LAN VF LAG capability (minimal version):
 .UNINDENT
 .TS
-center;
-|l|l|l|.
-_
+box center;
+l|l|l.
 T{
 Device
 T}	T{
@@ -932,7 +897,6 @@ T}	T{
 T}	T{
 1.20
 T}
-_
 .TE
 .sp
 In modes other than active\-backup (1), splitting traffic is achieved through
@@ -949,11 +913,9 @@ Enable switchdev mode on the primary port:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev eswitch set <pci/0000:##:##.#> mode switchdev
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 2. 3
@@ -961,11 +923,9 @@ Create SR\-IOV VFs:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 2 > /sys/class/net/$PF1/device/sriov_numvfs
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 3. 3
@@ -974,12 +934,10 @@ above):
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link add bond0 type bond
 ip link set bond0 type bond miimon 100 mode active\-backup
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 4. 3
@@ -987,15 +945,13 @@ Enslave primary and secondary port to bond:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set $PF1 down
 ip link set $PF1 master bond0
 
 ip link set $PF2 down
 ip link set $PF2 master bond0
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 5. 3
@@ -1003,14 +959,12 @@ Add a Linux bridge. Add bond and port representors to it:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link add $BR type bridge
 ip link set $BOND master $BR
 ip link set $VF1_PR master $BR
 ip link set $VF2_PR master $BR
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -1026,11 +980,9 @@ enabled on the secondary uplink:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set promisc on $PF2
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Application Device Queues (ADQ)
@@ -1041,7 +993,7 @@ and allow Tx traffic to be rate limited per application.
 .sp
 The ADQ information contained here is specific to the ice driver. For more
 details, refer to the E810 ADQ Configuration Guide at
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/609008\fP\&.
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/609008'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/609008\fP\X'tty: link'\&.
 .sp
 Requirements:
 .INDENT 0.0
@@ -1060,13 +1012,11 @@ For example:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 modprobe sch_mqprio
 modprobe act_mirred
 modprobe cls_flower
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1076,14 +1026,12 @@ We recommend the following installation method:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cd iproute2
 \&./configure
 make DESTDIR=/opt/iproute2 install
 ln \-s /opt/iproute2/sbin/tc /usr/local/sbin/tc
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -1141,11 +1089,9 @@ stop the firmware LLDP agent using the following command:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> fw\-lldp\-agent off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1179,6 +1125,7 @@ after issuing the \fBtc qdisc add\fP command. We recommend you wait 5 seconds
 after issuing \fBtc qdisc add\fP before adding TC filters. Dmesg will report
 the error if TC filters fail to add properly.
 .UNINDENT
+.SS Setting Up ADQ
 .sp
 To set up the adapter for ADQ, where \fB<ethX>\fP is the interface in use:
 .INDENT 0.0
@@ -1187,12 +1134,10 @@ Reload the ice driver to remove any previous TC configuration:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 rmmod ice
 modprobe ice
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 2. 3
@@ -1200,11 +1145,9 @@ Enable hardware TC offload on the interface:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> hw\-tc\-offload on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 3. 3
@@ -1212,11 +1155,9 @@ Disable LLDP on the interface, if it isn\(aqt already:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> fw\-lldp\-agent off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 4. 3
@@ -1224,15 +1165,14 @@ Verify settings:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-k <ethX> | grep \(dqhw\-tc\(dq
 ethtool \-\-show\-priv\-flags <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
+.SS ADQ Configuration Script
 .sp
 Intel also provides a script to configure ADQ. This script allows you configure
 ADQ\-specific parameters such as traffic classes, priority, filters, and ethtool
@@ -1242,7 +1182,8 @@ Refer to the \fBREADME.md\fP file in \fBscripts/adqsetup\fP inside the driver
 tarball for more information.
 .sp
 The script and README are also available as part of the Python Package Index
-at \fI\%https://pypi.org/project/adqsetup\fP\&.
+at \X'tty: link https://pypi.org/project/adqsetup'\fI\%https://pypi.org/project/adqsetup\fP\X'tty: link'\&.
+.SS Using ADQ with Independent Pollers
 .sp
 The ice driver supports ADQ acceleration using independent pollers. Independent
 pollers are kernel threads invoked by interrupts and are used for busy polling
@@ -1255,11 +1196,9 @@ To set the number of queue pairs per poller, use the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set <pci/D:b:d.f> name tc<x>_qps_per_poller value <num> cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1281,11 +1220,9 @@ To set the timeout for the independent poller, use the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set <pci/D:b:d.f> name tc<x>_poller_timeout value <num> cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1309,11 +1246,9 @@ To configure 3 queues of TC1 to be polled by each independent poller:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set pci/0000:3b:00.0 name tc1_qps_per_poller value 3 cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1321,14 +1256,13 @@ To set the timeout value in jiffies for TC1 when no traffic is flowing:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set pci/0000:3b:00.0 name tc1_poller_timeout value 1000 cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
+.SS Configuring ADQ Flows per Traffic Class
 .sp
 The ice out\-of\-tree driver allows you to configure inline Intel(R) Ethernet Flow
 Director (Intel(R) Ethernet FD) filters per traffic class (TC) using the
@@ -1356,11 +1290,9 @@ Use the following to configure inline Intel Ethernet FD filters per TC:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set <pci/D:b:d.f> name tc<x>_inline_fd value <setting> cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1382,11 +1314,9 @@ For example, to enable inline Intel Ethernet FD for TC1:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set pci/0000:af:00.0 name tc1_inline_fd value true cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1394,11 +1324,9 @@ To show the current inline Intel Ethernet FD setting:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param show <pci/D:b:d.f> name tc<x>_inline_fd
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1407,11 +1335,9 @@ specified device:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param show pci/0000:af:00.0 name tc2_inline_fd
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Creating Traffic Classes
@@ -1440,13 +1366,11 @@ Use the tc command to create traffic classes. You can create a maximum of
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev <ethX> root mqprio num_tc <tcs> map <priorities>
 queues <count1@offset1 ...> hw 1 mode channel shaper bw_rlimit
 min_rate <min_rate1 ...> max_rate <max_rate1 ...>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1511,11 +1435,9 @@ Enable hardware TC offload on the interface:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> hw\-tc\-offload on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -1525,11 +1447,9 @@ Add clsact qdisc to enable adding ingress/egress filters for Rx/Tx:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev <ethX> clsact
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 3. 3
@@ -1537,11 +1457,9 @@ Verify successful TC creation after qdisc is created:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc show dev <ethX> ingress
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -1557,12 +1475,10 @@ tc0 and 4\-7 for tc1, and max Tx rate set to 1Gbit for tc0 and 3Gbit for tc1:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev ens4f0 root mqprio num_tc 2 map 0 0 0 0 1 1 1 1 queues
 16@0 16@16 hw 1 mode channel shaper bw_rlimit max_rate 1Gbit 3Gbit
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1582,12 +1498,10 @@ enabled:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev <ethX> root mqprio num_tc 8 map 0 1 2 3 4 5 6 7
 queues 2@0 4@2 8@6 16@14 32@30 64@62 128@126 2@254 hw 1 mode channel
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1595,12 +1509,10 @@ To set a minimum rate for a TC:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev ens4f0 root mqprio num_tc 2 map 0 0 0 0 1 1 1 1 queues
 4@0 8@4 hw 1 mode channel shaper bw_rlimit min_rate 25Gbit 50Gbit
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1608,12 +1520,10 @@ To set a maximum data rate for a TC:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev ens4f0 root mqprio num_tc 2 map 0 0 0 0 1 1 1 1 queues
 4@0 8@4 hw 1 mode channel shaper bw_rlimit max_rate 25Gbit 50Gbit
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1621,13 +1531,11 @@ To set both minimum and maximum data rates together:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev ens4f0 root mqprio num_tc 2 map 0 0 0 0 1 1 1 1 queues
 4@0 8@4 hw 1 mode channel shaper bw_rlimit min_rate 10Gbit 20Gbit
 max_rate 25Gbit 50Gbit
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -1654,19 +1562,17 @@ To view all TC filters:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter show dev <ethX> ingress
 tc filter show dev <ethX> egress
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
 For detailed configuration information, supported fields, and example code for
 switchdev mode on Intel Ethernet 800 Series devices, refer to the configuration
 guide at
-\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\&.
+\X'tty: link https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote-e810-eswitch-switchdev-mode-config-guide/'\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\X'tty: link'\&.
 .sp
 TC FILTER EXAMPLES:
 .sp
@@ -1714,12 +1620,10 @@ destination port to the given TC:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev <ethX> protocol ip ingress prio 1 flower dst_ip
 <ip_address> ip_proto tcp dst_port <port_number> skip_sw hw_tc 1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1730,12 +1634,10 @@ source port to the given TC associated with the given priority:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev <ethX> protocol ip egress prio 1 flower src_ip
 <ip_address> ip_proto tcp src_port <port_number> action skbedit priority 1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1746,13 +1648,11 @@ destination port to the given TC using the VLAN protocol (802.1Q):
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev <ethX> protocol 802.1Q ingress prio 1 flower
 dst_ip <ip address> eth_type ipv4 ip_proto tcp dst_port <port_number>
 vlan_id <vlan_id> skip_sw hw_tc 1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -1760,13 +1660,11 @@ To add a GTP filter:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev <ethX> protocol ip parent ffff: prio 1 flower
 src_ip 16.0.0.0/16 ip_proto udp dst_port 5678 enc_dst_port 2152
 enc_key_id <tunnel_id> skip_sw hw_tc 1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1795,15 +1693,13 @@ but can have different match values.
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev <ethX> protocol ip ingress prio 1 flower ip_proto
 tcp dst_port <port_number> skip_sw hw_tc 1
 
 tc filter add dev <ethX> protocol ip egress prio 1 flower ip_proto tcp
 src_port <port_number> action skbedit priority 1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1811,15 +1707,13 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev ens4f0 protocol ip ingress prio 1 flower ip_proto
 tcp dst_port 5555 skip_sw hw_tc 1
 
 tc filter add dev ens4f0 protocol ip egress prio 1 flower ip_proto
 tcp src_port 5555 action skbedit priority 1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -1847,12 +1741,10 @@ To add filters for the desired queue, use the following tc command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev <ethX> ingress prio 1 protocol all flower src_mac
 <mac_address> skip_sw classid ffff:<queue_id>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1870,14 +1762,12 @@ For example, to direct a single MAC address to queue 10:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K ens801 hw\-tc\-offload on
 tc qdisc add dev ens801 clsact
 tc filter add dev ens801 ingress prio 1 protocol all flower src_mac
 68:dd:ac:dc:19:00 skip_sw classid ffff:b
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1885,8 +1775,7 @@ To direct 4 source MAC addresses to Rx queues 10\-13:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K ens801 hw\-tc\-offload on
 tc qdisc add dev ens801 clsact
 tc filter add dev ens801 ingress prio 1 protocol all flower src_mac
@@ -1897,8 +1786,7 @@ tc filter add dev ens801 ingress prio 1 protocol all flower src_mac
 68:dd:ac:dc:19:02 skip_sw classid ffff:d
 tc filter add dev ens801 ingress prio 1 protocol all flower src_mac
 68:dd:ac:dc:19:03 skip_sw classid ffff:e
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Intel(R) Ethernet Flow Director
@@ -1973,11 +1861,9 @@ To enable or disable the Intel Ethernet Flow Director and these filters:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> ntuple <off|on>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -1994,11 +1880,9 @@ To display all of the active filters:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-u <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2006,13 +1890,11 @@ To add a new filter:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U <ethX> flow\-type <type> src\-ip <ip> [m <ip_mask>] dst\-ip <ip>
 [m <ip_mask>] src\-port <port> [m <port_mask>] dst\-port <port> [m <port_mask>]
 action <queue>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2062,11 +1944,9 @@ To delete a filter:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U <ethX> delete <N>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2079,12 +1959,10 @@ To add a filter that directs packet to queue 2:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U <ethX> flow\-type tcp4 src\-ip 192.168.10.1 dst\-ip \e
 192.168.10.2 src\-port 2000 dst\-port 2001 action 2 [loc 1]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2092,12 +1970,10 @@ To set a filter using only the source and destination IP address:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U <ethX> flow\-type tcp4 src\-ip 192.168.10.1 dst\-ip \e
 192.168.10.2 action 2 [loc 1]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2106,12 +1982,10 @@ the \fBuser\-def\fP field contains the offset (4 bytes) and the pattern (0xffff)
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U <ethX> flow\-type tcp4 src\-ip 192.168.10.1 dst\-ip \e
 192.168.10.2 user\-def 0x4FFFF action 2 [loc 1]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2120,12 +1994,10 @@ port 80, and then send it to queue 7:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U enp130s0 flow\-type tcp4 src\-ip 192.168.0.1 dst\-ip 192.168.0.5 \e
 src\-port 5300 dst\-port 80 action 7
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2134,12 +2006,10 @@ matched src\-ip is 192.*.*.* (inverted mask):
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U <ethX> flow\-type tcp4 src\-ip 192.168.0.0 m 0.255.255.255 dst\-ip \e
 192.168.5.12 src\-port 12600 dst\-port 31 action 12
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2151,12 +2021,10 @@ input set. For example, issuing the following two commands is acceptable:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U enp130s0 flow\-type ip4 src\-ip 192.168.0.1 src\-port 5300 action 7
 ethtool \-U enp130s0 flow\-type ip4 src\-ip 192.168.0.5 src\-port 55 action 10
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2165,12 +2033,10 @@ specifies \fBsrc\-ip\fP and the second specifies \fBdst\-ip\fP:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U enp130s0 flow\-type ip4 src\-ip 192.168.0.1 src\-port 5300 action 7
 ethtool \-U enp130s0 flow\-type ip4 dst\-ip 192.168.0.5 src\-port 55 action 10
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2194,15 +2060,13 @@ command in the following way:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 +\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+
 | 31    28    24    20    16 | 15    12    8    4    0  |
 +\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+
 | offset into packet payload | 2 bytes of flexible data |
 +\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2210,11 +2074,9 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 \&... user\-def 0x4FFFF ...
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2224,11 +2086,9 @@ beginning of the packet. Thus:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 flow\-type tcp4 ... user\-def 0x8BEAF ...
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2255,11 +2115,9 @@ more options for Receive Side Scaling (RSS) hash byte configuration.
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-N <ethX> rx\-flow\-hash <type> <option>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2308,11 +2166,9 @@ traffic, use the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-N <ethX> rx\-flow\-hash tcp4 sd
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2321,11 +2177,9 @@ following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-N <ethX> rx\-flow\-hash udp6 sdfn
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Accelerated Receive Flow Steering (aRFS)
@@ -2368,11 +2222,9 @@ Enable the Intel Ethernet Flow Director and ntuple filters using ethtool:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> ntuple on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 2. 3
@@ -2380,12 +2232,10 @@ Set up the number of entries in the global flow table. For example:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 NUM_RPS_ENTRIES=16384
 echo $NUM_RPS_ENTRIES > /proc/sys/net/core/rps_sock_flow_entries
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 3. 3
@@ -2393,14 +2243,12 @@ Set up the number of entries in the per\-queue flow table. For example:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 NUM_RX_QUEUES=64
 for file in /sys/class/net/$IFACE/queues/rx\-*/rps_flow_cnt; do
 echo $(($NUM_RPS_ENTRIES/$NUM_RX_QUEUES)) > $file;
 done
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 4. 3
@@ -2409,11 +2257,9 @@ until the next reboot):
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 systemctl stop irqbalance
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 5. 3
@@ -2421,11 +2267,9 @@ Configure the interrupt affinity:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 set_irq_affinity <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -2434,11 +2278,9 @@ To disable aRFS using ethtool:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> ntuple off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2457,11 +2299,9 @@ Set the server application on the desired CPU (e.g., CPU 4):
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 taskset \-c 4 netserver
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 2. 3
@@ -2470,11 +2310,9 @@ aRFS configured. This example uses TCP over IPv4:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 netperf \-H <Host IPv4 Address> \-t TCP_STREAM
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -2486,11 +2324,9 @@ For example, you can create 4 VFs as follows:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 4 > /sys/class/net/<ethX>/device/sriov_numvfs
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2498,11 +2334,9 @@ To disable VFs, write 0 to the same file:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/class/net/<ethX>/device/sriov_numvfs
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2511,11 +2345,9 @@ how many VFs each PF supports, use the following command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/class/net/<ethX>/device/sriov_totalvfs
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2546,7 +2378,7 @@ Any VF properties that are set by the PF will not be migrated. Make sure that
 both devices have the same PF\-set properties.
 .UNINDENT
 .sp
-Refer to \fI\%https://qemu.readthedocs.io/en/latest/devel/vfio\-migration.html\fP for
+Refer to \X'tty: link https://qemu.readthedocs.io/en/latest/devel/vfio-migration.html'\fI\%https://qemu.readthedocs.io/en/latest/devel/vfio\-migration.html\fP\X'tty: link' for
 more details.
 .SS Displaying VF Statistics on the PF
 .sp
@@ -2554,11 +2386,9 @@ Use the following command to display the statistics for the PF and its VFs:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip \-s link show dev <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2583,11 +2413,9 @@ VLAN\(dq mode).
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set dev <ethX> vf <id> vlan <vlan id>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2595,11 +2423,9 @@ For example, the following will configure PF eth0 and the first VF on VLAN 10:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set dev eth0 vf 0 vlan 10
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Enabling a VF Link If the Port Is Disconnected
@@ -2613,11 +2439,9 @@ For example, to force link up on VF 0 bound to PF eth0:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set eth0 vf 0 state enable
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2633,11 +2457,9 @@ To change the MAC address for the specified VF:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set <ethX> vf 0 mac <address>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2645,11 +2467,9 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set <ethX> vf 0 mac 00:01:02:03:04:05
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2675,11 +2495,9 @@ Hypervisor:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set dev <ethX> vf 1 trust [on|off]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2701,11 +2519,9 @@ For promiscuous all, where \fB<ethX>\fP is a VF interface in the VM:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set <ethX> promisc on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -2713,11 +2529,9 @@ For promiscuous multicast, where \fB<ethX>\fP is a VF interface in the VM:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set <ethX> allmulticast on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -2732,11 +2546,9 @@ see all ingress traffic, use the following command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> vf\-true\-promisc\-support on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -2751,11 +2563,9 @@ Next, add a VLAN interface on the VF interface. For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link add link eth2 name eth2.100 type vlan id 100
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2798,11 +2608,9 @@ PF:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 1 > /sys/bus/pci/devices/<VF\(aqs PCI device ID>/transmit_lldp
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2810,11 +2618,9 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 1 > /sys/bus/pci/devices/0000:ad:01.0/transmit_lldp
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2824,13 +2630,11 @@ want to want to change it to port \fB0000:ad:01.1\fP:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 1 > /sys/bus/pci/devices/0000:ad:01.0/transmit_lldp
 echo 0 > /sys/bus/pci/devices/0000:ad:01.0/transmit_lldp  # disables it on this port
 echo 1 > /sys/bus/pci/devices/0000:ad:01.1/transmit_lldp
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Virtual Function (VF) Tx Rate Limit
@@ -2842,11 +2646,9 @@ For example, to set a maximum Tx rate limit of 8000Mbps for VF 0:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set eth0 vf 0 max_tx_rate 8000
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2854,11 +2656,9 @@ For example, to set a minimum Tx rate limit of 1000Mbps for VF 0:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set eth0 vf 0 min_tx_rate 1000
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .INDENT 0.0
@@ -2903,11 +2703,9 @@ To enable or disable automatic VF resets, use the following command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> mdd\-auto\-reset\-vf on|off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS MAC and VLAN Anti\-Spoofing Feature for VFs
@@ -2922,11 +2720,9 @@ This feature can be disabled for a specific VF:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set <ethX> vf <vf id> spoofchk {off|on}
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -2965,11 +2761,9 @@ On the PF, use the following command:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> vf\-vlan\-pruning on|off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3024,12 +2818,10 @@ To change the loopback setting, use the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set <pci/D:b:d.f> name loopback value <setting> \e
       cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3063,15 +2855,13 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set pci/0000:b2:00.3 name loopback value prioritized cmode runtime
 
 devlink dev param set pci/0000:b2:00.3 name loopback value enabled cmode runtime
 
 devlink dev param set pci/0000:b2:00.3 name loopback value disabled cmode runtime
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Switchdev Mode
@@ -3111,11 +2901,9 @@ To configure the device in switchdev mode, enter the following, where
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev eswitch set <pci/0000:##:##.#> mode switchdev
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3123,11 +2911,9 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev eswitch set pci/0000:17:00.0 mode switchdev
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3135,11 +2921,9 @@ To configure the device in legacy mode:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev eswitch set <pci/0000:##:##.#> mode legacy
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3147,11 +2931,9 @@ To check the current eSwitch mode:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev eswitch show <pci/0000:##:##.#>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3205,7 +2987,7 @@ kernel versions, the DCF method provides the same functionality.
 For detailed configuration information, supported fields, and example code for
 switchdev mode on Intel Ethernet 800 Series devices, refer to the configuration
 guide at
-\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\&.
+\X'tty: link https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote-e810-eswitch-switchdev-mode-config-guide/'\fI\%https://edc.intel.com/content/www/us/en/design/products/ethernet/appnote\-e810\-eswitch\-switchdev\-mode\-config\-guide/\fP\X'tty: link'\&.
 .sp
 At a high level, do the following to offload TC filters to the hardware and
 create switch rules in switchdev mode:
@@ -3258,11 +3040,9 @@ following command, where \fB<vf_pr>\fP is the designated VF port representor and
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-C <vf_pr> rx\-usecs\-high <N>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Traffic Mirroring of VF
@@ -3292,11 +3072,9 @@ a minimal filter:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc filter add dev <VF1_PR> ingress flower skip_sw action mirred egress mirror dev <VF2_PR>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3372,12 +3150,10 @@ Use the following commands to set and show the hardware switch mode:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 bridge link set dev <ethX> hwmode {vepa|veb}
 bridge link show dev <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Jumbo Frames
@@ -3390,12 +3166,10 @@ where \fB<ethX>\fP is the interface number:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link set mtu 9000 dev <ethX>
 ip link set up dev <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3435,11 +3209,9 @@ To see the speed configurations your device supports, run the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3448,11 +3220,9 @@ is a bitmask of the desired speeds:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-s <ethX> advertise N
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3460,11 +3230,9 @@ For example, to have your device advertise 10000baseSR Full, use:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-s <ethX> advertise 0x80000000000
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3532,7 +3300,7 @@ In software\-based DCBX mode, you can configure DCB parameters using
 software LLDP/DCBX agents that interface with the Linux kernel\(aqs DCB
 Netlink API. We recommend using OpenLLDP as the DCBX agent when running
 in software mode. For more information, see the OpenLLDP man pages and
-\fI\%https://github.com/intel/openlldp\fP\&.
+\X'tty: link https://github.com/intel/openlldp'\fI\%https://github.com/intel/openlldp\fP\X'tty: link'\&.
 .IP \(bu 2
 The driver implements the DCB netlink interface layer to allow the user
 space to communicate with the driver and query DCB configuration for the
@@ -3557,11 +3325,9 @@ The following is an example of how to map a DSCP/ToS to a TC:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 lldptool \-T \-i <ethX> \-V APP app=<prio>,<sel>,<pid>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3583,11 +3349,9 @@ interface eth0:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 lldptool \-T \-i eth0 \-V APP app=63,5,0
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3595,11 +3359,9 @@ To remove a mapping, use the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 lldptool \-T \-I <ethX> \-V APP \-d app=<prio>,<sel>,<pid>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3607,11 +3369,9 @@ To view the currently configured mappings, use the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 lldptool \-t \-i <ethX> \-V APP \-c
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3639,11 +3399,9 @@ To enable LLDP:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> fw\-lldp\-agent on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3651,11 +3409,9 @@ To disable LLDP:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> fw\-lldp\-agent off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3663,11 +3419,9 @@ To check the current LLDP setting:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-show\-priv\-flags <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3699,11 +3453,9 @@ is not FEC capable:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-set\-priv\-flags <ethX> allow\-no\-fec\-modules\-in\-auto on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3752,11 +3504,9 @@ To enable or disable Rx or Tx Flow Control:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-A <ethX> rx <on|off> tx <on|off>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3787,12 +3537,10 @@ resolve this issue, disable and reenable LFC using ethtool:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-A <ethX> rx off tx off
 ethtool \-A <ethX> rx on tx on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -3808,11 +3556,9 @@ For example, to set the bit rate for transmit queue 1 to 300 Mbps:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 300 > /sys/class/net/<ethx>/queues/tx\-1/tx_maxrate
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3820,17 +3566,15 @@ To remove the limit:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/class/net/<ethx>/queues/tx\-1/tx_maxrate
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS NAPI
 .sp
 This driver supports NAPI (Rx polling mode). For more information on NAPI, see
-\fI\%https://docs.kernel.org/networking/napi.html\fP\&.
+\X'tty: link https://docs.kernel.org/networking/napi.html'\fI\%https://docs.kernel.org/networking/napi.html\fP\X'tty: link'\&.
 .SS MACVLAN
 .sp
 This driver supports MACVLAN. Kernel support for MACVLAN can be tested by
@@ -3855,11 +3599,9 @@ Enable L2 Forwarding offload:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> l2\-fwd\-offload on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 2. 3
@@ -3889,12 +3631,10 @@ The following are examples of how to configure 802.1ad (QinQ), where \(dq24\(dq 
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ip link add link eth0 eth0.24 type vlan proto 802.1ad id 24
 ip link add link eth0.24 eth0.24.371 type vlan proto 802.1Q id 371
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3963,12 +3703,10 @@ To enable outer or single 802.1Q VLAN insertion and stripping and disable
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> rxvlan on txvlan on rx\-vlan\-stag\-hw\-parse off
 tx\-vlan\-stag\-hw\-insert off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3977,12 +3715,10 @@ To enable outer or single 802.1ad VLAN insertion and stripping and disable
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> rxvlan off txvlan off rx\-vlan\-stag\-hw\-parse on
 tx\-vlan\-stag\-hw\-insert on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -3990,11 +3726,9 @@ To enable outer or single VLAN filtering:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> rx\-vlan\-filter on rx\-vlan\-stag\-filter on
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4002,11 +3736,9 @@ To disable outer or single VLAN filtering:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> rx\-vlan\-filter off rx\-vlan\-stag\-filter off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Combining QinQ with SR\-IOV VFs
@@ -4059,11 +3791,9 @@ To see VLAN filtering and offload capabilities, use the following command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-k <ethX> | grep vlan
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS IEEE 1588 Precision Time Protocol (PTP) Hardware Clock (PHC)
@@ -4075,11 +3805,9 @@ the device:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-T <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4088,10 +3816,10 @@ advanced configuration of this feature.
 .INDENT 0.0
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-XXV\-4T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/646265'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP\X'tty: link'
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-C\-Q2T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/722960'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP\X'tty: link'
 .UNINDENT
 .sp
 Intel Ethernet 800 Series devices support hardware\-generated timestamps. The
@@ -4101,11 +3829,9 @@ which is available in the linuxptp utility, to enable this setting:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 hwstamp_ctl \-i <ethX> \-t 1 \-r 1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4131,10 +3857,10 @@ advanced configuration of this feature.
 .INDENT 0.0
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-XXV\-4T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/646265'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/646265\fP\X'tty: link'
 .IP \(bu 2
 Intel(R) Ethernet Network Adapter E810\-C\-Q2T:
-\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP
+\X'tty: link https://cdrdv2.intel.com/v1/dl/getContent/722960'\fI\%https://cdrdv2.intel.com/v1/dl/getContent/722960\fP\X'tty: link'
 .UNINDENT
 .SS Unmanaged DPLL Support
 .sp
@@ -4174,8 +3900,7 @@ Dumping the DPLL pins
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 $ ./tools/net/ynl/cli.py \-\-spec Documentation/netlink/specs/dpll.yaml \-\-dump pin\-get
 [{\(aqboard\-label\(aq: \(aq1588\-TIME_SYNC\(aq,
   \(aqcapabilities\(aq: set(),
@@ -4216,8 +3941,7 @@ $ ./tools/net/ynl/cli.py \-\-spec Documentation/netlink/specs/dpll.yaml \-\-dump
   \(aqphase\-adjust\-max\(aq: 0,
   \(aqphase\-adjust\-min\(aq: 0,
   \(aqtype\(aq: \(aqint\-oscillator\(aq}]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4225,8 +3949,7 @@ Dumping the DPLL devices
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 $ ./tools/net/ynl/cli.py \-\-spec Documentation/netlink/specs/dpll.yaml \-\-dump device\-get
 [{\(aqclock\-id\(aq: 282574471561216,
   \(aqid\(aq: 6,
@@ -4235,8 +3958,7 @@ $ ./tools/net/ynl/cli.py \-\-spec Documentation/netlink/specs/dpll.yaml \-\-dump
   \(aqmode\-supported\(aq: [\(aqautomatic\(aq],
   \(aqmodule\-name\(aq: \(aqice\(aq,
   \(aqtype\(aq: \(aqeec\(aq}]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Earliest TxTime First (ETF) Offloads
@@ -4256,13 +3978,11 @@ classes. For example:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc add dev <ethX> handle 100: parent root mqprio num_tc 3 \e
   map 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 \e
   queues 1@0 1@1 2@2 \e
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4273,12 +3993,10 @@ example, to set the ETF qdisc for traffic class number 0:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tc qdisc replace dev <ethX> parent 100:1 etf \e
   clockid CLOCK_TAI delta 300000 offload
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -4294,11 +4012,9 @@ the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-k <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4306,11 +4022,9 @@ To enable or disable Tx and Rx checksum offload features, run the following:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> [tx|rx] [on|off]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4324,11 +4038,9 @@ To change Tx generic checksum offloads, use the following:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> tx\-checksum\-ip\-generic [on|off]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -4361,11 +4073,9 @@ To view the current state of all offloads:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-k <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS UDP Segmentation Offload
@@ -4393,11 +4103,9 @@ To enable/disable UDP Segmentation Offload, issue the following command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> tx\-udp\-segmentation [off|on]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Runtime Control of CRC/FCS Stripping
@@ -4423,11 +4131,9 @@ Use the following ethtool command to enable or disable FCS/CRC stripping:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-K <ethX> rx\-fcs on|off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4436,11 +4142,9 @@ reported from ethtool:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-k <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Using Devlink to update a device\(aqs NVM
@@ -4478,11 +4182,9 @@ to update the device NVM. However, we recommend that you use NVMUpdate.
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev flash pci/0000:3b:00.0 file filename.bin
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4523,11 +4225,9 @@ which configuration was set. Use the following command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port split <pci/D:b:d.f>/0 count <num>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4565,8 +4265,7 @@ For example, if your device had the following configurations defined in its NVM:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ice 0000:16:00.0:  Status  Split      Quad 0         Quad 1
 ice 0000:16:00.0:          count  L0  L1  L2  L3  L4  L5  L6  L7
 ice 0000:16:00.0: Active   2     100   \-   \-   \- 100   \-   \-   \-
@@ -4575,8 +4274,7 @@ ice 0000:16:00.0:          4      25  25  25  25   \-   \-   \-   \-
 ice 0000:16:00.0:          4      25  25   \-   \-  25  25   \-   \-
 ice 0000:16:00.0:          8      10  10  10  10  10  10  10  10
 ice 0000:16:00.0:          1     100   \-   \-   \-   \-   \-   \-   \-
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4584,11 +4282,9 @@ If you call:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port split pci/0000.16:00.0/0 count 4
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4596,11 +4292,9 @@ Your device will be configured for:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ice 0000:16:00.0:          4      25  25  25  25   \-   \-   \-   \-
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4608,11 +4302,9 @@ If you call the same command again, your device will be configured for:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ice 0000:16:00.0:          4      25  25   \-   \-  25  25   \-   \-
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4622,11 +4314,9 @@ configurations defined it its NVM) and will be set to:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ice 0000:16:00.0:          4      25  25  25  25   \-   \-   \-   \-
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Firmware Logs
@@ -4654,11 +4344,9 @@ Set log levels. For example:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo normal > /sys/kernel/debug/ice/0000:18:00.0/fwlog/modules/all
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 2. 3
@@ -4666,11 +4354,9 @@ Turn on firmware logging:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 1 > /sys/kernel/debug/ice/0000:18:00.0/fwlog/enable
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 3. 3
@@ -4680,11 +4366,9 @@ Turn off firmware logging:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/kernel/debug/ice/0000:18:00.0/fwlog/enable
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 5. 3
@@ -4692,11 +4376,9 @@ Save data to a file:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/kernel/debug/ice/0000:18:00.0/fwlog/data > fwlog.bin
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 6. 3
@@ -4717,6 +4399,7 @@ logging settings.
 .UNINDENT
 .UNINDENT
 .UNINDENT
+.SS Configuring firmware log modules
 .sp
 The driver groups firmware events into categories, called \(dqmodules.\(dq
 The modules are instantiated under the \fBfwlog/modules\fP directory.
@@ -4725,11 +4408,9 @@ To configure modules and verbosity levels:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo <log_level> > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/<module>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4834,11 +4515,9 @@ To set a single module to \fBverbose\fP:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo verbose > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/link
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4846,13 +4525,11 @@ To set multiple modules and then issue the command multiple times:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo verbose > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/link
 echo warning > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/ctrl
 echo none > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/dcb
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4860,11 +4537,9 @@ To set all the modules to the same value:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo normal > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/all
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4873,11 +4548,9 @@ module):
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/general
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4885,13 +4558,12 @@ To read the \fBlog_level\fP of all the modules:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/modules/all
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
+.SS Enabling and disabling firmware logs
 .sp
 You can configure modules, but firmware will \fBnot\fP send firmware logging
 events to the driver until it explicitly receives the \fBfwlog\eenable\fP setting.
@@ -4900,11 +4572,9 @@ To enable firmware logging:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 1 > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/enable
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4912,13 +4582,12 @@ To disable firmware logging:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/enable
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
+.SS Retrieving firmware log data
 .sp
 To retrieve the firmware log data, read the data from \fBfwlog\edata\fP\&. You can
 clear the contents of the firmware log data by writing any value to
@@ -4928,11 +4597,9 @@ To retrieve the firmware log data and output it to a binary file:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/data > fwlog.bin
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4940,11 +4607,9 @@ To clear the contents of the firmware log data:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/data
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4961,6 +4626,7 @@ hardware for debug purposes.
 .UNINDENT
 .UNINDENT
 .UNINDENT
+.SS Changing how often the log events are sent to the driver
 .sp
 The driver receives firmware log data from the Admin Receive Queue (ARQ).
 To change the frequency that the firmware sends the ARQ events, write a value
@@ -4977,11 +4643,9 @@ An example to set the value is:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 50 > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/nr_messages
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -4989,13 +4653,12 @@ To see the currently configured value:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/nr_messages
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
+.SS Configuring the amount of memory used to store firmware log data
 .sp
 The driver stores firmware log data within the driver. The default size of the
 memory used to store the data is 1MB, but some use cases may require more or less
@@ -5006,11 +4669,9 @@ To change the amount of memory allocated for firmware log data, write to
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 128K > /sys/kernel/debug/ice/0000\e:18\e:00.0/fwlog/log_size
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5060,11 +4721,9 @@ To dump all clusters:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo > /sys/kernel/debug/ice/<pci_addr>/fw/dump_cluster_id
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -5072,11 +4731,9 @@ To dump a single cluster:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo <cluster ID> > /sys/kernel/debug/ice/<pci_addr>/fw/dump_cluster_id
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5084,9 +4741,8 @@ The cluster ID values vary depending on the Intel Ethernet controller family. Us
 .sp
 Possible values for \fB<cluster ID>\fP are:
 .TS
-center;
-|l|l|l|.
-_
+box center;
+l|l|l.
 T{
 Cluster Function
 T}	T{
@@ -5182,7 +4838,6 @@ T}	T{
 T}	T{
 122
 T}
-_
 .TE
 .UNINDENT
 .sp
@@ -5190,11 +4845,9 @@ For example, to dump the CSR space, use the following:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 21 > /sys/kernel/debug/ice/<pci_addr>/fw/dump_cluster_id
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP 2. 3
@@ -5206,11 +4859,9 @@ For a single cluster:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/kernel/debug/ice/<pci_addr>/fw/debug_dump > ~/single_cluster_dump.bin
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -5218,11 +4869,9 @@ For all clusters:
 .INDENT 3.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/kernel/debug/ice/<pci_addr>/fw/debug_dump > ~/all_cluster_dump.bin
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5244,11 +4893,9 @@ Use ethtool to read the PHY registers:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-d <ethX> [raw on|off] [hex on|off] [file name]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5256,8 +4903,7 @@ The output of the command is similar to:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 Offset          Values
 \-\-\-\-\-\-          \-\-\-\-\-\-
 0x0000:         00 00 00 00 0a 00 00 00 00 00 00 00 00 00 00 00
@@ -5265,8 +4911,7 @@ Offset          Values
 0x0020:         b7 00 00 00 d4 00 00 00 00 00 00 00 00 00 00 00
 0x0030:         0a 00 00 00 19 00 00 00 00 00 00 00 0e 00 00 00
 \&...
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5282,11 +4927,9 @@ Use ethtool to read the RS FEC correctable and uncorrectable block counts:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-show\-fec <ethX>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5294,16 +4937,14 @@ The output of the command is similar to:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 FEC parameters for ethX:
 Supported/Configured FEC encodings: Auto RS BaseR
 Active FEC encoding: RS
 Statistics:
   corrected_blocks: 0
   uncorrectable_blocks: 0
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS Hierarchical QoS (HQoS) Transmit Scheduler
@@ -5338,11 +4979,9 @@ To create a devlink\-rate parent group:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port function rate add <dev/port>/<group>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5361,11 +5000,9 @@ device:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port function rate add pci/0000:03:00.0/operators
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5373,11 +5010,9 @@ To create a new child node in a parent group:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port function rate add <dev/port>/<child> parent <group>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5399,11 +5034,9 @@ For example, the following creates the \fBclass_1\fP child node in the
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port function rate add pci/0000:03:00.0/class_1 parent operators
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5412,11 +5045,9 @@ bus:device:function of the device:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port function rate show <dev/port>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5424,11 +5055,9 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink port function rate show pci/0000:03:00.0
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5436,15 +5065,13 @@ Example output:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 pci/0000:03:00.0/node_0 type node (root)
 pci/0000:03:00.0/operators type node tx_share 20Mbit tx_max 100Mbit
 tx_priority 2 tx_weight 5
 pci/0000:03:00.0/class_1 type node parent operators
 pci/0000:03:00.0/1 type leaf parent class_1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5458,11 +5085,9 @@ PF reset:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-reset <ethX> irq dma filter offload
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5470,12 +5095,10 @@ CORE reset:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-reset <ethX> irq\-shared dma\-shared filter\-shared offload\-shared \e
 ram\-shared
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5483,12 +5106,10 @@ GLOBAL reset:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-reset <ethX> irq\-shared dma\-shared filter\-shared offload\-shared \e
 mac\-shared phy\-shared ram\-shared
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5522,11 +5143,9 @@ To set 16 queue pairs, regardless of what the previous configuration was:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-L <ethX> combined 16 rx 0 tx 0
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5538,11 +5157,9 @@ the \fBrx\fP and \fBtx\fP parameters. For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-L <ethX> combined 16
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5552,11 +5169,9 @@ To set 16 Tx queues and 8 Rx queues:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-L <ethX> combined 8 tx 8
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5594,11 +5209,9 @@ evenly:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 scripts/set_irq_affinity \-x all <interface1> , [ <interface2>, ... ]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -5607,11 +5220,9 @@ are local to the adapter (same NUMA node):
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 scripts/set_irq_affinity \-x local <interface1> ,[ <interface2>, ... ]
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -5629,11 +5240,9 @@ Check if the interface is dropping Rx packets due to buffers being full
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-S <ethX> | grep \(dqrx_dropped\(dq
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -5643,11 +5252,9 @@ number of ring entries/descriptors:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-G <ethX> rx <N>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5665,11 +5272,9 @@ To set the interrupt rate manually, you must disable adaptive mode:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-C <ethX> adaptive\-rx off adaptive\-tx off
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5684,11 +5289,9 @@ Setting \fBrx\-usecs\fP and \fBtx\-usecs\fP to 80 will limit interrupts to about
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-C <ethX> adaptive\-rx off adaptive\-tx off rx\-usecs 80 tx\-usecs 80
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5701,11 +5304,9 @@ using ethtool:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-C <ethX> adaptive\-rx off adaptive\-tx off rx\-usecs 0 tx\-usecs 0
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5721,11 +5322,9 @@ about 100,000 interrupts/second, for queues 1 and 3:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-per\-queue <ethX> queue_mask 0xa \-\-coalesce adaptive\-rx off rx\-usecs 10
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -5733,11 +5332,9 @@ To show the current coalesce settings for queues 1 and 3:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-\-per\-queue <ethX> queue_mask 0xa \-\-show\-coalesce
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5762,12 +5359,10 @@ second, it limits total interrupts per second to 50,000 via the
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-C <ethX> adaptive\-rx off adaptive\-tx off rx\-usecs\-high 20
 rx\-usecs 5 tx\-usecs 5
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5783,11 +5378,9 @@ device\(aqs \fBlocal_cpulist\fP:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 /sys/class/net/<ethX>/device/local_cpulist
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -5796,11 +5389,9 @@ documentation for the number of queues supported.) For example:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-L <virt_interface> rx <max> tx <max>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -5824,8 +5415,7 @@ when the system is sending traffic to 9 queues:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 | tx_queue_0_packets: 24163396
 | tx_queue_1_packets: 24164623
 | tx_queue_2_packets: 24163188
@@ -5835,8 +5425,7 @@ when the system is sending traffic to 9 queues:
 | tx_queue_6_packets: 23327200
 | tx_queue_7_packets: 24163853
 | tx_queue_8_packets: 91101417 < Too much traffic is sent from 9th
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5852,12 +5441,10 @@ For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param set pci/0000:16:00.0 name tx_scheduling_layers
 value 5 cmode permanent
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5868,11 +5455,9 @@ To verify that value has been set:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink dev param show pci/0000:16:00.0 name tx_scheduling_layers
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SS MSI\-X Vector Allocation
@@ -5885,6 +5470,7 @@ allocating one vector per local node CPU thread, up to 64 vectors.
 The driver will not automatically allocate more than 64 MSI\-X vectors for each
 PF. RDMA requires one more MSI\-X vector than the PF allocation, so the driver
 will automatically allocate 9\-65 MSI\-X vectors for RDMA.
+.SS Setting MSI\-X Vector Allocation
 .sp
 You can use sysfs to override the automatic MSI\-X vector allocation for a
 particular PF or RDMA function, or for the pool of vectors used by the VFs
@@ -5892,11 +5478,9 @@ bound to a PF:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink resource set <pci/D:b:d.f> path msix/<parameter> size <num>
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5925,11 +5509,9 @@ For example, to set a PF to use 320 MSI\-X vectors:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink resource set pci/0000:31:00.1 path msix/msix_eth size 320
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5948,11 +5530,9 @@ sysfs parameter:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo <num> > /sys/bus/pci/devices/D:b:d.f/sriov_vf_msix_count
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5970,11 +5550,9 @@ For example, to set a VF to 64 MSI\-X vectors, use:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 64 > /sys/bus/pci/devices/0000:31:00.2/sriov_vf_msix_count
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -5985,17 +5563,16 @@ For some Linux distributions, the \fBsriov_vf_msix_count\fP
 parameter is not available, and it is recommended to use devlink parameter.
 .UNINDENT
 .UNINDENT
+.SS Current MSI\-X Allocation
 .sp
 You can check the current MSI\-X vector allocation by using the \fBdevlink
 resource show\fP parameter. For example:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 devlink resource show pci/0000:31:00.1
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6003,18 +5580,17 @@ Might return:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 name: msix size 520 occ 262 unit entry dpipe_tables none
 resources:
   name msix_misc size 4 unit entry dpipe_tables none
   name: msix_eth size 48 occ 24 unit
   name: msix_vf size 48 occ 24 unit
   name: msix_rdma size 48 occ 24 unit
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
+.SS Increasing the Automatic Allocation Limit
 .sp
 The ice driver supports changing the automatic MSI\-X vector and queue allocation
 for PFs and VFs to spread the RSS load across more cores.
@@ -6063,12 +5639,10 @@ To set a VF\(aqs queue pair limit up to 64, using the global LUT:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/bus/pci/devices/<ethx>/sriov_drivers_autoprobe
 echo 512 > /sys/bus/pci/devices/<ethx>/rss_lut_vf_attr
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6076,13 +5650,11 @@ To set a VF to use its PF\(aqs LUT:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/bus/pci/devices/<ethx>/sriov_drivers_autoprobe
 echo 512 > /sys/bus/pci/devices/<ethx>/rss_lut_pf_attr
 echo 2048 > /sys/bus/pci/devices/<ethx>/rss_lut_vf_attr
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6090,15 +5662,14 @@ To set a PF back to using its PF LUT:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo 0 > /sys/bus/pci/devices/<ethx>/sriov_drivers_autoprobe
 echo 64 > /sys/bus/pci/devices/<ethx>/rss_lut_vf_attr
 echo 2048 > /sys/bus/pci/devices/<ethx>/rss_lut_pf_attr
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
+.SS Internal Temperature Reporting
 .sp
 The ice driver support for monitoring the internal temperature of the chip.
 .sp
@@ -6107,11 +5678,9 @@ For example use:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 tree /sys/class/hwmon/
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6119,12 +5688,10 @@ Might return:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 /sys/class/hwmon/
 ├── <hwmonX> \-> ../../devices/pci0000:<bus>/<pci\-addresss\-id>/hwmon/hwmon0
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6132,11 +5699,9 @@ The temperature data can be accessed through the sysfs interface:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 cat /sys/class/hwmon/<hwmonX>/temp1_input
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6158,11 +5723,9 @@ parameter:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 modprobe ice dyndbg=+p
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6176,11 +5739,9 @@ command:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 echo \(dqmodule ice +p\(dq > /sys/kernel/debug/dynamic_debug/control
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6257,12 +5818,10 @@ the following returns a bad syntax error:
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 ethtool \-U p1p1 flow\-type tcp6 src\-ip 3001:1::2:1:1 dst\-ip 3001:1::1:1:1
 src\-port 22 dst\-port 23 action 10
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -6333,15 +5892,13 @@ missing symbols after loading out\-of\-tree ice driver:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 irdma: Unknown symbol ice_del_rdma_qset
 irdma: Unknown symbol ice_add_rdma_qset
 irdma: Unknown symbol ice_rdma_update_vsi_filter
 irdma: Unknown symbol ice_rdma_request_reset
 irdma: Unknown symbol ice_get_qos_params
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6351,16 +5908,14 @@ and RHEL distributions):
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 Warning: weak\-updates symlinks might not be created
 depmod: WARNING: /lib/modules/5.14.21\-150400.22\-default/kernel/drivers/infiniband/hw/irdma/irdma.ko.zst needs unknown symbol ice_del_rdma_qset
 depmod: WARNING: /lib/modules/5.14.21\-150400.22\-default/kernel/drivers/infiniband/hw/irdma/irdma.ko.zst needs unknown symbol ice_add_rdma_qset
 depmod: WARNING: /lib/modules/5.14.21\-150400.22\-default/kernel/drivers/infiniband/hw/irdma/irdma.ko.zst needs unknown symbol ice_rdma_update_vsi_filter
 depmod: WARNING: /lib/modules/5.14.21\-150400.22\-default/kernel/drivers/infiniband/hw/irdma/irdma.ko.zst needs unknown symbol ice_rdma_request_reset
 depmod: WARNING: /lib/modules/5.14.21\-150400.22\-default/kernel/drivers/infiniband/hw/irdma/irdma.ko.zst needs unknown symbol ice_get_qos_params
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -6369,14 +5924,14 @@ compatible out\-of\-tree irdma driver.
 .SH SUPPORT
 .sp
 For general information, go to the Intel support website at
-\fI\%https://www.intel.com/support/\fP
+\X'tty: link https://www.intel.com/support/'\fI\%https://www.intel.com/support/\fP\X'tty: link'
 .sp
 or the Intel Ethernet Linux project hosted by GitHub at
-\fI\%https://github.com/intel/ethernet\-linux\-ice\fP
+\X'tty: link https://github.com/intel/ethernet-linux-ice'\fI\%https://github.com/intel/ethernet\-linux\-ice\fP\X'tty: link'
 .sp
 If an issue is identified with the released source code on a supported kernel
 with a supported adapter, contact Intel Customer Support at
-\fI\%https://www.intel.com/content/www/us/en/support/products/36773/ethernet\-products.html\fP
+\X'tty: link https://www.intel.com/content/www/us/en/support/products/36773/ethernet-products.html'\fI\%https://www.intel.com/content/www/us/en/support/products/36773/ethernet\-products.html\fP\X'tty: link'
 .SH LICENSE
 .sp
 This program is free software; you can redistribute it and/or modify it under

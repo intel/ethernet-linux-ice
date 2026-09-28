@@ -248,7 +248,7 @@ static ssize_t dump_cluster_id_read(struct file *file, char __user *buf,
 static ssize_t dump_cluster_id_write(struct file *file, const char __user *buf,
 				     size_t len, loff_t *offset)
 {
-	static struct debugfs_blob_wrapper *desc_blob;
+	struct debugfs_blob_wrapper *desc_blob;
 	struct ice_pf *pf = file->private_data;
 	bool read_all_clusters = false;
 	const struct dentry *pfile;
@@ -270,7 +270,8 @@ static ssize_t dump_cluster_id_write(struct file *file, const char __user *buf,
 			return err;
 	}
 
-	if (!pf->ice_fw_dump_blob) {
+	desc_blob = pf->ice_fw_dump_blob;
+	if (!desc_blob) {
 		desc_blob = kzalloc(sizeof(*desc_blob), GFP_KERNEL);
 		if (!desc_blob)
 			return -ENOMEM;
@@ -884,29 +885,34 @@ ice_debugfs_module_write(struct file *file, const char __user *buf,
 	struct device *dev = ice_pf_to_dev(pf);
 	char user_val[16], *cmd_buf;
 	int module, log_level, cnt;
+	ssize_t ret;
 
 	/* don't allow partial writes or invalid input */
 	if (*ppos != 0 || count > 8)
 		return -EINVAL;
 
-	cmd_buf = memdup_user(buf, count);
+	cmd_buf = memdup_user_nul(buf, count);
 	if (IS_ERR(cmd_buf))
 		return PTR_ERR(cmd_buf);
 
 	module = ice_find_module_by_dentry(pf, dentry);
 	if (module < 0) {
 		dev_info(dev, "unknown module\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	cnt = sscanf(cmd_buf, "%8s", user_val);
-	if (cnt != 1)
-		return -EINVAL;
+	if (cnt != 1) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	log_level = sysfs_match_string(ice_fwlog_level_string, user_val);
 	if (log_level < 0) {
 		dev_info(dev, "unknown log level '%s'\n", user_val);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if (module != ICE_AQC_FW_LOG_ID_MAX) {
@@ -921,7 +927,10 @@ ice_debugfs_module_write(struct file *file, const char __user *buf,
 			ice_pf_fwlog_update_module(pf, log_level, i);
 	}
 
-	return count;
+	ret = count;
+out:
+	kfree(cmd_buf);
+	return ret;
 }
 
 static const struct file_operations ice_debugfs_module_fops = {
@@ -979,29 +988,35 @@ ice_debugfs_nr_messages_write(struct file *file, const char __user *buf,
 	if (*ppos != 0 || count > 4)
 		return -EINVAL;
 
-	cmd_buf = memdup_user(buf, count);
+	cmd_buf = memdup_user_nul(buf, count);
 	if (IS_ERR(cmd_buf))
 		return PTR_ERR(cmd_buf);
 
 	ret = sscanf(cmd_buf, "%4s", user_val);
-	if (ret != 1)
-		return -EINVAL;
+	if (ret != 1) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	ret = kstrtos16(user_val, 0, &nr_messages);
 	if (ret)
-		return ret;
+		goto out;
 
 	if (nr_messages < ICE_AQC_FW_LOG_MIN_RESOLUTION ||
 	    nr_messages > ICE_AQC_FW_LOG_MAX_RESOLUTION) {
 		dev_err(dev, "Invalid FW log number of messages %d, value must be between %d - %d\n",
 			nr_messages, ICE_AQC_FW_LOG_MIN_RESOLUTION,
 			ICE_AQC_FW_LOG_MAX_RESOLUTION);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	hw->fwlog_cfg.log_resolution = nr_messages;
 
-	return count;
+	ret = count;
+out:
+	kfree(cmd_buf);
+	return ret;
 }
 
 static const struct file_operations ice_debugfs_nr_messages_fops = {
@@ -1054,13 +1069,15 @@ ice_debugfs_enable_write(struct file *file, const char __user *buf,
 	if (*ppos != 0 || count > 2)
 		return -EINVAL;
 
-	cmd_buf = memdup_user(buf, count);
+	cmd_buf = memdup_user_nul(buf, count);
 	if (IS_ERR(cmd_buf))
 		return PTR_ERR(cmd_buf);
 
 	ret = sscanf(cmd_buf, "%2s", user_val);
-	if (ret != 1)
-		return -EINVAL;
+	if (ret != 1) {
+		ret = -EINVAL;
+		goto enable_write_error;
+	}
 
 	ret = kstrtobool(user_val, &enable);
 	if (ret)
@@ -1099,6 +1116,7 @@ enable_write_error:
 	if (WARN_ON(ret != (ssize_t)count && ret >= 0))
 		ret = -EIO;
 
+	kfree(cmd_buf);
 	return ret;
 }
 
@@ -1153,13 +1171,15 @@ ice_debugfs_log_size_write(struct file *file, const char __user *buf,
 	if (*ppos != 0)
 		return -EINVAL;
 
-	cmd_buf = memdup_user(buf, count);
+	cmd_buf = memdup_user_nul(buf, count);
 	if (IS_ERR(cmd_buf))
 		return PTR_ERR(cmd_buf);
 
 	ret = sscanf(cmd_buf, "%5s", user_val);
-	if (ret != 1)
-		return -EINVAL;
+	if (ret != 1) {
+		ret = -EINVAL;
+		goto log_size_write_error;
+	}
 
 	index = sysfs_match_string(ice_fwlog_log_size, user_val);
 	if (index < 0) {
@@ -1189,6 +1209,7 @@ log_size_write_error:
 	if (WARN_ON(ret != (ssize_t)count && ret >= 0))
 		ret = -EIO;
 
+	kfree(cmd_buf);
 	return ret;
 }
 

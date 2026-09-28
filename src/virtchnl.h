@@ -2161,7 +2161,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_fdir_del);
 	virtchnl_ss_byone(p, m, c, virtchnl_rss_lut)
 
 #define virtchnl_ss_queue_vector_maps(p, m, c)			      \
-	__vss_full(p, m, c, virtchnl_queue_vector_maps_LEGACY_SIZEOF)
+	 __vss_byelem(p, m, c, virtchnl_queue_vector_maps_LEGACY_SIZEOF)
 
 /* Status returned to VF after VF requests FSUB commands
  * VIRTCHNL_FSUB_SUCCESS
@@ -2317,10 +2317,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_queue_chunk);
 struct virtchnl_queue_chunks {
 	u16 num_chunks;
 	u16 rsvd;
-	struct virtchnl_queue_chunk chunks[1];
+	struct virtchnl_queue_chunk chunks[];
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(12, virtchnl_queue_chunks);
+VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_queue_chunks);
+#define virtchnl_queue_chunks_LEGACY_SIZEOF	12
 
 /* VIRTCHNL_OP_ENABLE_QUEUES_V2
  * VIRTCHNL_OP_DISABLE_QUEUES_V2
@@ -2338,7 +2339,8 @@ struct virtchnl_del_ena_dis_queues {
 	struct virtchnl_queue_chunks chunks;
 };
 
-VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_del_ena_dis_queues);
+VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_del_ena_dis_queues);
+#define virtchnl_del_ena_dis_queues_LEGACY_SIZEOF	16
 
 /* Virtchannel interrupt throttling rate index */
 enum virtchnl_itr_idx {
@@ -4101,7 +4103,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES_V2:
 	case VIRTCHNL_OP_DISABLE_QUEUES_V2:
-		valid_len = sizeof(struct virtchnl_del_ena_dis_queues);
+		valid_len = virtchnl_del_ena_dis_queues_LEGACY_SIZEOF;
 		if (msglen >= valid_len) {
 			struct virtchnl_del_ena_dis_queues *qs =
 				(struct virtchnl_del_ena_dis_queues *)msg;

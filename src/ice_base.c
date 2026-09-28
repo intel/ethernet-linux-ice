@@ -1341,13 +1341,7 @@ static void ice_qp_clean_rings(struct ice_vsi *vsi, u16 q_idx)
  * @q_idx: ring index in array
  *
  * Disables a queue pair by stopping the Tx ring(s), disabling the Rx ring,
- * and disabling interrupts. This function sets the ICE_CFG_BUSY flag and
- * expects the caller to subsequently call ice_qp_ena() to clear it.
- *
- * Context: Sets ICE_CFG_BUSY flag. Caller must call ice_qp_ena() to clear
- * ICE_CFG_BUSY, even if this function returns an error. Failing to call
- * ice_qp_ena() will leave ICE_CFG_BUSY set permanently, blocking all future
- * queue pair operations.
+ * and disabling interrupts.
  *
  * Return: 0 on success, negative on failure.
  */
@@ -1357,7 +1351,6 @@ int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 	struct ice_q_vector *q_vector;
 	struct ice_tx_ring *tx_ring;
 	struct ice_rx_ring *rx_ring;
-	int timeout = 50;
 	int err;
 
 	if (q_idx >= vsi->num_rxq || q_idx >= vsi->num_txq)
@@ -1367,15 +1360,12 @@ int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 	rx_ring = vsi->rx_rings[q_idx];
 	q_vector = rx_ring->q_vector;
 
-	while (test_and_set_bit(ICE_CFG_BUSY, vsi->back->state)) {
-		timeout--;
-		if (!timeout)
-			return -EBUSY;
-		usleep_range(1000, 2000);
-	}
+	netif_carrier_off(vsi->netdev);
 	netif_tx_stop_queue(netdev_get_tx_queue(vsi->netdev, q_idx));
 
 	ice_qvec_dis_irq(vsi, rx_ring, q_vector);
+	ice_qvec_toggle_napi(vsi, q_vector, false);
+	synchronize_net();
 
 	ice_fill_txq_meta(vsi, tx_ring, &txq_meta);
 	err = ice_vsi_stop_tx_ring(vsi, ICE_NO_RESET, 0, tx_ring, &txq_meta);
@@ -1399,7 +1389,6 @@ int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
 #ifdef HAVE_XSK_BATCHED_RX_ALLOC
 	ice_clean_rx_ring(rx_ring);
 #endif
-	ice_qvec_toggle_napi(vsi, q_vector, false);
 	ice_qp_clean_rings(vsi, q_idx);
 	ice_qp_reset_stats(vsi, q_idx);
 
@@ -1412,11 +1401,7 @@ int ice_qp_dis(struct ice_vsi *vsi, u16 q_idx)
  * @q_idx: ring index in array
  *
  * Enables a queue pair by configuring the Tx and Rx rings, enabling interrupts,
- * and starting the queues. This function clears the ICE_CFG_BUSY flag set by
- * ice_qp_dis() on all code paths (success and failure).
- *
- * Context: Clears ICE_CFG_BUSY flag on all paths. Must be called after
- * ice_qp_dis(), even if ice_qp_dis() failed, to clean up the ICE_CFG_BUSY flag.
+ * and starting the queues.
  *
  * Return: 0 on success, negative on failure.
  */
@@ -1426,20 +1411,17 @@ int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 	struct ice_q_vector *q_vector;
 	struct ice_tx_ring *tx_ring;
 	struct ice_rx_ring *rx_ring;
+	bool link_up = false;
 	u16 size;
 	int err;
 
-	if (q_idx >= vsi->num_rxq || q_idx >= vsi->num_txq) {
-		err = -EINVAL;
-		goto clear_busy;
-	}
+	if (q_idx >= vsi->num_rxq || q_idx >= vsi->num_txq)
+		return -EINVAL;
 
 	size = struct_size(qg_buf, txqs, 1);
 	qg_buf = kzalloc(size, GFP_KERNEL);
-	if (!qg_buf) {
-		err = -ENOMEM;
-		goto clear_busy;
-	}
+	if (!qg_buf)
+		return -ENOMEM;
 
 	qg_buf->num_txqs = 1;
 
@@ -1480,11 +1462,16 @@ int ice_qp_ena(struct ice_vsi *vsi, u16 q_idx)
 	ice_qvec_toggle_napi(vsi, q_vector, true);
 	ice_qvec_ena_irq(vsi, q_vector);
 
-	netif_tx_start_queue(netdev_get_tx_queue(vsi->netdev, q_idx));
+	/* Initialize link_up and hardcode link is up on query failure to avoid
+	 * permanently stalling the interface
+	 */
+	err = ice_get_link_status(vsi->port_info, &link_up);
+	if (!err && link_up) {
+		netif_tx_start_queue(netdev_get_tx_queue(vsi->netdev, q_idx));
+		netif_carrier_on(vsi->netdev);
+	}
 free_buf:
 	kfree(qg_buf);
-clear_busy:
-	clear_bit(ICE_CFG_BUSY, vsi->back->state);
 	return err;
 }
 

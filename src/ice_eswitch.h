@@ -8,6 +8,7 @@
 
 void ice_eswitch_detach(struct ice_pf *pf, struct ice_vf *vf);
 int ice_eswitch_attach(struct ice_pf *pf, struct ice_vf *vf);
+
 int ice_eswitch_mode_get(struct devlink *devlink, u16 *mode);
 #ifdef HAVE_DEVLINK_ESWITCH_OPS_EXTACK
 #ifdef HAVE_METADATA_PORT_INFO

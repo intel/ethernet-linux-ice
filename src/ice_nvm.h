@@ -7,6 +7,17 @@
 #define ICE_NVM_CMD_READ		0x0000000B
 #define ICE_NVM_CMD_WRITE		0x0000000C
 
+/*
+ * NVM Shadow RAM offsets for eRoT (external Root of Trust) presence detection
+ */
+/* NVM Security Control word SR offset; bit 7 is the chicken-bit override */
+#define ICE_SR_NVM_SEC_CTRL_WORD	0x0000
+#define ICE_NVM_SEC_CTRL_EROT_OVERRIDE	BIT(7)
+/* eRoT Presence fuse SR offset; bits[1:0] == 01 means eRoT present */
+#define ICE_SR_EROT_PRESENCE_FUSE	0x1016
+#define ICE_EROT_PRESENCE_FUSE_MASK	ICE_M(0x3, 0)
+#define ICE_EROT_PRESENCE_FUSE_PRESENT	0x01
+
 /* NVM Access config bits */
 #define ICE_NVM_CFG_MODULE_M		ICE_M(0xFF, 0)
 #define ICE_NVM_CFG_MODULE_S		0
@@ -87,6 +98,9 @@ ice_aq_read_nvm(struct ice_hw *hw, u16 module_typeid, u32 offset, u16 length,
 		void *data, bool last_command, bool read_shadow_ram,
 		struct ice_sq_cd *cd);
 int
+ice_aq_read_nvm_cfg(struct ice_hw *hw, u8 cmd_flags, u16 field_id, void *data,
+		    u16 buf_size, u16 *element_count, struct ice_sq_cd *cd);
+int
 ice_read_flat_nvm(struct ice_hw *hw, u32 offset, u32 *length, u8 *data,
 		  bool read_shadow_ram);
 int
@@ -105,6 +119,7 @@ ice_get_inactive_netlist_ver(struct ice_hw *hw, struct ice_netlist_info *netlist
 int
 ice_read_pba_string(struct ice_hw *hw, u8 *pba_num, u32 pba_num_size);
 int ice_init_nvm(struct ice_hw *hw);
+void ice_parse_erot_presence(struct ice_hw *hw);
 int ice_read_sr_word(struct ice_hw *hw, u16 offset, u16 *data);
 int
 ice_aq_erase_nvm(struct ice_hw *hw, u16 module_typeid, struct ice_sq_cd *cd);

@@ -778,19 +778,6 @@ static int ice_read_port_mem_eth56g(struct ice_hw *hw, u8 port, u16 offset,
 }
 
 /**
- * ice_write_port_mem_eth56g - Write a port memory location
- * @hw: pointer to the HW struct
- * @port: Port number to be read
- * @offset: Offset from PHY port register base
- * @val: Pointer to the value to read (out param)
- */
-static int ice_write_port_mem_eth56g(struct ice_hw *hw, u8 port, u16 offset,
-				     u32 val)
-{
-	return ice_write_port_eth56g(hw, port, offset, val, ETH56G_PHY_MEM_PTP);
-}
-
-/**
  * ice_write_quad_ptp_reg_eth56g - Write a PHY quad register
  * @hw: pointer to the HW struct
  * @offset: PHY register offset
@@ -1020,65 +1007,6 @@ static int ice_write_40b_ptp_reg_eth56g(struct ice_hw *hw, u8 port,
 }
 
 /**
- * ice_write_64b_phy_reg_eth56g - Write a 64bit value to PHY registers
- * @hw: pointer to the HW struct
- * @port: PHY port to read from
- * @low_addr: offset of the lower register to read from
- * @val: the contents of the 64bit value to write to PHY
- * @res_type: resource type
- *
- * Check if the caller has specified a known 64 bit register offset and write
- * the 64bit value to the two associated 32bit PHY registers.
- */
-static int ice_write_64b_phy_reg_eth56g(struct ice_hw *hw, u8 port,
-					u16 low_addr, u64 val,
-					enum eth56g_res_type res_type)
-{
-	u16 high_addr;
-	u32 lo, hi;
-	int err;
-
-	if (!ice_is_64b_phy_reg_eth56g(low_addr, &high_addr))
-		return -EINVAL;
-
-	lo = lower_32_bits(val);
-	hi = upper_32_bits(val);
-
-	err = ice_write_port_eth56g(hw, port, low_addr, lo, res_type);
-	if (err) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to write to low register 0x%08x\n, err %d",
-			  low_addr, err);
-		return err;
-	}
-
-	err = ice_write_port_eth56g(hw, port, high_addr, hi, res_type);
-	if (err) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to write to high register 0x%08x\n, err %d",
-			  high_addr, err);
-		return err;
-	}
-
-	return 0;
-}
-
-/**
- * ice_write_64b_ptp_reg_eth56g - Write a 64bit value to PHY registers
- * @hw: pointer to the HW struct
- * @port: PHY port to read from
- * @low_addr: offset of the lower register to read from
- * @val: the contents of the 64bit value to write to PHY
- *
- * Check if the caller has specified a known 64 bit register offset and write
- * the 64bit value to the two associated 32bit PHY registers.
- */
-static int ice_write_64b_ptp_reg_eth56g(struct ice_hw *hw, u8 port,
-					u16 low_addr, u64 val)
-{
-	return ice_write_64b_phy_reg_eth56g(hw, port, low_addr, val,
-					    ETH56G_PHY_REG_PTP);
-}
-
-/**
  * ice_read_ptp_tstamp_eth56g - Read a PHY timestamp out of the port memory
  * @hw: pointer to the HW struct
  * @port: the port to read from
@@ -1133,191 +1061,73 @@ static int ice_read_ptp_tstamp_eth56g(struct ice_hw *hw, u8 port, u8 idx,
  * internal PHYs of the 56G devices.
  *
  * To directly clear the contents of the timestamp block entirely, discarding
- * all timestamp data at once, software should instead use
- * ice_ptp_reset_ts_memory_quad_eth56g().
+ * all timestamp data at once, software should instead perform a PHY soft
+ * reset via ice_ptp_phy_soft_reset_eth56g().
  *
  * This function should only be called on an idx whose bit is set according to
  * ice_get_phy_tx_tstamp_ready().
+ *
+ * Serialized against ice_ptp_clear_tx_memory_status_eth56g() via
+ * tx_tstamp_lock so the two paths do not interleave their reads of the same
+ * port's Tx timestamp memory.
  */
 static int ice_clear_ptp_tstamp_eth56g(struct ice_hw *hw, u8 port, u8 idx)
 {
 	u64 unused_tstamp;
-	u16 lo_addr;
 	int err;
 
-	/* Read the timestamp register to ensure the timestamp status bit is
-	 * cleared.
+	mutex_lock(&hw->ptp.tx_tstamp_lock);
+
+	/* Per the PHY spec, reading the timestamp memory location is what
+	 * clears the entry's valid bit and its corresponding (read-only)
+	 * ts_memory_status bit. This clears only this index, leaving any
+	 * other in-flight timestamps on the port untouched.
 	 */
 	err = ice_read_ptp_tstamp_eth56g(hw, port, idx, &unused_tstamp);
-	if (err) {
+	if (err)
 		ice_debug(hw, ICE_DBG_PTP, "Failed to read the PHY timestamp register for port %u, idx %u, err %d\n",
 			  port, idx, err);
-	}
 
-	lo_addr = (u16)PHY_TSTAMP_L(idx);
+	mutex_unlock(&hw->ptp.tx_tstamp_lock);
 
-	err = ice_write_port_mem_eth56g(hw, port, lo_addr, 0);
-	if (err) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to clear low PTP timestamp register for port %u, idx %u, err %d\n",
-			  port, idx, err);
-		return err;
-	}
-
-	return 0;
-}
-
-/**
- * ice_ptp_reset_ts_memory_eth56g - Clear all timestamps from the port block
- * @hw: pointer to the HW struct
- */
-static void ice_ptp_reset_ts_memory_eth56g(struct ice_hw *hw)
-{
-	unsigned int port;
-
-	for (port = 0; port < hw->ptp.num_lports; port++) {
-		ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TX_MEMORY_STATUS_L,
-					 0);
-		ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TX_MEMORY_STATUS_U,
-					 0);
-	}
-}
-
-/**
- * ice_ptp_prep_port_time_eth56g - Prepare one PHY port with initial time
- * @hw: pointer to the HW struct
- * @port: port number
- * @time: time to initialize the PHY port clocks to
- *
- * Write a new initial time value into registers of a specific PHY port.
- */
-static int ice_ptp_prep_port_time_eth56g(struct ice_hw *hw, u8 port, u64 time)
-{
-	int err;
-
-	/* Tx case */
-	err = ice_write_64b_ptp_reg_eth56g(hw, port, PHY_REG_TX_TIMER_INC_PRE_L,
-					   time);
-	if (err)
-		return err;
-	/* Rx case */
-	return ice_write_64b_ptp_reg_eth56g(hw, port,
-					    PHY_REG_RX_TIMER_INC_PRE_L, time);
-}
-
-/**
- * ice_ptp_prep_phy_time_eth56g - Prepare PHY port with initial time
- * @hw: pointer to the HW struct
- * @time: Time to initialize the PHY port clocks to
- *
- * Program the PHY port registers with a new initial time value. The port
- * clock will be initialized once the driver issues an ICE_PTP_INIT_TIME sync
- * command. The time value is the upper 32 bits of the PHY timer, usually in
- * units of nominal nanoseconds.
- */
-static int ice_ptp_prep_phy_time_eth56g(struct ice_hw *hw, u32 time)
-{
-	u64 phy_time;
-	u8 port;
-
-	/* The time represents the upper 32 bits of the PHY timer, so we need
-	 * to shift to account for this when programming.
-	 */
-	phy_time = (u64)time << 32;
-
-	for (port = 0; port < hw->ptp.num_lports; port++) {
-		int err;
-
-		err = ice_ptp_prep_port_time_eth56g(hw, port, phy_time);
-		if (err) {
-			ice_debug(hw, ICE_DBG_PTP, "Failed to write init time for port %u, err %d\n",
-				  port, err);
-			return err;
-		}
-	}
-
-	return 0;
-}
-
-/**
- * ice_ptp_prep_port_adj_eth56g - Prepare a single port for time adjust
- * @hw: pointer to HW struct
- * @port: Port number to be programmed
- * @time: time in cycles to adjust the port clocks
- *
- * Program the port for an atomic adjustment by writing the Tx and Rx timer
- * registers. The atomic adjustment won't be completed until the driver issues
- * an ICE_PTP_ADJ_TIME command.
- *
- * Note that time is not in units of nanoseconds. It is in clock time
- * including the lower sub-nanosecond portion of the port timer.
- *
- * Negative adjustments are supported using 2s complement arithmetic.
- */
-static int ice_ptp_prep_port_adj_eth56g(struct ice_hw *hw, u8 port, s64 time)
-{
-	u32 l_time, u_time;
-	int err;
-
-	l_time = lower_32_bits(time);
-	u_time = upper_32_bits(time);
-
-	/* Tx case */
-	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TX_TIMER_INC_PRE_L,
-				    l_time);
-	if (err)
-		goto exit_err;
-
-	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TX_TIMER_INC_PRE_U,
-				    u_time);
-	if (err)
-		goto exit_err;
-
-	/* Rx case */
-	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_RX_TIMER_INC_PRE_L,
-				    l_time);
-	if (err)
-		goto exit_err;
-
-	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_RX_TIMER_INC_PRE_U,
-				    u_time);
-	if (err)
-		goto exit_err;
-
-	return 0;
-
-exit_err:
-	ice_debug(hw, ICE_DBG_PTP, "Failed to write time adjust for port %u, err %d\n",
-		  port, err);
 	return err;
 }
 
 /**
- * ice_ptp_prep_phy_adj_eth56g - Prep PHY ports for a time adjustment
- * @hw: pointer to HW struct
- * @adj: adjustment in nanoseconds
+ * ice_ptp_clear_tx_memory_status_eth56g - Reset one port's Tx timestamp memory
+ * @hw: pointer to the HW struct
+ * @port: port number to clear
  *
- * Prepare the PHY ports for an atomic time adjustment by programming the PHY
- * Tx and Rx port registers. The actual adjustment is completed by issuing an
- * ICE_PTP_ADJ_TIME or ICE_PTP_ADJ_TIME_AT_TIME sync command.
+ * Fully reset a single PHY port's Tx timestamp memory. Per the PHY spec, the
+ * only way to clear a timestamp valid bit (and its read-only ts_memory_status
+ * bit) is to read the timestamp memory location, so read every entry for the
+ * port. This discards all timestamp data on the port, so it must only be used
+ * for a full reset; callers that must preserve in-flight timestamps clear
+ * individual indices via ice_clear_phy_tstamp().
+ *
+ * Due to interactions with an internal HW counter for the number of
+ * outstanding Tx timestamps, this *must* only be called as part of the
+ * ice_ptp_phy_soft_reset_eth56g() procedure. Otherwise the internal counter
+ * may become out of sync and prevent new timestamp interrupts.
+ *
+ * Holds tx_tstamp_lock so this full-port sweep does not interleave with the
+ * per-index reads in ice_clear_ptp_tstamp_eth56g() on the same port.
+ *
+ * Return: 0 on success, negative error code on failure to read the PHY.
  */
-static int ice_ptp_prep_phy_adj_eth56g(struct ice_hw *hw, s32 adj)
+static int ice_ptp_clear_tx_memory_status_eth56g(struct ice_hw *hw, u8 port)
 {
+	u64 unused_tstamp;
 	int err = 0;
-	s64 cycles;
-	u8 port;
+	u8 idx;
 
-	/* The port clock supports adjustment of the sub-nanosecond portion of
-	 * the clock. We shift the provided adjustment in nanoseconds to
-	 * calculate the appropriate adjustment to program into the PHY ports.
-	 */
-	cycles = (s64)adj << 32;
-
-	for (port = 0; port < hw->ptp.num_lports; port++) {
-
-		err = ice_ptp_prep_port_adj_eth56g(hw, port, cycles);
+	mutex_lock(&hw->ptp.tx_tstamp_lock);
+	for (idx = 0; idx < BITS_PER_TYPE(u64); idx++) {
+		err = ice_read_ptp_tstamp_eth56g(hw, port, idx, &unused_tstamp);
 		if (err)
 			break;
 	}
+	mutex_unlock(&hw->ptp.tx_tstamp_lock);
 
 	return err;
 }
@@ -1883,8 +1693,8 @@ int ice_phy_cfg_intr_eth56g(struct ice_hw *hw, u8 port, bool ena, u8 threshold)
  * Issue a ICE_PTP_READ_TIME timer command to simultaneously capture the PHY
  * and PHC timer values.
  */
-static int ice_read_phy_and_phc_time_eth56g(struct ice_hw *hw, u8 port,
-					    u64 *phy_time, u64 *phc_time)
+int ice_read_phy_and_phc_time_eth56g(struct ice_hw *hw, u8 port, u64 *phy_time,
+				     u64 *phc_time)
 {
 	struct ice_pf *pf = container_of(hw, struct ice_pf, hw);
 	u64 tx_time, rx_time;
@@ -1934,72 +1744,6 @@ static int ice_read_phy_and_phc_time_eth56g(struct ice_hw *hw, u8 port,
 }
 
 /**
- * ice_sync_phy_timer_eth56g - Synchronize the PHY timer with PHC timer
- * @hw: pointer to the HW struct
- * @port: the PHY port to synchronize
- *
- * Perform an adjustment to ensure that the PHY and PHC timers are in sync.
- * This is done by issuing a ICE_PTP_READ_TIME command which triggers a
- * simultaneous read of the PHY timer and PHC timer. Then we use the
- * difference to calculate an appropriate 2s complement addition to add
- * to the PHY timer in order to ensure it reads the same value as the
- * primary PHC timer.
- */
-static int ice_sync_phy_timer_eth56g(struct ice_hw *hw, u8 port)
-{
-	u64 phc_time, phy_time, difference;
-	int err;
-
-	if (!ice_ptp_lock(hw)) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to acquire PTP semaphore\n");
-		return -EBUSY;
-	}
-
-	err = ice_read_phy_and_phc_time_eth56g(hw, port, &phy_time, &phc_time);
-	if (err)
-		goto err_unlock;
-
-	/* Calculate the amount required to add to the port time in order for
-	 * it to match the PHC time.
-	 *
-	 * Note that the port adjustment is done using 2s complement
-	 * arithmetic. This is convenient since it means that we can simply
-	 * calculate the difference between the PHC time and the port time,
-	 * and it will be interpreted correctly.
-	 */
-
-	ice_ptp_src_cmd(hw, ICE_PTP_NOP);
-	difference = phc_time - phy_time;
-
-	err = ice_ptp_prep_port_adj_eth56g(hw, port, (s64)difference);
-	if (err)
-		goto err_unlock;
-
-	err = ice_ptp_one_port_cmd(hw, port, ICE_PTP_ADJ_TIME);
-	if (err)
-		goto err_unlock;
-
-	/* Issue the sync to activate the time adjustment */
-	ice_ptp_exec_tmr_cmd(hw);
-
-	/* Re-capture the timer values to flush the command registers and
-	 * verify that the time was properly adjusted.
-	 */
-	err = ice_read_phy_and_phc_time_eth56g(hw, port, &phy_time, &phc_time);
-	if (err)
-		goto err_unlock;
-
-	dev_info(ice_hw_to_dev(hw),
-		 "Port %u PHY time synced to PHC: 0x%016llX, 0x%016llX\n",
-		 port, (unsigned long long)phy_time,
-		 (unsigned long long)phc_time);
-
-err_unlock:
-	ice_ptp_unlock(hw);
-	return err;
-}
-
-/**
  * ice_stop_phy_timer_eth56g - Stop the PHY clock timer
  * @hw: pointer to the HW struct
  * @port: the PHY port to stop
@@ -2012,10 +1756,6 @@ err_unlock:
 int ice_stop_phy_timer_eth56g(struct ice_hw *hw, u8 port, bool soft_reset)
 {
 	int err;
-
-	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TX_OFFSET_READY, 0);
-	if (err)
-		return err;
 
 	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_RX_OFFSET_READY, 0);
 	if (err)
@@ -2031,9 +1771,11 @@ int ice_stop_phy_timer_eth56g(struct ice_hw *hw, u8 port, bool soft_reset)
  * @hw: pointer to the HW struct
  * @port: the PHY port to start
  *
- * Start the clock of a PHY port. This must be done as part of the flow to
- * re-calibrate Tx and Rx timestamping offsets whenever the clock time is
- * initialized or when link speed changes.
+ * Perform a PHY soft reset and then start the clock for the PHY port.
+ *
+ * This must be done as part of the flow to re-calibrate Tx and Rx
+ * timestamping offsets whenever the clock time is initialized or when link
+ * speed changes.
  *
  */
 int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port)
@@ -2046,23 +1788,34 @@ int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port)
 
 	tmr_idx = ice_get_ptp_src_clock_index(hw);
 
+	err = ice_ptp_phy_soft_reset_eth56g(hw, port);
+	if (err)
+		return err;
+
 	err = ice_stop_phy_timer_eth56g(hw, port, false);
 	if (err)
 		return err;
+
+	/* Hold the PTP semaphore across the whole incval init and phase sync so
+	 * concurrent adjtime/adjfine cannot interfere
+	 */
+	if (!ice_ptp_lock(hw)) {
+		dev_err(ice_hw_to_dev(hw), "Failed to acquire PTP semaphore\n");
+		return -EBUSY;
+	}
 
 	ice_ptp_src_cmd(hw, ICE_PTP_NOP);
 
 	err = ice_phy_cfg_parpcs_eth56g(hw, port);
 	if (err)
-		return err;
-
+		goto err_ptp_unlock;
 	err = ice_phy_cfg_ptp_1step_eth56g(hw, port);
 	if (err)
-		return err;
+		goto err_ptp_unlock;
 
 	err = ice_phy_cfg_mac_eth56g(hw, port);
 	if (err)
-		return err;
+		goto err_ptp_unlock;
 
 	if (ice_is_primary(hw)) {
 		lo = rd32(hw, GLTSYN_INCVAL_L(tmr_idx));
@@ -2072,11 +1825,6 @@ int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port)
 		hi = rd32(ice_get_primary_hw(pf), GLTSYN_INCVAL_H(tmr_idx));
 	}
 	incval = (u64)hi << 32 | lo;
-
-	if (!ice_ptp_lock(hw)) {
-		dev_err(ice_hw_to_dev(hw), "Failed to acquire PTP semaphore\n");
-		return -EBUSY;
-	}
 
 	err = ice_write_40b_ptp_reg_eth56g(hw, port, PHY_REG_TIMETUS_L, incval);
 	if (err)
@@ -2089,10 +1837,6 @@ int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port)
 	ice_ptp_exec_tmr_cmd(hw);
 
 	ice_ptp_unlock(hw);
-
-	err = ice_sync_phy_timer_eth56g(hw, port);
-	if (err)
-		return err;
 
 	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TX_OFFSET_READY, 1);
 	if (err)
@@ -2156,6 +1900,7 @@ int ice_ptp_read_tx_hwtstamp_status_eth56g(struct ice_hw *hw, u32 *ts_status)
  *
  * Trigger a soft reset of the ETH56G PHY by toggling the soft reset
  * bit in the PHY global register. The reset sequence consists of:
+ *   0. Reading every timestamp memory register to clear its valid bit
  *   1. Clearing the soft reset bit
  *   2. Asserting the soft reset bit
  *   3. Clearing the soft reset bit again
@@ -2164,6 +1909,11 @@ int ice_ptp_read_tx_hwtstamp_status_eth56g(struct ice_hw *hw, u32 *ts_status)
  * to settle. This provides a controlled way to reinitialize the PHY
  * without requiring a full device reset.
  *
+ * To ensure that the internal counter matches the contents of the
+ * PHY_REG_TX_MEMORY_STATUS, read every timestamp index prior to performing
+ * the soft reset. The reads ensure that the region is cleared, while the soft
+ * reset procedure ensures that the timestamp counter is reset to zero.
+ *
  * Return: 0 on success, or a negative error code on failure when
  *         reading or writing the PHY register.
  */
@@ -2171,6 +1921,13 @@ int ice_ptp_phy_soft_reset_eth56g(struct ice_hw *hw, u8 port)
 {
 	u32 global_val;
 	int err;
+
+	err = ice_ptp_clear_tx_memory_status_eth56g(hw, port);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to clear PHY_REG_TX_MEMORY_STATUS for port %d, err %d\n",
+			  port, err);
+		return err;
+	}
 
 	err = ice_read_ptp_reg_eth56g(hw, port, PHY_REG_GLOBAL, &global_val);
 	if (err) {
@@ -4699,15 +4456,12 @@ static int ice_ptp_prep_phy_adj_ll_e810(struct ice_hw *hw, s32 adj)
 	err = rd32_poll_timeout_atomic(hw, PF_SB_ATQBAL, val,
 				       !FIELD_GET(ATQBAL_LL_EXEC, val),
 				       10, ATQBAL_LL_TIMEOUT_US);
-	if (err) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer adjustment using low latency interface\n");
-		spin_unlock_irq(&params->atqbal_wq.lock);
-		return err;
-	}
-
 	spin_unlock_irq(&params->atqbal_wq.lock);
 
-	return 0;
+	if (err)
+		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer adjustment using low latency interface\n");
+
+	return err;
 }
 
 /**
@@ -4728,8 +4482,13 @@ static int ice_ptp_prep_phy_adj_e810(struct ice_hw *hw, s32 adj)
 	u8 tmr_idx;
 	int err;
 
-	if (hw->dev_caps.ts_dev_info.ll_phy_tmr_update)
-		return ice_ptp_prep_phy_adj_ll_e810(hw, adj);
+	if (hw->dev_caps.ts_dev_info.ll_phy_tmr_update) {
+		err = ice_ptp_prep_phy_adj_ll_e810(hw, adj);
+		if (!err)
+			return 0;
+		ice_debug(hw, ICE_DBG_PTP, "LL adj failed (%d), falling back to SBQ\n",
+			  err);
+	}
 
 	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 
@@ -4791,15 +4550,12 @@ static int ice_ptp_prep_phy_incval_ll_e810(struct ice_hw *hw, u64 incval)
 	err = rd32_poll_timeout_atomic(hw, PF_SB_ATQBAL, val,
 				       !FIELD_GET(ATQBAL_LL_EXEC, val),
 				       10, ATQBAL_LL_TIMEOUT_US);
-	if (err) {
-		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer increment using low latency interface\n");
-		spin_unlock_irq(&params->atqbal_wq.lock);
-		return err;
-	}
-
 	spin_unlock_irq(&params->atqbal_wq.lock);
 
-	return 0;
+	if (err)
+		ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY timer increment using low latency interface\n");
+
+	return err;
 }
 
 /**
@@ -4817,8 +4573,13 @@ static int ice_ptp_prep_phy_incval_e810(struct ice_hw *hw, u64 incval)
 	u8 tmr_idx;
 	int err;
 
-	if (hw->dev_caps.ts_dev_info.ll_phy_tmr_update)
-		return ice_ptp_prep_phy_incval_ll_e810(hw, incval);
+	if (hw->dev_caps.ts_dev_info.ll_phy_tmr_update) {
+		err = ice_ptp_prep_phy_incval_ll_e810(hw, incval);
+		if (!err)
+			return 0;
+		ice_debug(hw, ICE_DBG_PTP, "LL incval failed (%d), falling back to SBQ\n",
+			  err);
+	}
 
 	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 	low = lower_32_bits(incval);
@@ -5124,6 +4885,23 @@ static int ice_read_phy_tstamp_e830(struct ice_hw *hw, u8 idx, u64 *tstamp)
 }
 
 /**
+ * ice_clear_phy_tstamp_e830 - Clear a timestamp from the E830 PHY
+ * @hw: pointer to the HW struct
+ * @idx: the timestamp index to clear
+ *
+ * Clear the valid bit for the given timestamp index in the Tx memory (TS_MEM).
+ * On E830 devices the PRTMAC_TS_TX_MEM_VALID_L/H registers are read-only
+ * mirrors of the per-entry TX_VALID bits and cannot be written. The actual
+ * TS_MEM entry's TX_VALID bit is cleared by reading the corresponding
+ * PRTTSYN_TXTIME_L/H registers (read-to-clear).
+ */
+static void ice_clear_phy_tstamp_e830(struct ice_hw *hw, u8 idx)
+{
+	rd32(hw, E830_PRTTSYN_TXTIME_H(idx));
+	rd32(hw, E830_PRTTSYN_TXTIME_L(idx));
+}
+
+/**
  * ice_get_phy_tx_tstamp_ready_e830 - Read Tx memory status register
  * @hw: pointer to the HW struct
  * @port: the PHY port to read
@@ -5313,6 +5091,7 @@ ice_cgu_get_pin_desc(const struct ice_hw *hw, bool input, int *size)
 	case ICE_DEV_ID_E830_L_QSFP:
 	case ICE_DEV_ID_E830C_SFP:
 	case ICE_DEV_ID_E830_L_SFP:
+	case ICE_DEV_ID_E835_10G_BASE_T:
 	case ICE_DEV_ID_E835CC_BACKPLANE:
 	case ICE_DEV_ID_E835CC_QSFP56:
 	case ICE_DEV_ID_E835CC_SFP:
@@ -5970,6 +5749,36 @@ static int ice_ptp_tmr_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
 }
 
 /**
+ * ice_ptp_src_tmr_cmd - Trigger a timer command for the source timer only
+ * @hw: pointer to HW struct
+ * @cmd: the command to issue
+ *
+ * Apply @cmd to the source timer while all PHY ports are issued a NOP, so
+ * their free running timers are left untouched.
+ */
+static int ice_ptp_src_tmr_cmd(struct ice_hw *hw, enum ice_ptp_tmr_cmd cmd)
+{
+	u32 port;
+
+	ice_ptp_src_cmd(hw, cmd);
+
+	for (port = 0; port < hw->ptp.num_lports; port++) {
+		int err;
+
+		err = ice_ptp_write_port_cmd(hw, port, ICE_PTP_NOP);
+		if (err) {
+			ice_debug(hw, ICE_DBG_PTP, "Failed to prepare PHY port %u for NOP, err %d\n",
+				  port, err);
+			return err;
+		}
+	}
+
+	ice_ptp_exec_tmr_cmd(hw);
+
+	return 0;
+}
+
+/**
  * ice_ptp_init_time - Initialize device time to provided value
  * @hw: pointer to HW struct
  * @time: 64bits of time (GLTSYN_TIME_L and GLTSYN_TIME_H)
@@ -6008,9 +5817,8 @@ int ice_ptp_init_time(struct ice_hw *hw, u64 time)
 		err = ice_ptp_prep_phy_time_e82x(hw, (u32)(time & 0xFFFFFFFF));
 		break;
 	case ICE_MAC_GENERIC_3K_E825:
-		err = ice_ptp_prep_phy_time_eth56g(hw,
-						   (u32)(time & 0xFFFFFFFF));
-		break;
+		/* PHY port timers free run; the offset to PHC is kept in SW */
+		return ice_ptp_src_tmr_cmd(hw, ICE_PTP_INIT_TIME);
 	default:
 		err = -EOPNOTSUPP;
 	}
@@ -6130,8 +5938,8 @@ int ice_ptp_adj_clock(struct ice_hw *hw, s32 adj)
 		err = ice_ptp_prep_phy_adj_e82x(hw, adj);
 		break;
 	case ICE_MAC_GENERIC_3K_E825:
-		err = ice_ptp_prep_phy_adj_eth56g(hw, adj);
-		break;
+		/* PHY port timers free run; the offset to PHC is kept in SW */
+		return ice_ptp_src_tmr_cmd(hw, ICE_PTP_ADJ_TIME);
 	default:
 		err = -EOPNOTSUPP;
 	}
@@ -6190,6 +5998,9 @@ int ice_clear_phy_tstamp(struct ice_hw *hw, u8 block, u8 idx)
 	switch (hw->mac_type) {
 	case ICE_MAC_E810:
 		return ice_clear_phy_tstamp_e810(hw, block, idx);
+	case ICE_MAC_E830:
+		ice_clear_phy_tstamp_e830(hw, idx);
+		return 0;
 	case ICE_MAC_GENERIC:
 		return ice_clear_phy_tstamp_e82x(hw, block, idx);
 	case ICE_MAC_GENERIC_3K_E825:
@@ -6210,8 +6021,9 @@ void ice_ptp_reset_ts_memory(struct ice_hw *hw)
 		ice_ptp_reset_ts_memory_e82x(hw);
 		break;
 	case ICE_MAC_GENERIC_3K_E825:
-		ice_ptp_reset_ts_memory_eth56g(hw);
-		break;
+		/* E825 hardware must only reset timestamp memory as part of
+		 * the soft reset procedure.
+		 */
 	case ICE_MAC_E810:
 	default:
 		return;

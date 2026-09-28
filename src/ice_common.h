@@ -147,8 +147,6 @@ int ice_set_ctx(struct ice_hw *hw, u8 *src_ctx, u8 *dest_ctx,
 		const struct ice_ctx_ele *ce_info);
 int ice_get_ctx(u8 *src_ctx, u8 *dest_ctx, const struct ice_ctx_ele *ce_info);
 
-extern struct mutex ice_global_cfg_lock_sw;
-
 int
 ice_aq_send_cmd(struct ice_hw *hw, struct ice_aq_desc *desc,
 		void *buf, u16 buf_size, struct ice_sq_cd *cd);
@@ -403,7 +401,6 @@ int ice_get_last_health_status_code(struct ice_hw *hw,
 				    struct ice_aqc_health_status_elem *out,
 				    u16 code);
 bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
-bool ice_is_fw_vf_txtime_supported_e83x(struct ice_hw *hw);
 /* AQ API version for FW auto drop reports */
 bool ice_is_fw_auto_drop_supported(struct ice_hw *hw);
 void ice_init_lm_ops(struct ice_hw *hw);

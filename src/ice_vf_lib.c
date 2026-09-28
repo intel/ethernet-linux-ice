@@ -835,10 +835,8 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 		ice_reset_vf_mbx_cnt(vf);
 
 	/* If VFs have been disabled, there is no need to reset */
-	if (test_and_set_bit(ICE_VF_DIS, pf->state)) {
-		mutex_unlock(&pf->vfs.table_lock);
-		return;
-	}
+	if (test_and_set_bit(ICE_VF_DIS, pf->state))
+		goto out_unlock;
 
 	ice_clear_dcf_acl_cfg(pf);
 	ice_clear_dcf_udp_tunnel_cfg(pf);
@@ -890,7 +888,12 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 		ice_vf_fsub_init(vf);
 
 		ice_vf_pre_vsi_rebuild(vf);
-		ice_vf_rebuild_vsi(vf);
+		if (ice_vf_rebuild_vsi(vf)) {
+			dev_err(dev, "VF %u VSI rebuild failed, leaving VF disabled\n",
+				vf->vf_id);
+			mutex_unlock(&vf->cfg_lock);
+			continue;
+		}
 		ice_vf_post_vsi_rebuild(vf);
 
 		ice_eswitch_attach(pf, vf);
@@ -901,6 +904,7 @@ void ice_reset_all_vfs(struct ice_pf *pf)
 	ice_flush(hw);
 	clear_bit(ICE_VF_DIS, pf->state);
 
+out_unlock:
 	mutex_unlock(&pf->vfs.table_lock);
 }
 
@@ -1782,15 +1786,20 @@ void ice_vf_rebuild_aggregator_node_cfg(struct ice_vsi *vsi)
 	struct device *dev;
 	int status;
 
-	if (!vsi->agg_node)
-		return;
-
 	dev = ice_pf_to_dev(pf);
-	status = ice_move_vsi_to_agg(pf->hw.port_info, vsi->agg_node->agg_id,
-				     vsi->idx, (u8)vsi->tc_cfg.ena_tc);
+
+	if (vsi->agg_id < 0 || vsi->agg_id > U32_MAX) {
+		dev_dbg(dev, "VSI idx %u does not have a valid aggregator node ID stored\n",
+			vsi->idx);
+		return;
+	}
+
+	status = ice_cfg_vsi_agg(pf->hw.port_info, vsi->idx,
+				 (u32)vsi->agg_id, (u32)vsi->agg_id,
+				 (u8)vsi->tc_cfg.ena_tc, NULL);
 	if (status)
-		dev_dbg(dev, "unable to move VSI idx %u into aggregator %u node",
-			vsi->idx, vsi->agg_node->agg_id);
+		dev_dbg(dev, "unable to move VSI idx %u into aggregator node %lld\n",
+			vsi->idx, vsi->agg_id);
 }
 
 /**
