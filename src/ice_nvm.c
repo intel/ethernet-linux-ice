@@ -49,6 +49,40 @@ ice_aq_read_nvm(struct ice_hw *hw, u16 module_typeid, u32 offset, u16 length,
 }
 
 /**
+ * ice_aq_read_nvm_cfg - read an NVM config block
+ * @hw: pointer to the HW struct
+ * @cmd_flags: NVM access admin command bits
+ * @field_id: field or feature ID
+ * @data: buffer for result
+ * @buf_size: buffer size
+ * @elem_count: pointer to count of elements read by FW
+ * @cd: pointer to command details structure or NULL
+ *
+ * Reads single or multiple feature/field ID and data (0x0704)
+ */
+int
+ice_aq_read_nvm_cfg(struct ice_hw *hw, u8 cmd_flags, u16 field_id, void *data,
+		    u16 buf_size, u16 *elem_count, struct ice_sq_cd *cd)
+{
+	struct ice_aqc_nvm_cfg *cmd;
+	struct ice_aq_desc desc;
+	int err;
+
+	cmd = &desc.params.nvm_cfg;
+
+	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_nvm_cfg_read);
+
+	cmd->cmd_flags = cmd_flags;
+	cmd->id = cpu_to_le16(field_id);
+
+	err = ice_aq_send_cmd(hw, &desc, data, buf_size, cd);
+	if (!err && elem_count)
+		*elem_count = le16_to_cpu(cmd->count);
+
+	return err;
+}
+
+/**
  * ice_read_flat_nvm - Read portion of NVM by flat offset
  * @hw: pointer to the HW struct
  * @offset: offset from beginning of NVM
@@ -1244,6 +1278,52 @@ static int ice_determine_css_hdr_len(struct ice_hw *hw)
 		return status;
 
 	return 0;
+}
+
+/**
+ * ice_parse_erot_presence - detect eRoT and populate hw->erot_present
+ * @hw: pointer to the HW struct
+ *
+ * Uses the device capability ICE_AQC_CAPS_EXTERNAL_PQC_ROT_PRESENT when
+ * available, falling back to the NVM Security Control word (SR 0x0000)
+ * chicken-bit override and eRoT Presence fuse (SR 0x1016).
+ *
+ * Priority:
+ *  1. Device capability external_pqc_rot_present           => eRoT present
+ *  2. Security Control word bit 7 (chicken-bit override)   => eRoT present
+ *  3. Fuse bits[1:0] == 0x01                               => eRoT present
+ *  4. Otherwise                                            => eRoT not present
+ */
+void ice_parse_erot_presence(struct ice_hw *hw)
+{
+	u16 sec_ctrl = 0, fuse = 0;
+
+	hw->erot_present = false;
+
+	if (hw->dev_caps.common_cap.external_pqc_rot_present) {
+		hw->erot_present = true;
+		goto done;
+	}
+
+	if (!ice_read_sr_word(hw, ICE_SR_NVM_SEC_CTRL_WORD, &sec_ctrl) &&
+	    (sec_ctrl & ICE_NVM_SEC_CTRL_EROT_OVERRIDE)) {
+		hw->erot_present = true;
+		goto done;
+	}
+
+	if (!ice_read_sr_word(hw, ICE_SR_EROT_PRESENCE_FUSE, &fuse) &&
+	    (fuse & ICE_EROT_PRESENCE_FUSE_MASK) ==
+	    ICE_EROT_PRESENCE_FUSE_PRESENT)
+		hw->erot_present = true;
+
+done:
+	if (hw->erot_present) {
+		dev_info(ice_hw_to_dev(hw),
+			 "eRoT present (cap=%d chicken=%d fuse=0x%x)\n",
+			 hw->dev_caps.common_cap.external_pqc_rot_present,
+			 !!(sec_ctrl & ICE_NVM_SEC_CTRL_EROT_OVERRIDE),
+			 (unsigned int)(fuse & ICE_EROT_PRESENCE_FUSE_MASK));
+	}
 }
 
 /**

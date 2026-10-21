@@ -335,6 +335,17 @@ static bool ice_clean_tx_irq(struct ice_tx_ring *tx_ring, int napi_budget)
 		total_bytes += tx_buf->bytecount;
 		total_pkts += tx_buf->gso_segs;
 
+		if (ice_trace_enabled(tx_tstamp_pkt_cleaned) &&
+		    tx_buf->skb && tx_buf->tx_flags & ICE_TX_FLAGS_TSYN) {
+			unsigned long flags;
+
+			spin_lock_irqsave(&tx_ring->tx_tstamps->lock, flags);
+			ice_trace(tx_tstamp_pkt_cleaned,
+				  tx_ring->dev, tx_ring->tx_tstamps,
+				  tx_buf->skb, tx_buf->ptp_ts_idx);
+			spin_unlock_irqrestore(&tx_ring->tx_tstamps->lock, flags);
+		}
+
 #ifdef HAVE_XDP_SUPPORT
 		if (ice_ring_is_xdp(tx_ring))
 			page_frag_free(tx_buf->raw_buf);
@@ -3004,6 +3015,17 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 	mmiowb();
 #endif /* SPIN_UNLOCK_IMPLIES_MMIOWB */
 
+	if (ice_trace_enabled(tx_tstamp_pkt_mapped) &&
+	    first->skb && first->tx_flags & ICE_TX_FLAGS_TSYN) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&tx_ring->tx_tstamps->lock, flags);
+		ice_trace(tx_tstamp_pkt_mapped,
+			  tx_ring->dev, tx_ring->tx_tstamps,
+			  first->skb, first->ptp_ts_idx);
+		spin_unlock_irqrestore(&tx_ring->tx_tstamps->lock, flags);
+	}
+
 	return;
 
 dma_error:
@@ -3893,6 +3915,7 @@ ice_tstamp(struct ice_tx_ring *tx_ring, struct sk_buff *skb,
 			     (ICE_TX_CTX_DESC_TSYN << ICE_TXD_CTX_QW1_CMD_S) |
 			     ((u64)idx << ICE_TXD_CTX_QW1_TSO_LEN_S));
 	first->tx_flags |= ICE_TX_FLAGS_TSYN;
+	first->ptp_ts_idx = idx;
 }
 
 /**
@@ -3945,6 +3968,7 @@ ice_xmit_frame_ring(struct sk_buff *skb, struct ice_tx_ring *tx_ring)
 	first->bytecount = max_t(unsigned int, skb->len, ETH_ZLEN);
 	first->gso_segs = 1;
 	first->tx_flags = 0;
+	first->ptp_ts_idx = -1;
 
 	/* prepare the VLAN tagging flags for Tx */
 	ice_tx_prepare_vlan_flags(tx_ring, first);

@@ -394,6 +394,8 @@ ice_parse_ieee_app_tlv(struct ice_lldp_org_tlv *tlv,
 	/* Removing sizeof(ouisubtype) and reserved byte from len.
 	 * Remaining len div 3 is number of APP TLVs.
 	 */
+	if (len < sizeof(tlv->ouisubtype) + 1)
+		return;
 	len -= (sizeof(tlv->ouisubtype) + 1);
 
 	/* Move offset to App Priority Table */

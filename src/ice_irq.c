@@ -290,6 +290,11 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 		ICE_OICR_MSIX, ICE_OICR_MSIX, ICE_OICR_MSIX,
 		ICE_OICR_MSIX, ICE_OICR_MSIX,
 	};
+	int ll_ts_adj_vec[ICE_ADJ_VEC_STEPS] = {
+		ICE_LL_TS_MSIX, ICE_LL_TS_MSIX, ICE_LL_TS_MSIX,
+		ICE_LL_TS_MSIX, ICE_LL_TS_MSIX, ICE_LL_TS_MSIX,
+		ICE_LL_TS_MSIX, ICE_LL_TS_MSIX,
+	};
 #ifdef HAVE_NDO_DFWD_OPS
 	int macvlan_adj_vec[ICE_ADJ_VEC_STEPS] = {
 		0, 0, 0, 0,
@@ -343,6 +348,12 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	} else {
 		ice_adj_vec_clear(fdir_adj_vec, ICE_ADJ_VEC_STEPS);
 	}
+	if (pf->hw.dev_caps.ts_dev_info.ts_ll_int_read) {
+		needed += ll_ts_adj_vec[ICE_ADJ_VEC_BEST_CASE];
+		ice_adj_vec_sum(adj_vec, ll_ts_adj_vec, ICE_ADJ_VEC_STEPS);
+	} else {
+		ice_adj_vec_clear(ll_ts_adj_vec, ICE_ADJ_VEC_STEPS);
+	}
 	v_actual = ice_ena_msix(pf, needed);
 	if (v_actual < 0) {
 		err = v_actual;
@@ -383,6 +394,7 @@ static int ice_ena_msix_range(struct ice_pf *pf)
 	pf->max_adq_qps = !ice_is_safe_mode(pf) ? lan_adj_vec[adj_step] : 1;
 #endif /* DEVLINK_SUPPORT && HAVE_DEVLINK_RELOAD_ACTION_AND_LIMIT */
 	pf->msix.misc += fdir_adj_vec[ICE_ADJ_VEC_BEST_CASE];
+	pf->msix.misc += ll_ts_adj_vec[ICE_ADJ_VEC_BEST_CASE];
 	total_msix += pf->msix.misc;
 
 	return total_msix;

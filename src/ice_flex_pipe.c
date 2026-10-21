@@ -2022,13 +2022,11 @@ ice_free_prof_masks(struct ice_hw *hw, enum ice_block blk, u16 prof_id)
 }
 
 /**
- * ice_shutdown_prof_masks - releases lock for masking
+ * ice_reset_prof_masks - mark all profile masks of a block as unused
  * @hw: pointer to the HW struct
  * @blk: hardware block
- *
- * This should be called before unloading the driver
  */
-static void ice_shutdown_prof_masks(struct ice_hw *hw, enum ice_block blk)
+static void ice_reset_prof_masks(struct ice_hw *hw, enum ice_block blk)
 {
 	u16 i;
 
@@ -2041,9 +2039,35 @@ static void ice_shutdown_prof_masks(struct ice_hw *hw, enum ice_block blk)
 		hw->blk[blk].masks.masks[i].in_use = false;
 		hw->blk[blk].masks.masks[i].idx = 0;
 		hw->blk[blk].masks.masks[i].mask = 0;
+		hw->blk[blk].masks.masks[i].ref = 0;
 	}
 
 	mutex_unlock(&hw->blk[blk].masks.lock);
+}
+
+/**
+ * ice_reset_all_prof_masks - mark all profile masks as unused
+ * @hw: pointer to the HW struct
+ *
+ * This should be called whenever the driver drops its view of the profiles
+ * that own the masks, otherwise the slots stay marked in use for good.
+ */
+static void ice_reset_all_prof_masks(struct ice_hw *hw)
+{
+	ice_reset_prof_masks(hw, ICE_BLK_RSS);
+	ice_reset_prof_masks(hw, ICE_BLK_FD);
+}
+
+/**
+ * ice_shutdown_prof_masks - releases lock for masking
+ * @hw: pointer to the HW struct
+ * @blk: hardware block
+ *
+ * This should be called before unloading the driver
+ */
+static void ice_shutdown_prof_masks(struct ice_hw *hw, enum ice_block blk)
+{
+	ice_reset_prof_masks(hw, blk);
 	mutex_destroy(&hw->blk[blk].masks.lock);
 }
 
@@ -2621,6 +2645,61 @@ static void ice_free_vsig_tbl(struct ice_hw *hw, enum ice_block blk)
 }
 
 /**
+ * ice_rel_blk_hw_res - hand back the HW resources a block's SW tables own
+ * @hw: pointer to the hardware structure
+ * @blk: the HW block to release
+ *
+ * Firmware tracks profile ID and profile TCAM ownership per PF and keeps that
+ * ownership across every reset, so anything the driver is about to forget has
+ * to be given back explicitly.
+ */
+static void ice_rel_blk_hw_res(struct ice_hw *hw, enum ice_block blk)
+{
+	struct ice_es *es = &hw->blk[blk].es;
+
+	/* nothing can be handed back once the queue carrying free_res is down */
+	if (!ice_check_sq_alive(hw, &hw->adminq))
+		return;
+
+	if (hw->blk[blk].xlt2.vsig_tbl) {
+		for (int i = ICE_DEFAULT_VSIG + 1; i < ICE_MAX_VSIGS; i++) {
+			struct ice_vsig_prof *p;
+
+			if (!hw->blk[blk].xlt2.vsig_tbl[i].in_use)
+				continue;
+
+			list_for_each_entry(p, &hw->blk[blk].xlt2.vsig_tbl[i].prop_lst,
+					    list) {
+				for (int j = 0; j < p->tcam_count; j++) {
+					if (!p->tcam[j].in_use)
+						continue;
+
+					p->tcam[j].in_use = false;
+					ice_free_tcam_ent(hw, blk,
+							  p->tcam[j].tcam_idx);
+				}
+			}
+		}
+	}
+
+	if (!es->ref_count)
+		return;
+
+	/* one free per owned profile ID, matching the single alloc or
+	 * subscribe ice_add_prof() did for it
+	 */
+	for (int i = 0; i < es->count; i++) {
+		if (!es->ref_count[i])
+			continue;
+
+		es->ref_count[i] = 0;
+		if (es->mask_ena)
+			ice_free_prof_masks(hw, blk, i);
+		ice_free_prof_id(hw, blk, (u8)i);
+	}
+}
+
+/**
  * ice_free_hw_tbls - free hardware table memory
  * @hw: pointer to the hardware structure
  */
@@ -2630,6 +2709,8 @@ void ice_free_hw_tbls(struct ice_hw *hw)
 	u8 i;
 
 	for (i = 0; i < ICE_BLK_COUNT; i++) {
+		ice_rel_blk_hw_res(hw, (enum ice_block)i);
+
 		if (hw->blk[i].is_list_init) {
 			struct ice_es *es = &hw->blk[i].es;
 
@@ -2683,6 +2764,8 @@ void ice_clear_hw_tbls(struct ice_hw *hw)
 		struct ice_xlt1 *xlt1 = &hw->blk[i].xlt1;
 		struct ice_xlt2 *xlt2 = &hw->blk[i].xlt2;
 		struct ice_es *es = &hw->blk[i].es;
+
+		ice_rel_blk_hw_res(hw, (enum ice_block)i);
 
 		if (hw->blk[i].is_list_init) {
 			ice_free_prof_map(hw, i);
@@ -2739,6 +2822,8 @@ void ice_clear_hw_tbls(struct ice_hw *hw)
 			memset(prof_id->id, 0,
 			       prof_id->count * sizeof(*prof_id->id));
 	}
+
+	ice_reset_all_prof_masks(hw);
 }
 
 /**
@@ -3473,8 +3558,8 @@ hw->back);
 								    es, masks,
 								    &prof_id);
 			if (status)
-				status = ice_alloc_prof_id(primary, blk,
-							   &prof_id);
+				status = ice_alloc_prof_id(primary ? primary : hw,
+							   blk, &prof_id);
 			else
 				status = ice_subscribe_prof_id(hw, blk,
 							       prof_id);

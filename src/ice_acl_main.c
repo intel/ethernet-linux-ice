@@ -158,6 +158,120 @@ ice_acl_set_ether_seg(struct ice_flow_seg_info *seg,
 }
 
 /**
+ * ice_acl_seg_info_eq - test whether two ACL flow segments share an input set
+ * @a: first flow segment
+ * @b: second flow segment
+ *
+ * Compare the segments' matched-header and matched-field descriptors instead of
+ * a raw memcmp(), which would also compare struct padding. The VF and ethtool
+ * callers build the extraction with the same helpers, so the header bitmask
+ * together with the match and range field bitmaps fully describe the input set.
+ *
+ * Return: true if both segments describe the same input set.
+ */
+static bool
+ice_acl_seg_info_eq(const struct ice_flow_seg_info *a,
+		    const struct ice_flow_seg_info *b)
+{
+	return a->hdrs == b->hdrs &&
+	       bitmap_equal(a->match, b->match, ICE_FLOW_FIELD_IDX_MAX) &&
+	       bitmap_equal(a->range, b->range, ICE_FLOW_FIELD_IDX_MAX);
+}
+
+/**
+ * ice_acl_prof_add - add or match an ACL HW profile for a flow type
+ * @pf: ice PF structure
+ * @fltr_type: filter (flow) type the segment describes
+ * @seg: pre-built flow segment; this function takes ownership of it
+ *
+ * Ensure an ACL HW profile exists for @fltr_type using the input set described
+ * by @seg. If a profile already exists with the same input set, @seg is freed
+ * and success is returned. If one exists with a different input set, -ENOSPC is
+ * returned. On every path @seg is either stored in the profile or freed.
+ *
+ * Returns 0 on success and negative values for failure
+ */
+static int
+ice_acl_prof_add(struct ice_pf *pf, enum ice_fltr_ptype fltr_type,
+		 struct ice_flow_seg_info *seg)
+{
+	struct ice_fd_hw_prof *hw_prof = NULL;
+	struct ice_flow_prof *prof = NULL;
+	struct ice_flow_seg_info *old_seg;
+	struct ice_hw *hw = &pf->hw;
+	bool new_prof = false;
+	struct device *dev;
+	int err;
+
+	dev = ice_pf_to_dev(pf);
+
+	if (!hw->acl_prof) {
+		hw->acl_prof = devm_kcalloc(dev, ICE_FLTR_PTYPE_MAX,
+					    sizeof(*hw->acl_prof), GFP_KERNEL);
+		if (!hw->acl_prof) {
+			err = -ENOMEM;
+			goto err_exit;
+		}
+	}
+	if (!hw->acl_prof[fltr_type]) {
+		hw->acl_prof[fltr_type] = devm_kzalloc(dev,
+						       sizeof(**hw->acl_prof),
+						       GFP_KERNEL);
+		if (!hw->acl_prof[fltr_type]) {
+			err = -ENOMEM;
+			goto err_exit;
+		}
+		new_prof = true;
+	}
+
+	hw_prof = hw->acl_prof[fltr_type];
+	old_seg = hw_prof->fdir_seg[0];
+	if (old_seg) {
+		/* @seg describes the field extraction (the input-set superset)
+		 * for this flow type, not a per-rule match. The VF and ethtool
+		 * callers build the same full-extraction segment for a given
+		 * flow type, so an existing profile is reused and each rule's
+		 * per-entry masks select the fields it actually matches.
+		 */
+		if (ice_acl_seg_info_eq(old_seg, seg)) {
+			devm_kfree(dev, seg);
+			return 0;
+		}
+
+		/* The slot for this flow type is already taken by a different
+		 * extraction that cannot share the existing profile (still in
+		 * use), so free only the new seg and leave it intact.
+		 */
+		err = -ENOSPC;
+		goto err_exit;
+	}
+
+	/* Adding a profile for the given flow specification with no
+	 * actions.
+	 */
+	err = ice_flow_add_prof(hw, ICE_BLK_ACL, ICE_FLOW_RX, seg, 1,
+				NULL, 0, &prof, false);
+	if (err)
+		goto err_free_prof;
+
+	hw_prof->fdir_seg[0] = seg;
+	hw_prof->prof_id[0] = prof->id;
+	return 0;
+
+err_free_prof:
+	/* Release the empty profile allocated in this call so it does not
+	 * linger (until driver removal) after a failed profile add.
+	 */
+	if (new_prof) {
+		devm_kfree(dev, hw->acl_prof[fltr_type]);
+		hw->acl_prof[fltr_type] = NULL;
+	}
+err_exit:
+	devm_kfree(dev, seg);
+	return err;
+}
+
+/**
  * ice_acl_check_input_set - Checks that a given ACL input set is valid
  * @pf: ice PF structure
  * @fsp: pointer to ethtool Rx flow specification
@@ -167,12 +281,8 @@ ice_acl_set_ether_seg(struct ice_flow_seg_info *seg,
 static int
 ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 {
-	struct ice_fd_hw_prof *hw_prof = NULL;
-	struct ice_flow_prof *prof = NULL;
-	struct ice_flow_seg_info *old_seg;
 	struct ice_flow_seg_info *seg;
 	enum ice_fltr_ptype fltr_type;
-	struct ice_hw *hw = &pf->hw;
 	struct device *dev;
 	int err;
 
@@ -215,57 +325,8 @@ ice_acl_check_input_set(struct ice_pf *pf, struct ethtool_rx_flow_spec *fsp)
 
 	fltr_type = ice_ethtool_flow_to_fltr(fsp->flow_type & ~FLOW_EXT);
 
-	if (!hw->acl_prof) {
-		hw->acl_prof = devm_kcalloc(dev, ICE_FLTR_PTYPE_MAX,
-					    sizeof(*hw->acl_prof), GFP_KERNEL);
-		if (!hw->acl_prof) {
-			err = -ENOMEM;
-			goto err_exit;
-		}
-	}
-	if (!hw->acl_prof[fltr_type]) {
-		hw->acl_prof[fltr_type] = devm_kzalloc(dev,
-						       sizeof(**hw->acl_prof),
-						       GFP_KERNEL);
-		if (!hw->acl_prof[fltr_type]) {
-			err = -ENOMEM;
-			goto err_acl_prof_exit;
-		}
-		hw->acl_prof[fltr_type]->cnt = 0;
-	}
+	return ice_acl_prof_add(pf, fltr_type, seg);
 
-	hw_prof = hw->acl_prof[fltr_type];
-	old_seg = hw_prof->fdir_seg[0];
-	if (old_seg) {
-		/* This flow_type already has an input set.
-		 * If it matches the requested input set then we are
-		 * done. If it's different then it's an error.
-		 */
-		if (!memcmp(old_seg, seg, sizeof(*seg))) {
-			devm_kfree(dev, seg);
-			return 0;
-		}
-
-		err = -EINVAL;
-		goto err_acl_prof_flow_exit;
-	}
-
-	/* Adding a profile for the given flow specification with no
-	 * actions (NULL) and zero actions 0.
-	 */
-	err = ice_flow_add_prof(hw, ICE_BLK_ACL, ICE_FLOW_RX, seg, 1,
-				NULL, 0, &prof, false);
-	if (err)
-		goto err_exit;
-
-	hw_prof->fdir_seg[0] = seg;
-	hw_prof->prof_id[0] = prof->id;
-	return 0;
-
-err_acl_prof_flow_exit:
-	devm_kfree(dev, hw->acl_prof[fltr_type]);
-err_acl_prof_exit:
-	devm_kfree(dev, hw->acl_prof);
 err_exit:
 	devm_kfree(dev, seg);
 
@@ -364,4 +425,122 @@ free_input:
 		devm_kfree(dev, input);
 
 	return ret;
+}
+
+/**
+ * ice_acl_prof_add_vf - ensure a full-input-set ACL profile for a VF flow type
+ * @pf: ice PF structure
+ * @flow: filter (flow) type to program
+ *
+ * Build the full input set segment for @flow (IPv4 addresses plus L4 ports for
+ * TCP/UDP/SCTP, IP addresses only for "other") and add/match the shared ACL HW
+ * profile keyed by @flow. VF and ethtool ACL rules of the same flow type share
+ * the same hw->acl_prof[flow]; per-entry masks select the fields that matter.
+ *
+ * Returns 0 on success and negative values for failure
+ */
+static int
+ice_acl_prof_add_vf(struct ice_pf *pf, enum ice_fltr_ptype flow)
+{
+	enum ice_flow_seg_hdr l4_proto = ICE_FLOW_SEG_HDR_NONE;
+	struct device *dev = ice_pf_to_dev(pf);
+	struct ice_flow_seg_info *seg;
+	int err;
+
+	switch (flow) {
+	case ICE_FLTR_PTYPE_NONF_IPV4_TCP:
+		l4_proto = ICE_FLOW_SEG_HDR_TCP;
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_UDP:
+		l4_proto = ICE_FLOW_SEG_HDR_UDP;
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_SCTP:
+		l4_proto = ICE_FLOW_SEG_HDR_SCTP;
+		break;
+	case ICE_FLTR_PTYPE_NONF_IPV4_OTHER:
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	seg = devm_kzalloc(dev, sizeof(*seg), GFP_KERNEL);
+	if (!seg)
+		return -ENOMEM;
+
+	ICE_FLOW_SET_HDRS(seg, ICE_FLOW_SEG_HDR_IPV4 | l4_proto);
+	ice_acl_set_ip4_addr_seg(seg);
+	if (l4_proto != ICE_FLOW_SEG_HDR_NONE) {
+		err = ice_acl_set_ip4_port_seg(seg, l4_proto);
+		if (err) {
+			devm_kfree(dev, seg);
+			return err;
+		}
+	}
+
+	return ice_acl_prof_add(pf, flow, seg);
+}
+
+/**
+ * ice_acl_add_rule_vf - program an ACL rule on behalf of a VF FDIR filter
+ * @vsi: pointer to the VF VSI the rule forwards to
+ * @input: filter data (values, masks, action) to program
+ * @entry_id: globally unique ACL entry ID for this rule
+ * @entry_h: on success, receives the ACL entry handle (for later removal)
+ *
+ * Ensure the shared ACL profile exists for input->flow_type, build the drop or
+ * forward-to-queue action from input->dest_ctl / input->q_index and program the
+ * TCAM entry. Unlike the ethtool path this does not touch the PF SW filter list
+ * or counters; the VF virtchnl path owns that bookkeeping.
+ *
+ * Returns 0 on success and negative values for failure
+ */
+int ice_acl_add_rule_vf(struct ice_vsi *vsi, struct ice_fdir_fltr *input,
+			u64 entry_id, u64 *entry_h)
+{
+	struct ice_flow_action acts[ICE_ACL_NUM_ACT] = {};
+	struct ice_fd_hw_prof *hw_prof;
+	enum ice_fltr_ptype flow;
+	struct ice_pf *pf;
+	struct ice_hw *hw;
+	int act_cnt;
+	int err;
+
+	if (!vsi || !input || !entry_h)
+		return -EINVAL;
+
+	pf = vsi->back;
+	hw = &pf->hw;
+	flow = input->flow_type;
+
+	err = ice_acl_prof_add_vf(pf, flow);
+	if (err)
+		return err;
+
+	act_cnt = 1;
+	if (input->dest_ctl == ICE_FLTR_PRGM_DESC_DEST_DROP_PKT) {
+		acts[0].type = ICE_FLOW_ACT_DROP;
+		acts[0].data.acl_act.mdid = ICE_MDID_RX_PKT_DROP;
+		acts[0].data.acl_act.prio = ICE_ACL_ACT_PRIO;
+		acts[0].data.acl_act.value = cpu_to_le16(0x1);
+	} else {
+		acts[0].type = ICE_FLOW_ACT_FWD_QUEUE;
+		acts[0].data.acl_act.mdid = ICE_MDID_RX_DST_Q;
+		acts[0].data.acl_act.prio = ICE_ACL_ACT_PRIO;
+		acts[0].data.acl_act.value = cpu_to_le16(input->q_index);
+	}
+
+	hw_prof = hw->acl_prof[flow];
+
+	/* Do not record the VF VSI in the shared hw->acl_prof[flow]
+	 * vsi_h/entry_h bookkeeping. That bookkeeping is walked by the PF
+	 * FD/ACL teardown (ice_vsi_manage_fdir -> ice_fdir_erase_flow_from_hw),
+	 * which assumes PF-persistent VSIs. A VF VSI is released when the VF is
+	 * removed, so a stale handle left here would be dereferenced through
+	 * ice_get_hw_vsi_num() during PF removal and crash. The VF owns this
+	 * entry's lifecycle via conf->acl_entry_h (removed in
+	 * ice_vc_del_fdir_acl() and ice_vc_fdir_flush_entry()).
+	 */
+	return ice_flow_add_entry(hw, ICE_BLK_ACL, hw_prof->prof_id[0],
+				  entry_id, vsi->idx, ICE_FLOW_PRIO_NORMAL,
+				  input, acts, act_cnt, entry_h);
 }

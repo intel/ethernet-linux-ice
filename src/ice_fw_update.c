@@ -17,6 +17,15 @@
 
 #include "ice.h"
 #include "ice_fw_update.h"
+#include "ice_lib.h"
+
+/* Bitmask values for ice_fwu_priv::seen_components */
+#define ICE_FWU_COMP_NVM	BIT(0)
+#define ICE_FWU_COMP_OROM	BIT(1)
+#define ICE_FWU_COMP_NETLIST	BIT(2)
+#define ICE_FWU_COMP_MANIFEST	BIT(3)
+#define ICE_FWU_COMP_ALL_EROT	(ICE_FWU_COMP_NVM | ICE_FWU_COMP_OROM | \
+				 ICE_FWU_COMP_NETLIST | ICE_FWU_COMP_MANIFEST)
 
 struct ice_fwu_priv {
 	struct pldmfw context;
@@ -38,6 +47,9 @@ struct ice_fwu_priv {
 
 	/* Track if EMP reset is available */
 	u8 emp_reset_available;
+
+	/* Bitmask of auth components seen in this image (ICE_FWU_COMP_*) */
+	u8 seen_components;
 };
 
 /**
@@ -116,6 +128,9 @@ ice_check_component_response(struct ice_pf *pf, u16 id, u8 response, u8 code,
 		break;
 	case NVM_COMP_ID_NETLIST:
 		component = "fw.netlist";
+		break;
+	case NVM_COMP_ID_MANIFEST:
+		component = "fw.pqc_manifest";
 		break;
 	default:
 		WARN(1, "Unexpected unknown component identifier 0x%02x", id);
@@ -230,8 +245,16 @@ ice_send_component_table(struct pldmfw *context, struct pldmfw_component *compon
 
 	switch (component->identifier) {
 	case NVM_COMP_ID_OROM:
+		priv->seen_components |= ICE_FWU_COMP_OROM;
+		break;
 	case NVM_COMP_ID_NVM:
+		priv->seen_components |= ICE_FWU_COMP_NVM;
+		break;
 	case NVM_COMP_ID_NETLIST:
+		priv->seen_components |= ICE_FWU_COMP_NETLIST;
+		break;
+	case NVM_COMP_ID_MANIFEST:
+		priv->seen_components |= ICE_FWU_COMP_MANIFEST;
 		break;
 	default:
 		dev_err(dev, "Unable to update due to a firmware component with unknown ID %u\n",
@@ -629,6 +652,28 @@ ice_switch_flash_banks(struct ice_pf *pf, u8 activate_flags,
 }
 
 /**
+ * ice_is_partial_nvm_update_allowed - Check if partial NVM update is allowed
+ * @priv: PLDM firmware update private data
+ *
+ * On eRoT adapters, all four authentication components (NVM Bank, OROM,
+ * NetList, Manifest) must be present in the firmware image.  A partial
+ * update would be rejected mid-session by firmware.
+ *
+ * Returns: true when the update may proceed, false if a required component
+ * is absent on an eRoT adapter.
+ */
+static bool
+ice_is_partial_nvm_update_allowed(struct ice_fwu_priv *priv)
+{
+	struct ice_pf *pf = priv->pf;
+
+	if (!ice_is_erot_adapter(pf))
+		return true;
+
+	return priv->seen_components == ICE_FWU_COMP_ALL_EROT;
+}
+
+/**
  * ice_flash_component - Flash a component of the NVM
  * @context: PLDM fw update structure
  * @component: the component table to program
@@ -653,6 +698,12 @@ ice_flash_component(struct pldmfw *context, struct pldmfw_component *component)
 	u8 flag;
 	int err;
 
+	if (!ice_is_partial_nvm_update_allowed(priv)) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Partial NVM update not allowed on eRoT adapter: image must contain NVM, OROM, NetList and Manifest");
+		return -EPERM;
+	}
+
 	switch (component->identifier) {
 	case NVM_COMP_ID_OROM:
 		module = ICE_SR_1ST_OROM_BANK_PTR;
@@ -671,6 +722,12 @@ ice_flash_component(struct pldmfw *context, struct pldmfw_component *component)
 		flag = ICE_AQC_NVM_ACTIV_SEL_NETLIST;
 		reset_level = NULL;
 		name = "fw.netlist";
+		break;
+	case NVM_COMP_ID_MANIFEST:
+		module = ICE_SR_PQC_MANIFEST_BANK_PTR;
+		flag = 0;
+		reset_level = NULL;
+		name = "fw.pqc_manifest";
 		break;
 	default:
 		/* This should not trigger, since we check the id before

@@ -1275,8 +1275,10 @@ int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
 		return -ENOENT;
 
 	vsi = ice_get_vf_vsi(vf);
-	if (!vsi)
+	if (!vsi) {
+		ice_put_vf(vf);
 		return -ENOENT;
+	}
 
 	prev_msix = vf->num_msix;
 	prev_queues = vf->num_vf_qs;
@@ -1286,8 +1288,11 @@ int ice_sriov_set_msix_vec_count(struct pci_dev *vf_dev, int msix_vec_count)
 	 */
 	avail_msix = ice_get_free_res_count(pf->vf_irq_tracker) + prev_msix;
 
-	if (msix_vec_count < ICE_MIN_INTR_PER_VF || msix_vec_count > avail_msix)
+	if (msix_vec_count < ICE_MIN_INTR_PER_VF ||
+	    msix_vec_count > avail_msix) {
+		ice_put_vf(vf);
 		return -ENOSPC;
+	}
 
 	ice_dis_vf_mappings(vf);
 	ice_sriov_free_irqs(pf, vf);
@@ -1514,7 +1519,8 @@ int ice_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool ena)
 
 	if (ice_is_eswitch_mode_switchdev(pf)) {
 		dev_info(ice_pf_to_dev(pf), "Trusted VF is forbidden in switchdev mode\n");
-		return -EOPNOTSUPP;
+		ret = -EOPNOTSUPP;
+		goto out_put_vf;
 	}
 
 	vf_vsi = ice_get_vf_vsi(vf);
@@ -1700,7 +1706,8 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted)
 
 	if (ice_is_eswitch_mode_switchdev(pf)) {
 		dev_info(ice_pf_to_dev(pf), "Trusted VF is forbidden in switchdev mode\n");
-		return -EOPNOTSUPP;
+		ret = -EOPNOTSUPP;
+		goto out_put_vf;
 	}
 
 	ret = ice_check_vf_ready_for_cfg(vf);
@@ -1901,7 +1908,8 @@ int ice_set_vf_bw(struct net_device *netdev, int vf_id, int max_tx_rate)
 
 	if (pf->hw.port_info->is_custom_tx_enabled) {
 		dev_err(dev, "Cannot enable feature VF QoS because HQoS HW offload mode is currently enabled\n");
-		return -EBUSY;
+		ret = -EBUSY;
+		goto out_put_vf;
 	}
 
 #ifdef HAVE_NDO_SET_VF_MIN_MAX_TX_RATE
@@ -2401,8 +2409,10 @@ int ice_get_vf_port_info(struct ice_pf *pf, u16 vf_id,
 	}
 
 	vsi = ice_get_vf_vsi(vf);
-	if (!vsi)
+	if (!vsi) {
+		ice_put_vf(vf);
 		return -EAGAIN;
+	}
 
 	vf_port_info->vf_id = vf->vf_id;
 	vf_port_info->vport_id = vsi->vsi_num;

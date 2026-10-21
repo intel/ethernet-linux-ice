@@ -26,6 +26,7 @@ struct iidc_core_dev_info
 
 #define ICE_FIND_CDEV_INFO(pf, cdev_info_id) \
 	ice_find_cdev_info_by_id((pf), (cdev_info_id))
+#define ICE_SEND_EVENT_TO_AUXS(pf, event) ice_send_event_to_auxs((pf), (event))
 
 void ice_send_vf_reset_to_aux(struct iidc_core_dev_info *cdev_info, u16 vf_id);
 bool ice_is_rdma_aux_loaded(struct ice_pf *pf);

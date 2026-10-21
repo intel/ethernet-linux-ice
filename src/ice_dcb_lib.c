@@ -411,7 +411,16 @@ int ice_pf_dcb_cfg(struct ice_pf *pf, struct ice_dcbx_cfg *new_cfg, bool locked)
 	}
 
 	set_bit(IIDC_EVENT_BEFORE_TC_CHANGE, event->type);
-	ice_send_event_to_auxs(pf, event);
+	/* Drop RTNL if held before notifying aux drivers to avoid AB-BA
+	 * deadlock. ice_send_event_to_aux() acquires device_lock, while irdma
+	 * probe (running under device_lock via auxiliary_device_add) will call
+	 * register_netdevice_notifier() which takes RTNL.
+	 */
+	if (locked)
+		rtnl_unlock();
+	ICE_SEND_EVENT_TO_AUXS(pf, event);
+	if (locked)
+		rtnl_lock();
 	kfree(event);
 
 	/* avoid race conditions by holding the lock while disabling and
@@ -446,7 +455,7 @@ int ice_pf_dcb_cfg(struct ice_pf *pf, struct ice_dcbx_cfg *new_cfg, bool locked)
 		goto out;
 	}
 
-	ice_pf_dcb_recfg(pf);
+	ice_pf_dcb_recfg(pf, locked);
 
 out:
 	/* enable previously downed VSIs */
@@ -743,12 +752,13 @@ static int ice_dcb_noncontig_cfg(struct ice_pf *pf)
 /**
  * ice_pf_dcb_recfg - Reconfigure all VEBs and VSIs
  * @pf: pointer to the PF struct
+ * @locked: true if caller holds RTNL
  *
  * Assumed caller has already disabled all VSIs before
  * calling this function. Reconfiguring DCB based on
  * local_dcbx_cfg.
  */
-void ice_pf_dcb_recfg(struct ice_pf *pf)
+void ice_pf_dcb_recfg(struct ice_pf *pf, bool locked)
 {
 	struct ice_dcbx_cfg *dcbcfg = &pf->hw.port_info->qos_cfg.local_dcbx_cfg;
 	struct iidc_core_dev_info *cdev_info;
@@ -812,7 +822,17 @@ void ice_pf_dcb_recfg(struct ice_pf *pf)
 
 		set_bit(IIDC_EVENT_AFTER_TC_CHANGE, event->type);
 		event->info.port_qos = cdev_info->qos_info;
-		ice_send_event_to_auxs(pf, event);
+		/* Drop RTNL before notifying aux drivers to avoid AB-BA
+		 * deadlock. ice_send_event_to_aux() acquires device_lock, while
+		 * irdma probe (running under device_lock via
+		 * auxiliary_device_add) will call register_netdevice_notifier()
+		 * which takes RTNL.
+		 */
+		if (locked)
+			rtnl_unlock();
+		ICE_SEND_EVENT_TO_AUXS(pf, event);
+		if (locked)
+			rtnl_lock();
 		kfree(event);
 	}
 }
@@ -1145,7 +1165,7 @@ ice_dcb_process_lldp_set_mib_change(struct ice_pf *pf,
 		ievent = kzalloc(sizeof(*ievent), GFP_KERNEL);
 		if (ievent) {
 			set_bit(IIDC_EVENT_BEFORE_TC_CHANGE, ievent->type);
-			ice_send_event_to_auxs(pf, ievent);
+			ICE_SEND_EVENT_TO_AUXS(pf, ievent);
 			kfree(ievent);
 		}
 	}
@@ -1167,7 +1187,7 @@ ice_dcb_process_lldp_set_mib_change(struct ice_pf *pf,
 	}
 
 	/* changes in configuration update VSI */
-	ice_pf_dcb_recfg(pf);
+	ice_pf_dcb_recfg(pf, true);
 
 	/* enable previously downed VSIs */
 	ice_dcb_ena_dis_vsi(pf, true, true);

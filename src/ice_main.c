@@ -30,10 +30,10 @@
 #include "ice_ieps.h"
 
 #define DRV_VERSION_MAJOR 2
-#define DRV_VERSION_MINOR 6
-#define DRV_VERSION_BUILD 7
+#define DRV_VERSION_MINOR 7
+#define DRV_VERSION_BUILD 6
 
-#define DRV_VERSION	"2.6.7"
+#define DRV_VERSION	"2.7.6"
 #define DRV_SUMMARY	"Intel(R) Ethernet Connection E800 Series Linux Driver"
 #ifdef ICE_ADD_PROBES
 #define DRV_VERSION_EXTRA "_probes"
@@ -978,7 +978,7 @@ ice_prepare_for_reset(struct ice_pf *pf, enum ice_reset_req reset_type)
 	event = kzalloc(sizeof(*event), GFP_KERNEL);
 	if (event) {
 		set_bit(IIDC_EVENT_WARN_RESET, event->type);
-		ice_send_event_to_auxs(pf, event);
+		ICE_SEND_EVENT_TO_AUXS(pf, event);
 		kfree(event);
 	} else {
 		dev_warn(ice_pf_to_dev(pf), "Failed to notify auxiliary drivers of reset\n");
@@ -1366,8 +1366,10 @@ static void ice_set_netdev_features(struct net_device *netdev)
 	/* mutual exclusivity for GCO and TSO is enforced by the
 	 * ice_fix_features() ndo callback.
 	 */
-	if (ice_is_feature_supported(pf, ICE_F_GCS))
+	if (ice_is_feature_supported(pf, ICE_F_GCS)) {
 		netdev->hw_features |= NETIF_F_HW_CSUM;
+		netdev->hw_enc_features |= NETIF_F_HW_CSUM;
+	}
 #ifdef HAVE_NDO_DFWD_OPS
 
 	/* Enable macvlan offloads */
@@ -2150,7 +2152,7 @@ static int ice_ieps_handle_link_change(struct ice_pf *pf, bool link_up)
 
 	set_bit(IIDC_EVENT_LINK_CHNG, iev->type);
 	iev->info.link_up = link_up;
-	ice_send_event_to_auxs(pf, iev);
+	ICE_SEND_EVENT_TO_AUXS(pf, iev);
 	kfree(iev);
 
 	return 0;
@@ -2358,7 +2360,9 @@ ice_get_fwlog_data(struct ice_pf *pf, struct ice_rq_event_info *event)
 	fwlog = &hw->fwlog_ring.rings[hw->fwlog_ring.tail];
 
 	memset(fwlog->data, 0, PAGE_SIZE);
-	fwlog->data_size = le16_to_cpu(event->desc.datalen);
+	fwlog->data_size = min3((u16)le16_to_cpu(event->desc.datalen),
+				event->msg_len,
+				(u16)ICE_AQ_MAX_BUF_LEN);
 
 	memcpy(fwlog->data, event->msg_buf, fwlog->data_size);
 	ice_fwlog_ring_increment(&hw->fwlog_ring.tail, hw->fwlog_ring.size);
@@ -3770,7 +3774,7 @@ static void ice_service_task(struct work_struct *work)
 			set_bit(IIDC_EVENT_CRIT_ERR, event->type);
 			/* report the entire OICR value to AUX driver */
 			event->info.reg = pf->oicr_err_reg;
-			ice_send_event_to_auxs(pf, event);
+			ICE_SEND_EVENT_TO_AUXS(pf, event);
 			kfree(event);
 		}
 	}
@@ -3780,7 +3784,7 @@ static void ice_service_task(struct work_struct *work)
 		event = kzalloc(sizeof(*event), GFP_KERNEL);
 		if (event) {
 			set_bit(IIDC_EVENT_AFTER_MTU_CHANGE, event->type);
-			ice_send_event_to_auxs(pf, event);
+			ICE_SEND_EVENT_TO_AUXS(pf, event);
 			kfree(event);
 		}
 	}
@@ -4917,6 +4921,8 @@ skip_irq:
 		/* If any new Tx timestamps happened while in interrupt,
 		 * re-arm the interrupt to trigger it again.
 		 */
+		ice_trace(misc_intr_tstamps_pending, pf);
+
 		wr32(hw, PFINT_OICR, PFINT_OICR_TSYN_TX_M);
 		ice_flush(hw);
 	}
@@ -5621,18 +5627,45 @@ static int ice_init_pf(struct ice_pf *pf)
 }
 
 /**
- * ice_is_wol_supported - check if WoL is supported
+ * ice_is_rde_wol_override_set - check if RDE WoL Override PF Driver flag is set
  * @hw: pointer to hardware info
  *
- * Check if WoL is supported based on the HW configuration.
- * Returns true if NVM supports and enables WoL for this port, false otherwise
+ * Read the HII Port Disable By Function TLV (0x139) and return 1 if
+ * bit 8 (RDE WOL Override PF Driver Flag) is set, meaning firmware may
+ * override an OS driver WoL disable when entering S5.
+ *
+ * Returns 1 if the flag is set, 0 if clear, or a negative error code.
+ */
+int ice_is_rde_wol_override_set(struct ice_hw *hw)
+{
+	u16 tlv, tlv_len, buf;
+	int err;
+
+	err = ice_get_pfa_module_tlv(hw, &tlv, &tlv_len,
+				     ICE_SR_HII_PORT_DISABLE_BY_FUNC_PTR);
+	if (err)
+		return false;
+
+	err = ice_read_sr_word(hw, tlv + ICE_SR_TLV_DATA_OFFSET, &buf);
+	if (err)
+		return false;
+
+	return !!(buf & ICE_SR_HII_PORT_DISABLE_RDE_WOL_OVRD);
+}
+
+/**
+ * ice_is_wol_supported - check if WoL is supported by HW
+ * @hw: pointer to hardware info
+ *
+ * Returns true if the NVM Software Reserved Word 2 (0x19) bit[port] is clear,
+ * meaning the NIC port is physically capable of Wake on LAN.
  */
 bool ice_is_wol_supported(struct ice_hw *hw)
 {
 	u16 wol_ctrl;
 
 	/* A bit set to 1 in the NVM Software Reserved Word 2 (WoL control
-	 * word) indicates WoL is not supported on the corresponding PF ID.
+	 * word) indicates WoL is not supported on the corresponding NIC port.
 	 */
 	if (ice_read_sr_word(hw, ICE_SR_NVM_WOL_CFG, &wol_ctrl))
 		return false;
@@ -5641,16 +5674,46 @@ bool ice_is_wol_supported(struct ice_hw *hw)
 }
 
 /**
+ * ice_is_wol_enabled - check if WoL is enabled by PF Feature Config
+ * @hw: pointer to hardware info
+ *
+ * Reads the per-PF WoL Feature Config field (ICE_WOL_FEATURE(pf_id)) via
+ * the NVM Config Read admin queue command, the same field ID and access
+ * mechanism the UEFI driver uses. This field is not a Shadow RAM TLV;
+ * its storage location is resolved by firmware, not computed by software.
+ *
+ * Returns 1 if WoL is enabled, 0 if disabled or if the read fails.
+ */
+static int ice_is_wol_enabled(struct ice_hw *hw)
+{
+	struct ice_aqc_nvm_cfg_data wol_feat = {};
+	int err;
+
+	err = ice_acquire_nvm(hw, ICE_RES_READ);
+	if (err)
+		return false;
+
+	err = ice_aq_read_nvm_cfg(hw, 0, ICE_WOL_FEATURE(hw->pf_id), &wol_feat,
+				  sizeof(wol_feat), NULL, NULL);
+	ice_release_nvm(hw);
+	if (err)
+		return false;
+
+	return le16_to_cpu(wol_feat.field_value) == ICE_WOL_FEATURE_ENABLE;
+}
+
+/**
  * ice_vsi_recfg_qs - Change the number of queues on a VSI
  * @vsi: VSI being changed
  * @new_rx: new number of Rx queues
  * @new_tx: new number of Tx queues
+ * @locked: true if caller holds RTNL
  *
  * Only change the number of queues if new_tx, or new_rx is non-0.
  *
  * Returns 0 on success.
  */
-int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx)
+int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx, bool locked)
 {
 	int err = 0, timeout = 50, i = 0;
 	struct ice_pf *pf = vsi->back;
@@ -5690,8 +5753,14 @@ int ice_vsi_recfg_qs(struct ice_vsi *vsi, int new_rx, int new_tx)
 					    vsi->tc_cfg.tc_info[i].netdev_tc,
 					    vsi->tc_cfg.tc_info[i].qcount_tx,
 					    vsi->tc_cfg.tc_info[i].qoffset);
-	ice_pf_dcb_recfg(pf);
+	ice_pf_dcb_recfg(pf, locked);
 	ice_vsi_open(vsi);
+	/* Rx rings are reallocated during VSI rebuild and lose their ptp_rx
+	 * flag. Restore the timestamp configuration so newly allocated rings
+	 * are properly set up for hardware Rx timestamping.
+	 */
+	if (test_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags))
+		ice_ptp_restore_timestamp_mode(pf);
 	goto done;
 
 rebuild_err:
@@ -7366,6 +7435,11 @@ ice_probe(struct pci_dev *pdev, const struct pci_device_id __always_unused *ent)
 	pci_save_state(pdev);
 
 	hw->back = pf;
+	/* Point the software Global Config Lock at the per-device adapter mutex
+	 * so AQ commands are only serialized among PFs of this physical device,
+	 * not across every device the driver manages.
+	 */
+	hw->global_cfg_lock_sw = &pf->adapter->global_cfg_lock_sw;
 	hw->vendor_id = pdev->vendor;
 	hw->device_id = pdev->device;
 	pci_read_config_byte(pdev, PCI_REVISION_ID, &hw->revision_id);
@@ -7446,8 +7520,8 @@ err_dma:
  */
 static void ice_set_wake(struct ice_pf *pf)
 {
+	bool wol = pf->wol_ena && ice_is_wol_enabled(&pf->hw) > 0;
 	struct ice_hw *hw = &pf->hw;
-	bool wol = pf->wol_ena;
 
 	/* clear wake state, otherwise new wake events won't fire */
 	wr32(hw, PFPM_WUS, U32_MAX);
@@ -8020,6 +8094,7 @@ static const struct pci_device_id ice_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E830_L_QSFP), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E830C_SFP), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E830_L_SFP), 0 },
+	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835_10G_BASE_T), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835CC_BACKPLANE), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835CC_QSFP56), 0 },
 	{ PCI_VDEVICE(INTEL, ICE_DEV_ID_E835CC_SFP), 0 },
@@ -8267,6 +8342,15 @@ static void ice_set_rx_mode(struct net_device *netdev)
 	if (!vsi)
 #endif /* ESWITCH_SUPPORT && CONFIG_NET_DEVLINK */
 		return;
+
+#ifdef HAVE_NETDEV_UPPER_INFO
+	/* Promisc mode rules can mess up the switch rules installed on primary
+	 * aggregate member in LAG configuration when the aggregate is not fully
+	 * SR-IOV compliant.
+	 */
+	if (vsi->back->lag && vsi->back->lag->bonded && vsi->back->lag->primary)
+		return;
+#endif /* HAVE_NETDEV_UPPER_INFO */
 
 	/* Set the flags to synchronize filters
 	 * ndo_set_rx_mode may be triggered even without a change in netdev
@@ -9395,7 +9479,6 @@ static int ice_up_complete(struct ice_vsi *vsi)
 	if (vsi->port_info &&
 	    (vsi->port_info->phy.link_info.link_info & ICE_AQ_LINK_UP) &&
 	    vsi->netdev && vsi->type == ICE_VSI_PF) {
-		ice_ptp_link_change(pf, true);
 		ice_print_link_msg(vsi, true,
 				   vsi->port_info->phy.link_info.link_speed);
 		netif_tx_start_all_queues(vsi->netdev);
@@ -9910,7 +9993,6 @@ int ice_down(struct ice_vsi *vsi)
 		vlan_err = ice_vsi_del_vlan_zero(vsi);
 		netif_carrier_off(vsi->netdev);
 		netif_tx_disable(vsi->netdev);
-		ice_ptp_link_change(vsi->back, false);
 	}
 
 	ice_vsi_dis_irq(vsi);
@@ -10198,6 +10280,8 @@ static void ice_vsi_release_all(struct ice_pf *pf)
  *
  * Iterates through the pf->vsi array and rebuilds VSIs of the requested type
  */
+#define ICE_VSI_REPLAY_RETRIES 5
+#define ICE_VSI_REPLAY_WAIT_MS 1000
 static int ice_vsi_rebuild_by_type(struct ice_pf *pf, enum ice_vsi_type type)
 {
 	struct device *dev = ice_pf_to_dev(pf);
@@ -10218,11 +10302,27 @@ static int ice_vsi_rebuild_by_type(struct ice_pf *pf, enum ice_vsi_type type)
 			return err;
 		}
 
-		/* replay filters for the VSI */
-		err = ice_replay_vsi(&pf->hw, vsi->idx);
+		/* Replay filters for the VSI. After an EMP reset the firmware
+		 * may not be immediately ready to accept AQ commands for RSS
+		 * or switch filter programming, so retry on -EIO with a delay.
+		 */
+		for (int retry = 1; retry <= ICE_VSI_REPLAY_RETRIES; retry++) {
+			err = ice_replay_vsi(&pf->hw, vsi->idx);
+			if (!err || err != -EIO)
+				break;
+			if (retry < ICE_VSI_REPLAY_RETRIES) {
+				dev_dbg(dev, "replay VSI failed (attempt %d/%d, status %d, VSI %d, type %s), retrying in %d ms\n",
+					retry, ICE_VSI_REPLAY_RETRIES,
+					err, vsi->idx,
+					ice_vsi_type_str(type),
+					ICE_VSI_REPLAY_WAIT_MS);
+				msleep(ICE_VSI_REPLAY_WAIT_MS);
+			}
+		}
 		if (err) {
-			dev_err(dev, "replay VSI failed, status %d, VSI index %d, type %s\n",
-				err, vsi->idx, ice_vsi_type_str(type));
+			ice_dev_err_errno(dev, err,
+					  "replay VSI failed, VSI index %d, type %s",
+					  vsi->idx, ice_vsi_type_str(type));
 			return err;
 		}
 

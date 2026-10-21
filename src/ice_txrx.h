@@ -155,6 +155,7 @@ struct ice_tx_buf {
 	};
 	unsigned int bytecount;
 	unsigned short gso_segs;
+	s8 ptp_ts_idx;
 	u32 tx_flags;
 	DEFINE_DMA_UNMAP_LEN(len);
 	DEFINE_DMA_UNMAP_ADDR(dma);

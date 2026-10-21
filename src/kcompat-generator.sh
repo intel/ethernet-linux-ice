@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2018-2026 Intel Corporation
 
+# SPDX-License-Identifier: GPL-2.0
+
+
+
 set -Eeuo pipefail
 
 # This file generates HAVE_ and NEED_ defines for current kernel
@@ -145,6 +149,8 @@ function gen-devlink() {
 	gen NEED_DEVLINK_FMSG_DUMP_SKB if fun devlink_fmsg_dump_skb absent in "$dh"
 	gen NEED_DEVLINK_FMSG_PUT if macro devlink_fmsg_put absent in "$dh"
 	gen NEED_DEVLINK_HEALTH_DEFAULT_AUTO_RECOVER if fun devlink_health_reporter_create matches auto_recover in "$dh"
+	gen NEED_DEVLINK_PARAMS_VALIDATE_VAL_PTR if method validate of devlink_param lacks 'devlink_param_value \\*' in "$dh"
+	gen NEED_DEVLINK_PUT_EXT_VERSION if fun devlink_info_version_running_put_ext absent in "$dh"
 	gen NEED_DEVLINK_REGION_CREATE_OPS if fun devlink_region_create lacks 'struct devlink_region_ops \\*ops' in "$dh"
 	gen NEED_DEVLINK_RESOURCES_UNREGISTER_NO_RESOURCE if fun devlink_resources_unregister matches 'struct devlink_resource \\*' in "$dh"
 	gen NEED_DEVLINK_TO_DEV if fun devlink_to_dev absent in "$dh"
@@ -200,6 +206,7 @@ function gen-ethtool() {
 	gen HAVE_ETHTOOL_EXTENDED_RINGPARAMS if method get_ringparam of ethtool_ops matches 'struct kernel_ethtool_ringparam \\*' in "$eth"
 	gen HAVE_ETHTOOL_FEC_HIST if method get_fec_stats of ethtool_ops matches 'struct ethtool_fec_hist \\*' in "$eth"
 	gen HAVE_ETHTOOL_GET_FEC_STATS_OPS if struct ethtool_ops matches '\\*get_fec_stats' in "$eth"
+	gen HAVE_ETHTOOL_GET_RX_RING_COUNT if struct ethtool_ops matches '\\*get_rx_ring_count' in "$eth"
 	gen HAVE_ETHTOOL_GET_TS_STATS if struct ethtool_ops matches '\\*get_ts_stats' in "$eth"
 	gen HAVE_ETHTOOL_KEEE if struct ethtool_keee in "$eth"
 	gen HAVE_ETHTOOL_KERNEL_TS_INFO if struct kernel_ethtool_ts_info in "$eth"
@@ -237,13 +244,11 @@ function gen-filter() {
 function gen-flow-dissector() {
 	aah='include/net/act_api.h'
 	fdh='include/net/flow_dissector.h'
-	fkh='include/net/flow_keys.h'
 	foh='include/net/flow_offload.h'
 	pch='include/net/pkt_cls.h'
 	sgh='include/net/sch_generic.h'
 	tmh='include/net/tc_act/tc_mirred.h'
 
-	gen HAVE_FLOW_DISSECTOR_KEY_PPPOE if enum flow_dissector_key_id matches FLOW_DISSECTOR_KEY_PPPOE in "$fdh" "$fkh"
 	gen HAVE_FLOW_DISSECTOR_ICMP_ID if enum flow_dissector_key_icmp matches id in "$fdh"
 
 	gen HAVE_FLOW_BLOCK_API if fun flow_block_cb_priv in "$foh"
@@ -251,6 +256,7 @@ function gen-flow-dissector() {
 	# following HAVE ... CVLAN flag is mistakenly named after an enum key,
 	# but guards code around function call that was introduced later
 	gen HAVE_FLOW_DISSECTOR_KEY_CVLAN if fun flow_rule_match_cvlan in "$foh"
+	gen HAVE_FLOW_DISSECTOR_KEY_PPPOE if fun flow_rule_match_pppoe in "$foh"
 	gen HAVE_FLOW_MATCH_ICMP if struct flow_match_icmp in "$foh"
 	gen HAVE_TC_FLOW_INDIR_BLOCK_CLEANUP if fun flow_indr_dev_unregister matches 'void \\(\\*release\\)\\(void \\*cb_priv\\)'  in "$foh"
 	gen HAVE_TC_FLOW_INDIR_DEV if fun flow_indr_dev_register in "$foh"
@@ -343,7 +349,6 @@ function gen-netdevice() {
 	ndh='include/linux/netdevice.h'
 	gen HAVE_NDO_BRIDGE_SETLINK_EXTACK if method ndo_bridge_setlink of net_device_ops matches 'struct netlink_ext_ack \\*extack' in "$ndh"
 	gen HAVE_NDO_ETH_IOCTL if fun ndo_eth_ioctl in "$ndh"
-	gen HAVE_NDO_HWTSTAMP if method ndo_hwtstamp_get of net_device_ops in "$ndh"
 	gen HAVE_NDO_EXTENDED_SET_TX_MAXRATE if method ndo_set_tx_maxrate of net_device_ops_extended in "$ndh"
 	gen HAVE_NDO_FDB_ADD_EXTACK if method ndo_fdb_add of net_device_ops matches 'struct netlink_ext_ack \\*extack' in "$ndh"
 	gen HAVE_NDO_FDB_ADD_NOTIFIED if method ndo_fdb_add of net_device_ops matches 'bool \\*notified' in "$ndh"
@@ -352,6 +357,7 @@ function gen-netdevice() {
 	gen HAVE_NDO_FDB_DEL_NOTIFIED if method ndo_fdb_del of net_device_ops matches 'bool \\*notified' in "$ndh"
 	gen HAVE_NDO_GET_DEVLINK_PORT if method ndo_get_devlink_port of net_device_ops in "$ndh"
 	gen HAVE_NDO_GET_TSTAMP if method ndo_get_tstamp of net_device_ops in "$ndh"
+	gen HAVE_NDO_HWTSTAMP if method ndo_hwtstamp_get of net_device_ops in "$ndh"
 	gen HAVE_NDO_SETUP_TC_CHAIN_INDEX if method ndo_setup_tc of net_device_ops matches 'u32 chain_index' in "$ndh"
 	gen HAVE_NDO_SETUP_TC_REMOVE_TC_TO_NETDEV if method '(ndo_setup_tc|ndo_setup_tc_rh)' of '(net_device_ops|netdevice_ops_extended)' matches 'void \\*type_data' in "$ndh"
 	gen HAVE_NDO_UDP_TUNNEL_CALLBACK if method ndo_udp_tunnel_add of net_device_ops in "$ndh"
@@ -403,6 +409,12 @@ function gen-pci() {
 	gen NEED_PCI_ENABLE_PTM if fun pci_enable_ptm absent in "$pcih"
 }
 
+function gen-pldm() {
+	lph='include/linux/pldmfw.h'
+
+	gen HAVE_PLDMFW_COMPONENT_IDENTIFIER if enum pldmfw_update_mode in "$lph"
+}
+
 function gen-ptp() {
 	classifyh='include/linux/ptp_classify.h'
 	clockh='include/linux/ptp_clock_kernel.h'
@@ -423,6 +435,7 @@ function gen-ptp() {
 	gen NEED_DIFF_BY_SCALED_PPM if fun diff_by_scaled_ppm absent in "$clockh"
 	gen NEED_PTP_SYSTEM_TIMESTAMP if fun ptp_read_system_prets absent in "$clockh"
 	gen HAVE_PTP_SYS_COUNTERVAL_CSID if struct system_counterval_t matches clocksource_ids in "$timekeepingh"
+	gen NEED_KTIME_GET_SNAPSHOT_ID if fun ktime_get_snapshot_id absent in "$timekeepingh"
 	gen HAVE_PTP_TX_ONESTEP_P2P if enum hwtstamp_tx_types matches HWTSTAMP_TX_ONESTEP_P2P in include/uapi/linux/net_tstamp.h
 	gen HAVE_PTP_SYS_OFFSET_EXTENDED_IOCTL if macro PTP_SYS_OFFSET_EXTENDED in "$uapih"
 
@@ -482,6 +495,8 @@ function gen-other() {
 	gen NEED_BITMAP_COPY_CLEAR_TAIL if fun bitmap_copy_clear_tail absent in include/linux/bitmap.h
 	gen NEED_BITMAP_FROM_ARR32 if fun bitmap_from_arr32 absent in include/linux/bitmap.h
 	gen NEED_BITMAP_TO_ARR32 if fun bitmap_to_arr32 absent in include/linux/bitmap.h
+	gen NEED_BITMAP_PRINT_LIST_TO_BUF if fun bitmap_print_list_to_buf absent in include/linux/bitmap.h include/linux/bitmap-str.h
+	gen NEED_BITMAP_PRINT_TO_PAGEBUF if fun bitmap_print_to_pagebuf absent in include/linux/bitmap.h include/linux/bitmap-str.h
 	gen NEED_ASSIGN_BIT if fun assign_bit absent in include/linux/bitops.h
 	gen NEED_BITS_TO_U32 if fun BITS_TO_U32 absent in include/linux/bitops.h
 	gen NEED_STATIC_ASSERT if macro static_assert absent in include/linux/build_bug.h
@@ -570,7 +585,10 @@ function gen-other() {
 	gen HAVE_NON_CONST_CYCLECOUNTER if method read of cyclecounter lacks const in include/linux/timecounter.h
 	gen NEED_TIMER_CONTAINER_OF if macro timer_container_of absent in include/linux/timer.h
 	gen NEED_TIMER_DELETE if fun timer_delete absent in include/linux/timer.h
+	gen NEED_TIMER_SHUTDOWN_SYNC if fun timer_shutdown_sync absent in include/linux/timer.h
 	gen HAVE_TRACE_ENABLED_SUPPORT if implementation of macro __DECLARE_TRACE matches 'trace_##name##_enabled' in include/linux/tracepoint.h
+	gen HAVE_TTY_PORT_HANGUP if fun tty_port_hangup in include/linux/tty.h
+	gen HAVE_TTY_PORT_TTY_HANGUP if fun tty_port_tty_hangup in include/linux/tty.h
 	gen HAVE_TTY_OP_WRITE_SIZE_T if method write of tty_operations matches size_t in include/linux/tty_driver.h
 	gen HAVE_U64_STATS_FETCH_BEGIN_IRQ if fun u64_stats_fetch_begin_irq in "$ush"
 	gen HAVE_U64_STATS_FETCH_RETRY_IRQ if fun u64_stats_fetch_retry_irq in "$ush"
@@ -633,6 +651,7 @@ function gen-all() {
 	gen-netif
 	gen-packing
 	gen-pci
+	gen-pldm
 	gen-ptp
 	gen-stddef
 	gen-vdcm

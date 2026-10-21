@@ -599,6 +599,8 @@ ice_dcf_find_vsi_list_info(struct ice_pf *pf, u16 vsi_list_id)
 static void
 ice_dcf_add_vsi_id(struct ice_dcf_vsi_list_info *vsi_list_info, u16 hw_vsi_id)
 {
+	if (hw_vsi_id >= ICE_HW_VSI_ID_MAX)
+		return;
 	if (!test_and_set_bit(hw_vsi_id, vsi_list_info->hw_vsi_map))
 		vsi_list_info->vsi_count++;
 }
@@ -611,6 +613,8 @@ ice_dcf_add_vsi_id(struct ice_dcf_vsi_list_info *vsi_list_info, u16 hw_vsi_id)
 static void
 ice_dcf_del_vsi_id(struct ice_dcf_vsi_list_info *vsi_list_info, u16 hw_vsi_id)
 {
+	if (hw_vsi_id >= ICE_HW_VSI_ID_MAX)
+		return;
 	if (test_and_clear_bit(hw_vsi_id, vsi_list_info->hw_vsi_map))
 		vsi_list_info->vsi_count--;
 }
@@ -842,6 +846,8 @@ ice_dcf_parse_rm_sw_rule_data(struct ice_pf *pf,
 	list_for_each_entry_safe(sw_rule, tmp, &pf->dcf.sw_rule_head,
 				 list_entry)
 		if (sw_rule->rule_id == rule_id) {
+			if (sw_rule->vsi_list_info)
+				sw_rule->vsi_list_info->sw_rule = NULL;
 			list_del(&sw_rule->list_entry);
 			kfree(sw_rule);
 		}
@@ -965,10 +971,11 @@ ice_dcf_handle_free_res_rsp(struct ice_pf *pf, u8 *aq_buf)
  * @pf: pointer to the PF info
  * @aq_desc: descriptor describing the command
  * @aq_buf: pointer to the package update command buffer
+ * @aq_buf_size: size of the AdminQ buffer in bytes
  */
 static enum virtchnl_status_code
 ice_dcf_handle_udp_tunnel_rsp(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
-			      u8 *aq_buf)
+			      u8 *aq_buf, u16 aq_buf_size)
 {
 	struct ice_boost_tcam_section *sect;
 	struct ice_buf_hdr *pkg_buf;
@@ -979,12 +986,21 @@ ice_dcf_handle_udp_tunnel_rsp(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
 	u8 count;
 	u16 i, j;
 
-	mutex_lock(&hw->tnl_lock);
+	if (aq_buf_size < sizeof(*pkg_buf))
+		return VIRTCHNL_STATUS_ERR_PARAM;
+
 	pkg_buf = (struct ice_buf_hdr *)aq_buf;
 	offset = le16_to_cpu(pkg_buf->section_entry[0].offset);
+	if (offset > aq_buf_size ||
+	    aq_buf_size - offset < struct_size(sect, tcam, 1))
+		return VIRTCHNL_STATUS_ERR_PARAM;
+
 	sect = (struct ice_boost_tcam_section *)(((u8 *)pkg_buf) + offset);
 	count = le16_to_cpu(sect->count);
+	if (struct_size(sect, tcam, count) > aq_buf_size - offset)
+		return VIRTCHNL_STATUS_ERR_PARAM;
 
+	mutex_lock(&hw->tnl_lock);
 	for (i = 0; i < hw->tnl.count && i < ICE_TUNNEL_MAX_ENTRIES; i++)
 		for (j = 0; j < count; j++) {
 			addr = le16_to_cpu(sect->tcam[j].addr);
@@ -1023,10 +1039,11 @@ ice_dcf_handle_udp_tunnel_rsp(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
  * @pf: pointer to the PF info
  * @aq_desc: descriptor describing the command
  * @aq_buf: the AdminQ command buffer
+ * @aq_buf_size: size of the AdminQ buffer in bytes
  */
 enum virtchnl_status_code
 ice_dcf_post_aq_send_cmd(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
-			 u8 *aq_buf)
+			 u8 *aq_buf, u16 aq_buf_size)
 {
 	enum virtchnl_status_code status = VIRTCHNL_STATUS_SUCCESS;
 	u16 opc = le16_to_cpu(aq_desc->opcode);
@@ -1053,7 +1070,8 @@ ice_dcf_post_aq_send_cmd(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
 	case ice_aqc_opc_update_pkg:
 		if (ice_dcf_is_udp_tunnel_aq_cmd(aq_desc, aq_buf))
 			status = ice_dcf_handle_udp_tunnel_rsp(pf, aq_desc,
-							       aq_buf);
+							       aq_buf,
+							       aq_buf_size);
 		break;
 	}
 

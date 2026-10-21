@@ -1,6 +1,6 @@
 Name: ice
 Summary: Intel(R) Ethernet Connection E800 Series Linux Driver
-Version: 2.6.7
+Version: 2.7.6
 Release: 1
 Source: %{name}-%{version}.tar.gz
 Vendor: Intel Corporation
@@ -67,9 +67,13 @@ make -C src INSTALL_MOD_PATH=%{buildroot} MANDIR=%{_mandir} modules_install_no_a
 if [ -d %{buildroot}/lib/modules ]; then
 	find %{buildroot}/lib/modules/ -name 'modules.*' -exec rm -f {} \;
 fi
+
 cd %{buildroot}
 find . -name "ice.ko" -printf "/%p\n" \
 	>%{_builddir}/%{name}-%{version}/file.list
+
+find . -path '*/ddp/*' -printf "/%p\n" \
+	>>%{_builddir}/%{name}-%{version}/file.list
 find . -name "ice-vfio-pci.ko" -printf "/%p\n" \
 	>>%{_builddir}/%{name}-%{version}/file.list
 %if (%need_aux_rpm == 2)

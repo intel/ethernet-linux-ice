@@ -88,7 +88,7 @@ ice_dcf_pre_aq_send_cmd(struct ice_vf *vf, struct ice_aq_desc *aq_desc,
 			u8 *aq_buf, u16 aq_buf_size);
 enum virtchnl_status_code
 ice_dcf_post_aq_send_cmd(struct ice_pf *pf, struct ice_aq_desc *aq_desc,
-			 u8 *aq_buf);
+			 u8 *aq_buf, u16 aq_buf_size);
 bool ice_dcf_is_acl_aq_cmd(struct ice_aq_desc *desc);
 bool ice_dcf_is_udp_tunnel_aq_cmd(struct ice_aq_desc *desc, u8 *aq_buf);
 void ice_clear_dcf_acl_cfg(struct ice_pf *pf);

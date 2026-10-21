@@ -153,11 +153,6 @@ static int ice_vsi_alloc_arrays(struct ice_vsi *vsi)
 	if (!vsi->rx_rings)
 		goto err_rings;
 
-	if (vsi->type == ICE_VSI_PF && !ice_is_safe_mode(pf)) {
-		alloc_txq = pf->max_adq_qps;
-		alloc_rxq = pf->max_adq_qps;
-	}
-
 #ifdef HAVE_XDP_SUPPORT
 	/* XDP will have vsi->alloc_txq Tx queues as well, so double the size */
 	vsi->txq_map = devm_kcalloc(dev, (2 * alloc_txq),
@@ -1082,10 +1077,7 @@ static int ice_vsi_get_qs(struct ice_vsi *vsi)
 	};
 	int ret;
 
-	if (vsi->type == ICE_VSI_PF && !ice_is_safe_mode(pf)) {
-		rx_qs_cfg.q_count = pf->max_adq_qps;
-		tx_qs_cfg.q_count = pf->max_adq_qps;
-	}
+	/* No standing ADQ reservation; ADQ queues are acquired on demand. */
 
 	if (vsi->type == ICE_VSI_CHNL)
 		return 0;
@@ -1110,20 +1102,12 @@ static int ice_vsi_get_qs(struct ice_vsi *vsi)
 void ice_vsi_put_qs(struct ice_vsi *vsi)
 {
 	struct ice_pf *pf = vsi->back;
-	u16 alloc_txq, alloc_rxq;
 	u16 i;
-
-	alloc_txq = vsi->alloc_txq;
-	alloc_rxq = vsi->alloc_rxq;
-	if (vsi->type == ICE_VSI_PF && !ice_is_safe_mode(pf)) {
-		alloc_txq = pf->max_adq_qps;
-		alloc_rxq = pf->max_adq_qps;
-	}
 
 	mutex_lock(&pf->avail_q_mutex);
 
 	if (vsi->txq_map) {
-		for (i = 0; i < alloc_txq; i++) {
+		for (i = 0; i < vsi->alloc_txq; i++) {
 			if (vsi->txq_map[i] == ICE_INVAL_Q_INDEX)
 				continue;
 			clear_bit(vsi->txq_map[i], pf->avail_txqs);
@@ -1132,7 +1116,7 @@ void ice_vsi_put_qs(struct ice_vsi *vsi)
 	}
 
 	if (vsi->rxq_map) {
-		for (i = 0; i < alloc_rxq; i++) {
+		for (i = 0; i < vsi->alloc_rxq; i++) {
 			if (vsi->rxq_map[i] == ICE_INVAL_Q_INDEX)
 				continue;
 			clear_bit(vsi->rxq_map[i], pf->avail_rxqs);
@@ -2906,8 +2890,10 @@ void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create)
 static void ice_set_agg_vsi(struct ice_vsi *vsi)
 {
 	struct device *dev = ice_pf_to_dev(vsi->back);
-	struct ice_sched_agg_info *agg_node;
-	u32 min_id, max_id;
+	u32 min_id, max_id, agg_id;
+	int err;
+
+	vsi->agg_id = -1;
 
 	/* create (as needed) scheduler aggregator node and move VSI into
 	 * corresponding aggregator node
@@ -2941,18 +2927,17 @@ static void ice_set_agg_vsi(struct ice_vsi *vsi)
 		return;
 	}
 
-	agg_node = ice_cfg_vsi_agg(vsi->back->hw.port_info, vsi->idx, min_id,
-				   max_id, (u8)vsi->tc_cfg.ena_tc);
-	if (IS_ERR(agg_node)) {
+	err = ice_cfg_vsi_agg(vsi->back->hw.port_info, vsi->idx, min_id,
+			      max_id, (u8)vsi->tc_cfg.ena_tc, &agg_id);
+	if (err) {
 		dev_err(dev, "Unable to associate VSI with an aggregator node, %pe\n",
-			agg_node);
+			ERR_PTR(err));
 		return;
 	}
 
-	vsi->agg_node = agg_node;
-	dev_dbg(dev, "successfully moved VSI idx %u (tc_bitmap 0x%x) into aggregator node %d which has num_vsis %lu\n",
-		vsi->idx, vsi->tc_cfg.ena_tc, vsi->agg_node->agg_id,
-		list_count_nodes(&vsi->agg_node->agg_vsi_list));
+	vsi->agg_id = agg_id;
+	dev_dbg(dev, "successfully moved VSI idx %u tc_bitmap 0x%x into aggregator node %u\n",
+		vsi->idx, vsi->tc_cfg.ena_tc, agg_id);
 }
 
 static int ice_vsi_cfg_tc_lan(struct ice_pf *pf, struct ice_vsi *vsi)
@@ -3347,8 +3332,7 @@ struct ice_vsi * ice_vsi_setup(struct ice_pf *pf,
 #endif /* !CONFIG_DCB */
 		}
 
-	if (!vsi->agg_node)
-		ice_set_agg_vsi(vsi);
+	ice_set_agg_vsi(vsi);
 
 	return vsi;
 
@@ -4929,6 +4913,19 @@ void ice_clear_feature_support(struct ice_pf *pf, enum ice_feature f)
 }
 
 /**
+ * ice_is_erot_adapter - check if the adapter carries an external Root of
+ *                       Trust (eRoT) controller
+ * @pf: pointer to the struct ice_pf instance
+ *
+ * Return: true when an eRoT controller is present;
+ * hw->erot_present is set by ice_parse_erot_presence() during NVM init.
+ */
+bool ice_is_erot_adapter(struct ice_pf *pf)
+{
+	return pf->hw.erot_present;
+}
+
+/**
  * ice_init_feature_support
  * @pf: pointer to the struct ice_pf instance
  *
@@ -4991,8 +4988,16 @@ void ice_init_feature_support(struct ice_pf *pf)
 		ice_set_feature_support(pf, ICE_F_DSCP);
 		ice_set_feature_support(pf, ICE_F_GCS);
 		ice_set_feature_support(pf, ICE_F_TXTIME);
+
+		if (rd32(&pf->hw, E830_GLPCI_PUSH_PQM_CTRL) &
+		    E830_GLPCI_PUSH_PQM_CTRL_VF_TXTIME_RANGE_EN_M)
+			ice_set_feature_support(pf, ICE_F_SRIOV_TXTIME);
 		ice_set_feature_support(pf, ICE_F_MBX_LIMIT);
+		break;
 	default:
 		break;
 	}
+
+	if (ice_is_erot_adapter(pf))
+		ice_set_feature_support(pf, ICE_F_EROT);
 }

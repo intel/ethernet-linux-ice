@@ -184,6 +184,7 @@ static int ice_set_mac_type(struct ice_hw *hw)
 	case ICE_DEV_ID_E830_L_QSFP:
 	case ICE_DEV_ID_E830C_SFP:
 	case ICE_DEV_ID_E830_L_SFP:
+	case ICE_DEV_ID_E835_10G_BASE_T:
 	case ICE_DEV_ID_E835CC_BACKPLANE:
 	case ICE_DEV_ID_E835CC_QSFP56:
 	case ICE_DEV_ID_E835CC_SFP:
@@ -788,7 +789,8 @@ static int ice_init_fltr_mgmt_struct(struct ice_hw *hw)
 	struct ice_switch_info *sw;
 	int status;
 
-	hw->switch_info = kzalloc(sizeof(*hw->switch_info), GFP_KERNEL);
+	hw->switch_info = (struct ice_switch_info *)
+			  kzalloc(sizeof(*hw->switch_info), GFP_KERNEL);
 	sw = hw->switch_info;
 
 	if (!sw)
@@ -1036,8 +1038,11 @@ int ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_cqinit;
 
+	ice_parse_erot_presence(hw);
+
 	if (!hw->port_info)
-		hw->port_info = kzalloc(sizeof(*hw->port_info), GFP_KERNEL);
+		hw->port_info = (struct ice_port_info *)
+			kzalloc(sizeof(*hw->port_info), GFP_KERNEL);
 	if (!hw->port_info) {
 		status = -ENOMEM;
 		goto err_unroll_cqinit;
@@ -1075,7 +1080,8 @@ int ice_init_hw(struct ice_hw *hw)
 	if (status)
 		goto err_unroll_sched;
 
-	pcaps = kzalloc(sizeof(*pcaps), GFP_KERNEL);
+	pcaps = (struct ice_aqc_get_phy_caps_data *)
+		kzalloc(sizeof(*pcaps), GFP_KERNEL);
 	if (!pcaps) {
 		status = -ENOMEM;
 		goto err_unroll_sched;
@@ -1919,12 +1925,6 @@ int ice_sbq_rw_reg(struct ice_hw *hw, struct ice_sbq_msg_input *in, u16 flags)
 
 /* FW Admin Queue command wrappers */
 
-/* Software lock/mutex that is meant to be held while the Global Config Lock
- * in firmware is acquired by the software to prevent most (but not all) types
- * of AQ commands from being sent to FW
- */
-DEFINE_MUTEX(ice_global_cfg_lock_sw); /* global config lock */
-
 /**
  * ice_should_retry_sq_send_cmd
  * @opcode: AQ opcode
@@ -2026,6 +2026,7 @@ ice_aq_send_cmd(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf,
 		u16 buf_size, struct ice_sq_cd *cd)
 {
 	struct ice_aqc_req_res *cmd = &desc->params.res_owner;
+	struct mutex *cfg_lock = hw->global_cfg_lock_sw;
 	bool lock_acquired = false;
 	int status;
 
@@ -2060,14 +2061,14 @@ ice_aq_send_cmd(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf,
 			break;
 		fallthrough;
 	default:
-		mutex_lock(&ice_global_cfg_lock_sw);
+		mutex_lock(cfg_lock);
 		lock_acquired = true;
 		break;
 	}
 
 	status = ice_sq_send_cmd_retry(hw, &hw->adminq, desc, buf, buf_size, cd);
 	if (lock_acquired)
-		mutex_unlock(&ice_global_cfg_lock_sw);
+		mutex_unlock(cfg_lock);
 
 	return status;
 }
@@ -2358,7 +2359,13 @@ void ice_release_res(struct ice_hw *hw, enum ice_aq_res_ids res)
 	/* there are some rare cases when trying to release the resource
 	 * results in an admin queue timeout, so handle them correctly
 	 */
-	timeout = jiffies + 10 * ICE_CTL_Q_SQ_CMD_TIMEOUT;
+/* ICE_CTL_Q_SQ_CMD_TIMEOUT is in microseconds; convert to jiffies so the
+	 * timeout represents 10× the AQ command timeout (≈10 s) rather than
+	 * 10 × USEC_PER_SEC jiffies (≈10,000 s at HZ=1000) which is effectively
+	 * infinite and keeps hw->global_cfg_lock_sw held across EPR resets.
+	 */
+	timeout = jiffies + msecs_to_jiffies(10 * (ICE_CTL_Q_SQ_CMD_TIMEOUT /
+						    1000UL));
 	do {
 		int status = ice_aq_release_res(hw, res, 0, NULL);
 
@@ -2773,6 +2780,11 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		ice_debug(hw, ICE_DBG_INIT, "%s: base_release_ver_iana = 0x%08X\n",
 			  prefix, caps->base_release_ver_iana);
 		break;
+	case ICE_AQC_CAPS_EXTERNAL_PQC_ROT_PRESENT:
+		caps->external_pqc_rot_present = (number == 1);
+		ice_debug(hw, ICE_DBG_INIT, "%s: external_pqc_rot_present = %d\n",
+			  prefix, caps->external_pqc_rot_present);
+		break;
 	case ICE_AQC_CAPS_NVM_MGMT:
 		caps->sec_rev_disabled =
 			(number & ICE_NVM_MGMT_SEC_REV_DISABLED) ?
@@ -2921,6 +2933,11 @@ ice_parse_common_caps(struct ice_hw *hw, struct ice_hw_common_caps *caps,
 		caps->orom_recovery_update = (number == 1);
 		ice_debug(hw, ICE_DBG_INIT, "%s: orom_recovery_update = %d\n",
 			  prefix, caps->orom_recovery_update);
+		break;
+	case ICE_AQC_CAPS_PQC_CERT_PROVISIONING:
+		caps->pqc_cert_provisioning = (number == 1);
+		ice_debug(hw, ICE_DBG_INIT, "%s: pqc_cert_provisioning = %d\n",
+			  prefix, caps->pqc_cert_provisioning);
 		break;
 	case ICE_AQC_CAPS_NEXT_CLUSTER_ID:
 		caps->next_cluster_id_support = (number == 1);
@@ -8537,22 +8554,6 @@ bool ice_fw_supports_fec_dis_auto(struct ice_hw *hw)
 				 ICE_FW_FEC_DIS_AUTO_MAJ_E82X,
 				 ICE_FW_FEC_DIS_AUTO_MIN_E82X,
 				 ICE_FW_FEC_DIS_AUTO_PATCH_E82X);
-}
-
-/**
- * ice_is_fw_vf_txtime_supported_e83x
- * @hw: pointer to the hardware structure
- *
- * Checks if the firmware supports VF Tx Time feature
- */
-bool ice_is_fw_vf_txtime_supported_e83x(struct ice_hw *hw)
-{
-	if (hw->mac_type != ICE_MAC_E830)
-		return false;
-
-	return ice_is_fw_api_min_ver(hw, ICE_FW_API_VF_TXTIME_MAJ_E83X,
-				     ICE_FW_API_VF_TXTIME_MIN_E83X,
-				     ICE_FW_API_VF_TXTIME_PATCH_E83X);
 }
 
 /**

@@ -730,7 +730,7 @@ err:
 		NL_SET_ERR_MSG(extack,
 			       "Failed to update pin settings");
 #endif /* HAVE_NL_SET_ERR_MSG_FMT */
-	else
+	else if (pf->hw.adminq.sq_last_status != ICE_AQ_RC_EBUSY)
 		dev_err_ratelimited(ice_pf_to_dev(pf),
 				    "err:%d %s failed to update %s pin:%u\n",
 				    ret,
@@ -2613,10 +2613,12 @@ ice_dpll_update_state(struct ice_pf *pf, struct ice_dpll *d, bool init)
 		d->dpll_idx, d->prev_input_idx, d->input_idx,
 		d->dpll_state, d->prev_dpll_state, d->mode);
 	if (ret) {
-		dev_err(ice_pf_to_dev(pf),
-			"update dpll=%d state failed, ret=%d %s\n",
-			d->dpll_idx, ret,
-			ice_aq_str(pf->hw.adminq.sq_last_status));
+		/* EBUSY is expected during reset recovery, don't log error */
+		if (pf->hw.adminq.sq_last_status != ICE_AQ_RC_EBUSY)
+			dev_err(ice_pf_to_dev(pf),
+				"update dpll=%d state failed, ret=%d %s\n",
+				d->dpll_idx, ret,
+				ice_aq_str(pf->hw.adminq.sq_last_status));
 		return ret;
 	}
 	if (init) {
@@ -2680,6 +2682,7 @@ static void ice_dpll_periodic_work(struct kthread_work *work)
 	    !test_bit(ICE_FLAG_DPLL_MONITOR, pf->flags))
 		goto resched;
 	mutex_lock(&pf->dplls.lock);
+
 #ifdef HAVE_DPLL_PHASE_OFFSET_MONITOR
 	d->periodic_counter++;
 #endif /* HAVE_DPLL_PHASE_OFFSET_MONITOR */
@@ -2692,7 +2695,9 @@ static void ice_dpll_periodic_work(struct kthread_work *work)
 		ret = ice_dpll_pps_update_phase_offsets(pf, &phase_offset_ntf);
 #endif /* HAVE_DPLL_PHASE_OFFSET_MONITOR */
 	if (ret) {
-		d->cgu_state_acq_err_num++;
+		/* EBUSY is expected during reset recovery */
+		if (pf->hw.adminq.sq_last_status != ICE_AQ_RC_EBUSY)
+			d->cgu_state_acq_err_num++;
 		/* stop rescheduling this worker */
 		if (d->cgu_state_acq_err_num >
 		    ICE_CGU_STATE_ACQ_ERR_THRESHOLD) {

@@ -170,6 +170,8 @@ struct ice_ptp_tx {
  * @port_num: the port number this structure represents
  * @tx_clk: currently active Tx reference clock source
  * @tx_clk_req: requested Tx reference clock source (new target)
+ * @phy_time_offset: cached nanosecond distance from the free running PHY timer
+ *                   to the PHC, used to extend timestamps on E825
  * @phy_soft_resets: number of times port has been PHY soft reset
  */
 struct ice_ptp_port {
@@ -183,6 +185,7 @@ struct ice_ptp_port {
 	u8 rx_calibrating : 1;
 	enum ice_e825c_ref_clk tx_clk;
 	enum ice_e825c_ref_clk tx_clk_req;
+	u32 phy_time_offset;
 	u32 phy_soft_resets;
 };
 
@@ -316,6 +319,7 @@ struct ice_ptp {
 	u32 tx_hwtstamp_timeouts;
 	u32 tx_hwtstamp_flushed;
 	u32 tx_hwtstamp_discarded;
+	u32 aux_work_tsyn_tx_triggered;
 	u32 late_cached_phc_updates;
 	DECLARE_BITMAP(phy_ports_maybe_stuck, ICE_MAX_PORT_PER_PCI_DEV);
 };
@@ -336,7 +340,7 @@ static inline struct ice_ptp *__ptp_info_to_ptp(struct ptp_clock_info *i)
 #define ptp_info_to_pf(i) \
 	container_of(__ptp_info_to_ptp((i)), struct ice_pf, ptp)
 
-static inline int ice_ptp_get_seq_id(struct sk_buff *skb)
+static inline int ice_ptp_get_tx_seq_id(struct sk_buff *skb)
 {
 	struct ptp_header *hdr;
 	int type;
@@ -350,6 +354,33 @@ static inline int ice_ptp_get_seq_id(struct sk_buff *skb)
 		return -1;
 
 	hdr = ptp_parse_header(skb, type);
+	if (!hdr)
+		return -1;
+
+	return be16_to_cpu(hdr->sequence_id);
+}
+
+static inline int ice_ptp_get_rx_seq_id(struct sk_buff *skb)
+{
+	struct ptp_header *hdr;
+	unsigned int offset;
+	int type;
+
+	if (!skb || !skb_mac_header_was_set(skb))
+		return -1;
+
+	offset = skb->data - skb_mac_header(skb);
+	skb_push(skb, offset);
+
+	type = ptp_classify_raw(skb);
+
+	if (type == PTP_CLASS_NONE) {
+		skb_pull(skb, offset);
+		return -1;
+	}
+
+	hdr = ptp_parse_header(skb, type);
+	skb_pull(skb, offset);
 	if (!hdr)
 		return -1;
 

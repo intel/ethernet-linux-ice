@@ -2573,6 +2573,11 @@ ice_flow_set_hw_prof(struct ice_hw *hw, u16 dest_vsi_handle,
 	if (!params)
 		return -ENOMEM;
 
+	if (prof->fv_num > fv_words) {
+		kfree(params);
+		return -EINVAL;
+	}
+
 	for (i = 0; i < ICE_MAX_FV_WORDS; i++) {
 		params->es[i].prot_id = ICE_PROT_INVALID;
 		params->es[i].off = ICE_FV_OFFSET_INVAL;
