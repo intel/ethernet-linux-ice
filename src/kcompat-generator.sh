@@ -369,6 +369,7 @@ function gen-netdevice() {
 	gen HAVE_RHEL7_NETDEV_OPS_EXT_NDO_SETUP_TC if method ndo_setup_tc_rh of net_device_ops_extended in "$ndh"
 	gen HAVE_SET_NETDEV_DEVLINK_PORT if macro SET_NETDEV_DEVLINK_PORT in "$ndh"
 	gen NEED_NETDEV_TX_SENT_QUEUE if fun __netdev_tx_sent_queue absent in "$ndh"
+	gen NEED_NETDEV_XMIT_MORE if fun netdev_xmit_more absent in "$ndh"
 	gen NEED_NETIF_NAPI_ADD_NO_WEIGHT if fun netif_napi_add matches 'int weight' in "$ndh"
 	gen NEED_NET_PREFETCH if fun net_prefetch absent in "$ndh"
 	gen NEED_XDP_FEATURES if enum netdev_xdp_act absent in include/uapi/linux/netdev.h
