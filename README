@@ -637,7 +637,7 @@ following are true:
 * RDMA technology is set to RoCEv2.
 
 * LAG configuration is either active-backup or active-active.
-  Active-active includes balance-xor, broadcast, and 802.3ad.
+  Active-active includes 802.3ad mode. Other Linux bonding modes (balance-rr, balance-xor, broadcast, balance-tlb, balance-alb) are not supported for RDMA.
 
 * Bonding is between two ports within the same device.
 
