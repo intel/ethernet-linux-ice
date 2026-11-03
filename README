@@ -157,13 +157,13 @@ MACVLAN before enabling RDMA or SR-IOV. If you are using bridging or
 MACVLAN in conjunction with SR-IOV and/or RDMA, and you want to remove
 the interface from the bridge or MACVLAN, you must follow these steps:
 
-1. Remove RDMA if it is active
+1. Unload irdma driver if loaded.
 
-2. Destroy SR-IOV VFs if they exist
+2. Remove any existing SR-IOV Virtual Functions (VFs), if present.
 
-3. Remove the interface from the bridge or MACVLAN
+3. Remove the interface from the bridge or MACVLAN.
 
-4. Reactivate RDMA and recreate SR-IOV VFs as needed
+4. Load irdma driver and recreate SR-IOV VFs as needed.
 
 
 Building and Installation
@@ -632,17 +632,24 @@ Link Aggregation and RDMA
 Link aggregation (LAG) and RDMA are compatible only if all the
 following are true:
 
-* You are using an Intel Ethernet 810 Series device with the latest
-  drivers and NVM installed.
+* You are using an Intel Ethernet 800 Series device with the latest drivers and NVM installed.
 
 * RDMA technology is set to RoCEv2.
 
 * LAG configuration is either active-backup or active-active.
+  Active-active includes balance-xor, broadcast, and 802.3ad.
 
 * Bonding is between two ports within the same device.
 
+* LAG DDP package is required for LAG functionality. The default DDP package installed by the driver does not support LAG.
+
+* Firmware LLDP agent is off on the participating ports.
+     ethtool --set-priv-flags <iface> fw-lldp-agent off
+  Do this before creating the bond.
+
 * The QoS configuration of the two ports matches prior to the bonding
   of the devices.
+  DCB/QoS changes are not allowed after the ports are bonded.
 
 If the above conditions are not met:
 
@@ -650,36 +657,26 @@ If the above conditions are not met:
 
 * RDMA peers will not be able to register with the PF.
 
-Note:
+Behavior
+--------
+Both modes:
+  - ice blocks DCB/hardware QoS changes on the bonded ports.
 
-  The first interface added to an aggregate (bond) is assigned as the
-  "primary" interface for RDMA and LAG functionality. If LAN
-  interfaces are assigned to the bond and you remove the primary
-  interface from the bond, RDMA will not function properly over the
-  bonded interface. To address the issue, remove all interfaces from
-  the bond and add them again. Interfaces that are not assigned to the
-  bond will operate normally.
+active-backup:
+  - Only the primary port is used for RDMA.
+  - ice forwards RoCEv2 traffic from the secondary port to the primary
+    via a switch rule.
 
-If the ice driver is configured for active-backup or active-active
-LAG:
+active-active (LACP):
+  - irdma configures QSets on both ports.
+  - On a port failure, queue pairs move to the surviving port and move
+    back once the failed port recovers.
 
-* The ice driver will block any DCB/hardware QoS configuration changes
-  on the bonded ports.
-
-* Only the primary port is available for the RDMA driver.
-
-* The ice driver will forward RoCEv2 traffic from the secondary port
-  to the primary port by creating an appropriate switch rule.
-
-If the ice driver is configured for active-active LAG:
-
-* The ice driver will allow the RDMA driver to configure QSets for
-  both active ports.
-
-* A port failure on the active port will trigger a failover mechanism
-  and move the queue pairs to the currently active port. Once the port
-  has recovered, the RDMA driver will move RDMA QSets back to the
-  originally allocated port.
+Limitations
+-----------
+* Removing the primary interface from the bond breaks RDMA on the
+  bond. Recover by removing all interfaces and re-adding them.
+* RDMA LAG is not supported on VF interfaces. Although Linux allows VF interfaces to be bonded, Intel Ethernet 800 Series drivers do not support RDMA, failover, or load balancing on VF bonds.
 
 Note:
 
@@ -720,7 +717,7 @@ LAG and SR-IOV are compatible only if all the following are true:
 +---------------+-----------------+---------------+
 | Device        | active-backup   | Other modes   |
 |===============|=================|===============|
-| E810          | 4.30            | 4.80          |
+| E800 Series   | 4.30            | 4.80          |
 +---------------+-----------------+---------------+
 | E83x Series   | 1.00            | 1.20          |
 +---------------+-----------------+---------------+
@@ -764,18 +761,32 @@ In order to configure SR-IOV LAG:
       ip link set $VF2_PR master $BR
 
 Note: in this example "$PF1" is the primary port and "$PF2" is the
-secondary port.
+secondary port. Do not use this bridge when RDMA is also active. See
+Link aggregation with both SR-IOV and RDMA.
 
 
 Link aggregation with both SR-IOV and RDMA
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 It is possible to use both SR-IOV VFs and RDMA at the same time. In
 this configuration bridge is not supported (tc filters should be
-configured to enable VF connectivity - see Switchdev Mode) and
-promiscuous mode should be enabled on the secondary uplink:
+configured to enable VF connectivity - see Switchdev Mode). Follow the SR-IOV LAG steps through the bond, then:
 
-   ip link set promisc on $PF2
+* Enable promiscuous mode on the secondary uplink:
+
+     ip link set promisc on $PF2
+
+* On each VF port representor, enable hw-tc-offload and add a tc
+  filter toward the bond:
+
+     ethtool -K $VF1_PR hw-tc-offload on
+     tc qdisc add dev $VF1_PR ingress
+     tc filter add dev $VF1_PR ingress protocol all flower action mirred egress redirect dev $BOND
+     tc qdisc add dev $BOND ingress
+     tc filter add dev $BOND ingress protocol all flower dst_mac <vf mac> action mirred egress redirect dev $VF1_PR
+
+* Load irdma with RoCEv2 enabled after the bond is up. Only the
+  primary port exposes an RDMA device, and RDMA in the VF stays
+  disabled.
 
 
 Application Device Queues (ADQ)
