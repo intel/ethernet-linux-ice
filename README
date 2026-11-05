@@ -769,20 +769,16 @@ Link aggregation with both SR-IOV and RDMA
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 It is possible to use both SR-IOV VFs and RDMA at the same time. In
 this configuration bridge is not supported (tc filters should be
-configured to enable VF connectivity - see Switchdev Mode). Follow the SR-IOV LAG steps through the bond, then:
+configured to enable VF connectivity - see Switchdev Mode). 
+
+Follow the SR-IOV LAG steps through the bond, then:
 
 * Enable promiscuous mode on the secondary uplink:
 
      ip link set promisc on $PF2
 
-* On each VF port representor, enable hw-tc-offload and add a tc
-  filter toward the bond:
-
-     ethtool -K $VF1_PR hw-tc-offload on
-     tc qdisc add dev $VF1_PR ingress
-     tc filter add dev $VF1_PR ingress protocol all flower action mirred egress redirect dev $BOND
-     tc qdisc add dev $BOND ingress
-     tc filter add dev $BOND ingress protocol all flower dst_mac <vf mac> action mirred egress redirect dev $VF1_PR
+* Enable hw-tc-offload on VF port representator and add a tc
+  filter.
 
 * Load irdma with RoCEv2 enabled after the bond is up. Only the
   primary port exposes an RDMA device, and RDMA in the VF stays
