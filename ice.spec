@@ -11,12 +11,13 @@ Provides: %{name}
 URL: http://support.intel.com
 BuildRoot: %{_tmppath}/%{name}-%{version}-root
 %global debug_package %{nil}
-# macros for finding system files to update at install time (pci.ids, pcitable)
-%define find() %(for f in %*; do if [ -e $f ]; then echo $f; break; fi; done)
+# candidate locations of the system files to update at install time
+# (pci.ids, pcitable); the first one found on the target system is used
 %define _pciids   /usr/share/pci.ids        /usr/share/hwdata/pci.ids
-%define _pcitable /usr/share/kudzu/pcitable /usr/share/hwdata/pcitable /dev/null
-%define pciids    %find %{_pciids}
-%define pcitable  %find %{_pcitable}
+%define _pcitable /usr/share/kudzu/pcitable /usr/share/hwdata/pcitable
+# data needed by the scriptlets; must not be %doc (rpm --excludedocs)
+%global ice_datadir %{_datadir}/%{name}
+%global ice_file_list %{ice_datadir}/%{name}-%{version}-%{release}.list
 Requires: kernel, findutils, gawk, bash
 
 %global __strip /bin/true
@@ -33,6 +34,46 @@ Requires: kernel, findutils, gawk, bash
 %endif
 
 %define check_aux_args %check_aux_args_kernel %check_aux_args_ksrc
+
+# kernels to refresh: the one the module was built for and the running one
+%define ice_kernels $( (echo %{kernel_ver}; uname -r) | sort -u)
+
+# the driver may be needed at boot, so a failed initramfs update is an error
+%define ice_update_initramfs \
+if command -v dracut >/dev/null 2>&1; then \
+	for k in %{ice_kernels}; do \
+		[ -d /lib/modules/$k ] || continue \
+		echo "Updating initramfs for $k with dracut..." \
+		if dracut --force --kver $k; then \
+			echo "Successfully updated initramfs." \
+		else \
+			echo "Failed to update initramfs for $k." >&2 \
+			echo "You must update your initramfs image for changes to take place." >&2 \
+			exit -1 \
+		fi \
+	done \
+elif command -v mkinitrd >/dev/null 2>&1; then \
+	echo "Updating initrd with mkinitrd..." \
+	if mkinitrd; then \
+		echo "Successfully updated initrd." \
+	else \
+		echo "Failed to update initrd." >&2 \
+		echo "You must update your initrd image for changes to take place." >&2 \
+		exit -1 \
+	fi \
+else \
+	echo "Unable to determine utility to update initrd image." >&2 \
+	echo "You must update your initrd manually for changes to take place." >&2 \
+	exit -1 \
+fi \
+%{nil}
+
+%define ice_depmod \
+for k in %{ice_kernels}; do \
+	[ -d /lib/modules/$k ] || continue \
+	echo $k | grep -q BOOT || /sbin/depmod -a $k > /dev/null 2>&1 || true \
+done \
+%{nil}
 
 %define need_aux_rpm %( [ -L /lib/modules/%kernel_ver/source ] && (rpm -q --whatprovides /lib/modules/%kernel_ver/source/include/linux/auxiliary_bus.h > /dev/null 2>&1 && echo 0 || echo 2) || (rpm -q --whatprovides /lib/modules/%kernel_ver/build/include/linux/auxiliary_bus.h > /dev/null 2>&1 && echo 0 || echo 2) )
 
@@ -108,6 +149,10 @@ for module in `find . -type f -name \*.ko`; do
 done
 %endif
 
+# data used by the scriptlets
+install -D -m 644 %{_builddir}/%{name}-%{version}/file.list %{buildroot}%{ice_file_list}
+install -D -m 644 %{_builddir}/%{name}-%{version}/pci.updates %{buildroot}%{ice_datadir}/pci.updates
+
 
 
 %clean
@@ -117,36 +162,50 @@ rm -rf %{buildroot}
 
 %defattr(-,root,root)
 %{_mandir}/man7/ice.7.gz
+%dir %{ice_datadir}
+%{ice_file_list}
+%{ice_datadir}/pci.updates
 %doc COPYING
 %doc README
-%doc file.list
-%doc pci.updates
 
 %post
-if [ -d /usr/local/share/%{name} ]; then
+# find the system files on the system being installed to
+pciids=
+for f in %{_pciids}; do
+	if [ -e "$f" ]; then pciids="$f"; break; fi
+done
+pcitable=/dev/null
+for f in %{_pcitable}; do
+	if [ -e "$f" ]; then pcitable="$f"; break; fi
+done
+
+# only touch pci.ids if there is something to merge and something to merge into
+if [ -s "$pciids" ] && [ -r %{ice_datadir}/pci.updates ]; then
+
 	rm -rf /usr/local/share/%{name}
-fi
-mkdir /usr/local/share/%{name}
-cp --parents %{pciids} /usr/local/share/%{name}/
-echo "original pci.ids saved in /usr/local/share/%{name}";
-if [ "%{pcitable}" != "/dev/null" ]; then
-	cp --parents %{pcitable} /usr/local/share/%{name}/
-	echo "original pcitable saved in /usr/local/share/%{name}";
-fi
+	mkdir -p /usr/local/share/%{name}
+	cp --parents "$pciids" /usr/local/share/%{name}/
+	echo "original pci.ids saved in /usr/local/share/%{name}";
+	ids_new=$(mktemp "$pciids.XXXXXX") || ids_new=
+	table_new=/dev/null
+	if [ "$pcitable" != "/dev/null" ]; then
+		cp --parents "$pcitable" /usr/local/share/%{name}/
+		echo "original pcitable saved in /usr/local/share/%{name}";
+		table_new=$(mktemp "$pcitable.XXXXXX") || table_new=
+	fi
 
-LD="%{_docdir}/%{name}";
-if [ -d %{_docdir}/%{name}-%{version} ]; then
-	LD="%{_docdir}/%{name}-%{version}";
-fi
+	if [ -z "$ids_new" ] || [ -z "$table_new" ]; then
+		echo "WARNING: cannot create a temporary file, pci.ids was not updated" >&2
+	else
 
-#Yes, this really needs bash
-bash -s %{pciids} \
-	%{pcitable} \
-	$LD/pci.updates \
-	$LD/pci.ids.new \
-	$LD/pcitable.new \
-	%{name} \
-<<"END"
+		#Yes, this really needs bash
+		bash -s "$pciids" \
+			"$pcitable" \
+			%{ice_datadir}/pci.updates \
+			"$ids_new" \
+			"$table_new" \
+			%{name} \
+		<<"END"
 #! /bin/bash
 # Copyright (C) 2017 - 2023 Intel Corporation
 # For licensing information, see the file 'LICENSE' in the root folder
@@ -205,7 +264,7 @@ do
 
 	# outer loop reads lines from the updates file
 	exec 0<&5
-	while read -r line
+	while read -r line || [ -n "$line" ]
 	do
 		# vendor entry
 		if [[ $line == $VEN ]]
@@ -219,7 +278,7 @@ do
 				 0x${ids_in:0:4} < $vendor ]]
 			do
 				echo "$ids_in"
-				read -r ids_in
+				read -r ids_in || [ -n "$ids_in" ] || break
 			done
 			echo "$line"
 			if [[ 0x${ids_in:0:4} == $vendor ]]
@@ -251,7 +310,7 @@ do
 				else
 					echo "$ids_in"
 				fi
-				read -r ids_in
+				read -r ids_in || [ -n "$ids_in" ] || break
 				ids_device=`echo ${ids_in:1:4} | tr "[:upper:]" "[:lower:]"`
 			done
 			if [[ $device != ${line:1:4} ]]
@@ -274,7 +333,7 @@ do
 				   ${table_in:7:6} < $table_device ) ]]
 			do
 				echo "$table_in"
-				read -r table_in
+				read -r table_in || [ -n "$table_in" ] || break
 			done
 			echo "$table_line"
 			if [[ ${table_in:0:6} == $vendor &&
@@ -317,7 +376,7 @@ do
 						echo "$ids_in"
 					fi
 				fi
-				read -r ids_in
+				read -r ids_in || [ -n "$ids_in" ] || break
 				ids_subven=`echo ${ids_in:2:4} | tr "[:upper:]" "[:lower:]"`
 				ids_subdev=`echo ${ids_in:7:4} | tr "[:upper:]" "[:lower:]"`
 			done
@@ -350,7 +409,7 @@ do
 				then
 					echo "$table_in"
 				fi
-				read -r table_in
+				read -r table_in || [ -n "$table_in" ] || break
 			done
 			echo "$table_line"
 			if [[ ${table_in:14:6} == $table_subven &&
@@ -368,7 +427,7 @@ do
 	exec 0<&3
 	exec 1>&6
 	echo "$ids_in"
-	while read -r ids_in
+	while read -r ids_in || [ -n "$ids_in" ]
 	do
 		echo "$ids_in"
 	done
@@ -377,7 +436,7 @@ do
 	exec 0>&4
 	exec 1>&7
 	echo "$table_in"
-	while read -r table_in
+	while read -r table_in || [ -n "$table_in" ]
 	do
 		echo "$table_in"
 	done
@@ -394,84 +453,71 @@ exec 7>&-
 
 END
 
-mv -f $LD/pci.ids.new  %{pciids}
-if [ "%{pcitable}" != "/dev/null" ]; then
-	mv -f $LD/pcitable.new %{pcitable}
-fi
+		# never replace the system files with an empty or missing result
+		if [ $? -eq 0 ] && [ -s "$ids_new" ]; then
+			chmod --reference="$pciids" "$ids_new"
+			mv -f "$ids_new" "$pciids"
+			if [ "$pcitable" != "/dev/null" ] && [ -s "$table_new" ]; then
+				chmod --reference="$pcitable" "$table_new"
+				mv -f "$table_new" "$pcitable"
+			fi
+		else
+			echo "WARNING: pci.ids was not updated" >&2
+		fi
 
-uname -r | grep BOOT || /sbin/depmod -a > /dev/null 2>&1 || true
-
-if [ -x "/usr/sbin/weak-modules" ]; then
-    modules=( $(cat $LD/file.list | grep '\.ko$' | xargs realpath) )
-    printf '%s\n' "${modules[@]}" | /usr/sbin/weak-modules --no-initramfs --add-modules
-fi
-
-if which dracut >/dev/null 2>&1; then
-	echo "Updating initramfs with dracut..."
-	if dracut --force ; then
-		echo "Successfully updated initramfs."
-	else
-		echo "Failed to update initramfs."
-		echo "You must update your initramfs image for changes to take place."
-		exit -1
 	fi
-elif which mkinitrd >/dev/null 2>&1; then
-	echo "Updating initrd with mkinitrd..."
-	if mkinitrd; then
-		echo "Successfully updated initrd."
-	else
-		echo "Failed to update initrd."
-		echo "You must update your initrd image for changes to take place."
-		exit -1
+
+	# remove whatever is left of the temporary files
+	if [ -n "$ids_new" ]; then
+		rm -f "$ids_new"
 	fi
+	if [ -n "$table_new" ] && [ "$table_new" != "/dev/null" ]; then
+		rm -f "$table_new"
+	fi
+
 else
-	echo "Unable to determine utility to update initrd image."
-	echo "You must update your initrd manually for changes to take place."
-	exit -1
+	echo "pci.ids or pci.updates is missing or empty, pci.ids not updated"
 fi
+
+%{ice_depmod}
+
+%posttrans
+# Runs after the scriptlets of the package being replaced on upgrade, so the
+# weak-modules links and the initramfs are refreshed once, at the very end.
+if [ -x "/usr/sbin/weak-modules" ]; then
+    grep '\.ko$' %{ice_file_list} | xargs realpath | /usr/sbin/weak-modules --no-initramfs --add-modules
+fi
+
+%{ice_update_initramfs}
 
 %preun
-LD="%{_docdir}/%{name}";
-if [ -d %{_docdir}/%{name}-%{version} ]; then
-	LD="%{_docdir}/%{name}-%{version}";
-fi
-
 # save tmp list of installed kernel modules for weak-modules
-cat $LD/file.list | grep '\.ko$' | xargs realpath > /var/run/rpm-%{name}-modules.list
+grep '\.ko$' %{ice_file_list} | xargs realpath > /var/run/rpm-%{name}-modules.list
 
-rm -rf /usr/local/share/%{name}
+# $1 == 0: package is being erased, not upgraded
+if [ $1 -eq 0 ]; then
+	rm -rf /usr/local/share/%{name}
+fi
 
 %postun
-uname -r | grep BOOT || /sbin/depmod -a > /dev/null 2>&1 || true
+%{ice_depmod}
 
-if [ -x "/usr/sbin/weak-modules" ]; then
-    modules=( $(cat /var/run/rpm-%{name}-modules.list) )
-    printf '%s\n' "${modules[@]}" | /usr/sbin/weak-modules --no-initramfs --remove-modules
+if [ -x "/usr/sbin/weak-modules" ] && [ -f /var/run/rpm-%{name}-modules.list ]; then
+    /usr/sbin/weak-modules --no-initramfs --remove-modules < /var/run/rpm-%{name}-modules.list
 fi
-rm /var/run/rpm-%{name}-modules.list
 
-if which dracut >/dev/null 2>&1; then
-	echo "Updating initramfs with dracut..."
-	if dracut --force ; then
-		echo "Successfully updated initramfs."
-	else
-		echo "Failed to update initramfs."
-		echo "You must update your initramfs image for changes to take place."
-		exit -1
-	fi
-elif which mkinitrd >/dev/null 2>&1; then
-	echo "Updating initrd with mkinitrd..."
-	if mkinitrd; then
-		echo "Successfully updated initrd."
-	else
-		echo "Failed to update initrd."
-		echo "You must update your initrd image for changes to take place."
-		exit -1
-	fi
-else
-	echo "Unable to determine utility to update initrd image."
-	echo "You must update your initrd manually for changes to take place."
-	exit -1
+# On upgrade the new package's %%posttrans updates the initramfs, unless the
+# modules of this package are gone (the new package is for another kernel).
+gone=0
+if [ -f /var/run/rpm-%{name}-modules.list ]; then
+	for m in $(cat /var/run/rpm-%{name}-modules.list); do
+		[ -e "$m" ] || gone=1
+	done
+fi
+rm -f /var/run/rpm-%{name}-modules.list
+
+if [ $1 -eq 0 ] || [ $gone -eq 1 ]; then
+%{ice_update_initramfs}
 fi
 
 %if (%need_aux_rpm == 2)
